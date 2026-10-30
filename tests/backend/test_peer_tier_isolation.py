@@ -1,19 +1,18 @@
-"""F-ID-3 — der Diskriminator im Pending-Satz, und warum sein Vorgabewert zählt.
+"""F-ID-3 -- the discriminator in the pending record, and why its default counts.
 
-Gefunden im `/review` zu PR #1420: ein Pending-Satz aus einer ÄLTEREN Fassung
-kennt weder `mapped` noch `peer_owner_id`. Beim Redis-Speicher ist genau das
-während eines rollenden Deploys der Normalfall (`_from_jsonable`: „Missing keys
-still fall back to the dataclass defaults — the common older-row case").
+Found in the `/review` of PR #1420: a pending record from an OLDER version
+knows neither `mapped` nor `peer_owner_id`. With the Redis store that is
+exactly the normal case during a rolling deploy (`_from_jsonable`: "Missing
+keys still fall back to the dataclass defaults -- the common older-row case").
 
-🛑 Eine solche Zeile trägt `asker_local_user_id = peer.remote_user_id`, also die
-geliehene fremde Kennung, die F-ID-3 abgeschafft hat. Ohne Diskriminator sähe
-sie aus wie ein gültiger gemappter Satz und liefe mit genau dieser Kennung —
-unter Auth-aus fände sie sogar die Einzelnutzer-Abkürzung und damit das ganze
-Gehirn.
+🛑 Such a row carries `asker_local_user_id = peer.remote_user_id`, i.e. the
+borrowed foreign id that F-ID-3 abolished. Without a discriminator it would
+look like a valid mapped record and would run with exactly that id -- with auth
+off it would even find the single-user shortcut, and with it the whole brain.
 
-Heute ist `FEDERATION_PENDING_USE_REDIS` in beiden Instanzen aus, das Fenster
-also null. Aber ein Befund, der nur „solange Flag F aus ist" harmlos ist, hat
-ein Verfallsdatum — darum der Riegel statt des Vertrauens auf das Flag.
+Today `FEDERATION_PENDING_USE_REDIS` is off on both instances, so the window is
+zero. But a finding that is harmless only "while flag F is off" has an expiry
+date -- hence the guard instead of trusting the flag.
 """
 import pytest
 
@@ -40,18 +39,18 @@ def test_a_fallback_record_yields_the_pairing_scope():
 
 
 def test_a_mapped_record_yields_no_peer_scope():
-    """Gemappt heisst: laeuft ALS die verknuepfte Person, voller Kreis-Zugriff."""
+    """Mapped means: runs AS the linked person, with full circle access."""
     assert _peer_scope_for(_satz(asker_local_user_id=99, mapped=True)) is None
 
 
 def test_an_OLD_record_is_refused_instead_of_silently_widened():
-    """🛑 Der eigentliche Riegel.
+    """🛑 The actual guard.
 
-    Eine Zeile aus einer aelteren Fassung: kein `mapped`, kein
-    `peer_owner_id`, dafuer die geliehene fremde Kennung in
-    `asker_local_user_id`. Sie darf NICHT als gemappter Satz durchgehen.
+    A row from an older version: no `mapped`, no `peer_owner_id`, but the
+    borrowed foreign id in `asker_local_user_id`. It must NOT pass as a mapped
+    record.
     """
-    alt = _satz(asker_local_user_id=42)   # 42 = peer.remote_user_id, wie frueher
+    alt = _satz(asker_local_user_id=42)   # 42 = peer.remote_user_id, as before
     assert alt.mapped is False, "der Vorgabewert muss auf der sicheren Seite liegen"
     assert alt.peer_owner_id is None
     with pytest.raises(PendingScopeError):
@@ -59,37 +58,38 @@ def test_an_OLD_record_is_refused_instead_of_silently_widened():
 
 
 def test_the_default_of_the_discriminator_is_the_SAFE_side():
-    """Negativkontrolle zum Vorgabewert: haette `mapped` die Vorgabe `True`,
-    ginge der Test darueber durch, ohne etwas zu pruefen."""
+    """Negative control on the default: were `mapped` to default to `True`,
+    the test above it would pass without checking anything."""
     assert _PendingRequest.__dataclass_fields__["mapped"].default is False
     assert _PendingRequest.__dataclass_fields__["peer_owner_id"].default is None
 
 
 # =============================================================================
-# Die Auflösung einer Paarung — gefunden am 2026-10-28 beim Prüfen der Live-Lage
+# Resolving a pairing -- found on 2026-10-28 while checking the live situation
 # =============================================================================
 #
-# 🛑 Der Eigentümer fand es an der Oberfläche: „auf x-ren gibt es einen peer, auf
-# haushalt nicht." Die Peers-Seite zeigt nur EIGENE, nicht widerrufene Zeilen —
-# die aktive Zeile im Haushalt gehörte dem Konto 1, die des fragenden Menschen
-# war widerrufen. Beim Nachsehen fiel das Ernstere auf: der Antwortende suchte
-# seine Paarung ALLEIN über `remote_pubkey`, mit `scalar_one_or_none()`.
+# 🛑 The owner found it at the surface: "on x-ren there is a peer, on the
+# household there is not." The peers page shows only one's OWN, non-revoked
+# rows -- the active row in the household belonged to account 1, the one
+# belonging to the person asking was revoked. Looking into it turned up the
+# more serious thing: the responder looked up its pairing by `remote_pubkey`
+# ALONE, with `scalar_one_or_none()`.
 #
-# Der Eindeutigkeitsindex ist aber `(circle_owner_id, remote_pubkey)`: zwei
-# lokale Menschen dürfen sich mit derselben Gegenstelle paaren. Dann wirft
-# `scalar_one_or_none()` — jede föderierte Anfrage endet als 500. Genau das
-# stand bevor: id=2 (Konto 1, aktiv) und id=3 (Konto 2, widerrufen), beide mit
-# x-idras Schlüssel; ein erneutes Paaren hätte die zweite wiederbelebt.
+# But the uniqueness index is `(circle_owner_id, remote_pubkey)`: two local
+# people may pair with the same far side. Then `scalar_one_or_none()` raises --
+# every federated request ends as a 500. That was exactly what lay ahead: id=2
+# (account 1, active) and id=3 (account 2, revoked), both with x-idra's key;
+# pairing again would have revived the second one.
 
 import inspect
 
 
 def test_the_responder_no_longer_resolves_a_peer_by_pubkey_ALONE():
-    """Strukturtest: `scalar_one_or_none()` auf der Schluesselsuche ist weg.
+    """Structural test: `scalar_one_or_none()` is gone from the key lookup.
 
-    🛑 Der Rumpf wird geprueft, nicht der Quelltext als Zeichenkette — der
-    Kommentar darueber ERKLAERT den alten Aufruf und wuerde eine Textsuche
-    treffen. Diesen Fehler habe ich am 2026-10-27 zweimal gemacht.
+    🛑 The BODY is checked, not the source as a string -- the comment above it
+    EXPLAINS the old call and would match a text search. I made that mistake
+    twice on 2026-10-27.
     """
     import ast
     import textwrap
@@ -105,16 +105,16 @@ def test_the_responder_no_longer_resolves_a_peer_by_pubkey_ALONE():
             and isinstance(k.value.value, str))],
         type_ignores=[]))
     assert "scalar_one_or_none" not in rumpf, rumpf
-    # Negativkontrolle: der Rumpf ist nicht leer, die Pruefung misst also etwas.
+    # Negative control: the body is not empty, so the check measures something.
     assert "scalars" in rumpf and "revoked_at" in rumpf, rumpf
 
 
 def test_the_pairing_refuses_a_second_owner_for_the_same_instance():
-    """🛑 Die Ursache, nicht nur ihre Erkennung.
+    """🛑 The cause, not merely its detection.
 
-    Ohne diese Sperre entstuende die mehrdeutige Lage weiterhin, und der
-    Antwortende wiese danach ALLE Anfragen ab — ein stiller Totalausfall der
-    Foederation statt einer lesbaren Absage beim Paaren.
+    Without this block the ambiguous situation would keep arising, and the
+    responder would then refuse ALL requests -- a silent total outage of the
+    federation instead of a readable refusal while pairing.
     """
     import ast
     import textwrap
@@ -125,11 +125,11 @@ def test_the_pairing_refuses_a_second_owner_for_the_same_instance():
     baum = ast.parse(quelle)
     rumpf = ast.unparse(baum)
     assert "circle_owner_id != owner_user_id" in rumpf, rumpf
-    # Seit dem Review zu PR #1421 die SICHTBARE Unterklasse — der uniforme
-    # 400 haette die Begruendung verschluckt.
+    # Since the review of PR #1421 the VISIBLE subclass -- the uniform 400
+    # would have swallowed the reason.
     assert "AlreadyPairedElsewhere" in rumpf, rumpf
-    # Und sie sitzt in `_upsert_peer_user`, also greift sie bei accept UND
-    # complete — nicht nur an einem der beiden Schritte.
+    # And it sits in `_upsert_peer_user`, so it applies on accept AND on
+    # complete -- not just at one of the two steps.
     import services.pairing_service as ps
     aufrufer = [
         n for n in ast.walk(ast.parse(inspect.getsource(ps)))
@@ -139,21 +139,21 @@ def test_the_pairing_refuses_a_second_owner_for_the_same_instance():
 
 
 def test_the_already_paired_refusal_is_VISIBLE_not_swallowed():
-    """🛑 Gefunden im Review zu diesem PR.
+    """🛑 Found in the review of this PR.
 
-    Die Routenschicht faengt jeden `PairingError` und macht daraus ein
-    uniformes „Pairing handshake failed" — kein Orakel. Diese Regel schuetzt
-    die KRYPTOGRAFISCHEN Pruefungen (Signatur, Nonce, Ablauf): niemand soll
-    ablesen koennen, welche davon griff.
+    The route layer catches every `PairingError` and turns it into a uniform
+    "Pairing handshake failed" -- no oracle. That rule protects the
+    CRYPTOGRAPHIC checks (signature, nonce, expiry): nobody should be able to
+    read off which of them fired.
 
-    „Eine andere lokale Person ist schon gepaart" ist etwas anderes: lokaler
-    Zustand, den die angemeldete Person ohnehin aendern darf. Opak gehalten
-    schickt er sie an die falsche Stelle — genau dieser Fehlermodus hat am
-    2026-10-27 eine Stunde Suche gekostet.
+    "Another local person is already paired" is something else: local state
+    that the signed-in person is allowed to change anyway. Kept opaque it sends
+    them to the wrong place -- exactly this failure mode cost an hour of
+    searching on 2026-10-27.
 
-    Darum eine eigene Klasse und ein eigener Fang VOR dem uniformen. Dieser
-    Test haelt die Reihenfolge fest: steht der uniforme Fang zuerst, ist die
-    Meldung wieder weg, und nichts ausser diesem Test merkt es.
+    Hence a class of its own and a catch of its own BEFORE the uniform one.
+    This test holds the order: put the uniform catch first and the message is
+    gone again, and nothing but this test notices.
     """
     import ast
     import inspect

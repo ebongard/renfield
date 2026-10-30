@@ -99,17 +99,17 @@ export const presenceMapDataSchema = z.object({
   rooms: z.array(z.object({ room: z.string(), users: z.array(z.string()) })),
 });
 
-// Verweis auf ein Renfield-Dokument. NUR die Kennung — der Link entsteht erst
-// beim Rendern. Zur Schreibzeit gibt es ihn meist noch nicht (die Paperless-
-// Ablage ist ein entkoppelter Nachlauf, Ingest im Mittel 363 s), und eine
-// persistierte URL waere eingefroren; die Kennung altert nicht.
+// Reference to a Renfield document. ONLY the id -- the link is built at render
+// time. At write time it usually does not exist yet (Paperless filing is a
+// decoupled follow-up, ingest averaging 363 s), and a persisted URL would be
+// frozen; the id does not age.
 export const documentRefDataSchema = z.object({
   documentId: z.number().int().positive(),
-  // Gesetzt NUR, wenn das Dokument in einer anderen Instanz liegt. Die
-  // Entscheidung faellt im Backend (es kennt `instance_id`); hier heisst
-  // „vorhanden" schlicht: nicht lokal nachfragen, nur benennen. Ein Scan nach
-  // xidra meldet sich im Haushalt mit XIDRAS Dokumentkennung — und die gibt es
-  // hier auch, fuer ein anderes Dokument.
+  // Set ONLY when the document lives in another instance. The decision is
+  // made in the backend (it knows `instance_id`); here "present" simply means:
+  // do not query locally, just name it. A scan to xidra reports back in the
+  // household with XIDRA's document id -- and that id exists here too, for a
+  // different document.
   instance: z.string().min(1).optional(),
 });
 

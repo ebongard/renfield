@@ -1,5 +1,5 @@
 """
-Frigate Integration für Kamera-Überwachung
+Frigate integration for camera surveillance
 """
 import json
 from collections.abc import Callable
@@ -32,7 +32,7 @@ async def close_frigate_client():
 
 
 class FrigateClient:
-    """Client für Frigate NVR"""
+    """Client for the Frigate NVR"""
 
     def __init__(self):
         self.base_url = ha_glue_settings.frigate_url
@@ -45,7 +45,7 @@ class FrigateClient:
         label: str | None = None,
         limit: int = 10
     ) -> list[dict]:
-        """Events von Frigate abrufen"""
+        """Fetch events from Frigate"""
         try:
             params = {"limit": limit}
             if camera:
@@ -66,7 +66,7 @@ class FrigateClient:
             return []
 
     async def get_snapshot(self, event_id: str) -> bytes | None:
-        """Snapshot eines Events herunterladen"""
+        """Download an event's snapshot"""
         try:
             client = await get_frigate_http_client()
             response = await client.get(
@@ -80,7 +80,7 @@ class FrigateClient:
             return None
 
     async def get_cameras(self) -> list[str]:
-        """Liste aller Kameras"""
+        """List every camera"""
         try:
             client = await get_frigate_http_client()
             response = await client.get(
@@ -95,7 +95,7 @@ class FrigateClient:
             return []
 
     def setup_mqtt(self, broker: str | None = None, port: int | None = None):
-        """MQTT Client für Echtzeit-Events einrichten.
+        """Set up the MQTT client for real-time events.
 
         Defaults to `frigate_mqtt_broker` / `frigate_mqtt_port` from
         `ha_glue_settings`; explicit args override settings.
@@ -104,7 +104,7 @@ class FrigateClient:
         port = port if port is not None else ha_glue_settings.frigate_mqtt_port
         def on_connect(client, userdata, flags, rc):
             logger.info(f"✅ MQTT verbunden (Code: {rc})")
-            # Alle Frigate Events abonnieren
+            # Subscribe to all Frigate events
             client.subscribe("frigate/events")
             client.subscribe("frigate/+/+/snapshot")
 
@@ -113,18 +113,18 @@ class FrigateClient:
                 topic = msg.topic
                 payload = json.loads(msg.payload.decode())
 
-                # Event-Typ identifizieren
+                # Identify the event type
                 if "events" in topic:
                     event_type = payload.get("type")
 
                     if event_type == "new":
-                        # Neues Objekt erkannt
+                        # New object detected
                         self._handle_new_object(payload)
                     elif event_type == "end":
-                        # Objekt verlassen
+                        # Object left
                         self._handle_object_left(payload)
 
-                # Callbacks aufrufen
+                # Invoke the callbacks
                 for callback in self.event_callbacks:
                     callback(topic, payload)
             except Exception as e:
@@ -142,17 +142,17 @@ class FrigateClient:
             logger.error(f"❌ MQTT Connection Fehler: {e}")
 
     def _handle_new_object(self, payload: dict):
-        """Handler für neue Objekte"""
+        """Handler for new objects"""
         after = payload.get("after", {})
         label = after.get("label")
         camera = after.get("camera")
 
         logger.info(f"🎯 Neues Objekt erkannt: {label} auf {camera}")
 
-        # Hier könnte Benachrichtigung getriggert werden
+        # A notification could be triggered here
 
     def _handle_object_left(self, payload: dict):
-        """Handler für verlassende Objekte"""
+        """Handler for objects that leave"""
         after = payload.get("after", {})
         label = after.get("label")
         camera = after.get("camera")
@@ -160,9 +160,9 @@ class FrigateClient:
         logger.info(f"👋 Objekt verlassen: {label} von {camera}")
 
     def add_event_callback(self, callback: Callable):
-        """Event Callback registrieren"""
+        """Register an event callback"""
         self.event_callbacks.append(callback)
 
     async def get_latest_events_by_type(self, label: str = "person") -> list[dict]:
-        """Letzte Events eines bestimmten Typs"""
+        """The most recent events of one type"""
         return await self.get_events(label=label, limit=5)

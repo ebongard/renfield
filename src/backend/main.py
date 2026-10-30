@@ -1,6 +1,6 @@
 """
-Renfield - Persönlicher KI-Assistent
-Hauptanwendung mit FastAPI
+Renfield - personal AI assistant
+Main application, FastAPI
 """
 import hmac
 import os
@@ -13,11 +13,11 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Logging konfigurieren
+# Configure logging
 logger.remove()
 logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
-# Lokale Imports
+# Local imports
 from api.lifecycle import lifespan
 from api.routes import (
     atoms,
@@ -77,7 +77,7 @@ from services.ollama_service import OllamaService
 from utils.config import settings
 from utils.metrics import setup_metrics
 
-# FastAPI App erstellen
+# Create the FastAPI app
 app = FastAPI(
     title="Renfield AI Assistant",
     description="Vollständig offline-fähiger persönlicher KI-Assistent",
@@ -664,9 +664,9 @@ async def debug_intent(
     user = Depends(require_permission(Permission.ADMIN))
 ):
     """
-    Teste Intent-Extraction für eine Nachricht
+    Test intent extraction for one message
 
-    Nützlich zum Debuggen von Intent-Erkennungsproblemen
+    Useful for debugging problems with intent recognition
 
     Requires: admin permission (when auth is enabled)
     """

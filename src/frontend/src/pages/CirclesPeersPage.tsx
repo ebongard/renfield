@@ -27,9 +27,9 @@ export default function CirclesPeersPage() {
 
   const deletePeer = useDeleteFederationPeer();
 
-  // F-ID-2: die eigenen Personenverknuepfungen. Bewusst HIER und nicht auf einer
-  // eigenen Seite — eine Verknuepfung haengt immer an einer Paarung, und wer sie
-  // widerrufen will, sucht sie dort, wo die Gegenstelle steht.
+  // F-ID-2: the person's own links. Deliberately HERE and not on a page of
+  // their own -- a link always hangs off a pairing, and whoever wants to
+  // revoke one looks for it where the far side is listed.
   const linksQuery = useMyIdentityLinksQuery();
   const links = linksQuery.data ?? [];
   const deleteLink = useDeleteIdentityLink();
@@ -268,12 +268,11 @@ export default function CirclesPeersPage() {
       <LinkIdentityResponderModal
         isOpen={showAcceptLink}
         onClose={() => setShowAcceptLink(false)}
-        /* 🛑 NICHT `linkSuccess`. Beim Annehmen steht erst die EIGENE Haelfte;
-           wirksam wird die Verknuepfung mit dem Abschluss drueben. Die erste
-           Fassung meldete hier „Die Identitaeten sind verknuepft" — und
-           widersprach damit dem Hinweis im selben Dialog, der es richtig sagt.
-           Wer das liest, schliesst beide Fenster und laesst einen halben
-           Handschlag zurueck. */
+        /* 🛑 NOT `linkSuccess`. On accepting, only OUR half exists; the link
+           takes effect with the completion on the other side. The first
+           version reported "the identities are linked" here -- contradicting
+           the hint in the same dialog, which says it correctly. Anyone reading
+           that closes both windows and leaves half a handshake behind. */
         onLinked={() => { setSuccess(t('circles.linkHalfDone')); linksQuery.refetch(); }}
       />
 

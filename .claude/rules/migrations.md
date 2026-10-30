@@ -93,6 +93,11 @@ database on the build box, never on a live DB: create the pre-migration state, `
 `upgrade head`, check the column and an existing row, `downgrade -1`, `upgrade head` again. `create_all` does not build
 GENERATED `search_vector` columns — add them explicitly when a test needs them. pgvector caps an indexed vector at
 2000 dimensions: use `::halfvec(2560)`.
+🛑 **A throwaway schema stays EMPTY under a bare `create_all`.** With `SET search_path TO "<schema>", public` it
+skips every table that is merely VISIBLE through `public`, so the rows land in the shared `public` tables and stay
+there — the test is green once, then red on every rerun and looks order-dependent. Create with
+`execution_options(schema_translate_map={None: schema})` and assert `to_regclass('"<schema>".roles')` (see
+`test_kb_shares_service.py`).
 
 ## The REVERSE path is exercised, never asserted
 Applies to `downgrade()`, to a backfill's `--revert`, to any flag rollback — the forward path gets the care and

@@ -129,12 +129,13 @@ describe('AuthContext', () => {
       expect(localStorage.getItem('renfield_refresh_token')).toBe('r');
     });
 
-    // 🛑 Seit die Stimme ein ZUSATZfaktor ist, kann `/auth/login` absichtlich ohne
-    // Token antworten. Ohne die Verzweigung im AuthContext liefe hier
-    // `setTokens(undefined, undefined)`: die Oberfläche hielte sich für angemeldet,
-    // und jede Folgeanfrage käme unauthentifiziert zurück. Der Fehlermodus wäre
-    // „eingeloggt, aber alles leer" — der unangenehmste, weil er nicht nach einem
-    // Anmeldefehler aussieht.
+    // 🛑 Ever since the voice became an ADDITIONAL factor, `/auth/login` can
+    // deliberately answer without tokens. Without the branch in AuthContext,
+    // `setTokens(undefined, undefined)` would run here: the UI would believe it
+    // is signed in, and every follow-up request would come back
+    // unauthenticated. The failure mode would be "signed in, but everything
+    // empty" -- the nastiest one, because it does not look like a login
+    // error.
     it('login without tokens raises SecondFactorRequired and stores nothing', async () => {
       server.use(
         http.get(`${BASE_URL}/api/auth/status`, () =>

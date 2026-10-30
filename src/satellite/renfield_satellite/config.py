@@ -155,7 +155,7 @@ class LEDConfig:
     # clamped UP to this value locally. Default 0 = no floor (fleet-identical:
     # the backend value is applied verbatim). Set > 0 only for a device whose
     # ring must stay visible regardless of the fleet daypart dimming — e.g. the
-    # Esszimmer XVF3800 behind a milled (gefräste) faceplate that needs ~90%
+    # Esszimmer XVF3800 behind a milled faceplate that needs ~90%
     # (=28) to shine through. See satellite.py::_on_led_config_update.
     min_brightness: int = 0  # 0-31 (APA102/XVF3800 scale)
     # Documentation/default only — the LIVE night brightness is pushed by the

@@ -1,27 +1,25 @@
-"""Real-Postgres-Test für ``pc20260927_voice2fa`` — Auf- UND Rückweg.
+"""Real-Postgres test for ``pc20260927_voice2fa`` -- the way up AND back.
 
-Die Migration fügt `users.voice_second_factor_enabled` hinzu: die Einwilligung je
-Person, dass eine Anmeldung ihre Stimme verlangen darf. Ein ECAPA-Stimmabdruck ist
-biometrisches Datum (Art. 9 DSGVO), und darum ist es eine Spalte und kein Flag.
+The migration adds `users.voice_second_factor_enabled`: the per-person consent
+that a login may demand their voice. An ECAPA voiceprint is biometric data
+(Art. 9 GDPR), which is why this is a column and not a flag.
 
-🛑 Drei Eigenschaften werden hier durchlaufen, nicht behauptet:
+🛑 Three properties are exercised here, not asserted:
 
-1. **Der Aufweg legt die Spalte wirklich an**, mit `NOT NULL` und
-   `server_default false` — sonst bekäme ein bestehendes Konto die Anmeldehürde
-   ungefragt, oder die Migration scheiterte an bestehenden Zeilen.
-2. **Sie ist idempotent.** Eine Neuinstallation hat die Spalte schon aus
-   `create_all` (`pc20260926_schema_baseline`); die Migration darf dort nicht
-   scheitern. Genau diese Klasse von Fehler hat am 2026-09-26 neun Indizes
-   gekostet.
-3. **Der Rückweg wird DURCHLAUFEN.** „Vorher" ist aus „nachher" nicht
-   rekonstruierbar — ein `downgrade`, der nie gelaufen ist, ist eine Behauptung.
+1. **The way up really creates the column**, with `NOT NULL` and
+   `server_default false` -- otherwise an existing account would get the login
+   hurdle without being asked, or the migration would fail on existing rows.
+2. **It is idempotent.** A fresh install already has the column from
+   `create_all` (`pc20260926_schema_baseline`); the migration must not fail
+   there. Exactly that class of defect cost nine indexes on 2026-09-26.
+3. **The way back is EXERCISED.** "Before" cannot be reconstructed from
+   "after" -- a `downgrade` that has never run is an assertion.
 
-Gated auf ``RENFIELD_TEST_PG_URL`` wie die übrigen Postgres-Tests.
+Gated on ``RENFIELD_TEST_PG_URL`` like the other Postgres tests.
 """
 from __future__ import annotations
 
 import importlib.util
-import os
 import uuid
 from pathlib import Path
 
@@ -52,11 +50,16 @@ def _load_migration():
 
 
 @pytest.fixture
-async def schema_conn():
-    """(AsyncConnection, schema) in einem Wegwerf-Schema."""
-    dsn = os.environ.get("RENFIELD_TEST_PG_URL")
-    if not dsn:
-        pytest.skip("RENFIELD_TEST_PG_URL nicht gesetzt")
+async def schema_conn(pg_url):
+    """(AsyncConnection, schema) in a throwaway schema.
+
+    Takes the DSN from the shared `pg_url` fixture rather than reading the env
+    var -- see the note there. Reading it raw is what made all seven tests in
+    this file ERROR with `ModuleNotFoundError: psycopg2` on 2026-10-30, and
+    that includes `TestTheDowngradeIsExercised`: the reverse path was never
+    actually exercised, only written down.
+    """
+    dsn = pg_url
     schema = f"t_{uuid.uuid4().hex[:12]}"
     engine = create_async_engine(dsn, poolclass=NullPool)
     async with engine.connect() as conn:
@@ -73,12 +76,12 @@ async def schema_conn():
 
 
 async def _minimal_users(conn) -> None:
-    """Ein `users`-Stub mit zwei Zeilen — genug für die Spaltenoperation.
+    """A `users` stub with two rows -- enough for the column operation.
 
-    Bewusst NICHT das ganze Schema: die Migration berührt eine Spalte, und ein
-    Test, der dafür 200 Tabellen aufbaut, prüft die Umgebung statt die Migration.
-    Die zwei Zeilen sind wichtig — eine `NOT NULL`-Spalte ohne `server_default`
-    scheitert nur, wenn schon Zeilen da sind.
+    Deliberately NOT the whole schema: the migration touches one column, and a
+    test that builds 200 tables for it checks the environment instead of the
+    migration. The two rows matter -- a `NOT NULL` column without a
+    `server_default` only fails when rows are already there.
     """
     await conn.execute(text("""
         CREATE TABLE users (
@@ -104,12 +107,13 @@ async def _column(conn, schema: str) -> dict | None:
 
 
 class _Op:
-    """Der schmale `op`-Ersatz, den die Migration braucht.
+    """The slim `op` stand-in the migration needs.
 
-    Die Migration ruft `op.get_bind()`, `op.add_column()` und `op.drop_column()`.
-    Alembics echtes `op` braucht einen MigrationContext; für eine Spaltenoperation
-    im Wegwerf-Schema ist das Zeremonie. Das Wesentliche — dass die Migration ihre
-    eigene Idempotenzprüfung über `get_bind()` fährt — bleibt echt.
+    The migration calls `op.get_bind()`, `op.add_column()` and
+    `op.drop_column()`. Alembic's real `op` needs a MigrationContext; for a
+    column operation in a throwaway schema that is ceremony. What matters --
+    that the migration runs its own idempotence check through `get_bind()` --
+    stays real.
     """
 
     def __init__(self, conn):
@@ -131,7 +135,7 @@ class _Op:
 
 
 async def _run(conn, direction: str) -> None:
-    """Migration im echten Schema fahren (sync-Bridge, wie Alembic selbst)."""
+    """Run the migration against the real schema (sync bridge, as Alembic itself does)."""
     mig = _load_migration()
 
     def _sync(sync_conn):
@@ -139,7 +143,7 @@ async def _run(conn, direction: str) -> None:
 
         real_get_bind = getattr(alembic_op, "get_bind", None)
         fake = _Op(sync_conn)
-        # Die Migration benutzt `op.<x>` — modulweit umlenken, danach zurück.
+        # The migration uses `op.<x>` -- redirect module-wide, then restore.
         patched = {}
         for name in ("get_bind", "add_column", "drop_column"):
             patched[name] = getattr(alembic_op, name, None)
@@ -176,7 +180,7 @@ class TestTheUpgrade:
         assert col["type"] == "boolean"
 
     async def test_existing_rows_get_false_not_null(self, schema_conn):
-        """🛑 Der eigentliche Punkt: niemand bekommt die Hürde ungefragt."""
+        """🛑 The actual point: nobody gets the hurdle without being asked."""
         conn, _ = schema_conn
         await _minimal_users(conn)
         await _run(conn, "upgrade")
@@ -187,13 +191,13 @@ class TestTheUpgrade:
         assert vals == [False, False], f"bestehende Zeilen sind nicht false: {vals}"
 
     async def test_running_it_twice_is_harmless(self, schema_conn):
-        """Eine Neuinstallation hat die Spalte schon aus `create_all`. Scheitert
-        die Migration dort, bleibt das Schema auf halbem Weg stehen — genau die
-        Falle, die am 2026-09-26 neun Indizes gekostet hat."""
+        """A fresh install already has the column from `create_all`. If the
+        migration fails there, the schema stays standing half-way -- exactly the
+        trap that cost nine indexes on 2026-09-26."""
         conn, schema = schema_conn
         await _minimal_users(conn)
         await _run(conn, "upgrade")
-        await _run(conn, "upgrade")   # darf nicht werfen
+        await _run(conn, "upgrade")   # must not raise
         assert await _column(conn, schema) is not None
 
     async def test_it_is_a_no_op_when_create_all_already_made_the_column(self, schema_conn):
@@ -206,15 +210,15 @@ class TestTheUpgrade:
             )
         """))
         await conn.commit()
-        await _run(conn, "upgrade")   # darf nicht werfen
+        await _run(conn, "upgrade")   # must not raise
         assert await _column(conn, schema) is not None
 
 
 class TestTheDowngradeIsExercised:
-    """🛑 Der Rückweg wird DURCHLAUFEN, nicht behauptet.
+    """🛑 The way back is EXERCISED, not asserted.
 
-    „Vorher" ist aus „nachher" nicht rekonstruierbar. Ein `downgrade`, der nie
-    gelaufen ist, ist eine Zeile Code mit einer Hoffnung daran.
+    "Before" cannot be reconstructed from "after". A `downgrade` that has never
+    run is a line of code with a hope attached to it.
     """
 
     async def test_it_removes_the_column(self, schema_conn):
@@ -231,11 +235,11 @@ class TestTheDowngradeIsExercised:
         await _minimal_users(conn)
         await _run(conn, "upgrade")
         await _run(conn, "downgrade")
-        await _run(conn, "downgrade")   # darf nicht werfen
+        await _run(conn, "downgrade")   # must not raise
         assert await _column(conn, schema) is None
 
     async def test_up_down_up_leaves_the_same_shape(self, schema_conn):
-        """Der Rundweg: zweimal auf, einmal ab, und das Ergebnis ist identisch."""
+        """The round trip: up twice, down once, and the result is identical."""
         conn, schema = schema_conn
         await _minimal_users(conn)
         await _run(conn, "upgrade")
@@ -247,9 +251,10 @@ class TestTheDowngradeIsExercised:
 
 class TestTheChain:
     def test_it_hangs_off_the_live_head(self):
-        """🛑 Am 2026-09-27 stand der LEBENDE Kopf beider Instanzen auf
-        `pc20260926_baseline` (per `alembic_version` abgefragt, nicht aus Dateien
-        geraten). Hängt diese Migration woanders, forkt die Kette beim Deploy."""
+        """🛑 On 2026-09-27 the LIVE head of both instances stood on
+        `pc20260926_baseline` (queried through `alembic_version`, not guessed
+        from files). If this migration hangs off anywhere else, the chain forks
+        at deploy time."""
         mig = _load_migration()
         assert mig.revision == "pc20260927_voice2fa"
         assert mig.down_revision == "pc20260926_baseline"

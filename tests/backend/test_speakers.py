@@ -1,12 +1,12 @@
 """
-Tests für Speakers API
+Tests for the speakers API
 
-Testet:
-- Speaker CRUD Operations
-- Speaker Enrollment
-- Speaker Identification
-- Speaker Verification
-- Speaker Merge
+Covers:
+- speaker CRUD operations
+- speaker enrollment
+- speaker identification
+- speaker verification
+- speaker merge
 """
 
 from io import BytesIO
@@ -98,11 +98,11 @@ def mock_speaker_service():
 # ============================================================================
 
 class TestSpeakerModel:
-    """Tests für das Speaker Model"""
+    """Tests for the Speaker model"""
 
     @pytest.mark.database
     async def test_create_speaker(self, db_session: AsyncSession):
-        """Testet das Erstellen eines Speakers"""
+        """Tests creating a speaker"""
         speaker = Speaker(
             name="New Speaker",
             alias="newspeaker",
@@ -118,7 +118,7 @@ class TestSpeakerModel:
 
     @pytest.mark.database
     async def test_speaker_unique_alias(self, db_session: AsyncSession, test_speaker):
-        """Testet, dass Alias eindeutig sein muss"""
+        """Tests that the alias has to be unique"""
         from sqlalchemy.exc import IntegrityError
 
         duplicate = Speaker(
@@ -132,7 +132,7 @@ class TestSpeakerModel:
 
 
 class TestSpeakerEmbeddingModel:
-    """Tests für das SpeakerEmbedding Model"""
+    """Tests for the SpeakerEmbedding model"""
 
     @pytest.mark.database
     async def test_create_embedding(
@@ -140,7 +140,7 @@ class TestSpeakerEmbeddingModel:
         db_session: AsyncSession,
         test_speaker: Speaker
     ):
-        """Testet das Erstellen eines Embeddings"""
+        """Tests creating an embedding"""
         embedding = SpeakerEmbedding(
             speaker_id=test_speaker.id,
             embedding="testembedding==",
@@ -159,7 +159,7 @@ class TestSpeakerEmbeddingModel:
         db_session: AsyncSession,
         speaker_with_embeddings: Speaker
     ):
-        """Testet die Beziehung zwischen Speaker und Embeddings"""
+        """Tests the relationship between Speaker and its embeddings"""
         result = await db_session.execute(
             select(Speaker)
             .where(Speaker.id == speaker_with_embeddings.id)
@@ -175,11 +175,11 @@ class TestSpeakerEmbeddingModel:
 # ============================================================================
 
 class TestSpeakerCRUDAPI:
-    """Tests für Speaker CRUD API"""
+    """Tests for the speaker CRUD API"""
 
     @pytest.mark.integration
     async def test_create_speaker(self, async_client: AsyncClient):
-        """Testet POST /api/speakers"""
+        """Tests POST /api/speakers"""
         response = await async_client.post(
             "/api/speakers",
             json={
@@ -201,7 +201,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet Erstellung mit doppeltem Alias"""
+        """Tests creation with a duplicate alias"""
         response = await async_client.post(
             "/api/speakers",
             json={
@@ -219,7 +219,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet GET /api/speakers"""
+        """Tests GET /api/speakers"""
         response = await async_client.get("/api/speakers")
 
         assert response.status_code == 200
@@ -233,7 +233,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet GET /api/speakers/{id}"""
+        """Tests GET /api/speakers/{id}"""
         response = await async_client.get(f"/api/speakers/{test_speaker.id}")
 
         assert response.status_code == 200
@@ -243,7 +243,7 @@ class TestSpeakerCRUDAPI:
 
     @pytest.mark.integration
     async def test_get_nonexistent_speaker(self, async_client: AsyncClient):
-        """Testet GET für nicht-existenten Speaker"""
+        """Tests GET for a speaker that does not exist"""
         response = await async_client.get("/api/speakers/99999")
 
         assert response.status_code == 404
@@ -254,7 +254,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet PATCH /api/speakers/{id}"""
+        """Tests PATCH /api/speakers/{id}"""
         response = await async_client.patch(
             f"/api/speakers/{test_speaker.id}",
             json={"name": "Updated Name"}
@@ -270,7 +270,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet DELETE /api/speakers/{id}"""
+        """Tests DELETE /api/speakers/{id}"""
         response = await async_client.delete(f"/api/speakers/{test_speaker.id}")
 
         assert response.status_code == 200
@@ -281,7 +281,7 @@ class TestSpeakerCRUDAPI:
 
     @pytest.mark.integration
     async def test_create_speaker_empty_alias(self, async_client: AsyncClient):
-        """Testet POST /api/speakers mit leerem Alias"""
+        """Tests POST /api/speakers with an empty alias"""
         response = await async_client.post(
             "/api/speakers",
             json={
@@ -300,7 +300,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         db_session: AsyncSession
     ):
-        """Testet PATCH mit Alias der bereits existiert"""
+        """Tests PATCH with an alias that already exists"""
         # Create two speakers
         speaker1 = Speaker(name="Speaker One", alias="speakerone")
         speaker2 = Speaker(name="Speaker Two", alias="speakertwo")
@@ -320,7 +320,7 @@ class TestSpeakerCRUDAPI:
 
     @pytest.mark.integration
     async def test_delete_nonexistent_speaker(self, async_client: AsyncClient):
-        """Testet DELETE für nicht-existenten Speaker"""
+        """Tests DELETE for a speaker that does not exist"""
         response = await async_client.delete("/api/speakers/99999")
 
         assert response.status_code == 404
@@ -330,7 +330,7 @@ class TestSpeakerCRUDAPI:
         self,
         async_client: AsyncClient
     ):
-        """Testet GET /api/speakers wenn keine Speaker existieren"""
+        """Tests GET /api/speakers when no speakers exist"""
         response = await async_client.get("/api/speakers")
 
         assert response.status_code == 200
@@ -344,7 +344,7 @@ class TestSpeakerCRUDAPI:
 # ============================================================================
 
 class TestSpeakerEnrollmentAPI:
-    """Tests für Speaker Enrollment API"""
+    """Tests for the speaker enrollment API"""
 
     @pytest.mark.integration
     async def test_enroll_speaker(
@@ -354,7 +354,7 @@ class TestSpeakerEnrollmentAPI:
         mock_audio_file,
         mock_speaker_service
     ):
-        """Testet POST /api/speakers/{id}/enroll"""
+        """Tests POST /api/speakers/{id}/enroll"""
         files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
         response = await async_client.post(
             f"/api/speakers/{test_speaker.id}/enroll",
@@ -374,7 +374,7 @@ class TestSpeakerEnrollmentAPI:
         mock_audio_file,
         mock_speaker_service
     ):
-        """Testet Enrollment für nicht-existenten Speaker"""
+        """Tests enrollment for a speaker that does not exist"""
         files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
         response = await async_client.post(
             "/api/speakers/99999/enroll",
@@ -390,7 +390,7 @@ class TestSpeakerEnrollmentAPI:
         test_speaker: Speaker,
         mock_audio_file
     ):
-        """Testet Enrollment wenn Service nicht verfügbar"""
+        """Tests enrollment when the service is unavailable"""
         with patch('api.routes.speakers.get_speaker_service') as mock:
             service = MagicMock()
             service.is_available.return_value = False
@@ -411,7 +411,7 @@ class TestSpeakerEnrollmentAPI:
         test_speaker: Speaker,
         mock_speaker_service
     ):
-        """Testet Enrollment mit leerer Audio-Datei"""
+        """Tests enrollment with an empty audio file"""
         mock_speaker_service.extract_embedding_from_bytes.return_value = None
 
         files = {"audio": ("empty.wav", BytesIO(b""), "audio/wav")}
@@ -430,7 +430,7 @@ class TestSpeakerEnrollmentAPI:
         test_speaker: Speaker,
         mock_speaker_service
     ):
-        """Testet Enrollment mit sehr kurzer Audio-Datei (<100 bytes)"""
+        """Tests enrollment with a very short audio file (<100 bytes)"""
         mock_speaker_service.extract_embedding_from_bytes.return_value = None
 
         short_audio = b'\x00' * 50
@@ -449,7 +449,7 @@ class TestSpeakerEnrollmentAPI:
 # ============================================================================
 
 class TestSpeakerIdentificationAPI:
-    """Tests für Speaker Identification API"""
+    """Tests for the speaker identification API"""
 
     @pytest.mark.integration
     async def test_identify_speaker(
@@ -459,7 +459,7 @@ class TestSpeakerIdentificationAPI:
         mock_audio_file,
         mock_speaker_service
     ):
-        """Testet POST /api/speakers/identify"""
+        """Tests POST /api/speakers/identify"""
         files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
         response = await async_client.post("/api/speakers/identify", files=files)
 
@@ -475,7 +475,7 @@ class TestSpeakerIdentificationAPI:
         async_client: AsyncClient,
         mock_audio_file
     ):
-        """Testet Identification ohne registrierte Sprecher"""
+        """Tests identification with no registered speakers"""
         with patch('api.routes.speakers.get_speaker_service') as mock:
             service = MagicMock()
             service.is_available.return_value = True
@@ -499,7 +499,7 @@ class TestSpeakerIdentificationAPI:
         mock_audio_file,
         db_session: AsyncSession
     ):
-        """Testet Identification wenn Speaker existieren aber keine Embeddings haben"""
+        """Tests identification when speakers exist but have no embeddings"""
         # Create a speaker without embeddings
         speaker = Speaker(name="No Embeddings", alias="noembed")
         db_session.add(speaker)
@@ -529,7 +529,7 @@ class TestSpeakerIdentificationAPI:
         speaker_with_embeddings: Speaker,
         mock_audio_file
     ):
-        """Testet Identification mit niedriger Konfidenz (unter Schwellenwert)"""
+        """Tests identification with low confidence (below the threshold)"""
         with patch('api.routes.speakers.get_speaker_service') as mock:
             service = MagicMock()
             service.is_available.return_value = True
@@ -557,7 +557,7 @@ class TestSpeakerIdentificationAPI:
 # ============================================================================
 
 class TestSpeakerVerificationAPI:
-    """Tests für Speaker Verification API"""
+    """Tests for the speaker verification API"""
 
     @pytest.mark.integration
     async def test_verify_speaker(
@@ -567,7 +567,7 @@ class TestSpeakerVerificationAPI:
         mock_audio_file,
         mock_speaker_service
     ):
-        """Testet POST /api/speakers/{id}/verify"""
+        """Tests POST /api/speakers/{id}/verify"""
         files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
         response = await async_client.post(
             f"/api/speakers/{speaker_with_embeddings.id}/verify",
@@ -586,7 +586,7 @@ class TestSpeakerVerificationAPI:
         mock_audio_file,
         mock_speaker_service
     ):
-        """Testet Verification für nicht-existenten Speaker"""
+        """Tests verification for a speaker that does not exist"""
         files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
         response = await async_client.post(
             "/api/speakers/99999/verify",
@@ -602,7 +602,7 @@ class TestSpeakerVerificationAPI:
         speaker_with_embeddings: Speaker,
         mock_audio_file
     ):
-        """Testet Verification gegen falschen Speaker (nicht verifiziert)"""
+        """Tests verification against the wrong speaker (not verified)"""
         with patch('api.routes.speakers.get_speaker_service') as mock:
             service = MagicMock()
             service.is_available.return_value = True
@@ -629,7 +629,7 @@ class TestSpeakerVerificationAPI:
         test_speaker: Speaker,
         mock_audio_file
     ):
-        """Testet Verification wenn Speaker keine Embeddings hat"""
+        """Tests verification when the speaker has no embeddings"""
         with patch('api.routes.speakers.get_speaker_service') as mock:
             service = MagicMock()
             service.is_available.return_value = True
@@ -651,7 +651,7 @@ class TestSpeakerVerificationAPI:
 # ============================================================================
 
 class TestSpeakerMergeAPI:
-    """Tests für Speaker Merge API"""
+    """Tests for the speaker merge API"""
 
     @pytest.mark.integration
     async def test_merge_speakers(
@@ -659,7 +659,7 @@ class TestSpeakerMergeAPI:
         async_client: AsyncClient,
         db_session: AsyncSession
     ):
-        """Testet POST /api/speakers/merge"""
+        """Tests POST /api/speakers/merge"""
         # Create two speakers
         source = Speaker(name="Source", alias="source")
         target = Speaker(name="Target", alias="target")
@@ -697,7 +697,7 @@ class TestSpeakerMergeAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet Merge mit gleichem Source und Target"""
+        """Tests a merge with the same source and target"""
         response = await async_client.post(
             "/api/speakers/merge",
             json={
@@ -714,7 +714,7 @@ class TestSpeakerMergeAPI:
 # ============================================================================
 
 class TestSpeakerServiceStatusAPI:
-    """Tests für Service Status API"""
+    """Tests for the service status API"""
 
     @pytest.mark.integration
     async def test_service_status_available(
@@ -722,7 +722,7 @@ class TestSpeakerServiceStatusAPI:
         async_client: AsyncClient,
         mock_speaker_service
     ):
-        """Testet GET /api/speakers/status"""
+        """Tests GET /api/speakers/status"""
         response = await async_client.get("/api/speakers/status")
 
         assert response.status_code == 200
@@ -732,7 +732,7 @@ class TestSpeakerServiceStatusAPI:
 
     @pytest.mark.integration
     async def test_service_status_unavailable(self, async_client: AsyncClient):
-        """Testet Status wenn Service nicht verfügbar"""
+        """Tests the status when the service is unavailable"""
         with patch('api.routes.speakers.get_speaker_service') as mock:
             service = MagicMock()
             service.is_available.return_value = False

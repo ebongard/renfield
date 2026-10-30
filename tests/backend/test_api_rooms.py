@@ -1,7 +1,7 @@
 """
-Tests für Rooms API Routes
+Tests for the rooms API routes
 
-Testet:
+Covers:
 - Room CRUD Endpoints
 - Device Management Endpoints
 - Home Assistant Sync Endpoints
@@ -24,11 +24,11 @@ from models.database import (
 # ============================================================================
 
 class TestRoomCRUDEndpoints:
-    """Tests für Room CRUD Endpoints"""
+    """Tests for the room CRUD endpoints"""
 
     @pytest.mark.integration
     async def test_create_room(self, async_client: AsyncClient):
-        """Test: POST /api/rooms - Room erstellen"""
+        """Test: POST /api/rooms - create a room"""
         response = await async_client.post(
             "/api/rooms",
             json={
@@ -48,7 +48,7 @@ class TestRoomCRUDEndpoints:
     async def test_create_room_duplicate_name(
         self, async_client: AsyncClient, test_room: Room
     ):
-        """Test: Doppelter Room-Name gibt Fehler"""
+        """Test: a duplicate room name returns an error"""
         response = await async_client.post(
             "/api/rooms",
             json={"name": test_room.name}
@@ -59,7 +59,7 @@ class TestRoomCRUDEndpoints:
 
     @pytest.mark.integration
     async def test_get_rooms(self, async_client: AsyncClient, test_room: Room):
-        """Test: GET /api/rooms - Alle Rooms laden"""
+        """Test: GET /api/rooms - load all rooms"""
         response = await async_client.get("/api/rooms")
 
         assert response.status_code == 200
@@ -72,7 +72,7 @@ class TestRoomCRUDEndpoints:
 
     @pytest.mark.integration
     async def test_get_room_by_id(self, async_client: AsyncClient, test_room: Room):
-        """Test: GET /api/rooms/{id} - Room nach ID laden"""
+        """Test: GET /api/rooms/{id} - load a room by id"""
         response = await async_client.get(f"/api/rooms/{test_room.id}")
 
         assert response.status_code == 200
@@ -82,14 +82,14 @@ class TestRoomCRUDEndpoints:
 
     @pytest.mark.integration
     async def test_get_room_not_found(self, async_client: AsyncClient):
-        """Test: Room nicht gefunden"""
+        """Test: room not found"""
         response = await async_client.get("/api/rooms/99999")
 
         assert response.status_code == 404
 
     @pytest.mark.integration
     async def test_update_room(self, async_client: AsyncClient, test_room: Room):
-        """Test: PATCH /api/rooms/{id} - Room aktualisieren"""
+        """Test: PATCH /api/rooms/{id} - update a room"""
         response = await async_client.patch(
             f"/api/rooms/{test_room.id}",
             json={
@@ -106,7 +106,7 @@ class TestRoomCRUDEndpoints:
 
     @pytest.mark.integration
     async def test_delete_room(self, async_client: AsyncClient, db_session: AsyncSession):
-        """Test: DELETE /api/rooms/{id} - Room löschen"""
+        """Test: DELETE /api/rooms/{id} - delete a room"""
         # Create room to delete
         room = Room(name="To Delete", alias="todelete")
         db_session.add(room)
@@ -125,13 +125,13 @@ class TestRoomCRUDEndpoints:
 # ============================================================================
 
 class TestRoomDeviceEndpoints:
-    """Tests für Room Device Endpoints"""
+    """Tests for the room device endpoints"""
 
     @pytest.mark.integration
     async def test_get_devices_in_room(
         self, async_client: AsyncClient, test_room: Room, test_device: RoomDevice
     ):
-        """Test: GET /api/rooms/{id}/devices - Devices im Room laden"""
+        """Test: GET /api/rooms/{id}/devices - load the devices in a room"""
         response = await async_client.get(f"/api/rooms/{test_room.id}/devices")
 
         assert response.status_code == 200
@@ -146,7 +146,7 @@ class TestRoomDeviceEndpoints:
     async def test_register_device_to_room(
         self, async_client: AsyncClient, test_room: Room
     ):
-        """Test: POST /api/rooms/{id}/devices - Device registrieren"""
+        """Test: POST /api/rooms/{id}/devices - register a device"""
         response = await async_client.post(
             f"/api/rooms/{test_room.id}/devices",
             json={
@@ -167,7 +167,7 @@ class TestRoomDeviceEndpoints:
     async def test_delete_device(
         self, async_client: AsyncClient, test_room: Room, db_session: AsyncSession
     ):
-        """Test: DELETE /api/rooms/devices/{device_id} - Device löschen"""
+        """Test: DELETE /api/rooms/devices/{device_id} - delete a device"""
         # Create device to delete
         device = RoomDevice(
             room_id=test_room.id,
@@ -187,7 +187,7 @@ class TestRoomDeviceEndpoints:
     async def test_move_device_to_room(
         self, async_client: AsyncClient, test_device: RoomDevice, db_session: AsyncSession
     ):
-        """Test: PATCH /api/rooms/devices/{device_id}/room/{room_id} - Device verschieben"""
+        """Test: PATCH /api/rooms/devices/{device_id}/room/{room_id} - move a device"""
         # Create target room
         target_room = Room(name="Target Room", alias="targetroom")
         db_session.add(target_room)
@@ -208,13 +208,13 @@ class TestRoomDeviceEndpoints:
 # ============================================================================
 
 class TestHASyncEndpoints:
-    """Tests für Home Assistant Sync Endpoints"""
+    """Tests for the Home Assistant sync endpoints"""
 
     @pytest.mark.integration
     async def test_link_room_to_ha_area(
         self, async_client: AsyncClient, test_room: Room
     ):
-        """Test: POST /api/rooms/{id}/link/{ha_area_id} - Room mit HA Area verknüpfen"""
+        """Test: POST /api/rooms/{id}/link/{ha_area_id} - link a room to an HA area"""
         response = await async_client.post(
             f"/api/rooms/{test_room.id}/link/test_area_123"
         )
@@ -227,7 +227,7 @@ class TestHASyncEndpoints:
     async def test_unlink_room_from_ha(
         self, async_client: AsyncClient, db_session: AsyncSession
     ):
-        """Test: DELETE /api/rooms/{id}/link - HA Verknüpfung entfernen"""
+        """Test: DELETE /api/rooms/{id}/link - remove the HA link"""
         # Create linked room
         room = Room(
             name="HA Linked Room",
@@ -250,13 +250,13 @@ class TestHASyncEndpoints:
 # ============================================================================
 
 class TestOutputDeviceEndpoints:
-    """Tests für Output Device Endpoints"""
+    """Tests for the output device endpoints"""
 
     @pytest.mark.integration
     async def test_get_output_devices(
         self, async_client: AsyncClient, test_room: Room
     ):
-        """Test: GET /api/rooms/{id}/output-devices - Output Devices laden"""
+        """Test: GET /api/rooms/{id}/output-devices - load the output devices"""
         response = await async_client.get(f"/api/rooms/{test_room.id}/output-devices")
 
         assert response.status_code == 200
@@ -267,7 +267,7 @@ class TestOutputDeviceEndpoints:
     async def test_add_output_device_ha_entity(
         self, async_client: AsyncClient, test_room: Room
     ):
-        """Test: POST /api/rooms/{id}/output-devices - HA Output Device hinzufügen"""
+        """Test: POST /api/rooms/{id}/output-devices - add an HA output device"""
         response = await async_client.post(
             f"/api/rooms/{test_room.id}/output-devices",
             json={
@@ -289,7 +289,7 @@ class TestOutputDeviceEndpoints:
     async def test_add_output_device_renfield_device(
         self, async_client: AsyncClient, test_room: Room, test_device: RoomDevice
     ):
-        """Test: POST /api/rooms/{id}/output-devices - Renfield Output Device hinzufügen"""
+        """Test: POST /api/rooms/{id}/output-devices - add a Renfield output device"""
         response = await async_client.post(
             f"/api/rooms/{test_room.id}/output-devices",
             json={
@@ -330,7 +330,7 @@ class TestOutputDeviceEndpoints:
     async def test_update_output_device(
         self, async_client: AsyncClient, test_room: Room, db_session: AsyncSession
     ):
-        """Test: PATCH /api/rooms/output-devices/{id} - Output Device aktualisieren"""
+        """Test: PATCH /api/rooms/output-devices/{id} - update an output device"""
         # Create output device
         output = RoomOutputDevice(
             room_id=test_room.id,
@@ -362,7 +362,7 @@ class TestOutputDeviceEndpoints:
     async def test_tts_eq_profile_setzen_behalten_und_wieder_ausschalten(
         self, async_client: AsyncClient, test_room: Room, db_session: AsyncSession
     ):
-        """`null` schaltet das Profil AUS, ein fehlender Schluessel laesst es stehen."""
+        """`null` switches the profile OFF, a missing key leaves it standing."""
         created = await async_client.post(
             f"/api/rooms/{test_room.id}/output-devices",
             json={
@@ -407,7 +407,7 @@ class TestOutputDeviceEndpoints:
     async def test_leerer_string_gilt_als_aus(
         self, async_client: AsyncClient, test_room: Room
     ):
-        """Ein HTML-<select> sendet fuer "Keins" einen leeren String."""
+        """An HTML <select> sends an empty string for "Keins"."""
         response = await async_client.post(
             f"/api/rooms/{test_room.id}/output-devices",
             json={
@@ -424,7 +424,7 @@ class TestOutputDeviceEndpoints:
     async def test_delete_output_device(
         self, async_client: AsyncClient, test_room: Room, db_session: AsyncSession
     ):
-        """Test: DELETE /api/rooms/output-devices/{id} - Output Device löschen"""
+        """Test: DELETE /api/rooms/output-devices/{id} - delete an output device"""
         # Create output device
         output = RoomOutputDevice(
             room_id=test_room.id,
@@ -444,7 +444,7 @@ class TestOutputDeviceEndpoints:
     async def test_reorder_output_devices(
         self, async_client: AsyncClient, test_room: Room, db_session: AsyncSession
     ):
-        """Test: POST /api/rooms/{id}/output-devices/reorder - Prioritäten neu ordnen"""
+        """Test: POST /api/rooms/{id}/output-devices/reorder - reorder the priorities"""
         # Create multiple output devices
         output1 = RoomOutputDevice(
             room_id=test_room.id,
@@ -483,11 +483,11 @@ class TestOutputDeviceEndpoints:
 # ============================================================================
 
 class TestConnectedDevicesEndpoints:
-    """Tests für Connected Devices Endpoints"""
+    """Tests for the connected-devices endpoints"""
 
     @pytest.mark.integration
     async def test_get_connected_devices(self, async_client: AsyncClient):
-        """Test: GET /api/rooms/devices/connected - Verbundene Geräte"""
+        """Test: GET /api/rooms/devices/connected - connected devices"""
         response = await async_client.get("/api/rooms/devices/connected")
 
         assert response.status_code == 200
@@ -501,11 +501,11 @@ class TestConnectedDevicesEndpoints:
 # ============================================================================
 
 class TestRoomAPIErrorHandling:
-    """Tests für Fehlerbehandlung"""
+    """Tests for error handling"""
 
     @pytest.mark.integration
     async def test_invalid_room_id(self, async_client: AsyncClient):
-        """Test: Ungültige Room ID"""
+        """Test: invalid room id"""
         response = await async_client.get("/api/rooms/invalid")
 
         assert response.status_code == 422  # Validation error
@@ -514,7 +514,7 @@ class TestRoomAPIErrorHandling:
     async def test_invalid_device_type(
         self, async_client: AsyncClient, test_room: Room
     ):
-        """Test: Ungültiger Device Type"""
+        """Test: invalid device type"""
         response = await async_client.post(
             f"/api/rooms/{test_room.id}/devices",
             json={
@@ -528,7 +528,7 @@ class TestRoomAPIErrorHandling:
 
     @pytest.mark.integration
     async def test_missing_required_fields(self, async_client: AsyncClient):
-        """Test: Fehlende Pflichtfelder"""
+        """Test: Missing required fields"""
         response = await async_client.post(
             "/api/rooms",
             json={}  # Missing 'name'
@@ -540,7 +540,7 @@ class TestRoomAPIErrorHandling:
     async def test_output_device_missing_target(
         self, async_client: AsyncClient, test_room: Room
     ):
-        """Test: Output Device ohne renfield_device_id und ha_entity_id"""
+        """Test: Output device without renfield_device_id and ha_entity_id"""
         response = await async_client.post(
             f"/api/rooms/{test_room.id}/output-devices",
             json={

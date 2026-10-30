@@ -1,33 +1,32 @@
-"""Fehlermeldungen protokollieren, ohne Nutzerinhalt mitzuschicken.
+"""Log an exception without shipping user content along with it.
 
-🛑 Der Anlass, am 2026-10-29 im Review gefunden: der Atom-Abruf hatte einen
-Riegel gegen Inhalt im Protokoll — und vier der acht Abrufquellen umgingen ihn,
-weil sie die rohe Ausnahme protokollieren (`logger.warning(f"… {e}")`).
+🛑 The occasion, found in review on 2026-10-29: the atom-store fan-out had a guard against
+content in the log, and four of its eight retrieval sources bypassed it by
+logging the raw exception (`logger.warning(f"... {e}")`).
 
-SQLAlchemy haengt an seine Meldungen
+SQLAlchemy appends this to its messages:
 
     [SQL: SELECT ... WHERE ts @@ websearch_to_tsquery(%(or_query)s)]
-    [parameters: {'or_query': '<die Frage der Person>'}]
+    [parameters: {'or_query': '<whatever the person asked>'}]
 
-Die gebundene Anfrage IST der Nutzertext. In `lexical_retrieval` ist es die
-Suchanfrage, in `document_fact_retrieval` und `note_retrieval` dasselbe.
+The bound query IS the user's text. In `lexical_retrieval` it is the search
+string; in `document_fact_retrieval` and `note_retrieval` the same.
 
-🛑 Der Schnitt bei `[SQL:` ist eine Untergrenze, keine Garantie. Zwei Formate
-tragen den Wert in der PRIMAERmeldung und ueberleben ihn deshalb:
-`invalid input syntax for type <t>: "<wert>"` (Postgres) und
-`invalid input for query argument $N: <repr(wert)>` (asyncpg). Beide entstehen
-nur bei einem Typfehler in der Bindung, nicht auf den Suchpfaden hier. Wer den
-Riegel dicht haben will, protokolliert `type(e).__name__` plus `sqlstate` und
-verzichtet auf die Meldung — das kostet aber genau die Diagnose, fuer die die
-Zeile da ist. Die Abwaegung steht hier, damit sie nicht wieder erraten wird.
+🛑 The cut at `[SQL:` is a floor, not a guarantee. Two formats carry the value in the
+PRIMARY message and therefore survive it: `invalid input syntax for type <t>:
+"<value>"` (Postgres) and `invalid input for query argument $N: <repr(value)>`
+(asyncpg). Both only arise from a type error in a binding, not on the search
+paths here. A watertight guard would log `type(e).__name__` plus the sqlstate
+and drop the message entirely -- which costs exactly the diagnosis the line
+exists for. The trade-off is written down here so it is not guessed again.
 """
 from __future__ import annotations
 
-#: Mehr als das braucht niemand zur Einordnung, und je laenger die Meldung,
-#: desto wahrscheinlicher traegt sie etwas mit.
+#: Nobody needs more than this to place an error, and the longer the message
+#: the likelier it carries something along.
 MAX_LEN = 200
 
 
-def fehlertext_ohne_inhalt(e: BaseException) -> str:
-    """Die Fehlermeldung bis vor den `[SQL: …]`-Anhang, gekappt."""
+def error_text_without_content(e: BaseException) -> str:
+    """The message up to the `[SQL: ...]` tail, truncated."""
     return str(e).split("[SQL:")[0].strip()[:MAX_LEN]

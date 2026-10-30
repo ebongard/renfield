@@ -34,23 +34,23 @@ class ConversationSessionState:
     conversation_history: list[dict] = field(default_factory=list)
     history_loaded: bool = False  # Whether history was loaded from DB
     db_session_id: str | None = None  # Session ID for DB persistence
-    #: Die hoechste Nachrichten-Kennung, die diese Sitzung KENNT.
+    #: The highest message id this session KNOWS about.
     #:
-    #: 🛑 Wozu: die Historie wird einmal je Socket aus der Datenbank geladen und
-    #: waechst danach nur noch ueber `add_to_history`. Ein ASYNCHRONER Erzeuger
-    #: — der Scanner mit seiner Fertigmeldung, die Gespraechsuebergabe, die
-    #: Paperless-Bestaetigung — schreibt in die Datenbank, ohne diese Liste
-    #: anzufassen. Der Agent las damit einen veralteten Kontext und antwortete
-    #: daraus, ohne das Werkzeug zu rufen.
+    #: 🛑 Why: the history is loaded from the database once per socket and after
+    #: that only grows through `add_to_history`. An ASYNCHRONOUS producer --
+    #: the scanner with its completion notice, the conversation handover, the
+    #: Paperless confirmation -- writes to the database without touching this
+    #: list. The agent therefore read a stale context and answered from it
+    #: without calling the tool.
     #:
-    #: Gemessen am 2026-10-26: ein Scan scheiterte am Papierstau, die Meldung
-    #: stand in der Datenbank — und der Agent sagte auf zwei weitere Bitten
-    #: „der Scan laeuft bereits im Hintergrund, Du wirst benachrichtigt" und
-    #: rief `scan_document` NIE. Erfundene Beruhigung ueber einen Scan, der
-    #: nicht lief.
+    #: Measured on 2026-10-26: a scan failed on a paper jam, the notice was in
+    #: the database -- and on two further requests the agent said "the scan is
+    #: already running in the background, you will be notified" and NEVER
+    #: called `scan_document`. Invented reassurance about a scan that was not
+    #: running.
     #:
-    #: Liegt in der Datenbank eine hoehere Kennung als diese Marke, hat jemand
-    #: anders geschrieben und die Historie wird neu geladen.
+    #: If the database holds a higher id than this mark, somebody else wrote
+    #: and the history gets reloaded.
     history_watermark: int | None = None
 
     # RAG-specific state
@@ -106,7 +106,7 @@ class ConversationSessionState:
         """Update the last action context for pronoun resolution."""
         self.last_intent = intent
         self.last_action_result = result
-        # Extract entity IDs for "es/das" resolution
+        # Extract entity IDs for resolving "es"/"das"
         if intent and intent.get("parameters"):
             entity_id = intent["parameters"].get("entity_id")
             if entity_id:
@@ -225,26 +225,23 @@ def history_needs_reload(
     *, history_loaded: bool, known_session_id: str | None, wanted_session_id: str,
     watermark: int | None, newest_in_db: int | None,
 ) -> bool:
-    """Muss die Historie dieser Sitzung aus der Datenbank neu geladen werden?
+    """Does this session's history have to be reloaded from the database?
 
-    Eine REINE Funktion, damit die Regel pruefbar ist statt im Handler zu
-    stecken. Drei Gruende, und der dritte ist der neue:
+    A PURE function, so the rule is testable instead of buried in the
+    handler. Three reasons, and the third is the new one:
 
-    1. Noch nie geladen.
-    2. Der Socket wechselt die Sitzung.
-    3. In der Datenbank steht eine HOEHERE Kennung als die bekannte — dann hat
-       ein asynchroner Erzeuger geschrieben, ohne die lebende Liste
-       anzufassen.
+    1. Never loaded before.
+    2. The socket switches session.
+    3. The database holds a HIGHER id than the known one -- then an
+       asynchronous producer wrote without touching the live list.
 
-    🛑 `newest_in_db is None` heisst „keine Auskunft" und laedt NICHT neu. Eine
-    fehlende Messung darf keinen Neuladezyklus erzwingen; sonst tauscht man
-    einen veralteten Kontext gegen eine Abfrage je Zug, die bei jeder Stoerung
-    der Datenbank zuschlaegt.
+    🛑 `newest_in_db is None` means "no answer" and does NOT reload. A missing
+    measurement must not force a reload cycle; that would trade stale context
+    for a query per turn that fires on every database hiccup.
 
-    🛑 `watermark is None` bei geladener Historie heisst ebenfalls nicht neu
-    laden: die Marke fehlt nur, wenn das Lesen der Zahl scheiterte, und daraus
-    einen Dauer-Neuladezyklus zu machen waere schlimmer als der Zustand, den
-    sie verhindert.
+    🛑 `watermark is None` with a loaded history also means do not reload: the
+    mark is only absent when reading the number failed, and turning that into a
+    permanent reload cycle would be worse than the state it prevents.
     """
     if not history_loaded or known_session_id != wanted_session_id:
         return True

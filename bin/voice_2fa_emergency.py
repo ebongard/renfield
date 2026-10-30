@@ -1,47 +1,47 @@
 #!/usr/bin/env python3
-"""Notausgang: die Stimme als zweiten Anmeldefaktor von der Schale aus abschalten.
+"""Emergency exit: switch the voice off as a second login factor from the shell.
 
-🛑 DAS IST NICHT DER NORMALE WEG
-=================================
-Der normale Weg ist **Verwaltung → Benutzer → Schild-Schaltfläche**, bzw.
-``POST /api/users/{id}/voice-second-factor`` mit ``{"enabled": false}``. Wer dort
-hinkommt, soll dort bleiben: die Route protokolliert, prüft Berechtigungen und
-kennt die Asymmetrie zwischen Ein- und Ausschalten.
+🛑 THIS IS NOT THE NORMAL WAY
+==============================
+The normal way is **administration -> users -> the shield button**, or
+``POST /api/users/{id}/voice-second-factor`` with ``{"enabled": false}``.
+Whoever can get there should stay there: that route logs, checks permissions
+and knows the asymmetry between switching on and switching off.
 
-Dieses Skript existiert für **genau einen** Fall, den die Route nicht bedienen
-kann (Review-Befund F5):
+This script exists for **exactly one** case the route cannot serve (review
+finding F5):
 
-    Die einzige Administratorin hat den Faktor für sich eingeschaltet und kann
-    nicht sprechen — defektes Mikrofon, Erkältung, kaputter Browser.
+    The only administrator switched the factor on for herself and cannot speak
+    -- a broken microphone, a cold, a broken browser.
 
-Dann greift die Kette lückenlos gegen sie: ``/auth/login`` hält die Token
-zurück, ``/auth/voice`` scheitert an der Stimme, und Abschalten verlangt
-``users.manage`` — das auf einer Standardinstallation NUR die Admin-Rolle hat
-(``models/permissions.py``, ``DEFAULT_ROLES``). Es gibt keinen zweiten
-Administrator, der helfen könnte. **Kein unterstützter API-Aufruf stellt die
-Instanz wieder her.** Schalenzugang hat der Betreiber aber, und das ist der
-Notausgang, den solche Systeme an dieser Stelle haben.
+Then the chain closes against her without a gap: ``/auth/login`` withholds the
+tokens, ``/auth/voice`` fails on the voice, and switching off requires
+``users.manage`` -- which on a default installation ONLY the admin role has
+(``models/permissions.py``, ``DEFAULT_ROLES``). There is no second
+administrator who could help. **No supported API call brings the instance
+back.** But the operator does have shell access, and that is the emergency exit
+such systems have at this point.
 
-Die Alternative wäre gewesen, das Einschalten für den letzten Administrator zu
-verweigern — dann könnte ausgerechnet die Person mit dem größten Schutzbedarf
-den Faktor als Einzige nie benutzen.
+The alternative would have been to refuse switching on for the last
+administrator -- then of all people the one with the greatest need for
+protection would be the only one who could never use the factor.
 
-🛑 Was dieses Skript NICHT kann: einschalten. Das ist eine Einwilligung in
-biometrische Verarbeitung (Art. 9 DSGVO), und die gibt eine Person über die
-Oberfläche für sich selbst ab, nicht ein Betreiber über die Kommandozeile.
+🛑 What this script CANNOT do: switch on. That is a consent to biometric
+processing (Art. 9 GDPR), and a person gives it for themselves through the
+interface, not an operator on the command line.
 
-🛑 Das Skript liegt NICHT im Backend-Bild: der Build-Kontext ist ``src/backend/``,
-``COPY . .`` sieht das ``bin/`` des Repos nicht. Es wird zur Laufzeit in den Pod
-kopiert — wie jedes ``bin/backfill_*.py``. Darum trägt es denselben
-``_find_backend_dir``-Block: der findet ``/app`` im Bild von selbst, egal aus
-welchem Verzeichnis es gestartet wird.
+🛑 The script is NOT in the backend image: the build context is
+``src/backend/``, and ``COPY . .`` does not see the repo's ``bin/``. It is
+copied into the pod at runtime -- like every ``bin/backfill_*.py``. That is why
+it carries the same ``_find_backend_dir`` block: that finds ``/app`` in the
+image by itself, no matter which directory it is started from.
 
-Aufruf:
+Usage:
 
-    # lokal / Build-Box
+    # locally / on the build box
     python bin/voice_2fa_emergency.py --list
 
-    # in der Produktion
+    # in production
     POD=$(kubectl -n renfield get pod -l app.kubernetes.io/name=backend -o name | head -1)
     kubectl -n renfield cp bin/voice_2fa_emergency.py "${POD#pod/}":/tmp/voice_2fa_emergency.py
     kubectl -n renfield exec "$POD" -- python /tmp/voice_2fa_emergency.py --username admin --off
@@ -94,7 +94,7 @@ from services.database import AsyncSessionLocal  # noqa: E402
 
 
 async def list_armed() -> int:
-    """Wer hat den Faktor scharf? Nur Benutzername und Id — keine weiteren Daten."""
+    """Who has the factor armed? Username and id only -- no further data."""
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
             select(User.id, User.username, User.speaker_id)

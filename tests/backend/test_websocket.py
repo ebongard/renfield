@@ -1,12 +1,12 @@
 """
-Tests für WebSocket Endpoints und Protokoll
+Tests for the WebSocket endpoints and protocol
 
-Testet:
+Covers:
 - WebSocket Message Parsing
-- Device Registration Protokoll
-- Audio Streaming Protokoll
+- Device registration protocol
+- Audio streaming protocol
 - Session Management
-- Fehlerbehandlung
+- Error handling
 """
 
 import base64
@@ -62,11 +62,11 @@ def _fake_session_local():
 # ============================================================================
 
 class TestWebSocketMessageParsing:
-    """Tests für WebSocket Message Parsing"""
+    """Tests for WebSocket message parsing"""
 
     @pytest.mark.unit
     def test_parse_register_message(self):
-        """Test: Register Message parsen"""
+        """Test: Parse a register message"""
         data = {
             "type": "register",
             "device_id": "web-test-123",
@@ -91,7 +91,7 @@ class TestWebSocketMessageParsing:
 
     @pytest.mark.unit
     def test_parse_text_message(self):
-        """Test: Text Message parsen"""
+        """Test: Parse a text message"""
         data = {
             "type": "text",
             "content": "Schalte das Licht ein",
@@ -106,7 +106,7 @@ class TestWebSocketMessageParsing:
 
     @pytest.mark.unit
     def test_parse_audio_message(self):
-        """Test: Audio Message parsen"""
+        """Test: Parse an audio message"""
         audio_data = base64.b64encode(b"fake_audio_data").decode()
         data = {
             "type": "audio",
@@ -123,7 +123,7 @@ class TestWebSocketMessageParsing:
 
     @pytest.mark.unit
     def test_parse_audio_end_message(self):
-        """Test: Audio End Message parsen"""
+        """Test: Parse an audio-end message"""
         data = {
             "type": "audio_end",
             "session_id": "audio-session-123",
@@ -137,7 +137,7 @@ class TestWebSocketMessageParsing:
 
     @pytest.mark.unit
     def test_parse_wakeword_detected_message(self):
-        """Test: Wakeword Detected Message parsen"""
+        """Test: Parse a wakeword-detected message"""
         data = {
             "type": "wakeword_detected",
             "keyword": "alexa",
@@ -153,7 +153,7 @@ class TestWebSocketMessageParsing:
 
     @pytest.mark.unit
     def test_parse_heartbeat_message(self):
-        """Test: Heartbeat Message parsen"""
+        """Test: Parse a heartbeat message"""
         data = {
             "type": "heartbeat",
             "status": "idle"
@@ -166,7 +166,7 @@ class TestWebSocketMessageParsing:
 
     @pytest.mark.unit
     def test_parse_unknown_message_type(self):
-        """Test: Unbekannter Message Type returns base message"""
+        """Test: An unknown message type returns base message"""
         data = {
             "type": "unknown_type",
             "data": "something"
@@ -180,14 +180,14 @@ class TestWebSocketMessageParsing:
 
     @pytest.mark.unit
     def test_parse_invalid_json(self):
-        """Test: ein Nicht-dict wird nicht stillschweigend verarbeitet.
+        """Test: a non-dict is not processed in silence.
 
-        🛑 Der Test hiess „Ungültiges JSON" und prüfte etwas anderes:
-        `parse_ws_message` nimmt ein `dict` (der Aufrufer macht
-        `receive_json`), sie parst nie JSON. Hier kommt eine Zeichenkette an
-        und `data.get("type")` scheitert — das ist ein `AttributeError`, und
-        genau der muss dastehen. Ein blankes `raises(Exception)` haette auch
-        einen Namensfehler im Test bestanden.
+        🛑 The test was called "invalid JSON" and checked something else:
+        `parse_ws_message` takes a `dict` (the caller does `receive_json`), it
+        never parses JSON. Here a string arrives and `data.get("type")` fails
+        -- that is an `AttributeError`, and exactly that has to be stated. A
+        bare `raises(Exception)` would have passed on a name error in the test
+        too.
         """
         data = "not valid json"
 
@@ -200,11 +200,11 @@ class TestWebSocketMessageParsing:
 # ============================================================================
 
 class TestWebSocketErrorResponses:
-    """Tests für WebSocket Error Responses"""
+    """Tests for the WebSocket error responses"""
 
     @pytest.mark.unit
     def test_create_error_response_invalid_message(self):
-        """Test: Invalid Message Error erstellen"""
+        """Test: create an invalid-message error"""
         response = create_error_response(
             WSErrorCode.INVALID_MESSAGE,
             "Invalid message format"
@@ -216,7 +216,7 @@ class TestWebSocketErrorResponses:
 
     @pytest.mark.unit
     def test_create_error_response_unauthorized(self):
-        """Test: Unauthorized Error erstellen"""
+        """Test: create an unauthorized error"""
         response = create_error_response(
             WSErrorCode.UNAUTHORIZED,
             "Not authorized"
@@ -226,7 +226,7 @@ class TestWebSocketErrorResponses:
 
     @pytest.mark.unit
     def test_create_error_response_rate_limited(self):
-        """Test: Rate Limited Error erstellen"""
+        """Test: create a rate-limited error"""
         response = create_error_response(
             WSErrorCode.RATE_LIMITED,
             "Too many requests"
@@ -240,12 +240,12 @@ class TestWebSocketErrorResponses:
 # ============================================================================
 
 class TestWebSocketDeviceRegistration:
-    """Tests für Device Registration über WebSocket"""
+    """Tests for device registration over the WebSocket"""
 
     @pytest.mark.unit
     @pytest.mark.database
     async def test_device_registration_flow(self, mock_websocket, db_session):
-        """Test: Vollständiger Registration Flow"""
+        """Test: the complete registration flow"""
         from ha_glue.services.room_service import RoomService
 
         room_service = RoomService(db_session)
@@ -265,7 +265,7 @@ class TestWebSocketDeviceRegistration:
     @pytest.mark.unit
     @pytest.mark.database
     async def test_device_registration_creates_room(self, db_session):
-        """Test: Registration erstellt Room bei Bedarf"""
+        """Test: Registration creates the room when needed"""
         from ha_glue.services.room_service import RoomService
 
         room_service = RoomService(db_session)
@@ -289,11 +289,11 @@ class TestWebSocketDeviceRegistration:
 # ============================================================================
 
 class TestWebSocketAudioStreaming:
-    """Tests für Audio Streaming über WebSocket"""
+    """Tests for audio streaming over the WebSocket"""
 
     @pytest.mark.unit
     def test_audio_chunk_encoding(self):
-        """Test: Audio Chunk wird korrekt encodiert"""
+        """Test: an audio chunk is encoded correctly"""
         raw_audio = bytes([0] * 1600)  # 100ms of 16kHz 16bit mono
         encoded = base64.b64encode(raw_audio).decode()
 
@@ -303,7 +303,7 @@ class TestWebSocketAudioStreaming:
 
     @pytest.mark.unit
     def test_audio_message_sequence(self):
-        """Test: Audio Messages haben korrekte Sequenz"""
+        """Test: Audio messages carry the correct sequence"""
         messages = []
         for i in range(5):
             msg = WSAudioMessage(
@@ -334,11 +334,11 @@ class TestWebSocketAudioStreaming:
 # ============================================================================
 
 class TestWebSocketSessionManagement:
-    """Tests für Session Management"""
+    """Tests for session management"""
 
     @pytest.mark.unit
     def test_session_id_generation(self):
-        """Test: Session IDs sind unique"""
+        """Test: Session IDs are unique"""
         import uuid
 
         session_ids = set()
@@ -350,7 +350,7 @@ class TestWebSocketSessionManagement:
     @pytest.mark.unit
     @pytest.mark.database
     async def test_session_cleanup_on_disconnect(self, db_session):
-        """Test: Session Cleanup bei Disconnect"""
+        """Test: Session cleanup on disconnect"""
         from ha_glue.services.room_service import RoomService
 
         room_service = RoomService(db_session)
@@ -436,11 +436,11 @@ class TestWebSocketSessionManagement:
 # ============================================================================
 
 class TestWebSocketRateLimiting:
-    """Tests für WebSocket Rate Limiting"""
+    """Tests for WebSocket rate limiting"""
 
     @pytest.mark.unit
     def test_rate_limiter_initialization(self):
-        """Test: Rate Limiter wird initialisiert"""
+        """Test: the rate limiter is initialized"""
         from services.websocket_rate_limiter import WSRateLimiter
 
         limiter = WSRateLimiter(
@@ -453,7 +453,7 @@ class TestWebSocketRateLimiting:
 
     @pytest.mark.unit
     def test_rate_limiter_allows_normal_traffic(self):
-        """Test: Rate Limiter erlaubt normalen Traffic"""
+        """Test: The rate limiter allows normal traffic"""
         from services.websocket_rate_limiter import WSRateLimiter
 
         limiter = WSRateLimiter(
@@ -483,8 +483,8 @@ class TestWebSocketRateLimiting:
         # 6th connection should be denied
         allowed, reason = limiter.can_connect("192.168.1.1", "device-5")
         assert allowed is False
-        # Der Grund wurde bisher weggeworfen. Er geht an den Client — eine
-        # Ablehnung ohne Begruendung ist im Betrieb nicht diagnostizierbar.
+        # The reason used to be thrown away. It goes to the client -- a
+        # refusal without a reason cannot be diagnosed in operation.
         assert "max: 5" in reason
 
         # Different IP should be allowed
@@ -497,11 +497,11 @@ class TestWebSocketRateLimiting:
 # ============================================================================
 
 class TestWebSocketAuthentication:
-    """Tests für WebSocket Authentication"""
+    """Tests for WebSocket authentication"""
 
     @pytest.mark.unit
     def test_token_store_initialization(self):
-        """Test: Token Store wird initialisiert"""
+        """Test: the token store is initialized"""
         from services.websocket_auth import WSTokenStore
 
         store = WSTokenStore()
@@ -509,7 +509,7 @@ class TestWebSocketAuthentication:
 
     @pytest.mark.unit
     def test_token_store_create_and_validate(self):
-        """Test: Token erstellen und validieren"""
+        """Test: create and validate a token"""
         from services.websocket_auth import WSTokenStore
 
         store = WSTokenStore()
@@ -525,7 +525,7 @@ class TestWebSocketAuthentication:
 
     @pytest.mark.unit
     def test_invalid_token_rejected(self):
-        """Test: Ungültiger Token wird abgelehnt"""
+        """Test: an invalid token is rejected"""
         from services.websocket_auth import WSTokenStore
 
         store = WSTokenStore()
@@ -902,11 +902,11 @@ class TestWebSocketAuthentication:
 # ============================================================================
 
 class TestWebSocketProtocolEdgeCases:
-    """Tests für Edge Cases im WebSocket Protokoll"""
+    """Tests for edge cases in the WebSocket protocol"""
 
     @pytest.mark.unit
     def test_empty_message(self):
-        """Test: Leere Message returns error response"""
+        """Test: An empty message returns error response"""
         result = parse_ws_message({})
         # Empty message returns WSErrorResponse
         assert isinstance(result, WSErrorResponse)
@@ -914,7 +914,7 @@ class TestWebSocketProtocolEdgeCases:
 
     @pytest.mark.unit
     def test_message_without_type(self):
-        """Test: Message ohne Type returns error response"""
+        """Test: A message without a type returns error response"""
         result = parse_ws_message({"content": "test"})
         # Missing type returns WSErrorResponse
         assert isinstance(result, WSErrorResponse)
@@ -922,7 +922,7 @@ class TestWebSocketProtocolEdgeCases:
 
     @pytest.mark.unit
     def test_register_message_minimal(self):
-        """Test: Register Message mit minimalen Daten"""
+        """Test: A register message with minimal data"""
         data = {
             "type": "register",
             "device_id": "minimal-device"
@@ -935,7 +935,7 @@ class TestWebSocketProtocolEdgeCases:
 
     @pytest.mark.unit
     def test_large_audio_chunk(self):
-        """Test: Großer Audio Chunk"""
+        """Test: a large audio chunk"""
         # 10 seconds of 16kHz 16bit mono = 320000 bytes
         large_audio = bytes([0] * 320000)
         encoded = base64.b64encode(large_audio).decode()
@@ -950,7 +950,7 @@ class TestWebSocketProtocolEdgeCases:
 
     @pytest.mark.unit
     def test_special_characters_in_content(self):
-        """Test: Sonderzeichen in Text Content"""
+        """Test: Special characters in text content"""
         special_content = "Schalte 'Licht' im \"Wohnzimmer\" ein! 🏠"
 
         data = {
@@ -966,7 +966,7 @@ class TestWebSocketProtocolEdgeCases:
 
     @pytest.mark.unit
     def test_unicode_room_name(self):
-        """Test: Unicode im Raumnamen"""
+        """Test: Unicode in the room name"""
         data = {
             "type": "register",
             "device_id": "unicode-device",
@@ -985,7 +985,7 @@ class TestWebSocketProtocolEdgeCases:
 # ============================================================================
 
 class TestBuildActionSummary:
-    """Tests für _build_action_summary() in chat_handler."""
+    """Tests for _build_action_summary() in chat_handler."""
 
     @pytest.mark.unit
     def test_list_results_with_key_fields(self):

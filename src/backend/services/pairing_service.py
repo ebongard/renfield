@@ -19,11 +19,11 @@ Handshake State Machine):
      persists a PeerUser row on the initiator side with
      `granted_tier = their_tier_for_me`. The pairing is live.
 
-🛑 Die gewaehrte Stufe steht seit 2026-10-27 (F-ID-3) AN DER PAARUNG, nicht
-mehr als `CircleMembership`. Davor landete die ENTFERNTE Nutzerkennung in
-`circle_memberships.member_user_id` — einer Spalte, deren Fremdschluessel auf
-die LOKALE `users.id` zeigt. Das brach auf einer Instanz den Schluessel und
-band auf der anderen still die falsche Person.
+🛑 Since 2026-10-27 (F-ID-3) the granted tier sits ON THE PAIRING, no longer
+as a `CircleMembership`. Before that the REMOTE user id ended up in
+`circle_memberships.member_user_id` -- a column whose foreign key points at the
+LOCAL `users.id`. That broke the key on one instance and silently bound the
+wrong person on the other.
 
 Adversary model (design doc § Threat Model):
   - Offers expire in 10 minutes. The nonce cache is TTL'd + single-use.
@@ -113,15 +113,14 @@ class PairingError(Exception):
     at the API boundary so we don't leak which check failed."""
 
 class AlreadyPairedElsewhere(PairingError):
-    """Eine ANDERE lokale Person ist bereits mit dieser Gegenstelle gepaart.
+    """ANOTHER local person is already paired with this far side.
 
-    🛑 Bewusst eine eigene Klasse, damit die Routenschicht sie sichtbar machen
-    kann. Die Regel „kein Orakel" schuetzt die kryptografischen Pruefungen —
-    Signatur, Nonce, Ablauf —, damit niemand ablesen kann, WELCHE davon griff.
-    Dieser Fall ist etwas anderes: lokaler Zustand, den die angemeldete Person
-    ohnehin aendern darf. Ihn hinter demselben „Pairing handshake failed" zu
-    verstecken schickt sie an die falsche Stelle; genau dieser Fehlermodus hat
-    am 2026-10-27 eine Stunde Suche gekostet.
+    🛑 Deliberately its own class, so the route layer can surface it.
+    The "no oracle" rule protects the cryptographic checks -- signature, nonce,
+    expiry -- so nobody can read off WHICH of them caught. This case is
+    something else: local state the signed-in person may change anyway. Hiding
+    it behind the same "Pairing handshake failed" sends them to the wrong place;
+    that very failure mode cost an hour of searching on 2026-10-27.
     """
 
 
@@ -315,8 +314,8 @@ class PairingService:
         """
         Verify the offer + create the responder-side PeerUser row carrying
         `granted_tier = my_tier_for_you`. Returns a signed response for the
-        initiator to ingest. KEINE `CircleMembership` mehr — siehe
-        Modul-Docstring.
+        initiator to ingest. NO `CircleMembership` any more — see the
+        module docstring.
         """
         self._verify_offer(offer)
 
@@ -335,17 +334,17 @@ class PairingService:
             remote_pubkey=offer.initiator_pubkey,
             remote_display_name=offer.display_name,
             remote_user_id=offer.initiator_user_id,
-            # 🛑 Die Stufe steht AN DER PAARUNG, seit F-ID-3. Hier stand bis
-            # 2026-10-27 ein `_upsert_circle_membership(member_user_id=
-            # offer.initiator_user_id, …)` — die ENTFERNTE Kennung in einer
-            # Spalte mit Fremdschluessel auf die LOKALE `users.id`. Auf x-idra
-            # brach das den Schluessel (500); im Haushalt gab es die Zahl, also
-            # entstand still eine Zugriffszeile fuer die FALSCHE Person.
+            # 🛑 The tier sits ON THE PAIRING, since F-ID-3. Until
+            # 2026-10-27 an `_upsert_circle_membership(member_user_id=
+            # offer.initiator_user_id, ...)` stood here -- the REMOTE id in a
+            # column with a foreign key onto the LOCAL `users.id`. On x-idra
+            # that broke the key (500); in the household the number existed, so
+            # an access row for the WRONG person came into being silently.
             granted_tier=my_tier_for_you,
             transport_config=transport_config,
         )
-        # Die `circles`-Zeile bleibt: sie wird anderswo gelesen, und in einer
-        # Sicherheitsaenderung wird nicht nebenbei aufgeraeumt.
+        # The `circles` row stays: it is read elsewhere, and a security change
+        # does not tidy up on the side.
         await _get_or_create_circle(self.db, current_user.id)
 
         now = int(time.time())
@@ -401,7 +400,7 @@ class PairingService:
             remote_pubkey=response.responder_pubkey,
             remote_display_name=response.responder_display_name,
             remote_user_id=response.responder_user_id,
-            granted_tier=their_tier_for_me,   # siehe `accept_offer`
+            granted_tier=their_tier_for_me,   # see `accept_offer`
             transport_config=transport_config,
         )
         await _get_or_create_circle(self.db, current_user.id)
@@ -451,13 +450,12 @@ class PairingService:
         granted_tier: int,
         transport_config: dict[str, Any],
     ) -> PeerUser:
-        # 🛑 Eine zweite AKTIVE Paarung mit derselben Gegenstelle unter einem
-        # ANDEREN lokalen Konto darf nicht entstehen. Der Eindeutigkeitsindex
-        # `(circle_owner_id, remote_pubkey)` erlaubt sie, aber der Antwortende
-        # findet seine Paarung allein ueber den Schluessel — zwei aktive Zeilen
-        # machen jede foederierte Anfrage mehrdeutig, und er weist dann ALLE ab
-        # (`_lookup_peer`). Lieber hier mit einer lesbaren Begruendung
-        # scheitern als dort stumm.
+        # 🛑 A second ACTIVE pairing with the same far side under a
+        # DIFFERENT local account must not come into being. The uniqueness index
+        # `(circle_owner_id, remote_pubkey)` permits it, but the responder finds
+        # its pairing by the key alone -- two active rows make every federated
+        # request ambiguous, and it then refuses them ALL (`_lookup_peer`).
+        # Better to fail here with a readable reason than silently there.
         other_owner_rows = (await self.db.execute(
             select(PeerUser).where(
                 PeerUser.remote_pubkey == remote_pubkey,
@@ -482,9 +480,9 @@ class PairingService:
         if existing is not None:
             existing.remote_display_name = remote_display_name
             existing.remote_user_id = remote_user_id
-            # Ein erneutes Paaren setzt die Stufe NEU — sonst behielte eine
-            # Zweitpaarung still die alte Gewaehrung, und die Oberflaeche zeigte
-            # eine Zahl, die nicht gilt.
+            # Pairing again sets the tier ANEW -- otherwise a second pairing
+            # would silently keep the old grant, and the interface would show a
+            # number that does not hold.
             existing.granted_tier = granted_tier
             existing.transport_config = transport_config
             existing.last_seen_at = now
@@ -522,33 +520,32 @@ class PairingService:
         await self.db.refresh(peer)
         return peer
 
-    # 🛑 `_upsert_circle_membership` ist am 2026-10-27 ENTFALLEN (F-ID-3).
-    # Sie schrieb die ENTFERNTE Nutzerkennung in `circle_memberships.member_user_id`,
-    # eine Spalte mit Fremdschluessel auf die LOKALE `users.id`. Die Stufe steht
-    # jetzt als `peer_users.granted_tier` an der Paarung. Wer hier wieder eine
-    # Mitgliedschaft schreiben will, baut den Fehler neu — ein Strukturtest in
-    # `tests/backend/test_peer_tier_isolation.py` haelt das fest.
+    # 🛑 `_upsert_circle_membership` was REMOVED on 2026-10-27 (F-ID-3).
+    # It wrote the REMOTE user id into `circle_memberships.member_user_id`, a
+    # column with a foreign key onto the LOCAL `users.id`. The tier now sits on
+    # the pairing as `peer_users.granted_tier`. Whoever wants to write a
+    # membership here again rebuilds the defect -- a structural test in
+    # `tests/backend/test_peer_tier_isolation.py` holds that down.
 
 # =============================================================================
 # Helpers
 # =============================================================================
 
 
-#: 🛑 Der Rumpf ist am 2026-10-27 nach `federation_identity.canonical_bytes`
-#: gewandert, weil der Personen-Handschlag (F-ID-2) DIESELBEN Bytes signiert.
-#: Zwei Abschriften waeren der stille Bruch: beide Seiten signieren fleissig,
-#: und nichts verifiziert mehr. Der private Name bleibt hier stehen, weil die
-#: Tests dieses Moduls ihn einfuehren — und weil jeder Aufruf unten unveraendert
-#: weiterlaeuft.
+#: 🛑 The body moved to `federation_identity.canonical_bytes` on
+#: 2026-10-27, because the person handshake (F-ID-2) signs THE SAME bytes. Two
+#: copies would be the silent break: both sides sign away diligently, and
+#: nothing verifies any more. The private name stays here because this module's
+#: tests introduce it -- and because every call below keeps running unchanged.
 _canonical_bytes = canonical_bytes
 
 
 async def _get_or_create_circle(db: AsyncSession, owner_user_id: int) -> Circle:
     """
-    Ensure a `circles` row exists for the pairing user. Seit F-ID-3 braucht
-    die PAARUNG sie nicht mehr (die Stufe steht an `peer_users`), aber die
-    Zeile wird anderswo gelesen und ist idempotent — in einer
-    Sicherheitsaenderung wird nicht nebenbei aufgeraeumt.
+    Ensure a `circles` row exists for the pairing user. Since F-ID-3 the
+    PAIRING no longer needs it (the tier sits on `peer_users`), but the row is
+    read elsewhere and this is idempotent -- a security change does not tidy up
+    on the side.
     Mirrors the helper in api/routes/circles.py:
     IntegrityError recovery for concurrent-first-hit races.
     """

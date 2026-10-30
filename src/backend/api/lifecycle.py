@@ -157,8 +157,8 @@ def _schedule_whisper_preload():
                 whisper_service.load_model()
                 logger.info("✅ Whisper Service bereit (STT aktiviert)")
             except Exception as e:
-                logger.warning(f"⚠️  Whisper konnte nicht vorgeladen werden: {e}")
-                logger.warning("💡 Spracheingabe wird beim ersten Gebrauch geladen")
+                logger.warning(f"⚠️  Whisper could not be preloaded: {e}")
+                logger.warning("💡 Speech input will be loaded on first use")
 
         task = asyncio.create_task(preload_whisper())
         _startup_tasks.append(task)
@@ -392,7 +392,7 @@ async def _init_mcp(app: "FastAPI"):
                 f"Federation peer registry sync skipped at startup: {peer_error}"
             )
     except Exception as e:
-        logger.error(f"MCP Client konnte nicht initialisiert werden: {e}")
+        logger.error(f"MCP client could not be initialised: {e}")
         import traceback
         logger.error(traceback.format_exc())
         app.state.mcp_manager = None
@@ -459,7 +459,7 @@ async def _init_agent_router(app: "FastAPI"):
         except Exception as e:
             logger.debug(f"Entity patterns not loaded (non-fatal): {e}")
     except Exception as e:
-        logger.error(f"❌ Agent Router konnte nicht initialisiert werden: {e}")
+        logger.error(f"❌ Agent router could not be initialised: {e}")
         import traceback
         logger.error(traceback.format_exc())
         app.state.agent_router = None
@@ -843,7 +843,7 @@ async def lifespan(app: "FastAPI"):
     yield
 
     # Shutdown sequence
-    logger.info("👋 Renfield wird heruntergefahren...")
+    logger.info("👋 Renfield is shutting down...")
 
     from utils.hooks import run_hooks
     await run_hooks("shutdown", app=app)

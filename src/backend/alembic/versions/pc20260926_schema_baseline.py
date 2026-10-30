@@ -1,51 +1,51 @@
-"""Basis: eine Neuinstallation bekommt dasselbe Schema wie die Produktion
+"""Baseline: a fresh install gets the same schema as production
 
 Revision ID: pc20260926_baseline
 Revises: pc20260924_restore_idx
 Create Date: 2026-09-26
 
-WARUM ES DIESE MIGRATION GIBT
------------------------------
-`services/database.py:_ensure_alembic_baseline()` erzeugte das Schema einer
-Neuinstallation aus den ORM-Modellen (`create_all`) und STEMPELTE dann den
-Alembic-Kopf. Der Docstring dort sagte es selbst: „the 41-migration history is
-skipped". Folge: alles, was eine Migration per `op.execute("CREATE INDEX …")`
-anlegt, entstand auf einer Neuinstallation NIE — und wurde nie nachgeholt, weil
-der Stempel behauptete, die Migration sei angewandt. #1336 hat den BESTAND
-repariert; diese Migration behebt die URSACHE.
+WHY THIS MIGRATION EXISTS
+-------------------------
+`services/database.py:_ensure_alembic_baseline()` built a fresh install's
+schema from the ORM models (`create_all`) and then STAMPED the Alembic head.
+The docstring there said it itself: "the 41-migration history is skipped".
+Consequence: everything a migration creates via `op.execute("CREATE INDEX ...")`
+NEVER came into being on a fresh install -- and was never caught up, because
+the stamp claimed the migration had been applied. #1336 repaired the EXISTING
+STOCK; this migration fixes the CAUSE.
 
-Gemessen 2026-09-25: `create_all` und das Produktionsschema hatten beide exakt
-333 Indizes — und ein Drittel davon war VERSCHIEDEN (45 nur hier, 45 nur dort).
-Gleiche Zahl ist nicht gleiche Menge.
+Measured 2026-09-25: `create_all` and the production schema both had exactly
+333 indexes -- and a third of them were DIFFERENT (45 only here, 45 only
+there). The same number is not the same set.
 
-WARUM AM KETTENENDE UND NICHT AN DER WURZEL
---------------------------------------------
-Die Kette hat genau EINE Wurzel (`9a0d8ccea5b0`), und die ist ein leerer
-`pass`-Rumpf — sie war nie eine vollständige Beschreibung des Schemas und läuft
-aus dem Leeren nicht durch (`rooms` legt keine Migration an). Eine zweite Wurzel
-würde die Kette gabeln, und `alembic heads` MUSS eine einzige Revision liefern.
-Eine gestauchte Kette wiederum bräche jede Datenbank, die auf einer älteren
-Revision steht — reva, ein zurückgespieltes Backup, ein älterer Abzug.
+WHY AT THE END OF THE CHAIN AND NOT AT ITS ROOT
+-----------------------------------------------
+The chain has exactly ONE root (`9a0d8ccea5b0`), and that one is an empty
+`pass` body -- it was never a complete description of the schema and does not
+run through from empty (`rooms` is created by no migration). A second root
+would fork the chain, and `alembic heads` MUST yield a single revision. A
+squashed chain in turn would break every database standing on an older
+revision -- reva, a restored backup, an older dump.
 
-Deshalb hier, hinter dem heutigen Kopf, MIT WÄCHTER:
+Hence here, behind today's head, WITH A GUARD:
 
-* **Bestehende Instanz** (Tabellen vorhanden): tut nichts. Nachweisbar daran,
-  dass die Sentinel-Tabelle existiert.
-* **Frische Datenbank**: der Bootstrap stempelt auf `pc20260924_restore_idx`
-  und läuft dann `alembic upgrade head` — diese Migration ist das Einzige, was
-  läuft, und sie bringt beides mit: die Tabellen aus den Modellen UND das
-  Roh-SQL, das heute verlorengeht.
+* **Existing instance** (tables present): does nothing. Provable by the
+  sentinel table existing.
+* **Fresh database**: the bootstrap stamps `pc20260924_restore_idx` and then
+  runs `alembic upgrade head` -- this migration is the only thing that runs,
+  and it brings both: the tables from the models AND the raw SQL that is lost
+  today.
 
-🛑 **Was das für KÜNFTIGE Migrationen heißt:** nichts Besonderes. Sie stehen
-hinter dieser Basis und laufen auf einer Neuinstallation ganz normal mit. Nur
-was VOR ihr liegt, deckt sie ab. Diese Basis muss also nie wieder nachgeführt
-werden — ein neuer Roh-SQL-Index gehört in eine neue Migration, nicht hierher.
+🛑 **What that means for FUTURE migrations:** nothing special. They stand
+behind this baseline and run normally on a fresh install. It covers only what
+lies BEFORE it. So this baseline never has to be updated again -- a new raw-SQL
+index belongs in a new migration, not here.
 
-🛑 **Die Vektorindizes werden NICHT festgeschrieben.** Ihre Dimension wird zur
-Laufzeit aus der Spalte gelesen (ROH, ohne `- 4`: pgvector legt N direkt im
-typmod ab). `pc20260402` rechnete `atttypmod - 4` und hätte einen Index auf
-halfvec(2556) gebaut, den keine Abfrage je hätte nutzen können — gebaut, bei
-jedem Schreibvorgang gepflegt, nutzlos.
+🛑 **The vector indexes are NOT pinned here.** Their dimension is read from the
+column at runtime (RAW, without `- 4`: pgvector stores N directly in the
+typmod). `pc20260402` computed `atttypmod - 4` and would have built an index on
+halfvec(2556) that no query could ever have used -- built, maintained on every
+write, useless.
 """
 from typing import Sequence, Union
 
@@ -57,11 +57,11 @@ down_revision: Union[str, None] = "pc20260924_restore_idx"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-#: Existiert diese Tabelle, ist das Schema da und die Migration tut nichts.
-#: `users` ist die aelteste und auf jeder Instanz vorhanden.
+#: If this table exists the schema is there and the migration does nothing.
+#: `users` is the oldest one and present on every instance.
 SENTINEL_TABLE = "users"
 
-#: Vektorindizes: (Name, Tabelle, Spalte). Die Dimension kommt zur Laufzeit.
+#: Vector indexes: (name, table, column). The dimension comes at runtime.
 _VECTOR_INDEXES = [
     ('idx_document_chunks_embedding_hnsw', 'document_chunks', 'embedding'),
     ('idx_documents_content_embedding_hnsw', 'documents', 'content_embedding'),
@@ -75,7 +75,7 @@ _VECTOR_INDEXES = [
     ('ix_episodic_embedding_hnsw', 'episodic_memories', 'embedding'),
 ]
 
-#: Alles uebrige woertlich aus der Produktion (2026-09-25), mit IF NOT EXISTS.
+#: Everything else verbatim from production (2026-09-25), with IF NOT EXISTS.
 _RAW_DDL = [
     'CREATE INDEX IF NOT EXISTS idx_conversation_memories_search_vector_gin ON conversation_memories USING gin (search_vector)',
     'CREATE INDEX IF NOT EXISTS idx_document_chunks_doc_chunk ON document_chunks USING btree (document_id, chunk_index)',
@@ -121,7 +121,7 @@ def _table_exists(conn, table: str) -> bool:
 
 
 def _column_dim(conn, table: str, column: str) -> int | None:
-    """Dimension einer `vector(N)`-Spalte. ROH, ohne `- 4` — siehe Kopf."""
+    """Dimension of a `vector(N)` column. RAW, without `- 4` -- see the header."""
     row = conn.execute(text("""
         SELECT a.atttypmod FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid
@@ -134,19 +134,19 @@ def _column_dim(conn, table: str, column: str) -> int | None:
 def upgrade() -> None:
     conn = op.get_bind()
 
-    # WAECHTER. Eine bestehende Instanz hat das Schema laengst; diese Migration
-    # darf dort nichts tun, sonst liefe sie auf jeder Produktivdatenbank an.
+    # GUARD. An existing instance has had the schema for ages; this migration
+    # must do nothing there, or it would run against every production database.
     if _table_exists(conn, SENTINEL_TABLE):
         return
 
-    # Ab hier: eine LEERE Datenbank.
+    # From here on: an EMPTY database.
     conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 
-    # Die Tabellen aus den Modellen. `ha_glue.models.database` MUSS importiert
-    # werden: `Base.metadata` kennt nur Tabellen, deren Modul geladen wurde —
-    # ohne diesen Import fehlten 12 Tabellen (rooms, satellites, ha_entities …).
+    # The tables from the models. `ha_glue.models.database` MUST be imported:
+    # `Base.metadata` only knows tables whose module was loaded -- without this
+    # import 12 tables were missing (rooms, satellites, ha_entities ...).
     from models.database import Base
-    import ha_glue.models.database  # noqa: F401 — fuellt Base.metadata
+    import ha_glue.models.database  # noqa: F401 -- fills Base.metadata
 
     Base.metadata.create_all(bind=conn)
 
@@ -159,8 +159,8 @@ def upgrade() -> None:
         dim = _column_dim(conn, table, column)
         if dim is None:
             continue
-        # halfvec ueber 2000 Dimensionen: der regulaere vector-Typ ist darueber
-        # nicht indizierbar.
+        # halfvec above 2000 dimensions: the regular vector type is not
+        # indexable beyond that.
         expr = (f"(({column}::halfvec({dim})) halfvec_cosine_ops)" if dim > 2000
                 else f"({column} vector_cosine_ops)")
         op.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table} "
@@ -168,21 +168,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Bewusst ein Nichts — und das ist eine Aussage, keine Luecke.
+    """Deliberately nothing -- and that is a statement, not a gap.
 
-    Der Rueckweg einer Basis waere „das ganze Schema loeschen". Das ist kein
-    Rueckbau, das ist Datenverlust. Wer hinter diese Migration zurueck will,
-    nimmt die Datenbank, die es vor ihr gab.
+    The way back from a baseline would be "drop the whole schema". That is not
+    a downgrade, that is data loss. Whoever wants to get behind this migration
+    takes the database that existed before it.
 
-    DURCHLAUFEN, nicht behauptet (2026-09-26, beide Faelle):
+    EXERCISED, not asserted (2026-09-26, both cases):
 
-        frische DB      333 Indizes -> downgrade -> 333 -> upgrade -> 333
-        Bestandsschema  326 Indizes -> downgrade -> 326 -> upgrade -> 326
+        fresh DB         333 indexes -> downgrade -> 333 -> upgrade -> 333
+        existing schema  326 indexes -> downgrade -> 326 -> upgrade -> 326
 
-    🛑 Daraus folgt eine Eigenschaft, die man kennen muss: nach einem Rueckbau
-    BLEIBT das Schema stehen, waehrend `alembic_version` behauptet, es gaebe es
-    noch nicht. „Vorher" ist aus „nachher" hier nicht rekonstruierbar. Das ist
-    in sich stimmig, weil der WAECHTER im `upgrade()` an der Sentinel-Tabelle
-    entscheidet und nicht an der Revision — ein erneutes `upgrade` tut deshalb
-    korrekt nichts, statt ein vorhandenes Schema neu bauen zu wollen.
+    🛑 From that follows a property one has to know: after a downgrade the
+    schema STAYS standing while `alembic_version` claims it does not exist yet.
+    "Before" cannot be reconstructed from "after" here. That is coherent in
+    itself, because the GUARD in `upgrade()` decides on the sentinel table and
+    not on the revision -- so running `upgrade` again correctly does nothing
+    instead of trying to rebuild a schema that is already there.
     """

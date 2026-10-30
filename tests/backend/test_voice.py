@@ -1,11 +1,11 @@
 """
-Tests für Voice API (STT/TTS)
+Tests for the voice API (STT/TTS)
 
-Testet:
-- Speech-to-Text Endpoint
-- Text-to-Speech Endpoint
-- TTS Cache Endpoint
-- Voice-Chat Flow
+Covers:
+- The speech-to-text endpoint
+- The text-to-speech endpoint
+- The TTS cache endpoint
+- The voice-chat flow
 """
 
 from io import BytesIO
@@ -64,7 +64,7 @@ def mock_piper_service():
 # ============================================================================
 
 class TestSpeechToTextAPI:
-    """Tests für Speech-to-Text API"""
+    """Tests for the speech-to-text API"""
 
     @pytest.mark.integration
     async def test_stt_endpoint(
@@ -73,7 +73,7 @@ class TestSpeechToTextAPI:
         mock_audio_file,
         mock_whisper_service
     ):
-        """Testet POST /api/voice/stt"""
+        """Tests POST /api/voice/stt"""
         import api.routes.voice as voice_module
         original_service = voice_module.whisper_service
 
@@ -100,7 +100,7 @@ class TestSpeechToTextAPI:
         mock_audio_file,
         mock_whisper_service
     ):
-        """Testet STT mit Sprechererkennung"""
+        """Tests STT with speaker recognition"""
         import api.routes.voice as voice_module
         original_service = voice_module.whisper_service
 
@@ -128,7 +128,7 @@ class TestSpeechToTextAPI:
         async_client: AsyncClient,
         mock_audio_file
     ):
-        """Testet STT mit leerem Ergebnis"""
+        """Tests STT with an empty result"""
         import api.routes.voice as voice_module
         original_service = voice_module.whisper_service
 
@@ -155,7 +155,7 @@ class TestSpeechToTextAPI:
 # ============================================================================
 
 class TestTextToSpeechAPI:
-    """Tests für Text-to-Speech API"""
+    """Tests for the text-to-speech API"""
 
     @pytest.mark.integration
     async def test_tts_endpoint(
@@ -163,7 +163,7 @@ class TestTextToSpeechAPI:
         async_client: AsyncClient,
         mock_piper_service
     ):
-        """Testet POST /api/voice/tts"""
+        """Tests POST /api/voice/tts"""
         import api.routes.voice as voice_module
         original_service = voice_module.piper_service
 
@@ -182,7 +182,7 @@ class TestTextToSpeechAPI:
 
     @pytest.mark.integration
     async def test_tts_empty_response(self, async_client: AsyncClient):
-        """Testet TTS mit leerem Ergebnis"""
+        """Tests TTS with an empty result"""
         import api.routes.voice as voice_module
         original_service = voice_module.piper_service
 
@@ -208,7 +208,7 @@ class TestTextToSpeechAPI:
         async_client: AsyncClient,
         mock_piper_service
     ):
-        """Testet TTS mit Standard-Voice"""
+        """Tests TTS with the default voice"""
         import api.routes.voice as voice_module
         original_service = voice_module.piper_service
 
@@ -226,11 +226,11 @@ class TestTextToSpeechAPI:
 
 
 class TestTTSCacheAPI:
-    """Tests für TTS Cache API"""
+    """Tests for the TTS cache API"""
 
     @pytest.mark.integration
     async def test_tts_cache_not_found(self, async_client: AsyncClient):
-        """Testet GET /api/voice/tts-cache für nicht-existentes Audio"""
+        """GET /api/voice/tts-cache for audio that does not exist"""
         with patch('ha_glue.services.audio_output_service.get_audio_output_service') as mock_service:
             mock_instance = MagicMock()
             mock_instance.get_cached_audio.return_value = None
@@ -242,7 +242,7 @@ class TestTTSCacheAPI:
 
     @pytest.mark.integration
     async def test_tts_cache_found(self, async_client: AsyncClient):
-        """Testet GET /api/voice/tts-cache mit gecachtem Audio.
+        """Tests GET /api/voice/tts-cache with cached audio.
 
         The route resolves cached audio through the ``fetch_tts_audio_cache``
         hook (ha_glue owns the cache storage), not a direct
@@ -317,7 +317,7 @@ class TestTTSCacheAPI:
 # ============================================================================
 
 class TestVoiceChatAPI:
-    """Tests für Voice-Chat API"""
+    """Tests for the voice-chat API"""
 
     @pytest.mark.integration
     async def test_voice_chat_endpoint(
@@ -327,7 +327,7 @@ class TestVoiceChatAPI:
         mock_whisper_service,
         mock_piper_service
     ):
-        """Testet POST /api/voice/voice-chat"""
+        """Tests POST /api/voice/voice-chat"""
         import api.routes.voice as voice_module
 
         original_whisper = voice_module.whisper_service
@@ -369,7 +369,7 @@ class TestVoiceChatAPI:
         mock_whisper_service,
         mock_piper_service
     ):
-        """Testet Voice-Chat mit Sprechererkennung"""
+        """Tests voice chat with speaker recognition"""
         import api.routes.voice as voice_module
 
         original_whisper = voice_module.whisper_service
@@ -408,7 +408,7 @@ class TestVoiceChatAPI:
         async_client: AsyncClient,
         mock_audio_file
     ):
-        """Testet Voice-Chat mit leerem STT-Ergebnis"""
+        """Tests voice chat with an empty STT result"""
         import api.routes.voice as voice_module
 
         original_whisper = voice_module.whisper_service
@@ -435,11 +435,11 @@ class TestVoiceChatAPI:
 # ============================================================================
 
 class TestVoiceEdgeCases:
-    """Tests für Edge Cases"""
+    """Tests for edge cases"""
 
     @pytest.mark.integration
     async def test_stt_invalid_audio_format(self, async_client: AsyncClient):
-        """Testet STT mit ungültigem Audio-Format"""
+        """STT with an invalid audio format"""
         with patch('api.routes.voice.whisper_service') as mock_whisper:
             mock_whisper.transcribe_bytes = AsyncMock(
                 side_effect=Exception("Invalid audio format")
@@ -455,7 +455,7 @@ class TestVoiceEdgeCases:
 
     @pytest.mark.integration
     async def test_tts_service_error(self, async_client: AsyncClient):
-        """Testet TTS bei Service-Fehler"""
+        """TTS on a service error"""
         with patch('api.routes.voice.piper_service') as mock_piper:
             mock_piper.synthesize_to_bytes = AsyncMock(
                 side_effect=Exception("Piper not available")

@@ -1,22 +1,22 @@
 """
-Notification API Routes — Proaktive Benachrichtigungen
+Notification API routes -- proactive notifications
 
 Endpoints:
-- POST /webhook          — HA → Renfield (Bearer Token auth)
-- GET  /                 — Liste mit Filtern
-- PATCH /{id}/acknowledge — Bestätigen
-- DELETE /{id}           — Verwerfen (Soft Delete)
-- POST /token            — Webhook-Token generieren (Admin)
+- POST /webhook           -- HA -> Renfield (Bearer token auth)
+- GET  /                  -- list, with filters
+- PATCH /{id}/acknowledge -- acknowledge
+- DELETE /{id}            -- discard (soft delete)
+- POST /token             -- generate a webhook token (admin)
 
 Phase 2:
-- POST /{id}/suppress        — Ähnliche Benachrichtigungen unterdrücken
-- GET  /suppressions         — Aktive Suppressions auflisten
-- DELETE /suppressions/{id}  — Suppression aufheben
+- POST /{id}/suppress        -- suppress similar notifications
+- GET  /suppressions         -- list the active suppressions
+- DELETE /suppressions/{id}  -- lift a suppression
 
 Reminders:
-- POST /reminders            — Erinnerung erstellen
-- GET  /reminders            — Erinnerungen auflisten
-- DELETE /reminders/{id}     — Erinnerung stornieren
+- POST /reminders            -- create a reminder
+- GET  /reminders            -- list the reminders
+- DELETE /reminders/{id}     -- cancel a reminder
 
 Scheduling (Cron-basiert) is handled externally via n8n/HA automations → webhook.
 See docs/PROACTIVE_SCHEDULING_TEMPLATES.md for templates.

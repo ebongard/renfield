@@ -1,11 +1,12 @@
-"""Die Flottenwache: Karenz, richtiges Signal, kein Fehlalarm.
+"""The fleet watchdog: the settle period, the right signal, no false alarm.
 
-Der wichtigste Test hier ist `test_a_connected_satellite_is_never_reported`. Er
-haelt die Einsicht fest, die den ganzen Waechter geformt hat: `last_authenticated_at`
-taugt NICHT als Lebenszeichen. Die Spalte wird beim VERBINDUNGSAUFBAU gesetzt,
-ihr Alter misst also „Zeit seit dem letzten Neuverbinden". Ein Waechter darauf
-haette am 2026-09-26 die drei GESUNDEN Satelliten gemeldet (sie hatten sich
-gerade neu angemeldet, waren also frisch) und die drei TOTEN verschwiegen.
+The most important test here is `test_a_connected_satellite_is_never_reported`.
+It holds the insight that shaped the whole watchdog: `last_authenticated_at` is
+NOT fit as a sign of life. The column is set when the CONNECTION IS
+ESTABLISHED, so its age measures "time since the last reconnect". A watchdog
+built on it would on 2026-09-26 have reported the three HEALTHY satellites
+(they had just re-authenticated, so they were fresh) and said nothing about the
+three DEAD ones.
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ def _rows(*specs):
 
 @pytest.fixture
 def settled(monkeypatch):
-    """Karenz vorbei — sonst urteilt die Aufgabe gar nicht."""
+    """Settle period over -- otherwise the task does not judge at all."""
     monkeypatch.setattr(wd, "_STARTED_AT", time.monotonic() - wd.SETTLE_SECONDS - 1)
 
 
@@ -71,18 +72,18 @@ async def _run(*, notify, connected, rows, state):
 
 class TestTheSettlePeriod:
     async def test_it_does_not_judge_right_after_a_restart(self, monkeypatch):
-        # 🛑 Ohne die Karenz meldete JEDER Rollout die ganze Flotte als tot: die
-        # Registratur lebt im Arbeitsspeicher und ist beim Start leer. Ein
-        # Fehlalarm dieser Groesse macht jede echte Meldung wertlos.
+        # 🛑 Without the settle period EVERY rollout reported the whole fleet
+        # as dead: the registry lives in memory and is empty at startup. A
+        # false alarm of that size makes every real report worthless.
         monkeypatch.setattr(wd, "_STARTED_AT", time.monotonic())
         n, st = _Notify(), _State("a")
         out = await _run(notify=n, connected=[],
                          rows=_rows(("a", "Kueche", 99)), state=st)
         assert out is None
         assert n.calls == []
-        # Und der Marker bleibt UNBERUEHRT. Wuerde die Karenz ihn leeren, waere
-        # nach jedem Neustart der naechste Lauf eine "Aenderung" — also doch
-        # wieder eine Meldung je Rollout.
+        # And the marker stays UNTOUCHED. If the settle period cleared it,
+        # the next run after every restart would be a "change" -- so one
+        # report per rollout after all.
         assert st.writes == []
         assert st.value == "a"
 
@@ -96,10 +97,11 @@ class TestTheSettlePeriod:
 
 class TestTheRightSignal:
     async def test_a_connected_satellite_is_never_reported(self, settled):
-        """Auch wenn sein letzter Verbindungsaufbau 30 TAGE her ist.
+        """Even when its last connection was established 30 DAYS ago.
 
-        Das ist der Kern. Ein stabil verbundener Satellit meldet sich nicht neu
-        an — seine Spalte altert, er selbst ist quicklebendig.
+        This is the core. A stably connected satellite does not
+        re-authenticate -- its column ages while the device itself is very much
+        alive.
         """
         n = _Notify()
         out = await _run(notify=n, connected=["sat-a"],
@@ -108,8 +110,8 @@ class TestTheRightSignal:
         assert n.calls == []
 
     async def test_a_freshly_authenticated_but_absent_one_is_reported(self, settled):
-        # Die Gegenrichtung: gerade erst angemeldet, aber nicht in der
-        # Registratur — etwa weil die Verbindung sofort wieder abriss.
+        # The other direction: just authenticated, but not in the registry
+        # -- for instance because the connection dropped again immediately.
         n = _Notify()
         out = await _run(notify=n, connected=[],
                          rows=_rows(("sat-a", "Kueche", 0)), state=_State())
@@ -127,14 +129,13 @@ class TestTheRightSignal:
 
 class TestTheMessage:
     async def test_an_unchanged_situation_is_not_reported_again(self, settled):
-        """🛑 Der Kern dieser Fassung, und eine Berichtigung an mir selbst.
+        """🛑 The core of this version, and a correction to myself.
 
-        Die erste Fassung verliess sich auf den `dedup_key` von `notify_admin`
-        und ich behauptete, damit werde nicht stuendlich erneut gemeldet. Der
-        Betrieb hat das in DREI STUNDEN widerlegt: drei identische
-        Benachrichtigungen um 13:59, 14:59, 15:59, weil
-        `proactive_suppression_window` 60 Sekunden ist. Bei einem 30-Tage-Ausfall
-        waeren das 24 Meldungen am Tag.
+        The first version relied on `notify_admin`'s `dedup_key` and I claimed
+        that this prevented an hourly repeat report. Operation disproved that
+        within THREE HOURS: three identical notifications at 13:59, 14:59,
+        15:59, because `proactive_suppression_window` is 60 seconds. On a
+        30-day outage that would be 24 reports a day.
         """
         n, st = _Notify(), _State()
         rows = _rows(("a", "Kueche", 5), ("b", "Bad", 5))
@@ -146,13 +147,13 @@ class TestTheMessage:
     async def test_a_changed_situation_is_reported_again(self, settled):
         n, st = _Notify(), _State()
         await _run(notify=n, connected=[], rows=_rows(("a", "Kueche", 5)), state=st)
-        # Ein zweiter Raum fallt aus -> neue Lage, neue Nachricht.
+        # A second room drops out -> new situation, new message.
         await _run(notify=n, connected=[],
                    rows=_rows(("a", "Kueche", 5), ("b", "Bad", 1)), state=st)
         assert len(n.calls) == 2
 
     async def test_the_marker_ignores_row_order(self, settled):
-        # Sonst waere jede andere Sortierung der Abfrage eine "Aenderung".
+        # Otherwise any other ordering of the query would be a "change".
         n, st = _Notify(), _State()
         await _run(notify=n, connected=[],
                    rows=_rows(("b", "Bad", 5), ("a", "Kueche", 5)), state=st)
@@ -161,9 +162,9 @@ class TestTheMessage:
         assert len(n.calls) == 1
 
     async def test_a_return_is_reported_and_CLEARS_the_marker(self, settled):
-        """Rueckkehr ist eine eigene Nachricht — und der Marker MUSS leer werden.
+        """A return is a message of its own -- and the marker MUST be cleared.
 
-        Bleibt er stehen, waere der naechste Ausfall derselben Raeume stumm.
+        If it stays, the next outage of the same rooms would be silent.
         """
         n, st = _Notify(), _State()
         rows = _rows(("a", "Kueche", 5))
@@ -176,7 +177,7 @@ class TestTheMessage:
         assert len(n.calls) == 2
         assert "wieder verbunden" in n.calls[1]["title"]
 
-        # …und derselbe Ausfall danach meldet wieder.
+        # ...and the same outage afterwards reports again.
         await _run(notify=n, connected=[], rows=rows, state=st)
         assert len(n.calls) == 3
 
@@ -207,7 +208,7 @@ class TestSurvival:
 
         out = await _run(notify=boom, connected=[],
                          rows=_rows(("a", "Kueche", 5)), state=_State())
-        # Die Aufgabe meldet trotzdem ihr Ergebnis ins Laufprotokoll.
+        # The task still reports its result into the run log.
         assert out is not None
 
     async def test_an_empty_fleet_is_silent(self, settled):
@@ -222,15 +223,15 @@ async def _async(value):
 
 
 class TestTheFeatureGate:
-    """Der innere Riegel — der Pfad, den `manager=None` nimmt.
+    """The inner gate -- the path `manager=None` takes.
 
-    🛑 Dieser Block hat gefehlt, und das war kein Zufall: jeder andere Test hier
-    geht durch `_run()`, und das speist IMMER einen Manager ein. Damit war
-    `manager is None` nie wahr und der ganze Zweig aus Sicht der Suite toter
-    Code — einschliesslich des `ha_glue`-Imports, den er abschirmen soll. Genau
-    dieser Import ist der Grund, warum `test_ha_glue_boundary.py` diese Datei
-    durchlaesst. Ein Allowlist-Eintrag, dessen Bedingung ungeprueft ist, ist
-    keine Begruendung, sondern eine Behauptung.
+    🛑 This block was missing, and that was no accident: every other test here
+    goes through `_run()`, and that ALWAYS feeds in a manager. So
+    `manager is None` was never true and the whole branch was dead code as far
+    as the suite was concerned -- including the `ha_glue` import it is meant to
+    shield. That very import is the reason `test_ha_glue_boundary.py` lets this
+    file through. An allowlist entry whose condition is unchecked is not a
+    justification but an assertion.
     """
 
     async def test_without_the_satellite_feature_it_never_touches_ha_glue(
@@ -241,8 +242,9 @@ class TestTheFeatureGate:
         monkeypatch.setattr(settings, "feature_satellites", False)
         assert settings.features.get("satellites") is False
 
-        # Waere der Riegel weg, liefe der Code in den Import und von dort in die
-        # echte Registratur. Ein Fehlschlag hier heisst: die Grenze ist offen.
+        # Were the gate gone, the code would run into the import and from
+        # there into the real registry. A failure here means the boundary is
+        # open.
         n = _Notify()
         out = await wd.check_satellite_fleet(
             notify=n, manager=None,
@@ -253,10 +255,10 @@ class TestTheFeatureGate:
         assert n.calls == []
 
     async def test_with_the_feature_on_it_asks_the_registry(self, monkeypatch, settled):
-        """Die Gegenrichtung: mit Merkmal AN wird der Manager geholt.
+        """The other direction: with the feature ON the manager is fetched.
 
-        Der Import wird ersetzt, damit der Test ohne `ha_glue`-Registratur
-        laeuft — geprueft wird, DASS er stattfindet, nicht was dahinter liegt.
+        The import is replaced so the test runs without an `ha_glue` registry
+        -- what is checked is THAT it happens, not what lies behind it.
         """
         from utils.config import settings
 

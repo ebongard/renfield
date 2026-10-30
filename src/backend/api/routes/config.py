@@ -126,16 +126,17 @@ class FeatureFlags(BaseModel):
     # Per-user live event push (/ws/user). On => the frontend opens the socket and
     # invalidates KB queries on server-side changes. See utils/config.py.
     user_events_enabled: bool = True
-    # 🛑 Die beiden Schalter, von denen die STIMM-HUERDE abhaengt — und ohne die
-    # die Oberflaeche „scharf" meldet, waehrend der Faktor in Wahrheit RUHT.
+    # 🛑 The two switches the VOICE HURDLE depends on -- without them the UI
+    # reports "armed" while the factor is in fact DORMANT.
     #
-    # Die Vorbedingungen haben zwei Haelften (`services/voice_factor_preconditions`):
-    # instanzweite Schalter und das Profil der Person. Die Benutzerverwaltung sah
-    # nur die zweite und nannte alles andere scharf. Im Cutover-Fenster — erst die
-    # Einwilligungen einsammeln, dann `VOICE_AUTH_ENABLED` umlegen — meldet damit
-    # JEDE eingewilligte Zeile das Falsche, also genau dann, wenn es zaehlt.
+    # The preconditions have two halves
+    # (`services/voice_factor_preconditions`): instance-wide switches and the
+    # person's profile. User administration saw only the second and called
+    # everything else armed. During the cutover window -- collect the consents
+    # first, then flip `VOICE_AUTH_ENABLED` -- EVERY consenting row therefore
+    # reports the wrong thing, i.e. exactly when it matters.
     #
-    # Kein Geheimnis: beide sagen nur, ob ein Weg offen ist, nicht wer ihn geht.
+    # No secret: both only say whether a path is open, not who walks it.
     voice_auth_enabled: bool = False
     speaker_recognition_enabled: bool = True
     # Registry client id the browser sends as ?client= on /ws/voice (runtime, so

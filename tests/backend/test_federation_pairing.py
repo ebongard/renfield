@@ -413,18 +413,18 @@ class TestFullHandshakeRoundtrip:
         # Alice persisted bob as her peer + bob persisted alice as his peer.
         svc_alice._upsert_peer_user.assert_awaited_once()
         svc_bob._upsert_peer_user.assert_awaited_once()
-        # 🛑 KEINE Seite schreibt mehr eine CircleMembership (F-ID-3). Hier
-        # stand `_upsert_circle_membership.assert_awaited_once()` fuer beide.
-        # Die Methode gibt es nicht mehr: sie trug die ENTFERNTE Nutzerkennung
-        # in eine Spalte mit Fremdschluessel auf die LOKALE `users.id`. Die
-        # Stufe reist jetzt als `granted_tier` an der Paarungszeile mit.
-        # 🛑 Gegen die KLASSE pruefen, nicht gegen die Attrappe: die erste
-        # Fassung fragte `hasattr(svc_alice, …)` und mass damit, dass der Test
-        # sich das Attribut selbst gesetzt hatte.
+        # 🛑 NEITHER side writes a CircleMembership any more (F-ID-3). This
+        # used to read `_upsert_circle_membership.assert_awaited_once()` for
+        # both. The method no longer exists: it put the REMOTE user id into a
+        # column with a foreign key on the LOCAL `users.id`. The tier now
+        # travels along on the pairing row as `granted_tier`.
+        # 🛑 Check against the CLASS, not against the mock: the first version
+        # asked `hasattr(svc_alice, ...)` and thereby measured that the test
+        # had set the attribute on itself.
         assert not hasattr(PairingService, "_upsert_circle_membership"), (
             "Der Mitgliedschafts-Schreiber ist zurueck — das ist der Fehler von F-ID-3")
-        # bob gewaehrt alice 2 (accept), alice gewaehrt bob 3 (complete) —
-        # die Werte stehen oben im Rundlauf, nicht geraten.
+        # bob grants alice 2 (accept), alice grants bob 3 (complete) -- the
+        # values are set above in the round trip, not guessed.
         for svc, erwartet in ((svc_alice, 3), (svc_bob, 2)):
             kwargs = svc._upsert_peer_user.await_args.kwargs
             assert kwargs["granted_tier"] == erwartet, kwargs
@@ -443,12 +443,12 @@ class TestAdvertisedEndpointResolution:
         from api.routes.federation_pairing import _resolve_advertised_endpoints
         from utils.config import settings
         monkeypatch.setattr(settings, "federation_advertised_url", "http://from-setting:8000")
-        # 🛑 Ein AUFLOESBARER Name. Die Absicht dieses Tests („die Eingabe
-        # ueberstimmt den Standard") ist unveraendert; seit 2026-10-29 weist
-        # `_refuse_unresolvable` eine Eingabe ab, deren Name nicht auflöst, und
-        # `ui-override` tat das nie. Die Vorrichtung wurde nachgezogen, nicht
-        # die Absicht — `from-setting` darf unauflösbar bleiben, denn der
-        # konfigurierte Standard wird bewusst NICHT geprueft.
+        # 🛑 A RESOLVABLE name. The intent of this test ("the input overrides
+        # the default") is unchanged; since 2026-10-29 `_refuse_unresolvable`
+        # refuses an input whose name does not resolve, and `ui-override` never
+        # did. The fixture was brought along, not the intent -- `from-setting`
+        # may stay unresolvable, because the configured default is
+        # deliberately NOT checked.
         provided = [{"url": "http://localhost:8000"}]
         assert await _resolve_advertised_endpoints(provided) == provided
 
@@ -509,13 +509,13 @@ class TestAdvertisedEndpointResolution:
 
 
 class TestPeerRegistryResync:
-    """🛑 Eine Kopplung, die der agent loop nicht sieht, ist keine Kopplung.
+    """🛑 A pairing the agent loop does not see is not a pairing.
 
-    `sync_peers` hing bis zum 2026-10-28 nur am Widerruf und am App-Start. Wer
-    paarte, waehrend das Backend lief, bekam die Zeile in `peer_users`, aber
-    `mcp.peer_<id>.query_brain` erschien erst nach dem naechsten Neustart —
-    gemessen an beiden Instanzen: Pods um 13:35 UTC gestartet, Kopplungen um
-    14:22 UTC aktiv, kein tool registriert.
+    Until 2026-10-28 `sync_peers` hung only off the revocation and off app
+    startup. Whoever paired while the backend was running got the row in
+    `peer_users`, but `mcp.peer_<id>.query_brain` appeared only after the next
+    restart -- measured on both instances: pods started at 13:35 UTC, pairings
+    active at 14:22 UTC, no tool registered.
     """
 
     async def test_helper_syncs_when_a_manager_is_present(self, monkeypatch):
@@ -535,16 +535,16 @@ class TestPeerRegistryResync:
         assert gerufen == [manager]
 
     async def test_no_manager_is_not_an_error(self, monkeypatch):
-        """Beim Start ohne MCP (Tests, Migrations-Pod) darf das nicht werfen."""
+        """At startup without MCP (tests, the migration pod) this must not raise."""
         from api.routes import federation_pairing as fp
 
         request = MagicMock()
         request.app.state.mcp_manager = None
-        await fp._resync_peer_registry(request, MagicMock(), "test")  # kein raise
+        await fp._resync_peer_registry(request, MagicMock(), "test")  # no raise
 
     async def test_a_failing_sync_never_breaks_the_pairing(self, monkeypatch):
-        """Die Datenbank ist massgeblich; ein fehlgeschlagener resync kostet
-        Auffindbarkeit, nie Sicherheit — er darf die Paarung nicht umwerfen."""
+        """The database is authoritative; a failed resync costs
+        discoverability, never safety -- it must not overturn the pairing."""
         from api.routes import federation_pairing as fp
         from services import peer_mcp_registry
 
@@ -553,13 +553,13 @@ class TestPeerRegistryResync:
             AsyncMock(side_effect=RuntimeError("Harbor weg")))
         request = MagicMock()
         request.app.state.mcp_manager = MagicMock()
-        await fp._resync_peer_registry(request, MagicMock(), "test")  # kein raise
+        await fp._resync_peer_registry(request, MagicMock(), "test")  # no raise
 
     def test_every_pairing_mutating_route_resyncs(self):
-        """🛑 Die KLASSE, nicht die Instanz: jede Route, die eine Kopplung
-        anlegt oder widerruft, ruft den Helfer. Am AST gemessen, nicht am
-        Quelltext — ein Kommentar, der `sync_peers` erwaehnt, ist kein Aufruf.
-        Genau diese Verwechslung stand bis zum 2026-10-28 in `mcp_client.py`.
+        """🛑 The CLASS, not the instance: every route that creates or revokes
+        a pairing calls the helper. Measured on the AST, not on the source --
+        a comment mentioning `sync_peers` is not a call. That very confusion
+        stood in `mcp_client.py` until 2026-10-28.
         """
         import ast
         import inspect
@@ -581,8 +581,8 @@ class TestPeerRegistryResync:
         for name in ("accept_pair_offer", "complete_pair_handshake", "revoke_peer"):
             assert ruft.get(name) is True, f"{name} synchronisiert die Registry nicht"
 
-        # Negativkontrolle: die Pruefung ist nicht trivial wahr. `/pair/offer`
-        # legt noch keine Paarung an und darf NICHT synchronisieren.
+        # Negative control: the check is not trivially true. `/pair/offer`
+        # does not create a pairing yet and must NOT synchronize.
         assert ruft.get("create_pair_offer") is False, (
             "create_pair_offer sollte nicht synchronisieren — die Pruefung "
             "trifft offenbar jede Route und beweist nichts")

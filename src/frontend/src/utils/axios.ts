@@ -95,7 +95,7 @@ apiClient.interceptors.response.use(
     ) {
       window.dispatchEvent(new CustomEvent(PASSWORD_CHANGE_REQUIRED_EVENT));
     }
-    // Globale Error-Behandlung
+    // Global error handling
     console.error('API Error:', error);
     return Promise.reject(error);
   }

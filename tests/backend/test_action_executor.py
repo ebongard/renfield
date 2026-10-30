@@ -1,10 +1,10 @@
 """
-Tests für ActionExecutor
+Tests for ActionExecutor
 
-Testet:
-- Intent Routing (MCP, Knowledge, General)
-- MCP Tool Execution
-- Fehlerbehandlung
+Covers:
+- Intent routing (MCP, knowledge, general)
+- MCP tool execution
+- Error handling
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,11 +16,11 @@ import pytest
 # ============================================================================
 
 class TestActionExecutorRouting:
-    """Tests für Intent Routing"""
+    """Tests for intent routing"""
 
     @pytest.mark.unit
     async def test_route_mcp_intent(self, action_executor):
-        """Test: MCP Intent wird an mcp_manager weitergeleitet"""
+        """An MCP intent is forwarded to the mcp_manager"""
         intent_data = {
             "intent": "mcp.homeassistant.turn_on",
             "parameters": {"entity_id": "light.wohnzimmer"},
@@ -40,7 +40,7 @@ class TestActionExecutorRouting:
 
     @pytest.mark.unit
     async def test_route_mcp_n8n_intent(self, action_executor):
-        """Test: MCP n8n Intent wird korrekt geroutet"""
+        """An MCP n8n intent is routed correctly"""
         intent_data = {
             "intent": "mcp.n8n.n8n_list_workflows",
             "parameters": {},
@@ -60,7 +60,7 @@ class TestActionExecutorRouting:
 
     @pytest.mark.unit
     async def test_route_mcp_weather_intent(self, action_executor):
-        """Test: MCP Weather Intent wird korrekt geroutet"""
+        """An MCP weather intent is routed correctly"""
         intent_data = {
             "intent": "mcp.weather.get_current_weather",
             "parameters": {"location": "Berlin"},
@@ -80,7 +80,7 @@ class TestActionExecutorRouting:
 
     @pytest.mark.unit
     async def test_route_general_conversation(self, action_executor):
-        """Test: Conversation Intent führt keine Aktion aus"""
+        """A conversation intent executes no action"""
         intent_data = {
             "intent": "general.conversation",
             "parameters": {},
@@ -95,7 +95,7 @@ class TestActionExecutorRouting:
 
     @pytest.mark.unit
     async def test_route_unknown_intent(self, action_executor):
-        """Test: Unbekannter Intent gibt Fehler zurück"""
+        """An unknown intent returns an error"""
         intent_data = {
             "intent": "unknown.action",
             "parameters": {},
@@ -132,7 +132,7 @@ class TestActionExecutorRouting:
 
     @pytest.mark.unit
     async def test_route_knowledge_intent(self, action_executor):
-        """Test: Knowledge Intent wird an RAG-Service geroutet"""
+        """A knowledge intent is routed to the RAG service"""
         intent_data = {
             "intent": "knowledge.search",
             "parameters": {"query": "Docker Anleitung"},
@@ -160,11 +160,11 @@ class TestActionExecutorRouting:
 # ============================================================================
 
 class TestActionExecutorMCP:
-    """Tests für MCP Tool Execution"""
+    """Tests for MCP tool execution"""
 
     @pytest.mark.unit
     async def test_mcp_not_available_returns_unknown(self):
-        """Test: Ohne mcp_manager wird MCP Intent als unknown behandelt"""
+        """Without an mcp_manager an MCP intent is treated as unknown"""
         from services.action_executor import ActionExecutor
 
         executor = ActionExecutor(mcp_manager=None)
@@ -182,7 +182,7 @@ class TestActionExecutorMCP:
 
     @pytest.mark.unit
     async def test_mcp_tool_failure_propagated(self, action_executor):
-        """Test: MCP Tool Fehler werden propagiert"""
+        """MCP tool errors are propagated"""
         action_executor.mcp_manager.execute_tool.return_value = {
             "success": False,
             "message": "Tool execution failed: rate limited",
@@ -718,11 +718,11 @@ class TestActionExecutorVerifyToolCall:
 # ============================================================================
 
 class TestActionExecutorEdgeCases:
-    """Tests für Edge Cases"""
+    """Tests for edge cases"""
 
     @pytest.mark.unit
     async def test_missing_intent(self, action_executor):
-        """Test: Fehlender Intent wird als conversation behandelt"""
+        """A missing intent is treated as conversation"""
         intent_data = {
             "parameters": {},
             "confidence": 0.5
@@ -735,7 +735,7 @@ class TestActionExecutorEdgeCases:
 
     @pytest.mark.unit
     async def test_knowledge_intent_without_query(self, action_executor):
-        """Test: Knowledge Intent ohne Query gibt Fehler"""
+        """A knowledge intent without a query returns an error"""
         intent_data = {
             "intent": "knowledge.search",
             "parameters": {},
@@ -753,11 +753,11 @@ class TestActionExecutorEdgeCases:
 # ============================================================================
 
 class TestActionExecutorKnowledgeEmptyResult:
-    """Tests für empty_result Flag bei Knowledge-Intents"""
+    """Tests for the empty_result flag on knowledge intents"""
 
     @pytest.mark.unit
     async def test_knowledge_empty_result_flag(self):
-        """Test: Knowledge Intent mit 0 Ergebnissen setzt empty_result=True"""
+        """A knowledge intent with 0 results sets empty_result=True"""
         from services.action_executor import ActionExecutor
 
         executor = ActionExecutor()
@@ -786,7 +786,7 @@ class TestActionExecutorKnowledgeEmptyResult:
 
     @pytest.mark.unit
     async def test_knowledge_with_results_no_empty_flag(self):
-        """Test: Knowledge Intent mit Ergebnissen hat kein empty_result"""
+        """A knowledge intent with results has no empty_result"""
         from services.action_executor import ActionExecutor
 
         executor = ActionExecutor()

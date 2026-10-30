@@ -706,14 +706,15 @@ class TestBatchBCHandlers:
         builtins.register_builtin_handlers()
         seeds = builtins.builtin_task_seeds()
 
-        # +1: Vektorindex-Schwelle prüfen — der Auslöser gegen eine Ausnahme mit
-        # Verfallsdatum (PR #1336: document_chunks/conversation_memories casten
-        # bewusst nicht auf halfvec, weil der Planer den Index bei ihrer Größe
-        # nicht wählt; ab 4 000 eingebetteten Zeilen ist neu zu messen).
-        # +1: Satelliten-Flotte prüfen — bis dahin fiel ein ausgefallener
-        # Satellit GAR NICHT auf (BensZimmer war 30 Tage weg, ohne eine
-        # einzige Benachrichtigung).
-        assert len(seeds) == 28  # +1: Paperless-Suchindex prüfen (Fix B)
+        # +1: check the vector-index threshold -- the trigger against an
+        # exception with an expiry date (PR #1336: document_chunks and
+        # conversation_memories deliberately do not cast to halfvec, because
+        # the planner does not choose the index at their size; from 4,000
+        # embedded rows on this has to be measured again).
+        # +1: check the satellite fleet -- until then a satellite that had
+        # failed went entirely unnoticed (one room was away for 30 days
+        # without a single notification).
+        assert len(seeds) == 28  # +1: check the Paperless search index (fix B)
         names = [s.name for s in seeds]
         # Names are the ON CONFLICT seed key — a duplicate would silently drop a
         # built-in. Expressed against len(seeds) so adding a built-in updates ONE
@@ -803,16 +804,16 @@ class TestRunHistory:
 
 
 class TestSatelliteFleetGate:
-    """Das Merkmalstor der Flottenwache — Geschwister zu `TestBuiltinHandlers`
-    `test_mcp_health_gate_*`.
+    """The feature gate of the fleet watchdog -- a sibling of
+    `TestBuiltinHandlers` `test_mcp_health_gate_*`.
 
-    🛑 Warum das hier stehen MUSS: das Tor existiert nicht wegen eines Flags,
-    sondern wegen der Architekturgrenze. Eine Plattform-Installation ohne
-    `ha_glue` hat keine Satelliten, und der Waechter wuerde dort
-    `ha_glue.services.satellite_manager` importieren. `test_ha_glue_boundary.py`
-    laesst `services/satellite_fleet_watchdog.py` nur durch, WEIL dieses Tor
-    davor steht — ohne diese Tests haengt der Allowlist-Eintrag an einer
-    ungepruften Behauptung.
+    🛑 Why this MUST stand here: the gate does not exist because of a flag but
+    because of the architecture boundary. A platform-only install without
+    `ha_glue` has no satellites, and the watchdog would import
+    `ha_glue.services.satellite_manager` there.
+    `test_ha_glue_boundary.py` lets `services/satellite_fleet_watchdog.py`
+    through only BECAUSE this gate stands in front of it -- without these tests
+    the allowlist entry hangs on an unchecked assertion.
     """
 
     @staticmethod

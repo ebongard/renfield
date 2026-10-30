@@ -1,18 +1,18 @@
-"""Eine ausdrückliche Korrektur des Nutzers überstimmt die Werkzeug-Vorauswahl.
+"""An explicit correction by the user overrides the tool preselection.
 
-🛑 Der Anlass, am 2026-10-26 vom Eigentümer gemeldet: „wenn ich über falsch
-erkannt den Scanner auswähle, sollte das eine Auswirkung haben."
+🛑 The occasion, reported by the owner on 2026-10-26: "when I pick the scanner
+through 'wrongly recognised', that should have an effect."
 
-Hatte es nicht. „Korrigieren & neu beantworten" schickt einen KONKRETEN
-Werkzeugnamen (`mcp.<server>.<tool>`, siehe `agent_router.role_for_intent`).
-Der `chat_handler` leitete davon nur die ROLLE ab und warf den Namen weg — und
-die Rolle war in jedem gemeldeten Fehlgriff schon die richtige (`documents`).
-Die Korrektur blieb also wirkungslos, weil die Schicht DARUNTER das Werkzeug
-wieder entfernte: die Vorauswahl bot `scan_document` nicht an, und der Agent
-konnte es nicht rufen, egal was der Nutzer korrigiert hatte.
+It did not. "Correct & re-answer" sends a CONCRETE tool name
+(`mcp.<server>.<tool>`, see `agent_router.role_for_intent`). The
+`chat_handler` derived only the ROLE from it and threw the name away -- and in
+every misfire that was reported the role was already the right one
+(`documents`). So the correction had no effect, because the layer BELOW
+removed the tool again: the preselection did not offer `scan_document`, and
+the agent could not call it, no matter what the user had corrected.
 
-Wer sagt „das war ein Scan", hat die Frage entschieden. Ein Vorauswahl-Modell
-darf sie nicht neu aufwerfen.
+Whoever says "that was a scan" has decided the question. A preselection model
+must not reopen it.
 """
 import json
 from types import SimpleNamespace
@@ -24,7 +24,7 @@ from services.agent_tools import AgentToolRegistry, ToolDefinition
 
 pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
-#: Mehr als die sechs, unter denen die Vorauswahl gar nicht erst anläuft.
+#: More than the six below which the preselection does not even start.
 ALLE = [
     "mcp.scanner.scan_document",
     "mcp.paperless.search_documents",
@@ -35,7 +35,7 @@ ALLE = [
     "mcp.email.send",
     "internal.ingest_status",
 ]
-#: Was das Vorauswahl-Modell liefert — ohne den Scanner, genau der Fehlgriff.
+#: What the preselection model delivers -- without the scanner, exactly the misfire.
 OHNE_SCANNER = ["mcp.paperless.search_documents", "internal.knowledge_search"]
 
 
@@ -64,11 +64,10 @@ def gestellter_pfad(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_without_a_correction_the_model_decides(gestellter_pfad):
-    """Die Vorlage: ohne Korrektur bleibt es beim Urteil des Modells.
+    """The baseline: without a correction the model's judgement stands.
 
-    🛑 Dieser Test ist die Hälfte, die das Folgende aussagekräftig macht —
-    ohne ihn könnte der Riegel unten das Werkzeug immer hinzufügen und
-    niemandem fiele es auf.
+    🛑 This test is the half that makes the next one meaningful -- without it
+    the guard below could add the tool always and nobody would notice.
     """
     gewaehlt = await _dienst()._preselect_tools(
         "scanne nach x-idra", gestellter_pfad, "irgendein-modell",
@@ -81,19 +80,19 @@ async def test_without_a_correction_the_model_decides(gestellter_pfad):
 
 @pytest.mark.asyncio
 async def test_a_correction_puts_the_WHOLE_SERVER_back(gestellter_pfad):
-    """🛑 Der ganze Server, nicht der Vertreter aus dem Menü.
+    """🛑 The whole server, not the stand-in from the menu.
 
-    Das Auswahlmenü gruppiert die MCP-Werkzeuge nach Server, zeigt den
-    Servernamen („Scanner") und schickt als Wert das ERSTE Werkzeug dieses
-    Servers (`IntentCorrectionButton.tsx:57-67`). Hier also absichtlich
-    `scanner_status` als Korrektur — ein Vertreter, den der Nutzer so nie
-    gemeint hat — und `scan_document` muss trotzdem zurückkommen.
+    The selection menu groups the MCP tools by server, shows the server name
+    ("Scanner") and sends the FIRST tool of that server as the value
+    (`IntentCorrectionButton.tsx:57-67`). So the correction here is
+    deliberately `scanner_status` -- a stand-in the user never meant -- and
+    `scan_document` has to come back regardless.
 
-    Die erste Fassung dieses Riegels nagelte genau den gesendeten Namen fest.
-    Damit hätte „Scanner" je nach Reihenfolge der API-Liste `list_scanners`
-    erzwungen und `scan_document` weiter draußen gelassen: eine Korrektur in
-    ein anderes Werkzeug umgedeutet. Vom Eigentümer im Gespräch bemerkt
-    („es gibt eine rolle scanner, nicht documents").
+    The first version of this guard pinned exactly the name that was sent.
+    With that, "Scanner" would have forced `list_scanners` depending on the
+    order of the API list and left `scan_document` out: a correction
+    reinterpreted into a different tool. Noticed by the owner in conversation
+    ("es gibt eine rolle scanner, nicht documents").
     """
     gewaehlt = await _dienst()._preselect_tools(
         "scanne nach x-idra", gestellter_pfad, "irgendein-modell",
@@ -105,21 +104,21 @@ async def test_a_correction_puts_the_WHOLE_SERVER_back(gestellter_pfad):
     for name in ALLE:
         if name.startswith("mcp.scanner."):
             assert name in gewaehlt, f"{name} fehlt — nicht der ganze Server"
-    # Und sie wirft die Wahl des Modells nicht weg:
+    # And it does not throw the model's choice away:
     assert set(OHNE_SCANNER) <= set(gewaehlt), (
         "die Korrektur darf die uebrigen Werkzeuge nicht verdraengen")
 
 
 def test_an_internal_tool_pins_only_itself():
-    """`internal.<x>` hat keinen Server dahinter — genau eines, nicht alle."""
+    """`internal.<x>` has no server behind it -- exactly one, not all."""
     registry = dict.fromkeys(ALLE, object())
     assert _tools_pinned_by_correction("internal.ingest_status", registry) == \
         ["internal.ingest_status"]
 
 
 def test_a_core_option_pins_nothing():
-    """`knowledge.ask` und `general.conversation` benennen kein Werkzeug —
-    dort entscheidet weiter die Rolle, und es darf nichts erfunden werden."""
+    """`knowledge.ask` and `general.conversation` name no tool -- there the
+    role still decides, and nothing may be invented."""
     registry = dict.fromkeys(ALLE, object())
     assert _tools_pinned_by_correction("knowledge.ask", registry) == []
     assert _tools_pinned_by_correction("general.conversation", registry) == []
@@ -128,10 +127,10 @@ def test_a_core_option_pins_nothing():
 
 @pytest.mark.asyncio
 async def test_an_unknown_correction_is_ignored(gestellter_pfad):
-    """Ein Name, den die Registratur nicht kennt, darf nichts erfinden.
+    """A name the registry does not know must not invent anything.
 
-    Die Korrektur kommt vom Klienten; ein unbekannter oder veralteter Name
-    darf keinen Eintrag erzeugen, den es nicht gibt.
+    The correction comes from the client; an unknown or stale name must not
+    produce an entry that does not exist.
     """
     gewaehlt = await _dienst()._preselect_tools(
         "scanne nach x-idra", gestellter_pfad, "irgendein-modell",
@@ -139,11 +138,10 @@ async def test_an_unknown_correction_is_ignored(gestellter_pfad):
     )
     assert set(gewaehlt) == set(OHNE_SCANNER)
     assert all(n in ALLE for n in gewaehlt), "ein unbekanntes Werkzeug kam herein"
-    # 🛑 Und der Beweis, dass dieser Test die Festnagelung ueberhaupt
-    # DURCHLAEUFT: ein unbekannter Server unterscheidet sich sonst nicht von
-    # einer Festnagelung, die gar nicht laeuft. Eine Mutation, die die
-    # Festnagelung voellig abschaltete, liess diesen Test gruen. Darum
-    # derselbe Aufruf mit einem BEKANNTEN Server als Gegenstueck.
+    # 🛑 And the proof that this test EXERCISES the pinning at all: an
+    # unknown server is otherwise indistinguishable from pinning that does not
+    # run. A mutation that switched the pinning off entirely left this test
+    # green. Hence the same call with a KNOWN server as the counterpart.
     registry = dict.fromkeys(ALLE, object())
     assert _tools_pinned_by_correction("mcp.nichts.gibtesnicht", registry) == []
     assert _tools_pinned_by_correction("mcp.scanner.egal", registry), (
@@ -152,14 +150,13 @@ async def test_an_unknown_correction_is_ignored(gestellter_pfad):
 
 @pytest.mark.asyncio
 async def test_pinning_is_idempotent(monkeypatch):
-    """Was das Modell schon gewählt hat, darf nicht doppelt zählen.
+    """What the model already chose must not count twice.
 
-    🛑 Dieser Test behauptete erst, es bleibe GENAU beim benannten Werkzeug
-    plus der Modellwahl. Das war die alte Absicht (ein Werkzeug festnageln) und
-    ist mit der Server-Regel falsch: wer „Scanner" korrigiert, bekommt den
-    ganzen Server. Nach der Projektregel auf die neue Absicht geändert, nicht
-    auf das gebogen, was der Code tut — geprüft wird jetzt die
-    Wiederholungsfestigkeit.
+    🛑 This test first claimed it stays EXACTLY with the named tool plus the
+    model's choice. That was the old intent (pin one tool) and is wrong under
+    the server rule: whoever corrects to "Scanner" gets the whole server.
+    Changed to the new intent per the project rule, not bent to whatever the
+    code does -- what is checked now is idempotence.
     """
     import services.agent_service as mod
     monkeypatch.setattr(mod.prompt_manager, "get", lambda *a, **k: "x")
@@ -174,11 +171,11 @@ async def test_pinning_is_idempotent(monkeypatch):
     )
     scanner = {n for n in ALLE if n.startswith("mcp.scanner.")}
     assert set(gewaehlt) == scanner | set(OHNE_SCANNER)
-    # 🛑 Hier stand `len(gewaehlt) == len(set(gewaehlt))`. Ueber die Schluessel
-    # eines dict kann das NIE fehlschlagen — eine leere Behauptung, und der
-    # Kommentar daneben gab das sogar zu, statt sie zu loeschen. Was wirklich
-    # zu pruefen ist: die Festnagelung ueberSCHREIBT nichts, was das Modell
-    # schon gewaehlt hatte. Im Review zu #1414 gefunden.
+    # 🛑 This used to read `len(gewaehlt) == len(set(gewaehlt))`. Over the
+    # keys of a dict that can NEVER fail -- an empty assertion, and the
+    # comment next to it even admitted as much instead of deleting it. What
+    # really has to be checked: the pinning OVERWRITES nothing the model had
+    # already chosen. Found in the review of #1414.
     svc = _dienst()
     for name in scanner | set(OHNE_SCANNER):
         assert gewaehlt[name] is svc.tool_registry._tools[name] or \
@@ -188,22 +185,21 @@ async def test_pinning_is_idempotent(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_pin_runs_BEFORE_the_zero_tools_bailout(monkeypatch):
-    """🛑 Die Reihenfolge war nirgends behauptet.
+    """🛑 The order was asserted nowhere.
 
-    Liefert das Modell nur UNGÜLTIGE Namen, ist `filtered` leer und die
-    Vorauswahl gibt `None` zurück — der Agent bekommt dann ALLE Werkzeuge,
-    also wieder den Zustand „zu viele", den diese Schicht gerade vermeiden
-    soll. Steht die Festnagelung erst NACH diesem Rückfall, geht die Korrektur
-    genau dort verloren.
+    If the model delivers only INVALID names, `filtered` is empty and the
+    preselection returns `None` -- the agent then gets ALL the tools, so back
+    to the "too many" state this layer exists to avoid. If the pinning stands
+    only AFTER that fallback, the correction is lost exactly there.
 
-    Eine Mutation, die die Festnagelung unter den Rückfall verschob, ließ alle
-    zehn Tests grün. Im Review zu #1414 durch Mutationstest gefunden.
+    A mutation that moved the pinning below the fallback left all ten tests
+    green. Found by mutation test in the review of #1414.
     """
     import services.agent_service as mod
     monkeypatch.setattr(mod.prompt_manager, "get", lambda *a, **k: "x")
 
     async def chat(**kwargs):
-        # Nur Namen, die die Registratur NICHT kennt.
+        # Only names the registry does NOT know.
         return SimpleNamespace(message=SimpleNamespace(
             content=json.dumps(["mcp.gibt.esnicht", "internal.auch_nicht"])))
 

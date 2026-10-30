@@ -2107,18 +2107,20 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             WHERE is_active = true
               AND embedding IS NOT NULL
               {user_filter}
-            -- KEIN halfvec-Cast, und das ist GEMESSEN, nicht vermutet. Der Cast
-            -- lohnt nur, wenn der Planer den HNSW-Index daraufhin auch waehlt.
-            -- Haushalt 2026-09-25, 81 Zeilen: mit Cast 4,1 ms (Seq Scan, die
-            -- Umwandlung kostet je Zeile), ohne Cast 0,9 ms. Erzwungen war der
-            -- Indexscan noch langsamer. Zum Vergleich kg_entities bei 4 813 Zeilen:
-            -- 4,6 ms MIT Cast gegen 34 ms ohne — dort waehlt der Planer den Index
-            -- und gewinnt siebenfach. Die Schwelle liegt also dazwischen.
-            -- AUSLOESER: die Aufgabe `vector_index_threshold` fragt taeglich den
-            -- PLANER, ob er den Index bei GECASTETER Form naehme, und meldet erst
-            -- dann. NICHT die Zeilenzahl: die sagt es nicht vorher (xidra nutzt den
-            -- Index auf kg_entities schon bei 1 953 Zeilen, auf document_chunks bei
-            -- 3 165 nicht). Auf die Meldung hin gegenmessen, nicht annehmen.
+            -- NO halfvec cast, and that is MEASURED, not assumed. The cast
+            -- only pays off once the planner actually picks the HNSW index for
+            -- it. Household 2026-09-25, 81 rows: with cast 4.1 ms (seq scan,
+            -- the conversion costs per row), without cast 0.9 ms. Forcing the
+            -- index scan was slower still. For comparison kg_entities at
+            -- 4,813 rows: 4.6 ms WITH cast against 34 ms without -- there the
+            -- planner does pick the index and wins sevenfold. So the threshold
+            -- sits somewhere in between.
+            -- TRIGGER: the `vector_index_threshold` task asks the PLANNER
+            -- daily whether it would take the index in CAST form, and only
+            -- then reports. NOT the row count: that does not predict it
+            -- (xidra uses the index on kg_entities at 1,953 rows but not on
+            -- document_chunks at 3,165). When it reports, measure again -- do
+            -- not assume.
             ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT :top_k
         """)
@@ -2474,18 +2476,20 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             WHERE is_active = true
               AND embedding IS NOT NULL
               {user_filter}
-            -- KEIN halfvec-Cast, und das ist GEMESSEN, nicht vermutet. Der Cast
-            -- lohnt nur, wenn der Planer den HNSW-Index daraufhin auch waehlt.
-            -- Haushalt 2026-09-25, 81 Zeilen: mit Cast 4,1 ms (Seq Scan, die
-            -- Umwandlung kostet je Zeile), ohne Cast 0,9 ms. Erzwungen war der
-            -- Indexscan noch langsamer. Zum Vergleich kg_entities bei 4 813 Zeilen:
-            -- 4,6 ms MIT Cast gegen 34 ms ohne — dort waehlt der Planer den Index
-            -- und gewinnt siebenfach. Die Schwelle liegt also dazwischen.
-            -- AUSLOESER: die Aufgabe `vector_index_threshold` fragt taeglich den
-            -- PLANER, ob er den Index bei GECASTETER Form naehme, und meldet erst
-            -- dann. NICHT die Zeilenzahl: die sagt es nicht vorher (xidra nutzt den
-            -- Index auf kg_entities schon bei 1 953 Zeilen, auf document_chunks bei
-            -- 3 165 nicht). Auf die Meldung hin gegenmessen, nicht annehmen.
+            -- NO halfvec cast, and that is MEASURED, not assumed. The cast
+            -- only pays off once the planner actually picks the HNSW index for
+            -- it. Household 2026-09-25, 81 rows: with cast 4.1 ms (seq scan,
+            -- the conversion costs per row), without cast 0.9 ms. Forcing the
+            -- index scan was slower still. For comparison kg_entities at
+            -- 4,813 rows: 4.6 ms WITH cast against 34 ms without -- there the
+            -- planner does pick the index and wins sevenfold. So the threshold
+            -- sits somewhere in between.
+            -- TRIGGER: the `vector_index_threshold` task asks the PLANNER
+            -- daily whether it would take the index in CAST form, and only
+            -- then reports. NOT the row count: that does not predict it
+            -- (xidra uses the index on kg_entities at 1,953 rows but not on
+            -- document_chunks at 3,165). When it reports, measure again -- do
+            -- not assume.
             ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT 1
         """)

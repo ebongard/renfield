@@ -378,6 +378,60 @@ class TestSearch:
         assert total_messages <= 3
 
 
+@pytest.mark.backend
+@pytest.mark.database
+class TestNoContentInTheLog:
+    """🛑 What a person wrote or searched for never goes into the log --
+    neither on the success path nor through the `[SQL: ...] [parameters:
+    ...]` tail of a raw SQLAlchemy error. Until 2026-10-30 the service
+    logged the search query on success, the first 50 characters of every
+    saved message at DEBUG, and 13 raw exceptions."""
+
+    SECRET = "sehr privater Satz"
+
+    @staticmethod
+    def _capture():
+        from loguru import logger as _l
+
+        lines: list[str] = []
+        sink_id = _l.add(lambda m: lines.append(m.record["message"]),
+                         level="DEBUG", format="{message}")
+        return lines, lambda: _l.remove(sink_id)
+
+    async def test_saving_and_searching_log_no_content(self, db_session: AsyncSession):
+        service = ConversationService(db_session)
+        lines, stop = self._capture()
+        try:
+            await service.save_message("leak-1", "user", self.SECRET)
+            found = await service.search(self.SECRET)
+            await service.search_messages(self.SECRET, user_id=None)
+        finally:
+            stop()
+        assert found, "the search must actually have run"
+        assert lines, "nothing was logged -- the capture measured nothing"
+        assert not [t for t in lines if self.SECRET in t], lines
+
+    async def test_a_failing_query_logs_no_bound_parameter(self, db_session: AsyncSession):
+        from unittest.mock import patch
+
+        from sqlalchemy.exc import StatementError
+
+        service = ConversationService(db_session)
+        boom = StatementError(message="boom", statement="SELECT ...",
+                              params={"q": self.SECRET}, orig=RuntimeError("o"))
+        assert self.SECRET in str(boom), "control: the raw error carries it"
+        lines, stop = self._capture()
+        try:
+            with patch.object(db_session, "execute", side_effect=boom):
+                assert await service.search(self.SECRET) == []
+                result = await service.search_messages(self.SECRET, user_id=None)
+                assert result["results"] == []
+        finally:
+            stop()
+        assert [t for t in lines if "boom" in t], lines
+        assert not [t for t in lines if self.SECRET in t], lines
+
+
 # ============================================================================
 # Database Model Tests
 # ============================================================================
@@ -581,23 +635,23 @@ class TestConversationOwnershipGuard:
 @pytest.mark.backend
 @pytest.mark.database
 class TestLatestMessageId:
-    """Die Frischemarke: erkennt sie einen FREMDEN Schreibvorgang?
+    """The freshness mark: does it detect a FOREIGN write?
 
-    🛑 Wozu: die Historie einer lebenden Sitzung wird einmal je Socket aus der
-    Datenbank geladen und waechst danach nur ueber `add_to_history`. Ein
-    asynchroner Erzeuger — die Scanner-Fertigmeldung, die Gespraechsuebergabe,
-    die Paperless-Bestaetigung — schreibt direkt in die Datenbank und faesst
-    die lebende Liste nicht an. Der Agent las damit einen veralteten Kontext.
+    🛑 What for: a live session's history is loaded from the database once per
+    socket and after that grows only through `add_to_history`. An asynchronous
+    producer -- the scanner completion notice, the conversation handover, the
+    Paperless confirmation -- writes directly to the database and does not touch
+    the live list. So the agent read a stale context.
 
-    Gemessen am 2026-10-26: ein Scan scheiterte am Papierstau, die Meldung
-    stand in der Datenbank — und der Agent antwortete auf zwei weitere Bitten
-    „der Scan laeuft bereits im Hintergrund, Du wirst benachrichtigt" und rief
-    `scan_document` nie. Diese Zahl ist das Mittel, das zu bemerken.
+    Measured on 2026-10-26: a scan failed on a paper jam, the notice was in the
+    database -- and to two further requests the agent answered "der Scan laeuft
+    bereits im Hintergrund, Du wirst benachrichtigt" and never called
+    `scan_document`. This number is the means of noticing that.
     """
 
     async def test_an_unknown_session_has_no_id(self, db_session: AsyncSession):
-        """Keine Sitzung heisst „keine Auskunft", nicht 0 — sonst waere jede
-        frische Sitzung sofort „veraltet"."""
+        """No session means "no answer", not 0 -- otherwise every fresh
+        session would immediately be "stale"."""
         service = ConversationService(db_session)
         assert await service.latest_message_id("gibt-es-nicht") is None
 
@@ -608,14 +662,14 @@ class TestLatestMessageId:
         erste = await service.latest_message_id(sid)
         assert erste is not None
 
-        # Der Zug selbst schreibt seine Antwort …
+        # The turn itself writes its answer ...
         await service.save_message(sid, "assistant", "Scan gestartet",
                                    metadata={"action_success": True})
         zweite = await service.latest_message_id(sid)
         assert zweite > erste
 
-        # … und DANACH schreibt ein asynchroner Erzeuger die Fertigmeldung.
-        # Genau diesen Schreibvorgang muss die Marke sichtbar machen.
+        # ... and AFTER that an asynchronous producer writes the completion
+        # notice. That is exactly the write the mark has to make visible.
         await service.save_message(
             sid, "assistant", "Der Scan ist am Papierstau gescheitert.",
             metadata={"scanner_job": {"job_id": "x", "status": "failed"},
@@ -626,9 +680,9 @@ class TestLatestMessageId:
             "Sitzung koennte ihn damit nie bemerken")
 
     async def test_the_loaded_history_carries_the_marker(self, db_session: AsyncSession):
-        """Und nach dem Neuladen traegt die Historie `action_success: False`,
-        damit der Stale-Error-Riegel greifen KANN. Ohne diese Haelfte ist die
-        Frischepruefung wirkungslos — und umgekehrt."""
+        """And after the reload the history carries `action_success: False`,
+        so the stale-error guard CAN take hold. Without this half the freshness
+        check has no effect -- and vice versa."""
         service = ConversationService(db_session)
         sid = "frische-2"
         await service.save_message(sid, "assistant", "Scan gestartet",

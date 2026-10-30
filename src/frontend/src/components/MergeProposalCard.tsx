@@ -140,13 +140,13 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
           className="btn btn-secondary"
           onClick={onReject}
           disabled={busy}
-          // Absicht: bei einem vorsichtigen Vorschlag bekommt die SICHERE
-          // Aktion den Fokus, nicht die zusammenfuehrende.
-          // 🛑 Bekannter Fehler, #1349: die Liste rendert eine Karte JE Vorschlag,
-          // also verlangen bei mehreren vorsichtigen Vorschlaegen alle den Fokus
-          // und die letzte gewinnt. Nicht hier geloest, weil der Fix eine
-          // Entwurfsentscheidung ist (Elternkomponente rechnet den Index, oder
-          // gar kein DOM-autoFocus mehr).
+          // Deliberate: on a cautious proposal the SAFE action takes the
+          // focus, not the merging one.
+          // 🛑 Known defect, #1349: the list renders one card PER proposal, so
+          // with several cautious proposals all of them claim the focus and the
+          // last one wins. Not solved here, because the fix is a design
+          // decision (the parent component computes the index, or no DOM
+          // autoFocus at all any more).
           autoFocus={cautious}
         >
           {t('circles.mergeProposals.reject')}

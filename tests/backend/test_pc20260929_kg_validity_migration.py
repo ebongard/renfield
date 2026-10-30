@@ -1,4 +1,4 @@
-"""Real-Postgres tests for ``pc20260929_kg_validity`` (#875 Stufe 1).
+"""Real-Postgres tests for ``pc20260929_kg_validity`` (#875 stage 1).
 
 Harness as in ``test_pc20260423_migration.py``: a throwaway schema, the
 pre-migration shape of the one table the migration touches, and the real
@@ -15,7 +15,6 @@ What must hold (docs/design/kg-bitemporal-edges.md §5, §12.1):
 from __future__ import annotations
 
 import importlib.util
-import os
 import uuid
 from pathlib import Path
 
@@ -43,12 +42,12 @@ def _load_migration():
 
 
 @pytest.fixture
-async def schema_conn():
-    dsn = os.environ.get("RENFIELD_TEST_PG_URL")
-    if dsn is None:
-        pytest.skip("RENFIELD_TEST_PG_URL not set — Postgres tests disabled")
-    if dsn.startswith("postgresql://"):
-        dsn = dsn.replace("postgresql://", "postgresql+asyncpg://", 1)
+async def schema_conn(pg_url):
+    # DSN from the shared `pg_url` fixture. This file used to carry its own
+    # copy of the scheme normalisation -- one of three copies, while two other
+    # files had none and errored out with ModuleNotFoundError: psycopg2
+    # (2026-10-30). One helper, one place.
+    dsn = pg_url
     engine = create_async_engine(dsn, poolclass=NullPool, future=True)
     schema = f"pc875_{uuid.uuid4().hex[:12]}"
     conn = await engine.connect()

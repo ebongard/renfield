@@ -89,9 +89,9 @@ def mock_db_with_peer(asker_identity):
     peer.circle_owner_id = 1  # responder's local user
     peer.remote_pubkey = asker_identity.public_key_hex()
     peer.remote_user_id = 42
-    # 🛑 Seit F-ID-3 traegt die PAARUNG die Stufe. Vorher kam sie aus einer
-    # `CircleMembership`, die auf `remote_user_id` keyte — einer Zahl der
-    # GEGENSTELLE in einer Spalte mit Fremdschluessel auf die LOKALE users.id.
+    # 🛑 Since F-ID-3 the PAIRING carries the tier. Before that it came from a
+    # `CircleMembership` keyed on `remote_user_id` -- a number belonging to the
+    # FAR SIDE, in a column with a foreign key on the LOCAL users.id.
     peer.granted_tier = 2
     peer.revoked_at = None
 
@@ -100,11 +100,11 @@ def mock_db_with_peer(asker_identity):
     async def execute_side(stmt):
         result = MagicMock()
         if "peer_users" in str(stmt):
-            # 🛑 Seit 2026-10-28 holt `_lookup_peer` ALLE aktiven Zeilen zum
-            # Schluessel und weist ab, wenn es mehr als eine ist. Vorher war es
-            # ein `scalar_one_or_none()`, das bei zwei lokalen Konten mit
-            # derselben Gegenstelle `MultipleResultsFound` geworfen haette —
-            # also jede foederierte Anfrage als 500.
+            # 🛑 Since 2026-10-28 `_lookup_peer` fetches ALL active rows for
+            # the key and refuses when there is more than one. Before that it
+            # was a `scalar_one_or_none()`, which with two local accounts
+            # sharing one far side would have thrown `MultipleResultsFound` --
+            # so every federated request as a 500.
             result.scalars = lambda: MagicMock(all=lambda: [peer])
             result.scalar_one_or_none = lambda: peer
         else:
@@ -256,7 +256,7 @@ class TestHandleInitiate:
         async def no_peer(stmt):
             r = MagicMock()
             r.scalar_one_or_none = lambda: None
-            # Keine aktive Paarung zu diesem Schluessel — die neue Form.
+            # No active pairing for this key -- the new shape.
             r.scalars = lambda: __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock(all=lambda: [])
             return r
         db.execute = AsyncMock(side_effect=no_peer)
@@ -626,9 +626,10 @@ class TestEnforceCirclesOnRetrieve:
             request_id="r1",
             asker_pubkey="ab" * 32,
             peer_user_id=77,
-            # 🛑 Im Rueckfall gibt es KEINE fragende lokale Person mehr. Hier
-            # stand `asker_local_user_id=42` — `peer.remote_user_id`, eine Zahl
-            # der Gegenstelle, die der Filter als lokale Kennung las.
+            # 🛑 On the fallback path there is NO asking local person any
+            # more. This used to read `asker_local_user_id=42` --
+            # `peer.remote_user_id`, a number belonging to the far side that
+            # the filter read as a local id.
             asker_local_user_id=None,
             max_visible_tier=2,
             peer_owner_id=1,
@@ -651,28 +652,28 @@ class TestEnforceCirclesOnRetrieve:
         async with fqr.AsyncSessionLocal() as session:
             await responder._retrieve(session, pending)
 
-        # 🛑 Der peer-bezogene Filter laeuft — und er NENNT den Peer. Ein blosses
-        # „ja, durchsetzen" war der Fehler: es liess offen, WELCHER Peer, und der
-        # Filter griff daraufhin zur Kennung des Fragenden.
+        # 🛑 The peer-scoped filter runs -- and it NAMES the peer. A bare
+        # "yes, enforce" was the defect: it left open WHICH peer, and the
+        # filter then reached for the asker's id.
         assert captured["peer"] is not None
         assert captured["peer"].owner_id == 1
         assert captured["peer"].tier == 2
-        # 🛑 Der Pfad wird GESAGT, nicht aus `peer` abgeleitet. Im gemappten
-        # Fall ist `peer` naemlich `None` — dort blieb der kalte Lauf sonst
-        # unmarkiert, und kalt gegen warm ist der ganze Unterschied (gemessen:
-        # 1 von 8 Quellen gegen 8 von 8).
+        # 🛑 The path is STATED, not derived from `peer`. On the mapped path
+        # `peer` is `None`, so the cold run would otherwise stay unmarked --
+        # and cold against warm is the whole difference (measured: 1 of 8
+        # sources against 8 of 8).
         assert captured["federated"] is True
-        # Die Kennung ist 0 (der Platzhalter), und das ist folgenlos: im
-        # peer-bezogenen Zweig erzeugt `circles_filter_params` gar keine
-        # `:asker_id`-Bindung mehr.
+        # The id is 0 (the placeholder), and that has no effect: in the
+        # peer-scoped branch `circles_filter_params` no longer creates an
+        # `:asker_id` binding at all.
         assert captured["asker_id"] == 0
 
 
 class TestPersonScopedMapping:
     """F-ID-1: a querier_ref that maps (via federation_user_links) to a local
-    user must serve AS that user (`peer=None`); everything else —
-    flag off, no ref, no link — must fall back to the peer-scoped path
-    (`peer_owner_id` gesetzt). The pending record carries the decision."""
+    user must serve AS that user (`peer=None`); everything else --
+    flag off, no ref, no link -- must fall back to the peer-scoped path
+    (`peer_owner_id` set). The pending record carries the decision."""
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -687,11 +688,11 @@ class TestPersonScopedMapping:
         resp = await responder.handle_initiate(req)
 
         pending = await get_pending_store().get(resp.request_id)
-        assert pending.peer_owner_id == 1                      # Rueckfall: an den Eigentuemer gebunden
-        # 🛑 Der Rueckfall leiht sich KEINE lokale Kennung mehr. Hier stand
-        # `== 42`, also `peer.remote_user_id` — genau die fremde Zahl, die der
-        # Filter als lokale Person las und die am 2026-10-27 im Haushalt die
-        # falsche Person traf und auf x-idra den Fremdschluessel brach.
+        assert pending.peer_owner_id == 1                      # fallback: bound to the owner
+        # 🛑 The fallback no longer borrows a local id. This used to read
+        # `== 42`, i.e. `peer.remote_user_id` -- exactly the foreign number the
+        # filter read as a local person, which on 2026-10-27 hit the wrong
+        # person in the household and broke the foreign key on x-idra.
         assert pending.asker_local_user_id is None
 
     @pytest.mark.asyncio
@@ -712,7 +713,7 @@ class TestPersonScopedMapping:
         resp = await responder.handle_initiate(req)
 
         pending = await get_pending_store().get(resp.request_id)
-        assert pending.peer_owner_id == 1                      # Rueckfall: an den Eigentuemer gebunden
+        assert pending.peer_owner_id == 1                      # fallback: bound to the owner
         assert pending.asker_local_user_id is None
 
     @pytest.mark.asyncio
@@ -732,7 +733,7 @@ class TestPersonScopedMapping:
         resp = await responder.handle_initiate(req)
 
         pending = await get_pending_store().get(resp.request_id)
-        assert pending.peer_owner_id is None                   # GEMAPPT — laeuft als die Person
+        assert pending.peer_owner_id is None                   # MAPPED -- runs as the person
         assert pending.asker_local_user_id == 99               # the linked local user
 
     @pytest.mark.asyncio
@@ -740,7 +741,7 @@ class TestPersonScopedMapping:
     async def test_auth_off_never_maps_even_with_link(
         self, responder_identity, asker_identity, mock_db_with_peer, monkeypatch,
     ):
-        # SECURITY: unter AUTH_ENABLED=false wuerde ein gemappter Pfad die
+        # SECURITY: under AUTH_ENABLED=false a mapped path would inherit the
         # single-user full-bypass and leak the WHOLE brain. The mapped path must
         # be refused (fall back to peer-scoped) regardless of a matching link.
         monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
@@ -757,9 +758,9 @@ class TestPersonScopedMapping:
 
         spy.assert_not_awaited()                               # never even consults the link
         pending = await get_pending_store().get(resp.request_id)
-        assert pending.peer_owner_id == 1                      # erzwungener Rueckfall
-        # Auch hier keine geliehene Kennung mehr — und vor allem nicht die des
-        # verknuepften Nutzers: unter Auth-aus wird NICHT gemappt.
+        assert pending.peer_owner_id == 1                      # forced fallback
+        # No borrowed id here either -- and above all not the linked user's:
+        # with auth off there is NO mapping.
         assert pending.asker_local_user_id is None
 
     @pytest.mark.asyncio

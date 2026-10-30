@@ -1,18 +1,18 @@
-"""F-ID-2 — die Routen des Personen-Handschlags.
+"""F-ID-2 -- the routes of the person handshake.
 
-Der SELBSTBEDIENTE Weg zu einer Personenverknuepfung, als Ersatz fuer die
-Admin-Behauptung in `federation_user_links.py`. Der Unterschied ist nicht
-Bequemlichkeit, sondern die Art des Nachweises: dort traegt ein Administrator
-zwei Kontonummern ein, hier beweist die Person die Kontrolle ueber BEIDE Konten,
-indem sie den Handschlag angemeldet auf beiden Instanzen durchlaeuft.
+The SELF-SERVICE path to a person link, replacing the admin assertion in
+`federation_user_links.py`. The difference is not convenience but the kind of
+evidence: there an administrator types in two account numbers, here the person
+proves control over BOTH accounts by running the handshake signed in on both
+instances.
 
-🛑 Deshalb steht hier KEIN `require_permission(Permission.ADMIN)`. Das ist der
-ganze Punkt des Stuecks — wer es nachtraeglich hinzufuegt, macht den Handschlag
-wieder zur Admin-Behauptung mit mehr Schritten.
+🛑 That is why there is NO `require_permission(Permission.ADMIN)` here. That is
+the point of the whole thing; putting it back turns this into the admin
+assertion with more steps.
 
-Dienst: `services/link_handshake_service.py` (dort stehen die Grenzen des
-Verfahrens und warum der Nonce KEINE Mauer gegen Wiedereinspielung ist).
-Entwurf: `docs/design/federation-identity-mapping.md` §9.
+Service: `services/link_handshake_service.py` (the limits of the procedure and
+why the nonce is NOT a wall against replay are documented there).
+Design: `docs/design/federation-identity-mapping.md` §9.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
@@ -36,8 +36,8 @@ router = APIRouter()
 
 
 class CreateLinkOfferRequest(BaseModel):
-    #: Die Peer-Zeile, mit der verknuepft werden soll — eine abgeschlossene
-    #: Instanz-Paarung ist Vorbedingung, nicht Teil des Handschlags.
+    #: The peer row to link with -- a completed instance pairing is a
+    #: precondition, not part of the handshake.
     peer_id: int
 
 
@@ -46,9 +46,9 @@ class AcceptLinkOfferRequest(BaseModel):
 
 
 class CompleteLinkRequest(BaseModel):
-    #: 🛑 Das Angebot kommt zurueck, weil der Server sich NICHTS gemerkt hat.
-    #: Es traegt unsere eigene Signatur, die beim Abschluss geprueft wird —
-    #: kryptografische Bindung statt Sitzungszustand im Arbeitsspeicher.
+    #: 🛑 The offer comes back because the server remembered NOTHING. It
+    #: carries our own signature, which is verified at completion --
+    #: cryptographic binding instead of in-memory session state.
     offer: LinkOffer
     confirmation: LinkConfirmation
 
@@ -61,12 +61,12 @@ class LinkResponse(BaseModel):
 
 
 def _reject(e: LinkHandshakeError, user_id: int) -> HTTPException:
-    """Eine einzige, immer gleiche 400.
+    """One single, always identical 400.
 
-    🛑 Kein Orakel: unterschiedliche Meldungen je Ursache verrieten, WELCHE
-    Pruefung gegriffen hat — abgelaufen, falscher Empfaenger, Signatur falsch.
-    Der Grund steht im Protokoll, nicht in der Antwort. Gleiches Muster wie
-    `federation_pairing` („Pairing handshake failed").
+    🛑 No oracle: a different message per cause would give away WHICH check
+    fired -- expired, wrong recipient, bad signature. The reason is in the log,
+    not in the response. Same pattern as `federation_pairing`
+    ("Pairing handshake failed").
     """
     logger.warning(f"Link handshake failed for user {user_id}: {e}")
     return HTTPException(status_code=400, detail="Link handshake failed")
@@ -78,7 +78,7 @@ async def create_link_offer(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
-    """Schritt 1 (auf A, als U) — signiertes Angebot. Schreibt NICHTS."""
+    """Step 1 (on A, as U) -- signed offer. Writes NOTHING."""
     peer = (await db.execute(
         select(PeerUser).where(
             PeerUser.id == body.peer_id,
@@ -97,7 +97,7 @@ async def accept_link_offer(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
-    """Schritt 2 (auf B, als X) — zustimmen, eigene Zeile schreiben, signieren."""
+    """Step 2 (on B, as X) -- consent, write our own row, sign."""
     try:
         confirmation = await LinkHandshakeService(db).accept_offer(
             current_user, body.offer,
@@ -107,9 +107,9 @@ async def accept_link_offer(
         await db.rollback()
         raise _reject(e, current_user.id) from e
     except IntegrityError:
-        # 🛑 Der Eindeutigkeitsindex auf (peer_id, querier_ref) IST die
-        # eigentliche Sicherung gegen Wiedereinspielung — siehe den
-        # Modul-Docstring des Dienstes. Hier schlaegt er zu.
+        # 🛑 The uniqueness index on (peer_id, querier_ref) IS the real guard
+        # against a replay -- see the service's module docstring. This is where
+        # it fires.
         await db.rollback()
         raise HTTPException(
             status_code=409, detail="This link already exists",
@@ -123,7 +123,7 @@ async def complete_link(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
-    """Schritt 3 (zurueck auf A, als U) — pruefen, eigene Zeile schreiben."""
+    """Step 3 (back on A, as U) -- verify, write our own row."""
     try:
         link = await LinkHandshakeService(db).complete(
             current_user, body.offer, body.confirmation,
@@ -145,12 +145,12 @@ async def list_my_links(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
-    """Die EIGENEN Verknuepfungen dieser Person.
+    """This person's OWN links.
 
-    🛑 Hart auf `local_user_id == current_user.id` gefiltert, nicht auf den
-    Peer-Eigentuemer. Und ohne `querier_ref` in der Antwort: der ist das
-    opake Band zwischen zwei Instanzen, kein Anzeigewert — wer ihn hat, kann
-    sich bei der Gegenstelle als diese Person ausgeben.
+    🛑 Filtered hard on `local_user_id == current_user.id`, not on the peer
+    owner. And without `querier_ref` in the response: that is the opaque band
+    between two instances, not a display value -- whoever holds it can present
+    themselves to the far side as this person.
     """
     rows = (await db.execute(
         select(FederationUserLink, PeerUser)
@@ -175,14 +175,14 @@ async def revoke_my_link(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
-    """Die eigene Verknuepfung widerrufen — einseitig und sofort wirksam."""
+    """Revoke your own link -- unilateral and effective immediately."""
     row = (await db.execute(
         select(FederationUserLink, PeerUser)
         .join(PeerUser, PeerUser.id == FederationUserLink.peer_id)
         .where(
             FederationUserLink.id == link_id,
-            # 🛑 404 statt 403 bei einer fremden Kennung: eine 403 bestaetigte,
-            # dass es diese Verknuepfung GIBT.
+            # 🛑 404 rather than 403 for someone else's id: a 403 would confirm
+            # that this link EXISTS.
             FederationUserLink.local_user_id == current_user.id,
         )
     )).first()
@@ -193,11 +193,11 @@ async def revoke_my_link(
     await delete_link(db, link_id=link.id)
     await db.commit()
 
-    # 🛑 Laufende Anfragen nachraeumen, wie `revoke_peer` es tut: `handle_retrieve`
-    # prueft die Verknuepfung NICHT noch einmal, eine vor dem Widerruf
-    # begonnene Anfrage koennte also noch mit voller Reichweite abgeholt werden.
-    # Bewusst zu grob — es trifft auch unverknuepfte Anfragen desselben Peers —,
-    # dafuer kann es die gemappte nicht verfehlen.
+    # 🛑 Clean up requests in flight, the way `revoke_peer` does:
+    # `handle_retrieve` does NOT re-check the link, so a request started before
+    # the revocation could still be collected with full reach.
+    # Deliberately too coarse -- it also hits unlinked requests from the same
+    # peer -- and in exchange it cannot miss the mapped one.
     from services.federation_query_responder import purge_requests_for_pubkey
     discarded = await purge_requests_for_pubkey(peer.remote_pubkey)
     logger.info(

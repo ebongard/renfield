@@ -161,62 +161,61 @@ if [[ $SKIP_FRONTEND == 0 ]]; then
     docker push -q $REGISTRY/frontend:$FRONTEND_TAG && docker push -q $REGISTRY/frontend:latest"
 fi
 
-# --- 2b. Vorflug-Tor: Alembic-Kopf im BILD gegen die laufende Datenbank ------
-# Das Bild ist gepusht, aber NOCH NICHTS ausgerollt — die letzte Stelle, an der
-# ein Abbruch kostenlos ist.
+# --- 2b. preflight gate: the alembic head IN THE IMAGE vs. the running DB ----
+# The image is pushed, but NOTHING is rolled out yet -- the last point at which
+# aborting is free.
 #
-# Warum es das gibt (#1392): `--migrate` ist ein Schalter, den der Bediener
-# setzen muss, und wer ihn vergisst, bekommt keinen Hinweis, sondern einen
-# Ausfall. Am 2026-10-11 ~35 min Produktionsschaden auf dem Haushalt: der PR
-# enthielt keine Migration, das Bild wird aber aus `main` gebaut, und dort lag
-# `pc20260929_kg_validity`. Das ORM waehlt jede Spalte unbedingt → roher
-# SQLAlchemy-Fehler samt SQL in der Seite, KG-Extraktion tot. `/health/ready`
-# meldete durchgehend `healthy`; gefunden hat es allein der Browser-E2E.
+# Why it exists (#1392): `--migrate` is a switch the operator has to set, and
+# whoever forgets it gets no hint but an outage. On 2026-10-11, about 35 minutes
+# of production damage on the household: the PR contained no migration, but the
+# image is built from `main`, and `pc20260929_kg_validity` lay there. The ORM
+# selects every column unconditionally -> a raw SQLAlchemy error including the
+# SQL on the page, KG extraction dead. `/health/ready` reported `healthy`
+# throughout; the browser E2E alone found it.
 #
-# 🛑 Das Tor MIGRIERT NICHT von selbst. Eine Migration ist eine Entscheidung —
-# ein stiller Rollout darueber hinweg ist keine.
+# 🛑 The gate DOES NOT MIGRATE by itself. A migration is a decision -- a silent
+# rollout past it is not.
 #
-# 🛑 Und es laesst bei Unklarheit NICHT durch: schlaegt eine der beiden
-# Abfragen fehl, bricht es ab (ausser im --dry-run, der nichts veraendern
-# darf). Ein Tor, das im Zweifel oeffnet, ist genau der Fehler, gegen den
-# dieses Issue geschrieben ist.
+# 🛑 And it does NOT let anything through when the situation is unclear: if
+# either of the two queries fails, it aborts (except in --dry-run, which must
+# not change anything). A gate that opens when in doubt is exactly the defect
+# this issue was written against.
 
-# Nimmt die Ausgabe von `alembic heads`/`alembic current` auf stdin und gibt je
-# Zeile EINE Revision aus. Beide Kommandos schreiben INFO-Zeilen auf denselben
-# Strom, das Bild zusaetzlich eine Pydantic-Warnung, und Annotationen stehen in
-# Klammern (`(head)`, `(branchlabel)`). Bewusst grep-UNABHAENGIG von Dateinamen:
-# Dateinamen tragen die Revision NICHT — `pc20260929_kg_relation_validity.py`
-# haelt die Revision `pc20260929_kg_validity`, und genau diese Verwechslung hat
-# den Bediener am 2026-10-11 ein zweites Mal beruhigt.
-# Bewusst ohne `mapfile`/Arrays: macOS liefert bash 3.2 aus, und dieses Skript
-# wird vom Laptop gestartet — ein bash-4-Builtin waere hier ein Tor, das auf dem
-# Rechner des Bedieners gar nicht erst laeuft.
+# Takes the output of `alembic heads`/`alembic current` on stdin and prints ONE
+# revision per line. Both commands write INFO lines to the same stream, the
+# image adds a Pydantic warning, and annotations stand in parentheses
+# (`(head)`, `(branchlabel)`). Deliberately grep-INDEPENDENT of file names:
+# file names do NOT carry the revision -- `pc20260929_kg_relation_validity.py`
+# holds the revision `pc20260929_kg_validity`, and that very mix-up reassured
+# the operator a second time on 2026-10-11.
+# Deliberately without `mapfile`/arrays: macOS ships bash 3.2, and this script
+# is started from the laptop -- a bash 4 builtin would be a gate that does not
+# even run on the operator's machine.
 alembic_revs() {
-  # Zwei Stolpersteine auf einmal, und sie ziehen in verschiedene Richtungen:
+  # Two traps at once, and they pull in different directions:
   #
-  # 1. RAUSCHEN. `alembic` schreibt INFO-Zeilen und das Bild eine
-  #    Pydantic-Warnung. `tr -d '[:blank:]'` klebt so eine Zeile zu EINEM Token
-  #    zusammen, das an Klammern und Punkten scheitert — das ist der Grund,
-  #    warum hier geklebt wird. Wer stattdessen auf Zeilenumbruch zerlegt,
-  #    bekommt `INFO` und `Context` als Revisionskandidaten geliefert
-  #    (selbst hineingelaufen, 2026-10-11).
-  # 2. ZWEI KOEPFE IN EINER ZEILE. Genau dasselbe Kleben verband
-  #    `aaa111 (head) bbb222 (head)` zu einer Phantom-Revision, die den
-  #    Mehrfachkopf-Abbruch uebersprang und als „DB ist zurueck" gelesen wurde
-  #    — mit --migrate also durchgelassen (Review-Befund, latent).
+  # 1. NOISE. `alembic` writes INFO lines and the image a Pydantic warning.
+  #    `tr -d '[:blank:]'` glues such a line into ONE token that fails on
+  #    parentheses and dots -- that is the reason the gluing happens here.
+  #    Split on newlines instead and you get `INFO` and `Context` delivered as
+  #    revision candidates (walked into it myself, 2026-10-11).
+  # 2. TWO HEADS ON ONE LINE. That very same gluing joined
+  #    `aaa111 (head) bbb222 (head)` into a phantom revision, which skipped the
+  #    multiple-head abort and was read as "the DB is behind" -- so with
+  #    --migrate it was let through (review finding, latent).
   #
-  # Loesung, die beides traegt: ZUERST nach einer schliessenden Klammer
-  # umbrechen (nur Annotationen wie `(head)` tragen eine), DANN kleben. Die
-  # Rauschzeilen haben keine Klammerpaare mit folgendem Blank und bleiben eine
-  # Zeile; zwei Koepfe werden getrennt.
+  # The solution that carries both: break after a closing parenthesis FIRST
+  # (only annotations like `(head)` carry one), THEN glue. The noise lines have
+  # no parenthesis pairs followed by a blank and stay one line; two heads get
+  # separated.
   sed -E 's/\)[[:blank:]]+/)\n/g' | sed -E 's/\([^)]*\)//g' | tr -d '[:blank:]' \
     | grep -E '^[0-9A-Za-z][0-9A-Za-z_-]{2,}$' || true
 }
 count_lines() { printf '%s' "$1" | grep -c . || true; }
 
-# Abbruch des Tores. Im --dry-run wird nur GEZEIGT, was es taete: ein Probelauf
-# veraendert nichts und darf deshalb auch nicht am Tor scheitern — er ist die
-# einzige Moeglichkeit, das Tor vor einem echten Deploy zu proben.
+# The gate's abort. In --dry-run it only SHOWS what it would do: a trial run
+# changes nothing and therefore must not fail at the gate either -- it is the
+# only way to rehearse the gate before a real deploy.
 gate_abort() {
   if [[ $DRY_RUN == 1 ]]; then
     printf '  [dry-run] TOR WUERDE ABBRECHEN: %s\n' "$1"
@@ -228,7 +227,7 @@ gate_abort() {
 }
 
 if [[ $SKIP_BACKEND == 1 ]]; then
-  : # kein neues Backend-Bild → es gibt keinen Kopf zu vergleichen
+  : # no new backend image -- there is no head to compare against
 elif [[ $SKIP_MIGRATION_GATE == 1 ]]; then
   log "Migrations-Tor UEBERSPRUNGEN (--skip-migration-gate)"
   echo "  WARNING: der Alembic-Kopf des Bildes wurde NICHT gegen $NS geprueft." >&2
@@ -237,17 +236,17 @@ else
   IMAGE_REF="$REGISTRY/backend:$BACKEND_TAG"
   GATE_PROBED=1
 
-  # Beide Abfragen laufen AUCH im --dry-run: sie sind lesend, und ein Probelauf,
-  # der das Tor nicht ausfuehrt, probt es auch nicht. Deshalb hier `ssh` direkt
-  # statt `on_build` (das im --dry-run nur druckt).
-  # 🛑 Erst nachsehen, OB das Bild lokal liegt. Sonst versucht `docker run`
-  # einen Registry-Pull — im Probelauf auf eine noch nicht gebaute Marke ist
-  # das der NORMALFALL (Bau und Push werden dort nur gedruckt), und das Tor
-  # meldete dafuer einen Abbruch, den es im echten Lauf nie gaebe. Dazu zieht
-  # ein Pull 4,08 GB. Im Review vom 2026-10-11 gemessen.
+  # Both queries run in --dry-run TOO: they only read, and a trial run that
+  # does not execute the gate does not rehearse it either. Hence `ssh` directly
+  # here instead of `on_build` (which only prints in --dry-run).
+  # 🛑 First check WHETHER the image is there locally. Otherwise `docker run`
+  # attempts a registry pull -- in a trial run against a tag that has not been
+  # built yet that is the NORMAL CASE (build and push are only printed there),
+  # and the gate reported an abort for it that would never occur in a real run.
+  # On top of that a pull moves 4.08 GB. Measured in the review of 2026-10-11.
   #
-  # Im echten Lauf MUSS das Bild liegen — Schritt 2 hat es gerade gebaut. Fehlt
-  # es dort, ist etwas anderes schiefgegangen, und dann wird nicht ausgerollt.
+  # In a real run the image MUST be there -- step 2 just built it. If it is
+  # missing, something else went wrong, and then nothing gets rolled out.
   if ! ssh "$BUILD_HOST" "docker image inspect $IMAGE_REF >/dev/null 2>&1"; then
     if [[ $DRY_RUN == 1 ]]; then
       echo "  [dry-run] $IMAGE_REF liegt nicht auf $BUILD_HOST — im Probelauf ist das Tor damit NICHT probebar."
@@ -267,8 +266,9 @@ else
     GATE_PROBED=0
   fi
 
-  # Die laufende Datenbank: der noch laufende ALTE Pod liest `alembic_version`.
-  # Robuster als psql gegen den CNPG-Pod, dessen Name je Namensraum abweicht.
+  # The running database: the OLD pod, still running, reads `alembic_version`.
+  # More robust than psql against the CNPG pod, whose name differs per
+  # namespace.
   DB_REVS=""
   if [[ $GATE_PROBED == 1 ]] && db_out="$("${KUBECTL[@]}" exec deploy/backend -c backend -- sh -c 'cd /app && python -m alembic current' 2>&1)"; then
     DB_REVS="$(printf '%s\n' "$db_out" | alembic_revs)"
@@ -291,12 +291,12 @@ else
     if [[ $IMG_HEAD_COUNT -eq 0 ]]; then
       gate_abort "Aus der Ausgabe von \`alembic heads\` liess sich keine Revision lesen — Format geaendert? Es wird nicht geraten."
     elif [[ $IMG_HEAD_COUNT -gt 1 ]]; then
-      # Gegabelte Kette. Bisher wurde das nur beim SCHREIBEN einer Migration
-      # geprueft; hier steht es auf der Rollout-Seite.
+      # A forked chain. Until now this was only checked when WRITING a
+      # migration; here it stands on the rollout side.
       gate_abort "Mehrere Alembic-Koepfe im Bild (gegabelte Kette): ${IMG_HEADS//$'\n'/ }. Erst zusammenfuehren (merge-Revision), dann ausrollen."
     elif [[ $DB_REV_COUNT -ne 1 ]]; then
-      # Leere oder gegabelte `alembic_version`. Mit --migrate zieht der
-      # Migrationsschritt das gerade, ohne ihn ist die Lage unklar.
+      # An empty or forked `alembic_version`. With --migrate the migration
+      # step straightens it out; without it the situation is unclear.
       if [[ $DO_MIGRATE == 1 ]]; then
         echo "  WARNING: Datenbank-Revision in $NS unklar ($DB_REV_COUNT Eintraege) — --migrate ist gesetzt, der Migrationsschritt laeuft davor." >&2
       else
@@ -304,26 +304,26 @@ else
       fi
     elif [[ "$IMG_HEAD" == "$DB_REV" ]]; then
       echo "  OK: Bild und Datenbank stehen auf $IMG_HEAD — keine Migration ausstehend."
-    # Koepfe verschieden. Die Richtung entscheidet, und sie wird ERFRAGT, nicht
-    # aus Bildmarken oder Datumsnamen geraten: kennt das Bild die DB-Revision,
-    # dann liegt sie in seiner Kette und die DB ist ZURUECK (der gefaehrliche
-    # Fall). Kennt es sie nicht, traegt die DB eine Revision, die dieses Bild
-    # nie gesehen hat — nach einem Rueckfall der uebliche Fall.
+    # The heads differ. The direction decides, and it is ASKED FOR, not
+    # guessed from image tags or date-based names: if the image knows the DB
+    # revision, then that revision lies in its chain and the DB is BEHIND (the
+    # dangerous case). If it does not know it, the DB carries a revision this
+    # image has never seen -- the usual case after a rollback.
     #
-    # 🛑 DIE SONDE WIRD GEGEN SICH SELBST GEGENGEPRUEFT. Die erste Fassung
-    # fragte nur `alembic show $DB_REV` und las JEDEN Rueckgabewert != 0 als
-    # „Revision unbekannt" → Rueckfall-Zweig → WARNUNG → Rollout. Damit war
-    # ein `ssh`-Aussetzer (255), ein docker-Fehler oder ein Importfehler im
-    # Bild von „die DB ist alt" nicht unterscheidbar — und das Tor oeffnete
-    # genau im gefaehrlichen Fall. Im Review vom 2026-10-11 gemessen:
-    # DB zurueck + Sonde mit Code 255 ergab rc=0 und vier `set image`, also
-    # exakt den Ausfall, gegen den dieses Tor gebaut ist, mit einer Warnzeile
-    # davor.
+    # 🛑 THE PROBE IS CROSS-CHECKED AGAINST ITSELF. The first version asked
+    # only `alembic show $DB_REV` and read EVERY non-zero return code as
+    # "revision unknown" -> rollback branch -> WARNING -> rollout. That made an
+    # `ssh` dropout (255), a docker error or an import error in the image
+    # indistinguishable from "the DB is old" -- and the gate opened precisely
+    # in the dangerous case. Measured in the review of 2026-10-11: a DB that
+    # was behind plus a probe returning code 255 produced rc=0 and four
+    # `set image` calls, so exactly the outage this gate was built against,
+    # with one warning line in front of it.
     #
-    # Das Bild MUSS seinen eigenen Kopf kennen. Tut es das nicht, ist die
-    # Sonde kaputt, nicht die Datenbank alt. Beide Abfragen laufen in EINEM
-    # `ssh`/`docker run` und liefern ihre Rueckgabewerte als Text zurueck,
-    # damit „Sonde kaputt" vom Befund unterscheidbar bleibt.
+    # The image MUST know its own head. If it does not, the probe is broken,
+    # not the database old. Both queries run in ONE `ssh`/`docker run` and
+    # return their exit codes as text, so that "probe broken" stays
+    # distinguishable from a finding.
     else
       probe_out="$(ssh "$BUILD_HOST" "docker run --rm $IMAGE_REF sh -c '
         cd /app
@@ -345,7 +345,7 @@ else
           gate_abort "$(printf 'Die Datenbank in %s ist ZURUECK hinter dem Bild — ohne --migrate wird das ein Ausfall.\n       Alembic-Kopf im Bild:  %s\n       Alembic in der DB:     %s\n       Das ORM waehlt jede Spalte unbedingt: ein Pod auf diesem Bild scheitert an JEDER\n       Abfrage auf die geaenderten Tabellen, und /health/ready meldet dabei weiter healthy.\n       → --migrate nachlegen (die Migration laeuft dann VOR dem Rollout).' "$NS" "$IMG_HEAD" "$DB_REV")"
         fi
       else
-        # Erlaubt (zusaetzliche Spalten sind nullbar), aber nicht verschweigen.
+        # Permitted (the extra columns are nullable), but do not keep quiet about it.
         echo "  WARNING: die Datenbank in $NS traegt $DB_REV — eine Revision, die dieses Bild nicht kennt (Kopf: $IMG_HEAD)." >&2
         echo "           Das ist ein RUECKFALL auf ein aelteres Bild. Erlaubt, solange die zusaetzlichen Spalten nullbar sind — nachsehen." >&2
       fi
@@ -430,16 +430,16 @@ if [[ -z "$MANIFESTS_DIR" ]]; then
   done
   [[ -n "$MANIFESTS_DIR" ]] && echo "  (manifests: $MANIFESTS_DIR — sibling repo, by convention)"
 fi
-# Die Bildmarken ZUERST nachziehen, dann pruefen: `kubectl set image` aendert die
-# LIVE-Objekte, nicht die Dateien, also driften sie nach JEDEM Deploy erneut. Die
-# Pruefung darunter hat das bisher nur gemeldet; behoben wurde es von Hand, und
-# dreimal in Folge hiess der naechste Commit in x-ren "Bildmarken auf den
-# Live-Stand". Committet wird hier NICHTS — das Skript sagt nur, was anliegt.
+# Bring the image tags along FIRST, then check: `kubectl set image` changes the
+# LIVE objects, not the files, so they drift again after EVERY deploy. The check
+# below has so far only reported that; it was fixed by hand, and three times in
+# a row the next commit in x-ren was called "image tags to the live state".
+# NOTHING is committed here -- the script only says what is pending.
 if [[ -n "$MANIFESTS_DIR" ]]; then
   log "Bildmarken in die Manifeste schreiben (ohne Commit)"
-  # Explizite `if`-Bloecke statt `[[ … ]] && cmd`: unter `set -e` ist der
-  # Rueckgabewert einer solchen Kette der des fehlgeschlagenen Tests, und ob das
-  # abbricht, haengt am Kontext. In einem Deploy-Skript will man das nicht raten.
+  # Explicit `if` blocks instead of `[[ ... ]] && cmd`: under `set -e` such a
+  # chain's return code is that of the failing test, and whether that aborts
+  # depends on the context. In a deploy script one does not want to guess.
   tag_args=(--dir "$MANIFESTS_DIR")
   if [[ -n "$BACKEND_TAG"  ]]; then tag_args+=(--backend-tag "$BACKEND_TAG"); fi
   if [[ -n "$FRONTEND_TAG" ]]; then tag_args+=(--frontend-tag "$FRONTEND_TAG"); fi

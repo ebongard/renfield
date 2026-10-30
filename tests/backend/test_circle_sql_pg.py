@@ -548,21 +548,20 @@ async def test_document_chunks_stranger_sees_neither_self_chunk(
 # ---------------------------------------------------------------------------
 # peer_scoped (federation) — the collision + explicit-grant suppression proof.
 #
-# Eine foederierte Anfrage traegt seit F-ID-3 eine `PeerScope` — Eigentuemer der
-# Paarung UND gewaehrte Stufe. Vorher war es ein blosses `peer_scoped=True`, und
-# die fragende Kennung kam aus `PeerUser.remote_user_id`: eine Zahl der
-# Gegenstelle in einer Spalte mit Fremdschluessel auf die LOKALE `users.id`. Die
-# Zweige „Eigentuemer" und „Freigabe" entfallen weiterhin; die Stufe kommt jetzt
-# aus der Paarung statt aus einer Mitgliedschaft.
+# Since F-ID-3 a federated request carries a `PeerScope` -- the owner of the
+# pairing AND the granted tier. Before that it was a plain `peer_scoped=True`,
+# and the asking id came from `PeerUser.remote_user_id`: a number belonging to
+# the far side, in a column with a foreign key on the LOCAL `users.id`. The
+# "owner" and "grant" branches still fall away; the tier now comes from the
+# pairing instead of from a membership.
 # ---------------------------------------------------------------------------
 
 
 async def _run_kg_clause_peer_scoped(
     session: AsyncSession, owner_id: int, tier: int,
 ) -> set[int]:
-    """🛑 Nimmt KEINE Fragenden-Kennung mehr entgegen — es gibt im
-    peer-bezogenen Zweig keine fragende lokale Person. Genau diese Kennung war
-    der Fehler."""
+    """🛑 Takes NO asker id any more -- in the peer-scoped branch there is no
+    local person asking. That id was precisely the defect."""
     clause, params = kg_entities_circles_filter(
         asker_id=0, peer=PeerScope(owner_id=owner_id, tier=tier),
     )
@@ -575,17 +574,16 @@ async def test_a_colliding_id_can_no_longer_even_be_SUPPLIED(
     pg_db_session: AsyncSession,
     seeded_circle_world: dict,
 ) -> None:
-    """DER Kern des Fixes, an der Bank gemessen.
+    """THE core of the fix, measured against the database.
 
-    Frueher musste man beweisen, dass eine kollidierende `asker_id` den
-    Eigentuemerzweig nicht aufschliesst. Jetzt gibt es diese Kennung im
-    peer-bezogenen Zweig GAR NICHT MEHR: die Klausel nennt sie nicht, und
-    `circles_filter_params` gibt sie nicht aus. Ein Fehler, der nicht
-    formulierbar ist, kann nicht auftreten.
+    Formerly one had to prove that a colliding `asker_id` does not unlock the
+    owner branch. Now that id does NOT EXIST AT ALL in the peer-scoped branch:
+    the clause does not name it, and `circles_filter_params` does not hand it
+    out. A defect that cannot be formulated cannot occur.
     """
     owner_id = seeded_circle_world["owner_id"]
 
-    # Zur Gegenprobe: OHNE Peer ist derselbe Mensch der Eigentuemer und sieht alles.
+    # As a counter-check: WITHOUT a peer the same person is the owner and sees everything.
     unscoped = await _run_kg_clause_for(pg_db_session, owner_id)
     assert seeded_circle_world["kg_self_id"] in unscoped
 
@@ -594,7 +592,7 @@ async def test_a_colliding_id_can_no_longer_even_be_SUPPLIED(
     )
     assert "asker_id" not in params, params
 
-    # Und die Wirkung: Stufe 4 beim eigenen Eigentuemer erreicht nur Oeffentliches.
+    # And the effect: tier 4 at its own owner reaches only public content.
     visible = await _run_kg_clause_peer_scoped(pg_db_session, owner_id, tier=4)
     assert visible == {seeded_circle_world["kg_public_id"]}, visible
 
@@ -603,11 +601,11 @@ async def test_peer_scope_drops_explicit_grant(
     pg_db_session: AsyncSession,
     seeded_circle_world: dict,
 ) -> None:
-    """Der Freigabe-Zweig bleibt weg.
+    """The grant branch stays out.
 
-    `stranger` hat eine ausdrueckliche Freigabe auf die Stufe-0-Entitaet. Ohne
-    Peer sieht er sie; mit Peer nicht — die Freigabe haengt an einer lokalen
-    Person, und ein Peer ist keine.
+    `stranger` has an explicit grant on the tier-0 entity. Without a peer they
+    see it; with a peer they do not -- the grant hangs off a local person, and
+    a peer is not one.
     """
     stranger_id = seeded_circle_world["stranger_id"]
     owner_id = seeded_circle_world["owner_id"]
@@ -626,12 +624,12 @@ async def test_the_granted_tier_still_reaches_what_it_should(
     pg_db_session: AsyncSession,
     seeded_circle_world: dict,
 ) -> None:
-    """Der tragende Zweig bleibt: Stufe 2 erreicht Haushalt, Erweitert und
-    Oeffentlich — und NICHT die Stufe-0-Zeile des Eigentuemers.
+    """The load-bearing branch stays: tier 2 reaches Haushalt, Erweitert and
+    public -- and NOT the owner's tier-0 row.
 
-    🛑 Frueher kam diese Stufe aus einer `circle_memberships`-Zeile, die auf der
-    ENTFERNTEN Nutzerkennung keyte. Jetzt aus `peer_users.granted_tier`. Die
-    Wirkung ist dieselbe — der Weg dorthin traegt.
+    🛑 Formerly this tier came from a `circle_memberships` row that keyed on
+    the REMOTE user id. Now it comes from `peer_users.granted_tier`. The effect
+    is the same -- the way there holds.
     """
     owner_id = seeded_circle_world["owner_id"]
     visible = await _run_kg_clause_peer_scoped(pg_db_session, owner_id, tier=2)

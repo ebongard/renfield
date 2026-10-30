@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Renfield Quick Update Script
-# Aktualisiert nur den Backend-Container
+# Updates only the backend container
 
 # Change to project root directory
 cd "$(dirname "$0")/.."
@@ -16,14 +16,14 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Backend neu starten
+# Restart the backend
 echo -e "${YELLOW}Starte Backend neu...${NC}"
 docker-compose restart backend
 
-# Warte kurz
+# Wait a moment
 sleep 2
 
-# Prüfe ob Backend läuft
+# Check whether the backend is running
 if docker-compose ps | grep -q "renfield-backend.*Up"; then
     echo ""
     echo -e "${GREEN}✅ Backend erfolgreich neu gestartet!${NC}"

@@ -298,13 +298,30 @@ async def kb_schema_conn():
 
 @pytest.mark.database
 async def test_revoke_kb_share_rowcount_is_per_document(kb_schema_conn):
-    conn, _schema = kb_schema_conn
+    conn, schema = kb_schema_conn
 
     from models.database import Base, KnowledgeBase, Role, User
     from services.rag_service import RAGService
 
-    await conn.run_sync(Base.metadata.create_all)
+    # 🛑 Create the tables IN the throwaway schema, explicitly. A bare
+    # `create_all` skips every table that is merely VISIBLE on the search
+    # path -- and `public` is on it (for the pgvector type) -- so it created
+    # nothing here, every row below landed in public.roles/users/... and was
+    # committed there. The test passed once on a clean database and failed
+    # on every later run with a UniqueViolation on `kb_role`, which read like
+    # an ordering dependency.
+    await conn.run_sync(
+        lambda sync_conn: Base.metadata.create_all(
+            sync_conn.execution_options(schema_translate_map={None: schema})
+        )
+    )
     await conn.commit()
+    in_schema = (
+        await conn.execute(
+            text("SELECT to_regclass(:t) IS NOT NULL"), {"t": f'"{schema}".roles'}
+        )
+    ).scalar()
+    assert in_schema, "tables were not created in the throwaway schema"
 
     sm = async_sessionmaker(bind=conn, class_=AsyncSession, expire_on_commit=False)
 

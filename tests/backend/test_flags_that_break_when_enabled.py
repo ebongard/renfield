@@ -1,16 +1,16 @@
-"""Drei Flags, die das Einschalten nicht ueberlebten.
+"""Three flags that did not survive being switched on.
 
-Alle drei sind aus `tasks/backlog/TRIAGE.md` (Triage vom 2026-09-20). Sie haben
-eine Eigenschaft gemeinsam, die sie ueberhaupt so lange ueberleben liess: der
-Fehler liegt hinter einem AUSGESCHALTETEN Schalter, also faellt kein Test und
-kein Betrieb darauf. Nur ein Test, der den Schalter selbst umlegt, sieht ihn.
-Deshalb legt jeder Test hier den Schalter um.
+All three come from `tasks/backlog/TRIAGE.md` (the 2026-09-20 triage). They
+share the one property that let them survive this long in the first place: the
+defect sits behind a SWITCHED-OFF flag, so no test and no production run hits
+it. Only a test that flips the flag itself sees it. That is why every test here
+flips the flag.
 
-🛑 Der vierte Befund der Triage — `MEMORY_EXTRACTION_V2_AUTHORITATIVE` kehre vor
-dem Subsume-Tor zurueck — ist UEBERHOLT und braucht keinen Test hier: #1313 hat
-das Tor am 2026-09-23 in den v2-Pfad eingebaut
-(`conversation_memory_service.py:1596-1600`, dieselbe `_should_subsume_fact`).
-`test_memory_extraction_v2.py` deckt es ab.
+🛑 The triage's fourth finding -- that `MEMORY_EXTRACTION_V2_AUTHORITATIVE`
+returns ahead of the subsume gate -- is OUT OF DATE and needs no test here:
+#1313 built the gate into the v2 path on 2026-09-23
+(`conversation_memory_service.py:1596-1600`, the same `_should_subsume_fact`).
+`test_memory_extraction_v2.py` covers it.
 """
 from __future__ import annotations
 
@@ -21,25 +21,25 @@ pytestmark = [pytest.mark.unit]
 
 
 # ---------------------------------------------------------------------------
-# 1. VOICE_AUTH_ENABLED — Signatur und Rueckgabetyp
+# 1. VOICE_AUTH_ENABLED -- signature and return type
 # ---------------------------------------------------------------------------
 class TestVoiceAuthCallShape:
-    """Der VERTRAG, an dem die Route einst scheiterte — und der weiter gilt.
+    """The CONTRACT the route once failed against -- and which still holds.
 
-    `identify_speaker` lebt weiter: der Resolver und `/api/speakers/identify`
-    brauchen die 1:N-Zuordnung. Die ANMELDUNG benutzt sie seit dem Umbau zum
-    Zusatzfaktor nicht mehr. Diese Vertragspruefungen bleiben, weil eine Aenderung
-    an der Signatur die beiden verbliebenen Aufrufer mitnehmen muss.
+    `identify_speaker` lives on: the resolver and `/api/speakers/identify` need
+    the 1:N assignment. The LOGIN has not used it since the rework into an
+    additional factor. These contract checks stay, because a change to the
+    signature has to carry the two remaining callers with it.
 
-    Historisch: die Route rief `identify_speaker(audio_bytes)` auf — EIN Wert, wo zwei
-    Pflichtargumente stehen — und las das Ergebnis als `dict`, obwohl ein
-    `tuple` kommt. `VOICE_AUTH_ENABLED=true` war damit ein `TypeError` bei jedem
-    Anmeldeversuch.
+    Historically: the route called `identify_speaker(audio_bytes)` -- ONE value
+    where two mandatory arguments stand -- and read the result as a `dict`
+    although a `tuple` comes back. `VOICE_AUTH_ENABLED=true` was therefore a
+    `TypeError` on every login attempt.
     """
 
     def test_identify_speaker_needs_two_arguments(self):
-        # Der Vertrag, gegen den die Route verstiess. Aendert er sich, muss die
-        # Route mitwandern — deshalb steht er hier als Behauptung.
+        # The contract the route violated. If it changes, the route has to
+        # move with it -- which is why it stands here as an assertion.
         import inspect
 
         from services.speaker_service import SpeakerService
@@ -62,14 +62,14 @@ class TestVoiceAuthCallShape:
         assert out[0] == 7 and out[1] == "Anna"
 
     def test_the_route_does_not_call_the_enrolling_resolver(self):
-        """🛑 Ein ANMELDEVERSUCH darf niemals ein Profil anlegen.
+        """🛑 A LOGIN ATTEMPT must never create a profile.
 
-        `resolve_speaker_from_embedding` schreibt einen unbekannten Sprecher als
-        „Unbekannter Sprecher #N" an und verstaerkt bestehende Profile. Auf einem
-        Anmeldepfad hiesse das: jeder Fehlversuch legt einen Stimmabdruck an
-        (biometrisches Datum ohne Einwilligung), und ein Fremder koennte ein
-        Profil nach und nach auf seine Stimme ziehen. Der Test liest den
-        Quelltext, weil das Weglassen eines Aufrufs sonst nicht pruefbar ist.
+        `resolve_speaker_from_embedding` writes an unknown speaker down as
+        "Unbekannter Sprecher #N" and reinforces existing profiles. On a login
+        path that would mean: every failed attempt creates a voiceprint
+        (biometric data without consent), and a stranger could pull a profile
+        onto their own voice step by step. The test reads the source, because
+        the absence of a call cannot be checked any other way.
         """
         from api.routes import auth
 
@@ -77,18 +77,18 @@ class TestVoiceAuthCallShape:
         assert "resolve_speaker_from_embedding" not in body, (
             "die Sprachanmeldung darf nur LESEN, nicht einschreiben"
         )
-        # `build_known_speaker_centroids` stand hier bis zum Umbau zum
-        # Zusatzfaktor. Seit dem 2026-09-27 verifiziert die Route 1:1 gegen EIN
-        # Profil und baut gar keine Schwerpunkte mehr — das prueft
-        # `TestTheRouteIsNoLongerAnIdentifier`.
+        # `build_known_speaker_centroids` stood here until the rework into an
+        # additional factor. Since 2026-09-27 the route verifies 1:1 against
+        # ONE profile and builds no centroids at all -- that is what
+        # `TestTheRouteIsNoLongerAnIdentifier` checks.
 
     def test_the_route_sets_cookies_and_reports_the_password_gate(self):
-        """Die anderen vier Anmeldewege tun beides — dieser tat keins von beidem.
+        """The other four login paths do both -- this one did neither.
 
-        Ohne `_set_auth_cookies` richtete eine erfolgreiche Sprachanmeldung
-        ueberhaupt keine Sitzung ein (die Oberflaeche arbeitet seit #1125 auf dem
-        HttpOnly-Cookie). Und ohne `must_change_password` kaeme ein Konto mit
-        Passwortzwang per Stimme daran vorbei.
+        Without `_set_auth_cookies` a successful voice login set up no session
+        at all (since #1125 the user interface works off the HttpOnly cookie).
+        And without `must_change_password` an account under forced rotation
+        would get past it by voice.
         """
         import inspect
 
@@ -100,18 +100,18 @@ class TestVoiceAuthCallShape:
         assert "must_change_password" in auth.VoiceAuthResponse.model_fields
 
     def test_both_sides_of_the_hurdle_ask_the_same_checker(self):
-        """🛑 Der Befund, gegen den das steht: `/auth/login` stellte die Huerde
-        auf EINE Bedingung und `/auth/voice` raeumte sie auf FUENF ab. Jede
-        Luecke dazwischen war eine Aussperrung, denn es gibt keinen Rueckfall
-        auf Passwort allein.
+        """🛑 The finding this stands against: `/auth/login` raised the hurdle
+        on ONE condition and `/auth/voice` cleared it on FIVE. Every gap
+        between them was a lockout, because there is no fallback to the
+        password alone.
 
-        Die Pruefung liegt darum in `services/voice_factor_preconditions`, und
-        BEIDE Seiten fragen dort. Das ist bewusst eine Strukturpruefung: das
-        Verhalten steht in `TestTheHurdleRestsInsteadOfLockingOut`
-        (`test_voice_factor_preconditions.py`) und in
-        `test_the_route_refuses_while_recognition_is_off` weiter unten — hier
-        geht es darum, dass die beiden Seiten nicht wieder auseinanderlaufen,
-        indem jemand eine eigene Bedingung danebenschreibt.
+        The check therefore lives in `services/voice_factor_preconditions`, and
+        BOTH sides ask there. This is deliberately a structural check: the
+        behaviour is in `TestTheHurdleRestsInsteadOfLockingOut`
+        (`test_voice_factor_preconditions.py`) and in
+        `test_the_route_refuses_while_recognition_is_off` further down -- the
+        point here is that the two sides do not drift apart again by somebody
+        writing their own condition alongside.
         """
         import inspect
 
@@ -121,24 +121,26 @@ class TestVoiceAuthCallShape:
         voice_src = inspect.getsource(auth.voice_authenticate)
         assert "second_factor_applies" in login_src
         assert "voice_path_blocker" in voice_src
-        # Und nicht mehr von Hand daneben:
+        # And no longer by hand alongside it:
         assert "settings.voice_auth_enabled" not in login_src, (
             "die Anmeldeseite prueft wieder selbst — genau so ist der Fehler entstanden"
         )
 
 
 # ---------------------------------------------------------------------------
-# 3. /api/speakers/identify — derselbe Massstab wie die Erkennung
+# 3. /api/speakers/identify -- the same yardstick as recognition
 # ---------------------------------------------------------------------------
 class TestOneCentroidCalculation:
-    """Das Diagnose-Endpunkt antwortete aus einem anderen Modell als die
-    Erkennung. Drei Abweichungen, jede einzeln genug fuer eine andere Antwort.
+    """The diagnostic endpoint answered from a different model than
+    recognition did. Three deviations, each one on its own enough for a
+    different answer.
     """
 
     def test_normalisation_follows_either_switch(self, monkeypatch):
-        # 🛑 Der Kern. Die Route pruefte nur `speaker_quality_gating_enabled`.
-        # Im Haushalt ist `controlled` an und `gating` aus — also normalisierte
-        # die Erkennung und die Route nicht.
+        # 🛑 The core. The route checked only
+        # `speaker_quality_gating_enabled`. In the household `controlled` is on
+        # and `gating` is off -- so recognition normalized and the route did
+        # not.
         from services import speaker_resolver as sr
 
         monkeypatch.setattr("utils.config.settings.speaker_quality_gating_enabled", False)
@@ -167,8 +169,8 @@ class TestOneCentroidCalculation:
             controlled=True, quality_active=True,
         )
         assert [k[1] for k in known] == ["Anna"]
-        # Ohne den Schalter sind beide dabei — sonst waere die Route vor Phase 3
-        # stillschweigend enger geworden.
+        # Without the switch both are included -- otherwise the route would
+        # have quietly become narrower ahead of phase 3.
         known_all, _ = build_known_speaker_centroids(
             [_speaker(1, "Anna", enrolled=True), _speaker(2, "Gast", enrolled=False)],
             controlled=False, quality_active=True,
@@ -176,13 +178,13 @@ class TestOneCentroidCalculation:
         assert sorted(k[1] for k in known_all) == ["Anna", "Gast"]
 
     def test_only_the_ten_most_recent_embeddings_count(self):
-        # Die Route mittelte ALLE. Ein Profil mit 40 alten und 3 neuen
-        # Einbettungen ergibt so einen anderen Schwerpunkt als die Erkennung.
+        # The route averaged ALL of them. A profile with 40 old and 3 new
+        # embeddings therefore yields a different centroid than recognition.
         from services.speaker_resolver import (
             MAX_EMBEDDINGS_PER_SPEAKER,
             build_known_speaker_centroids,
         )
-        # 12 Einbettungen: die 10 jüngsten sind Einsen, die 2 aeltesten Nullen.
+        # 12 embeddings: the 10 most recent are ones, the 2 oldest zeros.
         sp = _speaker(1, "Anna", enrolled=True, values=[1.0] * 10 + [0.0] * 2)
         known, _ = build_known_speaker_centroids(
             [sp], controlled=True, quality_active=False
@@ -191,8 +193,8 @@ class TestOneCentroidCalculation:
         assert known[0][2].tolist() == [1.0], "die zwei aeltesten duerfen nicht mitzaehlen"
 
     def test_normalisation_stops_a_loud_sample_from_dominating(self):
-        # Rohe ECAPA-Normen schwanken ~250-410; ohne Normalisierung zieht die
-        # laute Aufnahme den Schwerpunkt zu sich.
+        # Raw ECAPA norms vary ~250-410; without normalization the loud
+        # recording pulls the centroid towards itself.
         from services.speaker_resolver import build_known_speaker_centroids
         sp = _speaker(1, "Anna", enrolled=True, values=[1.0, 100.0])
         raw, _ = build_known_speaker_centroids([sp], controlled=False, quality_active=False)
@@ -201,13 +203,13 @@ class TestOneCentroidCalculation:
         assert norm[0][2].tolist() == [1.0]
 
 
-# --- Helfer -----------------------------------------------------------------
+# --- helpers ----------------------------------------------------------------
 def _function_body(fn) -> str:
-    """Der Quelltext OHNE Docstring.
+    """The source WITHOUT the docstring.
 
-    Sonst schlaegt ein Test auf „dieser Aufruf kommt hier nicht vor" an der
-    Begruendung an, die genau diesen Aufruf beim Namen nennt — mir am 2026-09-27
-    einmal passiert.
+    Otherwise a test for "this call does not appear here" fires on the
+    reasoning that names exactly that call -- which happened once, on
+    2026-09-27.
     """
     import ast
     import inspect
@@ -235,42 +237,42 @@ class _Speaker:
 def _speaker(sid, name, *, enrolled, values=(1.0,)):
     from datetime import datetime, timedelta
     base = datetime(2026, 1, 1)
-    # Der ERSTE Wert ist der jüngste, damit `values` sich wie „neu zuerst" liest.
+    # The FIRST value is the most recent, so `values` reads as "newest first".
     return _Speaker(sid, name, enrolled,
                     [_Emb(v, base - timedelta(days=i)) for i, v in enumerate(values)])
 
 
 # ---------------------------------------------------------------------------
-# 1b. Der ZWEITE Faktor — Verhalten, nicht Quelltext
+# 1b. The SECOND factor -- behaviour, not source text
 # ---------------------------------------------------------------------------
 @pytest.mark.database
 class TestVoiceSecondFactor:
-    """Die Route nach dem Umbau vom 2026-09-27: Stimme bestaetigt, sie oeffnet nicht.
+    """The route after the 2026-09-27 rework: the voice confirms, it does not
+    open.
 
-    🛑 Diese Klasse FAEHRT die beiden Routen, statt ihren Quelltext zu lesen. Die
-    erste Fassung dieser Datei pruefte `inspect.getsource`-Textstellen; das haette
-    jede der Bruecken ueberlebt, solange die richtigen Zeichenketten im Koerper
-    stehen. Geprueft wird hier ueber Ergebnisse: gesetzte Cookies, ausgegebene
-    Token, die ABWESENHEIT von Token, und dass es keinen Weg ohne Stimme gibt.
+    🛑 This class RUNS the two routes instead of reading their source. The first
+    version of this file checked `inspect.getsource` text matches; that would
+    have survived any of the bridges as long as the right strings stand in the
+    body. What is checked here is results: cookies set, tokens issued, the
+    ABSENCE of tokens, and that there is no path without the voice.
     """
 
     @pytest.fixture(autouse=True)
     def _no_rate_limit(self, monkeypatch):
-        """Ratenbegrenzer aus, weil diese Tests den Handler DIREKT aufrufen.
+        """Rate limiter off, because these tests call the handler DIRECTLY.
 
-        Dasselbe Muster wie `test_auth.py:280` ("its wrapper guards everything
-        behind `if self.enabled`"): ein Direktaufruf soll nicht an einem
-        Zaehler haengen, den andere Tests fuellen, und slowapi greift auf
-        `request.app.state.limiter` zu (`extension.py:83`), das eine handgebaute
-        `Request` nicht hat.
+        The same pattern as `test_auth.py:280` ("its wrapper guards everything
+        behind `if self.enabled`"): a direct call should not hang on a counter
+        that other tests fill, and slowapi reaches for
+        `request.app.state.limiter` (`extension.py:83`), which a hand-built
+        `Request` does not have.
 
-        🛑 Berichtigung an mir selbst: hier stand zuerst, dieser Bypass behebe
-        die vier Fehlschlaege der Vollsuite. Das war FALSCH — er hat sie nicht
-        behoben, die Ursache war die Namensbindung in `_own_session`. Ein
-        Kommentar, der eine widerlegte Ursache behauptet, kostet den naechsten
-        Leser denselben Weg noch einmal. Der Bypass bleibt, weil er fuer sich
-        richtig ist; was er kostet, holt `TestTheRateLimitIsStillDeclared`
-        zurueck.
+        🛑 A correction to myself: this first said the bypass fixed the four
+        failures in the full suite. That was WRONG -- it did not fix them, the
+        cause was the name binding in `_own_session`. A comment that claims a
+        disproven cause costs the next reader the same journey a second time.
+        The bypass stays because it is right on its own merits; what it costs
+        is recovered by `TestTheRateLimitIsStillDeclared`.
         """
         from services.api_rate_limiter import limiter
 
@@ -288,7 +290,7 @@ class TestVoiceSecondFactor:
 
     @staticmethod
     def _request():
-        """Eine ECHTE starlette-Anfrage: der Ratenbegrenzer prueft den Typ."""
+        """A REAL starlette request: the rate limiter checks the type."""
         from starlette.requests import Request
 
         return Request({
@@ -330,14 +332,14 @@ class TestVoiceSecondFactor:
 
     @staticmethod
     def _stub_voice(monkeypatch, *, verified, score, duration_s=3.0, embedding=(1.0, 0.0)):
-        """Nur die ML-Haelfte ersetzen. Der Rest der Route laeuft echt.
+        """Replace only the ML half. The rest of the route runs for real.
 
-        🛑 Die Einbettung kommt seit dem Review vom VOICE-SERVER, nicht aus
-        `SpeakerService`. Der alte Weg konnte in der Produktion nie gelingen:
-        `speaker_inprocess_embeddings_enabled` ist auf beiden Instanzen aus, und
-        selbst offen waere es der falsche Vektorraum. Deshalb wird hier `stt`
-        gestellt — und zwar an dem Modul, aus dem die Route importiert, nicht an
-        der Quelle: `from ... import stt` bindet den Namen zur Importzeit.
+        🛑 Since the review the embedding comes from the VOICE SERVER, not from
+        `SpeakerService`. The old path could never succeed in production:
+        `speaker_inprocess_embeddings_enabled` is off on both instances, and
+        even open it would be the wrong vector space. So `stt` is stubbed here
+        -- and on the module the route imports FROM, not at the source:
+        `from ... import stt` binds the name at import time.
         """
         from services import voice_server_client as vsc
 
@@ -360,7 +362,7 @@ class TestVoiceSecondFactor:
 
     @staticmethod
     def _stub_ticket(monkeypatch, *, user_id):
-        """Redis-freies Ticket. Der Speicher hat seine eigenen Tests."""
+        """Redis-free ticket. The store has its own tests."""
         from services import voice_second_factor_store as store
 
         async def _consume(_t, _ip):
@@ -378,14 +380,14 @@ class TestVoiceSecondFactor:
         for k, v in base.items():
             monkeypatch.setattr(settings, k, v)
 
-    # --- die Vorbedingungen, verhaltensecht -------------------------------
+    # --- the preconditions, behaviourally ---------------------------------
 
     async def test_the_route_refuses_while_recognition_is_off(self, db_session, monkeypatch):
-        """🛑 Der zweite Riegel, den die Anmeldeseite frueher nie abgefragt hat.
+        """🛑 The second guard the login page never used to ask about.
 
-        Ein Stimmabdruck ist biometrisches Datum (Art. 9 DSGVO): ist die
-        Erkennung aus, wird auch fuer die Anmeldung keiner berechnet. Der Test
-        prueft BEIDES — die Absage und dass kein Audio hinausgeht.
+        A voiceprint is biometric data (Art. 9 GDPR): with recognition off,
+        none is computed for the login either. The test checks BOTH -- the
+        refusal, and that no audio leaves.
         """
         from fastapi import Response
 
@@ -413,9 +415,10 @@ class TestVoiceSecondFactor:
     async def test_a_sample_below_the_server_measured_minimum_is_refused(
         self, db_session, monkeypatch
     ):
-        """🛑 H3, jetzt geschlossen. Die 1,5 s in der Maske sind Bedienfuehrung,
-        keine Sicherheitspruefung — ein Angreifer schickt direkt an die API. Die
-        einzige Dauer, der hier zu trauen ist, misst der voice-server selbst.
+        """🛑 H3, now closed. The 1.5 s in the form is guidance for the
+        person, not a security check -- an attacker posts straight to the API.
+        The only duration to be trusted here is the one the voice-server
+        measures itself.
         """
         from fastapi import Response
 
@@ -434,8 +437,9 @@ class TestVoiceSecondFactor:
     async def test_a_voice_server_outage_is_not_counted_as_a_failed_attempt(
         self, db_session, monkeypatch
     ):
-        """Ein Betriebsfehler ist kein Fehlversuch der Person — sonst sperrt ein
-        Ausfall des voice-servers die Leute zusaetzlich aus ihrem Konto aus."""
+        """An operational error is not a failed attempt by the person --
+        otherwise a voice-server outage locks people out of their account on
+        top of everything else."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes
@@ -461,7 +465,7 @@ class TestVoiceSecondFactor:
         assert not out.access_token
         assert "voice_second_factor" not in failures
 
-    # --- der gute Fall ---------------------------------------------------
+    # --- the good case ---------------------------------------------------
 
     async def test_both_factors_pass_then_tokens_and_cookies(self, db_session, monkeypatch):
         from fastapi import Response
@@ -499,7 +503,7 @@ class TestVoiceSecondFactor:
         assert out.success is True
         assert out.must_change_password is True
 
-    # --- die Wege, die ES NICHT GEBEN DARF -------------------------------
+    # --- the paths that MUST NOT EXIST ----------------------------------
 
     _FORBIDDEN = ("access_token", "refresh_token")
 
@@ -510,7 +514,7 @@ class TestVoiceSecondFactor:
         )
         for f in self._FORBIDDEN:
             assert getattr(out, f) is None, f"{f} auf einem Fehlschlag gesetzt"
-        # 🛑 Und die Felder, die das Orakel trugen, existieren im Modell nicht mehr.
+        # 🛑 And the fields that carried the oracle no longer exist in the model.
         for gone in ("speaker_id", "speaker_name", "confidence", "user_id", "username"):
             assert not hasattr(out, gone), (
                 f"{gone} ist zurueck im Antwortmodell — das war das Orakel"
@@ -519,9 +523,9 @@ class TestVoiceSecondFactor:
             assert resp.headers.getlist("set-cookie") == []
 
     async def test_no_ticket_means_no_check_at_all(self, db_session, monkeypatch):
-        """🛑 Der Kern des Zusatzfaktors: ohne bestandenen ersten Faktor kommt man
-        nicht einmal bis zur Stimmpruefung. Damit ist die Namensaufzaehlung des
-        alten Orakels nicht mehr erreichbar."""
+        """🛑 The core of the additional factor: without a passed first
+        factor you do not even reach the voice check. That puts the old
+        oracle's name enumeration out of reach."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes
@@ -534,10 +538,10 @@ class TestVoiceSecondFactor:
             return None
 
         monkeypatch.setattr(store, "consume_ticket", _no)
-        # 🛑 Die Sonde sitzt jetzt am VOICE-SERVER, nicht an `SpeakerService` —
-        # dort wird die Einbettung berechnet. Der Test wird dadurch schaerfer:
-        # er beweist, dass die Aufnahme das Haus gar nicht erst verlaesst,
-        # bevor das Ticket gilt.
+        # 🛑 The probe now sits on the VOICE SERVER, not on `SpeakerService`
+        # -- that is where the embedding is computed. It makes the test
+        # sharper: it proves the recording does not even leave the house
+        # before the ticket is valid.
         extracted = []
 
         from services import voice_server_client as vsc
@@ -570,7 +574,7 @@ class TestVoiceSecondFactor:
         self._assert_opaque(out, resp)
 
     async def test_a_verified_but_weak_score_is_refused(self, db_session, monkeypatch):
-        """Die eigene Schwelle der Route gilt zusaetzlich zu `verify_speaker`."""
+        """The route's own threshold applies on top of `verify_speaker`."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes
@@ -585,8 +589,8 @@ class TestVoiceSecondFactor:
         self._assert_opaque(out)
 
     async def test_consent_revoked_between_factors_is_refused(self, db_session, monkeypatch):
-        """Dem Ticket wird nicht geglaubt: zwischen erstem und zweitem Faktor kann
-        die Einwilligung widerrufen worden sein."""
+        """The ticket is not taken on trust: the consent may have been
+        withdrawn between the first and the second factor."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes
@@ -615,8 +619,8 @@ class TestVoiceSecondFactor:
         self._assert_opaque(out)
 
     async def test_consent_without_a_profile_fails_closed(self, db_session, monkeypatch):
-        """Einwilligung ohne verknuepftes Profil: nichts, wogegen geprueft werden
-        koennte. Nicht durchlassen."""
+        """Consent without a linked profile: nothing to check against. Do
+        not let it through."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes
@@ -631,7 +635,7 @@ class TestVoiceSecondFactor:
         self._assert_opaque(out)
 
     async def test_recognition_off_computes_no_embedding(self, db_session, monkeypatch):
-        """Ein ECAPA-Stimmabdruck ist biometrisches Datum (Art. 9 DSGVO)."""
+        """An ECAPA voiceprint is biometric data (Art. 9 GDPR)."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes
@@ -639,10 +643,10 @@ class TestVoiceSecondFactor:
         user = await self._user(db_session)
         self._on(monkeypatch, speaker_recognition_enabled=False)
         self._stub_ticket(monkeypatch, user_id=user.id)
-        # 🛑 Die Sonde sitzt jetzt am VOICE-SERVER, nicht an `SpeakerService` —
-        # dort wird die Einbettung berechnet. Der Test wird dadurch schaerfer:
-        # er beweist, dass die Aufnahme das Haus gar nicht erst verlaesst,
-        # bevor das Ticket gilt.
+        # 🛑 The probe now sits on the VOICE SERVER, not on `SpeakerService`
+        # -- that is where the embedding is computed. It makes the test
+        # sharper: it proves the recording does not even leave the house
+        # before the ticket is valid.
         extracted = []
 
         from services import voice_server_client as vsc
@@ -660,13 +664,13 @@ class TestVoiceSecondFactor:
 
 
 class TestTheRouteIsNoLongerAnIdentifier:
-    """🛑 Der Riegel gegen das Zurueckrutschen.
+    """🛑 The guard against sliding back.
 
-    Drei Befunde des Reviews vom 2026-09-27 verschwinden NICHT durch eine Pruefung,
-    sondern durch die Form: die Route identifiziert nicht mehr, sie verifiziert.
-    Faellt sie auf 1:N zurueck, sind Namensorakel und Muenzwurf sofort wieder da.
-    Deshalb pruefen diese drei Behauptungen den Routenkoerper — ergaenzend zu den
-    Verhaltenstests oben, nicht an deren Stelle.
+    Three findings of the 2026-09-27 review disappear NOT through a check but
+    through the shape: the route no longer identifies, it verifies. If it falls
+    back to 1:N, the name oracle and the coin toss are back immediately. That
+    is why these three assertions check the route body -- in addition to the
+    behavioural tests above, not in their place.
     """
 
     pytestmark = [pytest.mark.unit]
@@ -700,8 +704,8 @@ class TestTheRouteIsNoLongerAnIdentifier:
             )
 
     def test_login_can_withhold_tokens(self):
-        """Der Anmeldepfad MUSS Token zurueckhalten koennen, sonst ist der zweite
-        Faktor Zierrat."""
+        """The login path MUST be able to withhold tokens, otherwise the
+        second factor is decoration."""
         from api.routes.auth import TokenResponse
 
         assert TokenResponse.model_fields["access_token"].default is None
@@ -709,11 +713,12 @@ class TestTheRouteIsNoLongerAnIdentifier:
 
 
 class TestTheMarginGateIsShared:
-    """`match_known_speaker` bleibt — fuer die Erkennung und `/api/speakers/identify`.
+    """`match_known_speaker` stays -- for recognition and
+    `/api/speakers/identify`.
 
-    Die Anmeldung benutzt es nach dem Umbau NICHT mehr (sie verifiziert 1:1), aber
-    die beiden 1:N-Pfade tun es, und dort war die fehlende Laeufer-Marge der
-    Muenzwurf-Befund.
+    After the rework the login does NOT use it any more (it verifies 1:1), but
+    the two 1:N paths do, and there the missing runner-up margin was the
+    coin-toss finding.
     """
 
     pytestmark = [pytest.mark.unit]
@@ -752,32 +757,32 @@ class TestTheMarginGateIsShared:
 
 @pytest.mark.database
 class TestLoginWithholdsTokensForSecondFactor:
-    """🛑 Der Kern des Zusatzfaktors, und die Stelle, an der er scheitern würde.
+    """🛑 The core of the additional factor, and the place where it would
+    fail.
 
-    Ein zweiter Faktor, nach dem der erste schon Zugriff gewährt hat, ist keiner.
-    `/auth/login` muss für ein Konto mit `voice_second_factor_enabled` deshalb
-    KEINE Token und KEINE Cookies ausgeben, sondern nur ein Ticket. Fällt diese
-    Verzweigung weg, ist die Stimme Dekoration — und man merkt es nicht, weil sich
-    die Anmeldung dann einfach normal anfühlt.
+    A second factor that comes after the first has already granted access is
+    not one. For an account with `voice_second_factor_enabled`, `/auth/login`
+    must therefore issue NO tokens and NO cookies, only a ticket. Remove that
+    branch and the voice is decoration -- and nobody notices, because the login
+    then simply feels normal.
     """
 
     @pytest.fixture(autouse=True)
     def _no_rate_limit(self, monkeypatch):
-        """Ratenbegrenzer aus, weil diese Tests den Handler DIREKT aufrufen.
+        """Rate limiter off, because these tests call the handler DIRECTLY.
 
-        Dasselbe Muster wie `test_auth.py:280` ("its wrapper guards everything
-        behind `if self.enabled`"): ein Direktaufruf soll nicht an einem
-        Zaehler haengen, den andere Tests fuellen, und slowapi greift auf
-        `request.app.state.limiter` zu (`extension.py:83`), das eine handgebaute
-        `Request` nicht hat.
+        The same pattern as `test_auth.py:280` ("its wrapper guards everything
+        behind `if self.enabled`"): a direct call should not hang on a counter
+        that other tests fill, and slowapi reaches for
+        `request.app.state.limiter` (`extension.py:83`), which a hand-built
+        `Request` does not have.
 
-        🛑 Berichtigung an mir selbst: hier stand zuerst, dieser Bypass behebe
-        die vier Fehlschlaege der Vollsuite. Das war FALSCH — er hat sie nicht
-        behoben, die Ursache war die Namensbindung in `_own_session`. Ein
-        Kommentar, der eine widerlegte Ursache behauptet, kostet den naechsten
-        Leser denselben Weg noch einmal. Der Bypass bleibt, weil er fuer sich
-        richtig ist; was er kostet, holt `TestTheRateLimitIsStillDeclared`
-        zurueck.
+        🛑 A correction to myself: this first said the bypass fixed the four
+        failures in the full suite. That was WRONG -- it did not fix them, the
+        cause was the name binding in `_own_session`. A comment that claims a
+        disproven cause costs the next reader the same journey a second time.
+        The bypass stays because it is right on its own merits; what it costs
+        is recovered by `TestTheRateLimitIsStillDeclared`.
         """
         from services.api_rate_limiter import limiter
 
@@ -785,26 +790,27 @@ class TestLoginWithholdsTokensForSecondFactor:
 
     @pytest.fixture(autouse=True)
     def _own_session(self, monkeypatch, db_session):
-        """🛑 BEIDE Namen umbiegen — und das ist der eigentliche Fund.
+        """🛑 Redirect BOTH names -- and that is the actual finding.
 
-        `DBProvider` oeffnet eine EIGENE Sitzung (der Vertrag der Anbieter traegt
-        kein `db`), und `auth/providers/db.py:18` holt sie ueber
-        `from services.database import AsyncSessionLocal` — ein auf MODULEBENE
-        GEBUNDENER Name. Ein `monkeypatch.setattr` auf `services.database`
-        erreicht diese Bindung NICHT, sobald das Modul einmal importiert ist.
+        `DBProvider` opens its OWN session (the providers' contract carries no
+        `db`), and `auth/providers/db.py:18` gets it via
+        `from services.database import AsyncSessionLocal` -- a name BOUND AT
+        MODULE LEVEL. A `monkeypatch.setattr` on `services.database` does NOT
+        reach that binding once the module has been imported.
 
-        Genau daran hingen vier Tests, und der Fehlermodus war heimtueckisch:
+        Four tests hung on exactly this, and the failure mode was insidious:
 
-        * **Allein** ist `auth.providers.db` beim Fixture-Lauf noch nicht
-          importiert. Der Patch landet zuerst, der spaetere Import KOPIERT den
-          gepatchten Wert — die Tests waren gruen.
-        * **In der Suite** hat ein frueherer Test das Modul laengst geladen. Es
-          haelt die echte Fabrik, der Anbieter sucht den Testnutzer in der
-          falschen Datenbank, findet ihn nicht, und die Anmeldung endet in
-          `bad credentials` — was wie ein Produktfehler aussieht.
+        * **On its own**, `auth.providers.db` is not yet imported when the
+          fixture runs. The patch lands first, the later import COPIES the
+          patched value -- the tests were green.
+        * **In the suite**, an earlier test loaded the module long ago. It
+          holds the real factory, the provider looks for the test user in the
+          wrong database, does not find them, and the login ends in
+          `bad credentials` -- which looks like a product defect.
 
-        Also beide Bindungen. Und nicht nur die, die gerade weh tut: `services.database`
-        bleibt gepatcht, weil andere Pfade sie zur Laufzeit nachschlagen.
+        So both bindings. And not only the one that currently hurts:
+        `services.database` stays patched, because other paths look it up at
+        runtime.
         """
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -839,14 +845,14 @@ class TestLoginWithholdsTokensForSecondFactor:
         return f
 
     async def _user(self, db, *, second_factor: bool):
-        """🛑 EINDEUTIGE Namen je Lauf, und das ist kein Stilpunkt.
+        """🛑 UNIQUE names per run, and that is not a style point.
 
-        Die Testbank ist echtes, geteiltes Postgres, und die Anmeldesperre liegt
-        in echtem Redis. Mit festen Namen nimmt ein Lauf den Zustand des vorigen
-        mit: meine eigenen fehlgeschlagenen Versuche haben `anna2fa` gesperrt, und
-        danach schlugen ALLE Tests dieser Klasse mit 401 fehl — ein Fehlerbild, das
-        wie ein Produktfehler aussieht und keiner ist. Dieselbe Falle wie in
-        `test_pc20260423_migration.py`; dort mit demselben Mittel gelöst.
+        The test database is real, shared Postgres, and the login lockout lives
+        in real Redis. With fixed names a run carries the previous run's state
+        with it: failed attempts of my own locked `anna2fa`, and after that ALL
+        tests in this class failed with a 401 -- a failure picture that looks
+        like a product defect and is not one. The same trap as in
+        `test_pc20260423_migration.py`; solved there by the same means.
         """
         import uuid
 
@@ -858,14 +864,14 @@ class TestLoginWithholdsTokensForSecondFactor:
         db.add(role)
         await db.flush()
 
-        # 🛑 MIT Profil und Einbettung, und das ist kein Beiwerk.
+        # 🛑 WITH a profile and an embedding, and that is not incidental.
         #
-        # Diese Klasse bewies „die Anmeldung haelt die Token zurueck" an einem
-        # Nutzer OHNE Sprecherprofil — also an einem, der den zweiten Faktor nie
-        # haette einloesen koennen. Unter dem alten Code war das genau die
-        # Aussperrung, und der Test feierte sie als Erfolg. Seit die Huerde nur
-        # noch steht, wenn sie auch faellt, verlangt der Nachweis einen Nutzer,
-        # der wirklich hindurchkaeme.
+        # This class used to prove "the login withholds the tokens" on a user
+        # WITHOUT a speaker profile -- that is, on one who could never have
+        # redeemed the second factor. Under the old code that was exactly the
+        # lockout, and the test celebrated it as a success. Now that the hurdle
+        # only stands when it can also fall, the proof requires a user who
+        # would genuinely get through.
         speaker = Speaker(name=f"stimme-{tag}")
         db.add(speaker)
         await db.flush()
@@ -916,7 +922,7 @@ class TestLoginWithholdsTokensForSecondFactor:
         )
 
     async def test_a_normal_account_is_untouched(self, db_session, monkeypatch):
-        """Der Flag-off-Pfad muss byte-identisch bleiben."""
+        """The flag-off path has to stay byte-identical."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes
@@ -935,10 +941,10 @@ class TestLoginWithholdsTokensForSecondFactor:
         assert resp.headers.getlist("set-cookie") != []
 
     async def test_with_the_voice_route_off_the_hurdle_rests(self, db_session, monkeypatch):
-        """🛑 Sonst wäre das Konto ausgesperrt: die Hürde greift nur, wenn es auch
-        eine Tür gibt. Ist `VOICE_AUTH_ENABLED` aus, könnte niemand das Ticket
-        einlösen — dann läuft der Passwortpfad normal weiter und die Einwilligung
-        ruht."""
+        """🛑 Otherwise the account would be locked out: the hurdle only
+        applies where there is also a door. With `VOICE_AUTH_ENABLED` off
+        nobody could redeem the ticket -- so the password path carries on
+        normally and the consent lies dormant."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes
@@ -955,8 +961,8 @@ class TestLoginWithholdsTokensForSecondFactor:
         assert out.second_factor is None
 
     async def test_no_ticket_means_no_login_at_all(self, db_session, monkeypatch):
-        """🛑 Fail-closed. Ein Redis-Ausfall darf den zweiten Faktor nicht
-        stillschweigend entfernen — er muss die Anmeldung verweigern."""
+        """🛑 Fail-closed. A Redis outage must not quietly remove the second
+        factor -- it has to refuse the login."""
         from fastapi import HTTPException, Response
 
         from api.routes import auth as auth_routes
@@ -981,15 +987,14 @@ class TestLoginWithholdsTokensForSecondFactor:
 
 
     async def test_without_a_usable_profile_the_hurdle_rests(self, db_session, monkeypatch):
-        """🛑 Die Gegenkontrolle zur ganzen Klasse.
+        """🛑 The counter-control to the whole class.
 
-        Sechs Routen koennen das Sprecherprofil nach der Einwilligung
-        entfernen. Frueher hielt die Anmeldung danach trotzdem die Token zurueck
-        und `/auth/voice` verweigerte fail-closed: das Konto war zu, ohne dass
-        jemand etwas falsch gemacht haette. Jetzt ruht die Huerde, der
-        Passwortweg bleibt offen, und die Einwilligung bleibt GESPEICHERT — sie
-        ist der Nachweis einer Erklaerung der Person, kein Schalter, den das
-        System still umlegen darf.
+        Six routes can remove the speaker profile after the consent. Previously
+        the login still withheld the tokens afterwards and `/auth/voice`
+        refused fail-closed: the account was shut without anybody having done
+        anything wrong. Now the hurdle lies dormant, the password path stays
+        open, and the consent stays STORED -- it is the record of a declaration
+        by the person, not a switch the system may quietly flip.
         """
         from fastapi import Response
 
@@ -1014,17 +1019,18 @@ class TestLoginWithholdsTokensForSecondFactor:
 
 
 class TestTheRateLimitIsStillDeclared:
-    """🛑 Was der Bypass kostet, wird hier zurückgeholt.
+    """🛑 What the bypass costs is recovered here.
 
-    `TestVoiceSecondFactor` und `TestLoginWithholdsTokensForSecondFactor` schalten
-    den Ratenbegrenzer ab, weil sie die Handler DIREKT aufrufen (slowapi greift
-    sonst auf `request.app.state.limiter` zu, das eine handgebaute Anfrage nicht
-    hat). Damit prüft aber auch kein Test mehr, dass die Begrenzung überhaupt
-    noch an den Routen HÄNGT — und beide sind unangemeldet erreichbar.
+    `TestVoiceSecondFactor` and `TestLoginWithholdsTokensForSecondFactor` switch
+    the rate limiter off, because they call the handlers DIRECTLY (otherwise
+    slowapi reaches for `request.app.state.limiter`, which a hand-built request
+    does not have). But that also means no test checks any more that the limit
+    is still ATTACHED to the routes -- and both are reachable without signing
+    in.
 
-    Ohne diesen Riegel könnte jemand den Dekorator entfernen und alle Tests
-    blieben grün. Das ist genau die Lücke, die ein Workaround typischerweise
-    aufreisst, ohne dass es jemand bemerkt.
+    Without this guard somebody could remove the decorator and all tests would
+    stay green. That is exactly the gap a workaround typically tears open
+    without anybody noticing.
     """
 
     pytestmark = [pytest.mark.unit]
@@ -1034,16 +1040,17 @@ class TestTheRateLimitIsStillDeclared:
         from api.routes import auth
 
         fn = getattr(auth, route)
-        # slowapi wickelt den Handler mit `functools.wraps`; die Kette ist über
-        # `__wrapped__` erreichbar. Ist sie leer, ist der Dekorator weg.
+        # slowapi wraps the handler with `functools.wraps`; the chain is
+        # reachable through `__wrapped__`. If it is empty, the decorator is
+        # gone.
         assert hasattr(fn, "__wrapped__"), (
             f"`{route}` traegt keinen Dekorator mehr — die Ratenbegrenzung auf "
             f"einer unangemeldet erreichbaren Anmelderoute ist weg"
         )
 
     def test_the_auth_limit_is_stricter_than_the_default(self):
-        """Die Anmelderouten laufen auf `api_rate_limit_auth`, nicht auf dem
-        allgemeinen Wert — sonst waere die strengere Grenze nur Dekoration."""
+        """The login routes run on `api_rate_limit_auth`, not on the general
+        value -- otherwise the stricter limit would be mere decoration."""
         from utils.config import settings
 
         def _per_minute(spec: str) -> float:

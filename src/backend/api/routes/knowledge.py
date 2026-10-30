@@ -1,7 +1,7 @@
 """
 Knowledge API Routes
 
-Endpoints für Dokument-Upload, Management und RAG-Suche.
+Endpoints for document upload, management and RAG search.
 With RPBAC permission checks for secure access control.
 Pydantic schemas are defined in knowledge_schemas.py.
 """
@@ -103,7 +103,7 @@ router = APIRouter()
 # =============================================================================
 
 def get_rag_service(db: AsyncSession = Depends(get_db)) -> RAGService:
-    """Dependency für RAG Service"""
+    """Dependency for the RAG service"""
     return RAGService(db)
 
 
@@ -270,9 +270,9 @@ async def upload_document(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Lädt ein Dokument hoch und indexiert es für RAG.
+    Uploads a document and indexes it for RAG.
 
-    Unterstützte Formate: PDF, DOCX, TXT, MD, HTML, PPTX, XLSX
+    Supported formats: PDF, DOCX, TXT, MD, HTML, PPTX, XLSX
 
     Requires: rag.manage permission or write access to KB
     """
@@ -301,7 +301,7 @@ async def upload_document(
                     status_code=403,
                     detail="Permission required: rag.manage"
                 )
-    # Validierung: Dateiformat — 415 Unsupported Media Type is the semantic
+    # Validation: file format -- 415 Unsupported Media Type is the semantic
     # match. Frontend reads the structured detail to render allowed-format
     # copy; legacy clients that only read status codes also get the right
     # signal.
@@ -318,7 +318,7 @@ async def upload_document(
             },
         )
 
-    # Validierung: Dateigröße — 413 Content Too Large is the correct code.
+    # Validation: file size -- 413 Content Too Large is the correct code.
     # Include max_mb in the detail so the frontend can show the limit
     # without hard-coding it.
     file.file.seek(0, 2)
@@ -336,12 +336,12 @@ async def upload_document(
             },
         )
 
-    # Datei-Inhalt lesen und SHA256-Hash berechnen
+    # Read the file contents and compute the SHA256 hash
     content = await file.read()
     file_hash = hashlib.sha256(content).hexdigest()
     logger.info(f"📄 Datei-Hash berechnet: {file_hash[:16]}... ({file.filename})")
 
-    # Duplikat-Prüfung: Existiert bereits ein Dokument mit diesem Hash in der gleichen Knowledge Base?
+    # Duplicate check: is there already a document with this hash in the same knowledge base?
     existing_doc = await rag.db.execute(
         select(Document).where(
             Document.file_hash == file_hash,
@@ -351,7 +351,7 @@ async def upload_document(
     existing = existing_doc.scalar_one_or_none()
 
     if existing:
-        logger.warning(f"⚠️ Duplikat erkannt: '{file.filename}' ist identisch mit '{existing.filename}' (ID: {existing.id})")
+        logger.warning(f"⚠️ Duplicate detected: '{file.filename}' is identical to '{existing.filename}' (ID: {existing.id})")
         raise HTTPException(
             status_code=409,
             detail={
@@ -364,16 +364,16 @@ async def upload_document(
             }
         )
 
-    # Upload-Verzeichnis erstellen
+    # Create the upload directory
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    # Eindeutigen Dateinamen generieren
+    # Generate a unique filename
     safe_name = os.path.basename((file.filename or "unknown").replace("\x00", ""))
     unique_filename = f"{uuid.uuid4().hex}_{safe_name}"
     file_path = upload_dir / unique_filename
 
-    # Datei speichern
+    # Save the file
     try:
         async with aiofiles.open(file_path, 'wb') as f:
             await f.write(content)
@@ -381,7 +381,7 @@ async def upload_document(
         logger.info(f"Datei gespeichert: {file_path}")
 
     except Exception as e:
-        logger.error(f"Fehler beim Speichern der Datei: {e}")
+        logger.error(f"Failed to store the file: {e}")
         raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {e!s}")
 
     # Worker path (#388): create the Document row synchronously (cheap
@@ -505,9 +505,9 @@ async def list_documents(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Listet Dokumente auf — nach Aktualität, ODER (mit ``q``) als gerankte
-    Hybrid-Suche (Name + Schicht-A-Fakten + Inhalt), die auch Dokumente jenseits
-    des 100-Neueste-Fensters findet."""
+    """List documents -- by recency, OR (with ``q``) as a ranked hybrid search
+    (name + layer-A facts + content) that also finds documents beyond the
+    100-most-recent window."""
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -606,15 +606,15 @@ async def _simba_uploaded_ids(db: AsyncSession, doc_ids: list[int]) -> set[int]:
 
 
 def paperless_document_url(paperless_document_id: int | None) -> str | None:
-    """Der Link auf ein Dokument in Paperless, oder None.
+    """The link to a document in Paperless, or None.
 
-    🛑 EINE Stelle, nicht drei: `_doc_to_response_kwargs` bedient `/documents`,
-    `/documents/batch`, `/documents/{id}`, `/upload` und `/reindex`. Eine
-    zusammengesetzte URL an mehreren Stellen läuft auseinander.
+    🛑 ONE place, not three: `_doc_to_response_kwargs` serves `/documents`,
+    `/documents/batch`, `/documents/{id}`, `/upload` and `/reindex`. A URL
+    assembled in several places drifts apart.
 
-    None, wenn die Kennung fehlt (das Dokument ist noch nicht abgelegt, oder es
-    war eine Dublette) oder keine Basis-URL konfiguriert ist. Der abschließende
-    Schrägstrich wird abgeschnitten, damit kein `//documents/` entsteht.
+    None when the id is missing (the document is not filed yet, or it was a
+    duplicate) or no base URL is configured. The trailing
+    slash is stripped so no `//documents/` is produced.
     """
     if not isinstance(paperless_document_id, int) or isinstance(paperless_document_id, bool):
         return None
@@ -653,8 +653,8 @@ def _doc_to_response_kwargs(doc: Document, *, in_simba: bool = False) -> dict:
         "document_date": doc.document_date.isoformat() if doc.document_date else None,
         # Integration upload status for the per-row status icons.
         "in_paperless": (doc.paperless_document_id is not None or doc.paperless_state == "done"),
-        # Fertiger Link statt roher Kennung: das Frontend soll keine Paperless-
-        # Adresse kennen müssen, und die Zusammensetzung bleibt an einer Stelle.
+        # A finished link rather than a raw id: the frontend should not have
+        # to know a Paperless address, and the composition stays in one place.
         "paperless_url": paperless_document_url(doc.paperless_document_id),
         "in_simba": in_simba,
         # Circle visibility for the tier-control UX. Denormalized on the
@@ -715,7 +715,7 @@ async def get_document(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Holt Details zu einem Dokument"""
+    """Fetch the details of a document."""
     document = await rag.get_document(document_id)
 
     if not document:
@@ -739,7 +739,7 @@ async def delete_document(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Löscht ein Dokument und alle zugehörigen Chunks"""
+    """Delete a document and all its chunks."""
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -866,7 +866,7 @@ async def move_documents(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Verschiebt Dokumente in eine andere Knowledge Base"""
+    """Move documents into a different knowledge base."""
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -874,7 +874,7 @@ async def move_documents(
         if not has_permission(user_perms, Permission.KB_OWN):
             raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
 
-        # Prüfe Write-Zugriff auf Ziel-KB
+        # Check write access on the target KB
         result = await db.execute(
             select(KnowledgeBase).where(KnowledgeBase.id == request.target_knowledge_base_id)
         )
@@ -1050,7 +1050,7 @@ async def create_knowledge_base(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Erstellt eine neue Knowledge Base.
+    Create a new knowledge base.
 
     Requires: kb.own or higher permission
     """
@@ -1100,12 +1100,12 @@ async def list_knowledge_bases(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Listet Knowledge Bases auf, gefiltert nach Benutzer-Berechtigung.
+    List knowledge bases, filtered by the user's permissions.
 
-    - kb.all: Alle KBs
-    - kb.shared: Eigene + öffentliche + geteilte
-    - kb.own: Nur eigene
-    - kb.none: Keine
+    - kb.all: all KBs
+    - kb.shared: own + public + shared
+    - kb.own: own ones only
+    - kb.none: none
     """
     # Get all KBs first
     all_bases = await rag.list_knowledge_bases()
@@ -1208,7 +1208,7 @@ async def get_knowledge_base(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Holt eine Knowledge Base nach ID"""
+    """Fetch a knowledge base by id."""
     kb = await rag.get_knowledge_base(kb_id)
 
     if not kb:
@@ -1238,7 +1238,7 @@ async def delete_knowledge_base(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Löscht eine Knowledge Base mit allen Dokumenten"""
+    """Delete a knowledge base with all its documents."""
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -1265,9 +1265,9 @@ async def search_knowledge(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Sucht in der Wissensdatenbank.
+    Search the knowledge base.
 
-    Gibt die relevantesten Chunks für eine Anfrage zurück.
+    Returns the most relevant chunks for a query.
     """
     if settings.auth_enabled:
         if not user:
@@ -1326,7 +1326,7 @@ async def search_knowledge_get(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Sucht in der Wissensdatenbank (GET-Variante).
+    Search the knowledge base (GET variant).
     """
     if settings.auth_enabled:
         if not user:
@@ -1365,8 +1365,8 @@ async def search_in_document(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Sucht nur innerhalb eines bestimmten Dokuments"""
-    # Prüfe ob Dokument existiert
+    """Searches only inside one specific document"""
+    # Check that the document exists
     doc = await rag.get_document(document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
@@ -1400,7 +1400,7 @@ async def get_knowledge_stats(
     rag: RAGService = Depends(get_rag_service),
     user: User | None = Depends(get_optional_user)
 ):
-    """Gibt Statistiken über die Wissensdatenbank zurück"""
+    """Return statistics about the knowledge base."""
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -1487,7 +1487,7 @@ async def run_rag_evaluation(
 
 @router.get("/models/status")
 async def get_model_status():
-    """Prüft, ob die für RAG benötigten Modelle verfügbar sind"""
+    """Check whether the models needed for RAG are available."""
     from services.ollama_service import OllamaService
 
     ollama = OllamaService()

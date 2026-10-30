@@ -71,61 +71,58 @@ class _PendingRequest:
     max_visible_tier: int
     query: str
     initiated_at: float
-    #: F-ID-3: gesetzt = peer-bezogener Rueckfall; dies ist die Kennung des
-    #: lokalen Menschen, der die PAARUNG eingegangen ist
-    #: (`peer_users.circle_owner_id`). Zusammen mit `max_visible_tier` ergibt
-    #: das die `PeerScope`, mit der der Filter laeuft.
+    #: F-ID-3: set = peer-scoped fallback; this is the id of the local person
+    #: who entered into the PAIRING
+    #: (`peer_users.circle_owner_id`). Together with `max_visible_tier` this
+    #: forms the `PeerScope` the filter runs with.
     #:
-    #: `None` = der gemappte Pfad (F-ID-1): die Anfrage laeuft ALS die
-    #: verknuepfte Person mit deren voller Reichweite.
+    #: `None` = the mapped path (F-ID-1): the request runs AS the linked
+    #: person, with that person's full reach.
     #:
-    #: 🛑 Hier stand bis 2026-10-27 ein `enforce_circles: bool = True`, und die
-    #: Stufe kam aus einer `CircleMembership`, die auf der ENTFERNTEN
-    #: Nutzerkennung keyte. Der Vorgabewert war `True` und damit fail-closed —
-    #: das bleibt so: ohne Eigentuemer gibt es keinen peer-bezogenen Filter,
-    #: und ohne Verknuepfung auch keine gemappte Reichweite. Eine alte, noch im
-    #: Speicher liegende Zeile ohne dieses Feld faellt auf `None`, also auf den
-    #: gemappten Pfad — der verlangt seinerseits eine Verknuepfung und liefert
-    #: ohne sie nichts.
+    #: 🛑 Until 2026-10-27 there was an `enforce_circles: bool = True` here, and
+    #: the tier came from a `CircleMembership` keyed on the REMOTE user id.
+    #: The default was `True` and therefore fail-closed -- and it stays that
+    #: way: without an owner there is no peer-scoped filter, and without a
+    #: link there is no mapped reach either. An old row still sitting in the
+    #: store without this field falls back to `None`, i.e. the mapped path --
+    #: which in turn requires a link and without one returns nothing.
     peer_owner_id: int | None = None
 
-    #: 🛑 Der DISKRIMINATOR, und sein Vorgabewert ist Absicht.
+    #: 🛑 The DISCRIMINATOR, and its default is deliberate.
     #:
-    #: `False` = Rueckfall (peer-bezogen) und verlangt `peer_owner_id`.
-    #: `True`  = gemappt: die Anfrage laeuft ALS die verknuepfte Person.
+    #: `False` = fallback (peer-scoped) and requires `peer_owner_id`.
+    #: `True`  = mapped: the request runs AS the linked person.
     #:
-    #: Warum nicht einfach `peer_owner_id is None` als Unterscheidung? Weil eine
-    #: ZEILE AUS EINER AELTEREN FASSUNG dieses Feld nicht kennt und auf die
-    #: Vorgabe faellt — und beim Redis-Speicher ist genau das laut
-    #: `_from_jsonable` der Normalfall waehrend eines rollenden Deploys. Eine
-    #: alte Zeile traegt `asker_local_user_id = peer.remote_user_id` (die
-    #: geliehene fremde Kennung) und KEIN `peer_owner_id`; ohne diesen
-    #: Diskriminator saehe sie aus wie ein gueltiger gemappter Satz und liefe
-    #: mit genau der Kennung, die F-ID-3 abgeschafft hat.
+    #: Why not simply use `peer_owner_id is None` as the distinction? Because
+    #: a ROW FROM AN OLDER VERSION does not know this field and falls back to
+    #: the default -- and with the Redis store that is exactly the normal case
+    #: during a rolling deploy (see `_from_jsonable`). An old row carries
+    #: `asker_local_user_id = peer.remote_user_id` (the borrowed foreign id)
+    #: and NO `peer_owner_id`; without this discriminator it would look like a
+    #: valid mapped record and run with exactly the id F-ID-3 abolished.
     #:
-    #: Mit `mapped=False` als Vorgabe ist so eine Zeile WIDERSPRUECHLICH
-    #: (Rueckfall ohne Eigentuemer) und wird abgewiesen, statt still auf den
-    #: weiteren Pfad zu fallen. Der Vorgabewert landet auf der sicheren Seite.
+    #: With `mapped=False` as the default such a row is CONTRADICTORY
+    #: (fallback without an owner) and gets refused instead of quietly falling
+    #: onto the wider path. The default lands on the safe side.
     mapped: bool = False
 
-    #: Anzeigename der Gegenstelle, fuer den Schnappschuss im Pruefprotokoll.
-    #: 🛑 Hier mitgefuehrt, nicht beim Schreiben nachgeschlagen: das Protokoll
-    #: haelt den Namen fest, der ZUM ZEITPUNKT DES ZUGRIFFS galt. Wird die
-    #: Paarung spaeter umbenannt oder widerrufen, soll die alte Zeile weiter
-    #: zeigen, wer damals gefragt hat. Vorgabe leer — eine Zeile aus einer
-    #: aelteren Fassung (rollender Deploy, Redis-Speicher) kennt das Feld
-    #: nicht, und ein erfundener Name waere schlimmer als gar keiner.
+    #: Display name of the far side, for the snapshot in the audit log.
+    #: 🛑 Carried here rather than looked up at write time: the log records the
+    #: name that applied AT THE TIME OF THE ACCESS. If the pairing is renamed
+    #: or revoked later, the old row should still show who asked back then.
+    #: Default empty -- a row from an older version (rolling deploy, Redis
+    #: store) does not know the field, and an invented name would be worse
+    #: than none at all.
     peer_display_name: str = ""
 
-    #: Zahl der Treffer, die `_retrieve` zurueckgegeben hat — oder `None`,
-    #: solange es nicht zurueckgekehrt ist.
+    #: Number of hits `_retrieve` returned -- or `None` while it has not
+    #: returned.
     #:
-    #: 🛑 Das ist die datenschutzrelevante Trennlinie eines ABGEBROCHENEN
-    #: Zuges, und sie laesst sich hinterher nicht rekonstruieren: vor dem
-    #: Abruf wurde nichts gelesen, danach lagen fremde Daten im Speicher —
-    #: auch wenn nie eine Antwort hinausging. `None` heisst „nicht gelesen",
-    #: `0` heisst „gelesen, nichts gefunden". Die beiden duerfen nicht
-    #: zusammenfallen; darum `int | None` und nicht `int = 0`.
+    #: 🛑 This is the privacy-relevant dividing line of a CANCELLED query, and it
+    #: cannot be reconstructed afterwards: before the retrieval nothing was
+    #: read, after it foreign data sat in memory -- even if no answer ever went
+    #: out. `None` means "not read", `0` means "read, found nothing". The two
+    #: must not collapse into one; hence `int | None` and not `int = 0`.
     retrieved_count: int | None = None
     status: str = STATUS_PROCESSING
     progress_label: str = PROGRESS_LABEL_RETRIEVING

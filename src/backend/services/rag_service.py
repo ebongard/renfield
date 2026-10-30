@@ -98,21 +98,21 @@ class DuplicateDocumentError(Exception):
 
 class RAGService(AtomOwnerResolverMixin):
     """
-    RAG Service für Dokument-basierte Anfragen.
+    RAG service for document-based queries.
 
-    Bietet:
-    - Dokument-Ingestion (Upload, Parsing, Chunking, Embedding)
-    - Similarity Search (Vektor-basierte Suche)
-    - Kontext-Generierung für LLM-Anfragen
-    - Dokument- und Knowledge-Base-Management
+    Provides:
+    - document ingestion (upload, parsing, chunking, embedding)
+    - similarity search (vector-based)
+    - context generation for LLM queries
+    - document and knowledge-base management
     """
 
     def __init__(self, db: AsyncSession):
         """
-        Initialisiert den RAG Service.
+        Initializes the RAG service.
 
         Args:
-            db: AsyncSession für Datenbankoperationen
+            db: AsyncSession for database operations
         """
         self.db = db
         self.processor = DocumentProcessor()
@@ -125,7 +125,7 @@ class RAGService(AtomOwnerResolverMixin):
         return AtomService(self.db)
 
     async def _get_ollama_client(self):
-        """Lazy initialization des Ollama Clients"""
+        """Lazy initialization of the Ollama client"""
         if self._ollama_client is None:
             self._ollama_client = get_embed_client()
         return self._ollama_client
@@ -136,17 +136,17 @@ class RAGService(AtomOwnerResolverMixin):
 
     async def get_embedding(self, text: str) -> list[float]:
         """
-        Generiert Embedding für Text mit Ollama.
+        Generates an embedding for the text with Ollama.
 
         Args:
-            text: Text für Embedding
+            text: Text to embed
 
         Returns:
-            Liste von Floats (Dimensionen je nach Embedding-Modell)
+            A list of floats (dimensions depend on the embedding model)
 
         Raises:
-            asyncio.TimeoutError: wenn Ollama nicht innerhalb rag_embedding_timeout antwortet
-            Exception: bei Verbindungsproblemen zu Ollama
+            asyncio.TimeoutError: when Ollama does not answer within rag_embedding_timeout
+            Exception: on connection problems with Ollama
         """
         try:
             client = await self._get_ollama_client()
@@ -849,7 +849,7 @@ class RAGService(AtomOwnerResolverMixin):
         user_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Sucht relevante Chunks für eine Anfrage.
+        Searches for the chunks relevant to a query.
 
         Lane C: always delegates to the extracted RAGRetrieval module which
         applies the circle-tier WHERE filter (`circle_sql.document_chunks_circles_filter`).
@@ -857,10 +857,10 @@ class RAGService(AtomOwnerResolverMixin):
         had no permission filter and would leak chunks across circle boundaries.
 
         Args:
-            query: Suchanfrage
-            top_k: Anzahl der Ergebnisse (default: settings.rag_top_k)
-            knowledge_base_id: Optional Knowledge Base Filter
-            similarity_threshold: Minimum Similarity (default: settings.rag_similarity_threshold)
+            query: Search query
+            top_k: Number of results (default: settings.rag_top_k)
+            knowledge_base_id: Optional knowledge base filter
+            similarity_threshold: Minimum similarity (default: settings.rag_similarity_threshold)
             user_id: Authenticated asker — required for circle filtering. None
                      reduces results to public-tier only.
         """
@@ -878,7 +878,7 @@ class RAGService(AtomOwnerResolverMixin):
         user_id: int | None = None,
     ) -> str:
         """
-        Erstellt einen formatierten Kontext-String für das LLM.
+        Builds a formatted context string for the LLM.
 
         Lane C: always delegates to RAGRetrieval (circle-aware). See search()
         for the rationale.
@@ -912,7 +912,7 @@ class RAGService(AtomOwnerResolverMixin):
         sort_by: str | None = None,
         order: str = "desc",
     ) -> list[Document]:
-        """Listet Dokumente auf.
+        """List documents.
 
         ``sort_by`` ∈ {name, imported, document_date} orders the FULL result set
         before paginating (so the sort is correct across pages, not just the page).
@@ -954,14 +954,14 @@ class RAGService(AtomOwnerResolverMixin):
         return list(result.scalars().all())
 
     async def get_document(self, document_id: int) -> Document | None:
-        """Holt ein Dokument nach ID"""
+        """Fetch a document by id"""
         stmt = select(Document).where(Document.id == document_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def delete_document(self, document_id: int) -> bool:
-        """Löscht ein Dokument und alle zugehörigen Chunks"""
-        # Prüfe ob Dokument existiert
+        """Delete a document and all chunks belonging to it"""
+        # Check whether the document exists
         doc = await self.get_document(document_id)
         if not doc:
             return False
@@ -976,7 +976,7 @@ class RAGService(AtomOwnerResolverMixin):
         except Exception:
             _deleted_owner = None
 
-        # Lösche auch die Datei
+        # Delete the file as well
         try:
             if doc.file_path and os.path.exists(doc.file_path):
                 os.remove(doc.file_path)
@@ -984,7 +984,7 @@ class RAGService(AtomOwnerResolverMixin):
         except Exception as e:
             logger.warning(f"Konnte Datei nicht löschen: {e}")
 
-        # Lösche FK-Referenzen aus chat_uploads
+        # Delete the foreign-key references in chat_uploads
         await self.db.execute(
             text("UPDATE chat_uploads SET document_id = NULL WHERE document_id = :doc_id"),
             {"doc_id": document_id}
@@ -1005,11 +1005,11 @@ class RAGService(AtomOwnerResolverMixin):
             if aid:
                 await AtomPurgeService.purge(self.db, atom_id=aid, reason="document_deleted")
 
-        # Lösche zuerst die Chunks (explizit, falls CASCADE nicht greift)
+        # Delete the chunks first (explicitly, in case CASCADE does not apply)
         chunk_stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
         await self.db.execute(chunk_stmt)
 
-        # Dann lösche das Dokument
+        # Then delete the document
         stmt = delete(Document).where(Document.id == document_id)
         result = await self.db.execute(stmt)
         await self.db.commit()
@@ -1037,7 +1037,7 @@ class RAGService(AtomOwnerResolverMixin):
         name: str,
         description: str | None = None
     ) -> KnowledgeBase:
-        """Erstellt eine neue Knowledge Base"""
+        """Create a new knowledge base"""
         kb = KnowledgeBase(name=name, description=description)
         self.db.add(kb)
         await self.db.commit()
@@ -1046,7 +1046,7 @@ class RAGService(AtomOwnerResolverMixin):
         return kb
 
     async def list_knowledge_bases(self) -> list[KnowledgeBase]:
-        """Listet alle Knowledge Bases auf (without eager-loading documents)"""
+        """List all knowledge bases (without eager-loading documents)"""
         # Use a count subquery instead of selectinload to avoid loading all documents
         doc_count_subq = (
             select(func.count(Document.id))
@@ -1070,7 +1070,7 @@ class RAGService(AtomOwnerResolverMixin):
         return kbs
 
     async def get_knowledge_base(self, kb_id: int) -> KnowledgeBase | None:
-        """Holt eine Knowledge Base nach ID"""
+        """Fetch a knowledge base by id"""
         stmt = (
             select(KnowledgeBase)
             .options(selectinload(KnowledgeBase.documents))
@@ -1085,26 +1085,26 @@ class RAGService(AtomOwnerResolverMixin):
         target_kb_id: int
     ) -> int:
         """
-        Verschiebt Dokumente in eine andere Knowledge Base.
+        Moves documents into another knowledge base.
 
         Args:
-            document_ids: Liste der Dokument-IDs
-            target_kb_id: Ziel-Knowledge-Base-ID
+            document_ids: List of document ids
+            target_kb_id: Id of the target knowledge base
 
         Returns:
-            Anzahl tatsächlich verschobener Dokumente
+            The number of documents actually moved
 
         Raises:
-            ValueError: wenn Ziel-KB nicht existiert oder inaktiv ist
+            ValueError: when the target knowledge base does not exist or is inactive
         """
-        # Validiere Ziel-KB
+        # Validate the target knowledge base
         target_kb = await self.get_knowledge_base(target_kb_id)
         if not target_kb:
             raise ValueError(f"Knowledge Base {target_kb_id} nicht gefunden")
         if not target_kb.is_active:
             raise ValueError(f"Knowledge Base '{target_kb.name}' ist nicht aktiv")
 
-        # Lade alle Dokumente
+        # Load all documents
         stmt = select(Document).where(Document.id.in_(document_ids))
         result = await self.db.execute(stmt)
         docs = list(result.scalars().all())
@@ -1112,7 +1112,7 @@ class RAGService(AtomOwnerResolverMixin):
         if not docs:
             raise ValueError("Keine der angegebenen Dokumente gefunden")
 
-        # Verschiebe nur Dokumente die nicht bereits in der Ziel-KB sind
+        # Move only documents that are not already in the target knowledge base
         moved = 0
         for doc in docs:
             if doc.knowledge_base_id != target_kb_id:
@@ -1128,12 +1128,12 @@ class RAGService(AtomOwnerResolverMixin):
         return moved
 
     async def delete_knowledge_base(self, kb_id: int) -> bool:
-        """Löscht eine Knowledge Base mit allen Dokumenten"""
+        """Delete a knowledge base with all of its documents"""
         kb = await self.get_knowledge_base(kb_id)
         if not kb:
             return False
 
-        # Lösche Dateien aller Dokumente
+        # Delete the files of all documents
         for doc in kb.documents:
             try:
                 if doc.file_path and os.path.exists(doc.file_path):
@@ -1141,7 +1141,7 @@ class RAGService(AtomOwnerResolverMixin):
             except Exception as e:
                 logger.warning(f"Konnte Datei nicht löschen: {e}")
 
-        # Lösche aus DB (Documents + Chunks werden durch cascade gelöscht)
+        # Delete from the database (documents + chunks go via cascade)
         stmt = delete(KnowledgeBase).where(KnowledgeBase.id == kb_id)
         result = await self.db.execute(stmt)
         await self.db.commit()
@@ -1154,7 +1154,7 @@ class RAGService(AtomOwnerResolverMixin):
     # ==========================================================================
 
     async def get_stats(self) -> dict[str, Any]:
-        """Gibt Statistiken über die RAG-Datenbank zurück"""
+        """Return statistics about the RAG database"""
         doc_count = await self.db.scalar(
             select(func.count(Document.id))
         )
@@ -1281,7 +1281,7 @@ class RAGService(AtomOwnerResolverMixin):
         top_k: int = 5
     ) -> list[dict[str, Any]]:
         """
-        Sucht nur innerhalb eines bestimmten Dokuments.
+        Searches only inside one specific document.
         """
         query_embedding = await self.get_embedding(query)
         embedding_str = f"[{','.join(map(str, query_embedding))}]"

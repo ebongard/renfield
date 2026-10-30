@@ -289,8 +289,9 @@ function AppRoutes() {
                 <FederationAuditPage />
               </ProtectedRoute>
             } />
-            {/* Eigenes Konto — bewusst KEINE AdminRoute: die Einwilligung in die
-                Stimme gehört der Person, nicht der Verwaltung. */}
+            {/* One's own account -- deliberately NOT an AdminRoute: the
+                consent to use the voice belongs to the person, not to the
+                administration. */}
             <Route path="/settings/account" element={
               <ProtectedRoute>
                 <AccountSettingsPage />

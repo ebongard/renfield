@@ -1,11 +1,11 @@
 """
-Tests für Proaktive Benachrichtigungen
+Tests for proactive notifications
 
-Testet:
+Covers:
 - NotificationService: Webhook, Dedup, CRUD, Token
 - Phase 2: Semantic Dedup, Urgency Classification, Enrichment, Suppressions
 - Reminders (Duration Parsing)
-- Notification API: Webhook-Endpoint, Liste, Acknowledge, Dismiss, Token
+- Notification API: webhook endpoint, list, Acknowledge, Dismiss, Token
 - WebSocket: notification_ack Handling
 """
 

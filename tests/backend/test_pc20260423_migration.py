@@ -31,7 +31,6 @@ container points it at the dedicated ``renfield_test`` DB.
 from __future__ import annotations
 
 import importlib.util
-import os
 import uuid
 from pathlib import Path
 
@@ -73,27 +72,22 @@ def _load_migration():
     return module
 
 
-def _pg_test_dsn() -> str | None:
-    return os.environ.get("RENFIELD_TEST_PG_URL")
-
-
 # ---------------------------------------------------------------------------
 # Dedicated-schema connection fixture.
 # ---------------------------------------------------------------------------
 @pytest.fixture
-async def schema_conn():
+async def schema_conn(pg_url):
     """Yield ``(AsyncConnection, schema_name)`` pinned to a throwaway schema.
 
     The connection is a single physical asyncpg connection (NullPool) so the
     session-level ``SET search_path`` persists across commits for the whole
     test. Torn down with ``DROP SCHEMA ... CASCADE``.
     """
-    dsn = _pg_test_dsn()
-    if dsn is None:
-        pytest.skip("RENFIELD_TEST_PG_URL not set — Postgres tests disabled")
-    if dsn.startswith("postgresql://"):
-        dsn = dsn.replace("postgresql://", "postgresql+asyncpg://", 1)
-
+    # DSN from the shared `pg_url` fixture. This file used to carry its own
+    # copy of the scheme normalisation -- one of three copies, while two other
+    # files had none and errored out with ModuleNotFoundError: psycopg2
+    # (2026-10-30). One helper, one place.
+    dsn = pg_url
     engine = create_async_engine(dsn, poolclass=NullPool, future=True)
     schema = f"pc447_{uuid.uuid4().hex[:12]}"
     conn = await engine.connect()
@@ -407,12 +401,26 @@ async def test_upgrade_downgrade_cycle(schema_conn):
 #    per-document atom whose policy tier is the KB default.
 # ===========================================================================
 async def test_create_document_populates_atom_id_and_tier_from_kb(schema_conn):
-    conn, _schema = schema_conn
+    conn, schema = schema_conn
 
     from models.database import Base
 
-    await conn.run_sync(Base.metadata.create_all)
+    # 🛑 Create the tables IN the throwaway schema, explicitly. A bare
+    # `create_all` skips every table that is merely VISIBLE on the search
+    # path, and `public` is on it -- so it created nothing here and every row
+    # below landed in the public schema of the shared test database.
+    await conn.run_sync(
+        lambda sync_conn: Base.metadata.create_all(
+            sync_conn.execution_options(schema_translate_map={None: schema})
+        )
+    )
     await conn.commit()
+    in_schema = (
+        await conn.execute(
+            text("SELECT to_regclass(:t) IS NOT NULL"), {"t": f'"{schema}".roles'}
+        )
+    ).scalar()
+    assert in_schema, "tables were not created in the throwaway schema"
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -421,19 +429,12 @@ async def test_create_document_populates_atom_id_and_tier_from_kb(schema_conn):
     sm = async_sessionmaker(bind=conn, class_=AsyncSession, expire_on_commit=False)
 
     async with sm() as session:
-        # Eindeutig je Lauf. Mit den festen Namen "doc_role"/"doc_owner" war der
-        # Test NICHT wiederholbar: `roles` und `users` liegen im public-Schema
-        # der geteilten Testbank, nicht im Wegwerf-Schema dieses Moduls, und der
-        # Aufräumlauf zwischen den Tests fasst sie nicht an. Der erste Lauf war
-        # grün, jeder weitere starb an `duplicate key … ix_roles_name`, und die
-        # Zeilen liessen sich wegen einer FK-Kette (users -> knowledge_bases)
-        # auch nicht mehr von Hand entfernen. Gefunden 2026-09-24.
-        #
-        # `tag` gilt fuer JEDEN eindeutigkeitsgebundenen Namen hier, nicht nur
-        # fuer den, der gerade rot war: `roles.name`, `users.username`,
-        # `users.email` UND `knowledge_bases.name` tragen alle ein UNIQUE. Nur
-        # die ersten drei zu kennzeichnen verschob den Fehler bloss eine Zeile
-        # weiter — beim ersten Versuch genau so passiert.
+        # Unique per run. Found 2026-09-24: with fixed names the test was not
+        # repeatable, because `create_all` had created nothing in the
+        # throwaway schema (see above) and the rows sat in public. The tag
+        # used to hide that; now it is only a second line of defence. It
+        # covers EVERY uniqueness-bound name: `roles.name`, `users.username`,
+        # `users.email` AND `knowledge_bases.name`.
         tag = uuid.uuid4().hex[:8]
         role = Role(name=f"doc_role_{tag}")
         session.add(role)

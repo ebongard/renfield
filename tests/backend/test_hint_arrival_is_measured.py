@@ -1,21 +1,21 @@
-"""Ob die `tool_hints` beim Entdecken ANKOMMEN, muss im Protokoll stehen.
+"""Whether the `tool_hints` ARRIVE at discovery time has to be in the log.
 
-🛑 Der Anlass, am 2026-10-26 gemessen. Vier Hinweise standen für den Scanner in
-`config/mcp_servers.yaml` (1426/791/186/379 Zeichen). Der gemountete Pfad trug
-sie, der Lader trug sie, und derselbe Codepfad lieferte in einer Nachstellung
-IM LAUFENDEN POD eine 1529 Zeichen lange Vorauswahlzeile.
+🛑 The occasion, measured on 2026-10-26. Four hints stood for the scanner in
+`config/mcp_servers.yaml` (1426/791/186/379 characters). The mounted path
+carried them, the loader carried them, and the same code path produced a
+1529-character preselection line in a reproduction INSIDE THE RUNNING POD.
 
-In Produktion war dieselbe Zeile **102 Zeichen** lang und trug keinen Hinweis —
-nur die erste Zeile des Docstrings vom Scanner-Server. Vier Review-Runden
-arbeiteten an diesen Texten (#1411 Sprachfalle, Bluetooth-Abgrenzung, die
-`known:`-Korrektur), ohne dass einer beim Modell ankam. Nichts im Protokoll
-sagte es; sichtbar wurde es erst durch einen eigens gebauten Prompt-Auszug.
+In production the same line was **102 characters** long and carried no hint --
+only the first line of the scanner server's docstring. Four review rounds
+worked on these texts (#1411 the language trap, the Bluetooth demarcation, the
+`known:` correction) without a single one of them reaching the model. Nothing
+in the log said so; it only became visible through a purpose-built prompt dump.
 
-🛑 **Abwesenheit ist keine Diagnose.** Die erste Fassung dieser Funktion kehrte
-bei einem Server ohne Hinweise still zurück — und ein Test schrieb diese Stille
-als gewolltes Verhalten fest. Damit sahen drei verschiedene Lagen gleich aus:
-Server ohne Hinweise, Konfiguration ohne Hinweise, Bild ohne diese Funktion.
-Im Review zu #1415 gefunden und umgedreht.
+🛑 **Absence is not a diagnosis.** The first version of this function returned
+silently for a server without hints -- and a test pinned that silence down as
+intended behaviour. That made three different situations look alike: a server
+without hints, a configuration without hints, an image without this function.
+Found in the review of #1415 and reversed.
 """
 import inspect
 from dataclasses import dataclass, field
@@ -37,7 +37,7 @@ class _Werkzeug:
 
 @dataclass
 class _Zustand:
-    """So viel von `MCPServerState`, wie die Funktion anfasst."""
+    """As much of `MCPServerState` as the function touches."""
     config: object
     all_discovered_tools: list = field(default_factory=list)
     tools: list = field(default_factory=list)
@@ -45,7 +45,7 @@ class _Zustand:
 
 def _zustand(hinweise: dict, entdeckt: list[_Werkzeug],
              angeboten: list[_Werkzeug] | None = None) -> _Zustand:
-    """`angeboten=None` heißt: der Filter wirft nichts weg (der Normalfall)."""
+    """`angeboten=None` means: the filter throws nothing away (the normal case)."""
     return _Zustand(
         config=SimpleNamespace(name="scanner", tool_hints=hinweise),
         all_discovered_tools=entdeckt,
@@ -64,8 +64,8 @@ def protokoll():
 
 
 def test_a_key_that_matches_no_tool_is_a_WARNING(protokoll):
-    """Ein Schlüssel, der zu keinem entdeckten Werkzeug passt, war ein stiller
-    Leerlauf: `config.tool_hints.get(tool.name)` liefert `None`, ohne Spur."""
+    """A key that matches no discovered tool used to be a silent no-op:
+    `config.tool_hints.get(tool.name)` returns `None`, leaving no trace."""
     log_hint_arrival(_zustand(
         {"scan_document": "x" * 1426, "tippfehler_tool": "y" * 100},
         [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("scanner_status")],
@@ -78,7 +78,7 @@ def test_a_key_that_matches_no_tool_is_a_WARNING(protokoll):
 
 
 def test_hints_configured_but_NONE_attached_is_a_WARNING(protokoll):
-    """Genau die Lage vom 2026-10-26: konfiguriert ja, angekommen nichts."""
+    """Exactly the situation of 2026-10-26: configured yes, arrived nothing."""
     log_hint_arrival(_zustand(
         {"scan_document": "x" * 1426},
         [_Werkzeug("scan_document"), _Werkzeug("scanner_status")],
@@ -89,17 +89,17 @@ def test_hints_configured_but_NONE_attached_is_a_WARNING(protokoll):
 
 
 def test_a_hinted_tool_filtered_OUT_of_the_offered_set_is_a_WARNING(protokoll):
-    """🛑 Angehängt ist nicht angeboten.
+    """🛑 Attached is not offered.
 
-    `prompt_tools` oder eine DB-Übersteuerung können ein Werkzeug aus
-    `state.tools` werfen, NACHDEM sein Hinweis angehängt wurde. Die erste
-    Fassung zählte nur `all_discovered_tools` und hätte das als GESUND
-    gemeldet. Im Review zu #1415 gefunden.
+    `prompt_tools` or a DB override can throw a tool out of `state.tools` AFTER
+    its hint was attached. The first version counted only
+    `all_discovered_tools` and would have reported that as HEALTHY. Found in
+    the review of #1415.
     """
     log_hint_arrival(_zustand(
         {"scan_document": "x" * 1426},
         [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("scanner_status")],
-        angeboten=[_Werkzeug("scanner_status")],   # der behinweiste fiel raus
+        angeboten=[_Werkzeug("scanner_status")],   # the hinted one dropped out
     ))
     warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
     assert warnungen, (
@@ -109,9 +109,9 @@ def test_a_hinted_tool_filtered_OUT_of_the_offered_set_is_a_WARNING(protokoll):
 
 
 def test_the_healthy_case_is_INFO_with_counts(protokoll):
-    """Wenn alles ankommt, genügt eine Zählung — mit Gesamtlänge, sonst wäre
-    ein abgeschnittener Hinweis nicht von einem vollständigen zu
-    unterscheiden."""
+    """When everything arrives a count is enough -- with the total length,
+    otherwise a truncated hint would be indistinguishable from a complete
+    one."""
     log_hint_arrival(_zustand(
         {"scan_document": "x" * 1426, "route_scan": "y" * 791},
         [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("route_scan", "y" * 791)],
@@ -124,13 +124,13 @@ def test_the_healthy_case_is_INFO_with_counts(protokoll):
 
 
 def test_a_server_WITHOUT_hints_still_says_so(protokoll):
-    """🛑 Umgedreht gegenüber der ersten Fassung, und das ist der Kern.
+    """🛑 Reversed from the first version, and that is the core.
 
-    Sie kehrte hier still zurück, und ein Test hielt diese Stille fest. Damit
-    war „Server hat keine Hinweise" nicht von „die Konfiguration dieses
-    Prozesses hat keine" und nicht von „dieses Bild kennt die Funktion nicht"
-    zu unterscheiden — drei Lagen, eine Stille. Genau das Rätselraten, das
-    diesen Zweig ausgelöst hat.
+    It returned silently here, and a test held that silence in place. That made
+    "this server has no hints" indistinguishable from "this process's
+    configuration has none" and from "this image does not know the function" --
+    three situations, one silence. Exactly the guesswork that set off this
+    branch.
     """
     log_hint_arrival(_zustand({}, [_Werkzeug("irgendwas")]))
     assert protokoll, (
@@ -142,10 +142,10 @@ def test_a_server_WITHOUT_hints_still_says_so(protokoll):
 
 
 def test_the_line_appears_only_ON_CHANGE(protokoll):
-    """🛑 Die Entdeckung läuft alle ~60 s je Server (`mcp_refresh_interval`;
-    `refresh_tools` liest den per-Server-Wert NICHT). Eine Zeile je Durchlauf
-    wären ~60 je Stunde, und ein dauerhaft unpassender Schlüssel ein
-    Dauerfeuer, das die echten Fälle zudeckt."""
+    """🛑 Discovery runs about every 60 s per server (`mcp_refresh_interval`;
+    `refresh_tools` does NOT read the per-server value). One line per pass
+    would be about 60 an hour, and a permanently mismatched key would be a
+    constant barrage that buries the real cases."""
     z = _zustand({"scan_document": "x" * 10},
                  [_Werkzeug("scan_document", "x" * 10)])
     log_hint_arrival(z)
@@ -155,7 +155,7 @@ def test_the_line_appears_only_ON_CHANGE(protokoll):
         f"drei Durchlaeufe, {len(protokoll)} Zeilen — ein unveraenderter "
         "Zustand darf nur einmal protokollieren")
 
-    # Ändert sich etwas, muss es wieder erscheinen.
+    # If something changes, it has to appear again.
     z.all_discovered_tools = [_Werkzeug("scan_document")]
     z.tools = list(z.all_discovered_tools)
     log_hint_arrival(z)
@@ -165,10 +165,10 @@ def test_the_line_appears_only_ON_CHANGE(protokoll):
 
 
 def test_the_hint_TEXT_never_reaches_the_log(protokoll):
-    """🛑 Nur Namen und Längen — und zwar auf BEIDEN Zweigen.
+    """🛑 Only names and lengths -- and on BOTH branches.
 
-    Die erste Fassung prüfte nur den INFO-Zweig; der WARNING-Zweig ist aber
-    der, der variable Inhalte einsetzt. Im Review zu #1415 gefunden.
+    The first version checked only the INFO branch; but the WARNING branch is
+    the one that inserts variable content. Found in the review of #1415.
     """
     geheim = "DIESER-TEXT-DARF-NICHT-INS-PROTOKOLL"
     log_hint_arrival(_zustand({"a": geheim}, [_Werkzeug("a", geheim)]))
@@ -181,11 +181,11 @@ def test_the_hint_TEXT_never_reaches_the_log(protokoll):
 
 
 def test_the_discovery_path_actually_calls_it(protokoll):
-    """🛑 Die VERDRAHTUNG, nicht nur die Funktion.
+    """🛑 The WIRING, not just the function.
 
-    Der Fehler dieses Tages war fünfmal derselbe: ein Riegel richtig gebaut
-    und nirgends gerufen, oder ein Parameter eine Schicht höher weggefallen —
-    und jeder Einheitentest blieb grün.
+    That day's defect was the same one five times over: a guard built
+    correctly and called nowhere, or a parameter dropped one layer up -- and
+    every unit test stayed green.
     """
     from services.mcp_client import MCPManager, MCPServerConfig, MCPServerState
 
@@ -197,9 +197,9 @@ def test_the_discovery_path_actually_calls_it(protokoll):
     rohe = [SimpleNamespace(name="scan_document", description="Scan a stack.",
                             inputSchema={"properties": {}, "required": []})]
 
-    # 🛑 Ein ECHTER Manager, kein `__new__`: `_apply_tool_filter` braucht
-    # Zustand, den `__init__` anlegt (`_tool_overrides`). Geprueft: `__init__`
-    # macht kein I/O — nur Zuweisungen.
+    # 🛑 A REAL manager, not `__new__`: `_apply_tool_filter` needs state that
+    # `__init__` creates (`_tool_overrides`). Checked: `__init__` does no I/O
+    # -- only assignments.
     mgr = MCPManager()
     mgr._install_discovered_tools(state, rohe)
 
@@ -212,12 +212,12 @@ def test_the_discovery_path_actually_calls_it(protokoll):
 
 
 def test_the_two_discovery_entry_points_reach_the_install():
-    """🛑 Und die Verdrahtung DAVOR.
+    """🛑 And the wiring BEFORE that.
 
-    Der Test oben beweist nur, dass `_install_discovered_tools` die Zählung
-    ruft — nicht, dass Verbinden und Auffrischen dort ankommen. Ein Umbau, der
-    die Entdeckung wieder in `_connect_server` einzieht, liesse ihn grün und
-    die Zeile verschwinden. Im Review zu #1415 benannt.
+    The test above proves only that `_install_discovered_tools` calls the
+    count -- not that connecting and refreshing arrive there. A rework that
+    pulls discovery back into `_connect_server` would leave it green and make
+    the line disappear. Named in the review of #1415.
     """
     from services.mcp_client import MCPManager
 

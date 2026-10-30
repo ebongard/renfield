@@ -1,34 +1,33 @@
-"""Misst, ob der halfvec-Cast sich inzwischen lohnen wuerde — statt es zu raten.
+"""Measures whether the halfvec cast would pay off by now -- instead of guessing.
 
-WARUM ES DAS GIBT
------------------
-Ein HNSW-Index auf `(embedding::halfvec(N)) halfvec_cosine_ops` ist ein
-AUSDRUCKSindex: der Planer benutzt ihn nur bei syntaktisch passendem
-`ORDER BY`. Der noetige Cast ist aber nur dann gratis, wenn der Planer den Index
-daraufhin auch WAEHLT. Tut er es nicht, kostet die halfvec-Umwandlung jede
-Zeile eines Seq Scans, ohne etwas einzubringen.
+WHY IT EXISTS
+-------------
+An HNSW index on `(embedding::halfvec(N)) halfvec_cosine_ops` is an EXPRESSION
+index: the planner only uses it on a syntactically matching `ORDER BY`. But the
+required cast is only free when the planner then also CHOOSES the index. If it
+does not, the halfvec conversion costs every row of a Seq Scan without
+delivering anything.
 
-Deshalb casten einige Abfragen bewusst NICHT (siehe `_WATCHED`). Diese Ausnahme
-stimmt heute und wird irgendwann still falsch: es geht nichts kaputt, es wird
-nur langsam. Sie braucht also einen Ausloeser.
+That is why some queries deliberately do NOT cast (see `_WATCHED`). This
+exception holds today and will at some point quietly become wrong: nothing
+breaks, it only gets slow. So it needs a trigger.
 
-🛑 **WARUM DIESER AUSLOESER NICHT ZAEHLT.** Die erste Fassung meldete ab 4 000
-Zeilen. Die Messung auf der zweiten Instanz hat diese Schwelle am Tag ihrer
-Einfuehrung widerlegt:
+🛑 **WHY ROW COUNT IS NOT THAT TRIGGER.** The first version reported from 4 000
+rows upwards. The measurement on the second instance disproved that threshold on
+the day it was introduced:
 
-    xidra  document_chunks  3 165 Zeilen  -> Index NICHT gewaehlt (145 ms / 22 ms)
-    xidra  kg_entities      1 953 Zeilen  -> Index GEWAEHLT       (4,1 ms / 14,7 ms)
+    xidra  document_chunks  3 165 rows  -> index NOT chosen (145 ms / 22 ms)
+    xidra  kg_entities      1 953 rows  -> index CHOSEN     (4,1 ms / 14,7 ms)
 
-Die Zeilenzahl sagt es nicht vorher. Der Grund sind Heap-Seiten und Indexform:
-`document_chunks` hat 416 Seiten bei 2 847 Zeilen, `kg_entities` nur 150 bei
-4 813 — und der geschaetzte HNSW-Einstieg unterscheidet sich um Faktor acht, bei
-WENIGER Zeilen. Eine Zahl, die das Falsche misst, ist kein Ausloeser, sondern
-eine zweite Falle.
+The row count does not predict it. The reason is heap pages and index shape:
+`document_chunks` has 416 pages at 2 847 rows, `kg_entities` only 150 at
+4 813 -- and the estimated HNSW entry differs by a factor of eight, at FEWER
+rows. A number that measures the wrong thing is not a trigger but a second trap.
 
-Also fragt diese Aufgabe direkt nach der Kippbedingung: **wuerde der Planer den
-Index nehmen, wenn die Abfrage casten wuerde?** Das beantwortet ein blosses
-`EXPLAIN` — ohne die Abfrage auszufuehren, ohne Last, auf echten Daten und
-echten Statistiken. Sagt er ja, ist der Cast fuer diese Tabelle faellig.
+So this task asks the tipping condition directly: **would the planner take the
+index if the query cast?** A bare `EXPLAIN` answers that -- without running the
+query, without load, on real data and real statistics. If it says yes, the cast
+is due for that table.
 """
 from __future__ import annotations
 
@@ -39,9 +38,9 @@ from sqlalchemy import text
 
 from services.database import AsyncSessionLocal
 
-# Tabellen, deren ORDER-BY-Suche HEUTE bewusst NICHT auf halfvec castet, mit den
-# Dateien, die dann anzupassen waeren. Der Index existiert trotzdem — er ist
-# billig zu halten und sofort da, sobald er lohnt.
+# Tables whose ORDER BY search deliberately does NOT cast to halfvec TODAY, with
+# the files that would then have to be adjusted. The index exists regardless --
+# it is cheap to keep and there immediately once it pays off.
 _WATCHED: dict[str, tuple[str, ...]] = {
     "document_chunks": ("services/rag_retrieval.py", "services/rag_service.py"),
     "conversation_memories": (
@@ -51,7 +50,7 @@ _WATCHED: dict[str, tuple[str, ...]] = {
 
 
 def _plan_uses_hnsw(plan: dict) -> str | None:
-    """Name des HNSW-Index im Plan, oder None. Rekursiv ueber alle Teilplaene."""
+    """Name of the HNSW index in the plan, or None. Recursive over all subplans."""
     name = plan.get("Index Name")
     if isinstance(name, str) and "hnsw" in name.lower():
         return name
@@ -67,10 +66,10 @@ def _plan_uses_hnsw(plan: dict) -> str | None:
 
 
 async def check_vector_index_thresholds() -> str | None:
-    """Frage je beobachteter Tabelle: naehme der Planer den Index MIT Cast?
+    """Ask per watched table: would the planner take the index WITH a cast?
 
-    Rueckgabe: kurze Zusammenfassung fuers Laufprotokoll, oder None, wenn nichts
-    zu melden ist — die Aufgabe schweigt im Normalfall.
+    Returns a short summary for the run log, or None when there is nothing to
+    report -- the task stays silent in the normal case.
     """
     due: list[str] = []
     async with AsyncSessionLocal() as db:
@@ -81,10 +80,10 @@ async def check_vector_index_thresholds() -> str | None:
             if not exists:
                 continue
 
-            # Dimension aus der SPALTE. ROH, ohne `- 4`: pgvector legt N direkt
-            # im typmod ab (der +4-Versatz ist die varlena-Konvention). Eine
-            # frühere Migration rechnete `- 4` und haette einen Index auf
-            # halfvec(2556) gebaut, den keine Abfrage je haette nutzen koennen.
+            # Dimension from the COLUMN. RAW, without `- 4`: pgvector stores N
+            # directly in the typmod (the +4 offset is the varlena convention).
+            # An earlier migration computed `- 4` and would have built an index
+            # on halfvec(2556) that no query could ever have used.
             dim = (await db.execute(text("""
                 SELECT a.atttypmod FROM pg_attribute a
                 JOIN pg_class c ON c.oid = a.attrelid
@@ -93,17 +92,17 @@ async def check_vector_index_thresholds() -> str | None:
             if not dim or dim <= 0:
                 continue
 
-            # Ohne Zeilen gibt es nichts zu planen — und eine leere Tabelle
-            # sagt ueber die Kippbedingung nichts aus.
+            # Without rows there is nothing to plan -- and an empty table says
+            # nothing about the tipping condition.
             n = (await db.execute(
                 text(f"SELECT count(*) FROM {table} WHERE embedding IS NOT NULL")
             )).scalar_one()
             if n == 0:
                 continue
 
-            # NUR EXPLAIN, kein ANALYZE: die Frage ist, was der Planer WAEHLT,
-            # nicht wie lange die Abfrage laeuft. Das kostet keine Ausfuehrung
-            # und belastet die Produktivinstanz nicht.
+            # EXPLAIN ONLY, no ANALYZE: the question is what the planner
+            # CHOOSES, not how long the query runs. That costs no execution and
+            # puts no load on the production instance.
             probe = (
                 f"SELECT id FROM {table} WHERE embedding IS NOT NULL "
                 f"ORDER BY embedding::halfvec({dim}) <=> "
@@ -114,7 +113,7 @@ async def check_vector_index_thresholds() -> str | None:
                 raw = (await db.execute(
                     text(f"EXPLAIN (FORMAT JSON) {probe}")
                 )).scalar_one()
-            except Exception as exc:  # pragma: no cover - Planerfehler ist kein Ausfall
+            except Exception as exc:  # pragma: no cover - a planner error is not an outage
                 logger.debug(f"Vektorindex-Probe fuer {table} fehlgeschlagen: {exc}")
                 continue
 

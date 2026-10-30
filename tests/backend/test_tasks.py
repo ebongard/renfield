@@ -1,10 +1,10 @@
 """
-Tests für Tasks API
+Tests for the tasks API
 
-Testet:
-- Task CRUD Operations
-- Task Status Updates
-- Task Filtering
+Covers:
+- Task CRUD operations
+- Task status updates
+- Task filtering
 """
 
 from datetime import datetime
@@ -67,11 +67,11 @@ async def completed_task(db_session: AsyncSession) -> Task:
 # ============================================================================
 
 class TestTaskModel:
-    """Tests für das Task Model"""
+    """Tests for the Task model"""
 
     @pytest.mark.database
     async def test_create_task(self, db_session: AsyncSession, sample_task_data):
-        """Testet das Erstellen eines Tasks"""
+        """Creating a task"""
         task = Task(**sample_task_data, status="pending")
         db_session.add(task)
         await db_session.commit()
@@ -84,7 +84,7 @@ class TestTaskModel:
 
     @pytest.mark.database
     async def test_task_with_result(self, db_session: AsyncSession):
-        """Testet Task mit Ergebnis"""
+        """Tests a task with a result"""
         task = Task(
             title="Task with Result",
             task_type="result_type",
@@ -101,7 +101,7 @@ class TestTaskModel:
 
     @pytest.mark.database
     async def test_task_with_error(self, db_session: AsyncSession):
-        """Testet Task mit Fehler"""
+        """A task with an error"""
         task = Task(
             title="Failed Task",
             task_type="error_type",
@@ -122,7 +122,7 @@ class TestTaskModel:
 # ============================================================================
 
 class TestTaskCRUDAPI:
-    """Tests für Task CRUD API"""
+    """Tests for the task CRUD API"""
 
     @pytest.mark.integration
     async def test_create_task_endpoint(
@@ -130,7 +130,7 @@ class TestTaskCRUDAPI:
         async_client: AsyncClient,
         sample_task_data
     ):
-        """Testet POST /api/tasks/create"""
+        """Tests POST /api/tasks/create"""
         response = await async_client.post(
             "/api/tasks/create",
             json=sample_task_data
@@ -148,7 +148,7 @@ class TestTaskCRUDAPI:
         async_client: AsyncClient,
         test_task: Task
     ):
-        """Testet GET /api/tasks/list"""
+        """Tests GET /api/tasks/list"""
         response = await async_client.get("/api/tasks/list")
 
         assert response.status_code == 200
@@ -163,7 +163,7 @@ class TestTaskCRUDAPI:
         test_task: Task,
         completed_task: Task
     ):
-        """Testet GET /api/tasks/list mit Status-Filter"""
+        """Tests GET /api/tasks/list with a status filter"""
         response = await async_client.get("/api/tasks/list?status=pending")
 
         assert response.status_code == 200
@@ -176,7 +176,7 @@ class TestTaskCRUDAPI:
         async_client: AsyncClient,
         test_task: Task
     ):
-        """Testet GET /api/tasks/list mit Typ-Filter"""
+        """Tests GET /api/tasks/list with a type filter"""
         response = await async_client.get(f"/api/tasks/list?task_type={test_task.task_type}")
 
         assert response.status_code == 200
@@ -189,7 +189,7 @@ class TestTaskCRUDAPI:
         async_client: AsyncClient,
         test_task: Task
     ):
-        """Testet GET /api/tasks/list mit Limit"""
+        """Tests GET /api/tasks/list with a limit"""
         response = await async_client.get("/api/tasks/list?limit=5")
 
         assert response.status_code == 200
@@ -202,7 +202,7 @@ class TestTaskCRUDAPI:
         async_client: AsyncClient,
         test_task: Task
     ):
-        """Testet GET /api/tasks/{task_id}"""
+        """Tests GET /api/tasks/{task_id}"""
         response = await async_client.get(f"/api/tasks/{test_task.id}")
 
         assert response.status_code == 200
@@ -213,7 +213,7 @@ class TestTaskCRUDAPI:
 
     @pytest.mark.integration
     async def test_get_nonexistent_task(self, async_client: AsyncClient):
-        """Testet GET für nicht-existenten Task"""
+        """GET for a task that does not exist"""
         response = await async_client.get("/api/tasks/99999")
 
         assert response.status_code == 404
@@ -224,7 +224,7 @@ class TestTaskCRUDAPI:
         async_client: AsyncClient,
         test_task: Task
     ):
-        """Testet PATCH /api/tasks/{task_id} - Status Update"""
+        """Tests PATCH /api/tasks/{task_id} - Status Update"""
         response = await async_client.patch(
             f"/api/tasks/{test_task.id}",
             json={"status": "in_progress"}
@@ -240,7 +240,7 @@ class TestTaskCRUDAPI:
         async_client: AsyncClient,
         test_task: Task
     ):
-        """Testet PATCH /api/tasks/{task_id} - Completion"""
+        """Tests PATCH /api/tasks/{task_id} - Completion"""
         response = await async_client.patch(
             f"/api/tasks/{test_task.id}",
             json={
@@ -257,7 +257,7 @@ class TestTaskCRUDAPI:
         async_client: AsyncClient,
         test_task: Task
     ):
-        """Testet PATCH /api/tasks/{task_id} - Error"""
+        """Tests PATCH /api/tasks/{task_id} - Error"""
         response = await async_client.patch(
             f"/api/tasks/{test_task.id}",
             json={
@@ -270,7 +270,7 @@ class TestTaskCRUDAPI:
 
     @pytest.mark.integration
     async def test_update_nonexistent_task(self, async_client: AsyncClient):
-        """Testet PATCH für nicht-existenten Task"""
+        """PATCH for a task that does not exist"""
         response = await async_client.patch(
             "/api/tasks/99999",
             json={"status": "completed"}
@@ -284,7 +284,7 @@ class TestTaskCRUDAPI:
         async_client: AsyncClient,
         test_task: Task
     ):
-        """Testet DELETE /api/tasks/{task_id}"""
+        """Tests DELETE /api/tasks/{task_id}"""
         response = await async_client.delete(f"/api/tasks/{test_task.id}")
 
         assert response.status_code == 200
@@ -297,7 +297,7 @@ class TestTaskCRUDAPI:
 
     @pytest.mark.integration
     async def test_delete_nonexistent_task(self, async_client: AsyncClient):
-        """Testet DELETE für nicht-existenten Task (idempotent)"""
+        """DELETE for a task that does not exist (idempotent)"""
         response = await async_client.delete("/api/tasks/99999")
 
         # Should succeed (idempotent)
@@ -309,7 +309,7 @@ class TestTaskCRUDAPI:
 # ============================================================================
 
 class TestTaskQueries:
-    """Tests für Task-Abfragen"""
+    """Tests for task queries"""
 
     @pytest.mark.database
     async def test_filter_by_status(
@@ -317,7 +317,7 @@ class TestTaskQueries:
         db_session: AsyncSession,
         test_task: Task
     ):
-        """Testet Filterung nach Status"""
+        """Tests filtering by status"""
         result = await db_session.execute(
             select(Task).where(Task.status == "pending")
         )
@@ -332,7 +332,7 @@ class TestTaskQueries:
         db_session: AsyncSession,
         test_task: Task
     ):
-        """Testet Filterung nach Task-Typ"""
+        """Tests filtering by task type"""
         result = await db_session.execute(
             select(Task).where(Task.task_type == test_task.task_type)
         )
@@ -347,7 +347,7 @@ class TestTaskQueries:
         db_session: AsyncSession,
         test_task: Task
     ):
-        """Testet Sortierung nach Erstellungsdatum"""
+        """Tests sorting by creation date"""
         result = await db_session.execute(
             select(Task).order_by(Task.created_at.desc())
         )
@@ -363,11 +363,11 @@ class TestTaskQueries:
 # ============================================================================
 
 class TestTaskEdgeCases:
-    """Tests für Edge Cases"""
+    """Tests for edge cases"""
 
     @pytest.mark.integration
     async def test_create_task_minimal_data(self, async_client: AsyncClient):
-        """Testet Task-Erstellung mit minimalen Daten"""
+        """Creating a task with minimal data"""
         response = await async_client.post(
             "/api/tasks/create",
             json={
@@ -383,7 +383,7 @@ class TestTaskEdgeCases:
 
     @pytest.mark.integration
     async def test_create_task_with_priority(self, async_client: AsyncClient):
-        """Testet Task-Erstellung mit Priorität"""
+        """Creating a task with a priority"""
         response = await async_client.post(
             "/api/tasks/create",
             json={
@@ -398,7 +398,7 @@ class TestTaskEdgeCases:
 
     @pytest.mark.database
     async def test_task_parameters_json(self, db_session: AsyncSession):
-        """Testet komplexe JSON-Parameter"""
+        """Tests complex JSON parameters"""
         complex_params = {
             "nested": {"key": "value"},
             "list": [1, 2, 3],

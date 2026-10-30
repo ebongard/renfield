@@ -1,16 +1,17 @@
-"""Ein unauflösbarer Endpunkt wird bei der Paarung abgewiesen, nicht gespeichert.
+"""An unresolvable endpoint is refused at pairing time, not stored.
 
-🛑 Der Anlass, am 2026-10-29 gefunden: in `peer_users.transport_config` stand
-`https://renfield.loca` — dem Namen fehlte das letzte `l`, UND es war der Name
-der GEGENSEITE statt des eigenen. Beides kam aus dem Feld „Erreichbare URL" im
-Paarungsdialog, das die Adresse meint, unter der andere DIESE Instanz erreichen.
+🛑 The occasion, found on 2026-10-29: `peer_users.transport_config` held
+`https://renfield.loca` -- the name was missing its final `l`, AND it was the
+FAR SIDE's name instead of our own. Both came out of the "Erreichbare URL"
+field in the pairing dialog, which means the address at which others reach THIS
+instance.
 
-Die Paarung meldete Erfolg. Der Ausfall zeigte sich erst beim ersten echten
-Gebrauch — Tage später, als `[Errno -2] Name or service not known` tief im
-Föderationsclient, und auch dann nur, weil wir ihn gesucht haben.
+The pairing reported success. The failure only showed on the first real use --
+days later, as `[Errno -2] Name or service not known` deep inside the
+federation client, and even then only because we went looking for it.
 
-Die vorhandene Säuberung verwarf schon Leeres mit der Begründung, sonst
-persistiere „a garbage endpoint". Ein Tippfehler ist auch Unrat.
+The existing sanitisation already discarded empty values on the grounds that
+otherwise "a garbage endpoint" would be persisted. A typo is garbage too.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
 async def test_an_unresolvable_host_is_refused():
-    """Der gemeldete Fall, wörtlich."""
+    """The reported case, verbatim."""
     with pytest.raises(HTTPException) as e:
         await _resolve_advertised_endpoints([{"url": "https://renfield.loca"}])
     assert e.value.status_code == 400
@@ -31,10 +32,9 @@ async def test_an_unresolvable_host_is_refused():
 
 
 async def test_the_message_says_WHOSE_address_is_meant():
-    """🛑 Die Meldung muss die Fehldeutung benennen, die den Fehler erzeugt
-    hat — sonst trägt die Person denselben falschen Namen noch einmal ein,
-    nur richtig geschrieben. Die Richtung ist der Fehler, nicht die
-    Rechtschreibung."""
+    """🛑 The message has to name the misreading that produced the error --
+    otherwise the person enters the same wrong name again, only spelled
+    correctly. The direction is the mistake, not the spelling."""
     with pytest.raises(HTTPException) as e:
         await _resolve_advertised_endpoints([{"url": "https://gibtesnicht.invalid"}])
     text = str(e.value.detail)
@@ -43,8 +43,8 @@ async def test_the_message_says_WHOSE_address_is_meant():
 
 
 async def test_a_resolvable_host_passes():
-    """🛑 Negativkontrolle: die Prüfung darf nicht einfach alles abweisen.
-    `localhost` löst überall auf."""
+    """🛑 Negative control: the check must not simply refuse everything.
+    `localhost` resolves everywhere."""
     assert await _resolve_advertised_endpoints(
         [{"url": "http://localhost:8000"}]) == [{"url": "http://localhost:8000"}]
 
@@ -56,13 +56,13 @@ async def test_a_url_without_a_hostname_is_refused():
 
 
 async def test_the_CONFIGURED_default_is_not_checked(monkeypatch):
-    """🛑 Geprüft wird nur die Eingabe aus der Oberfläche.
+    """🛑 Only the input from the UI is checked.
 
-    Der konfigurierte Standard ist Betreibersache, durchläuft ein Review und
-    darf bewusst einen Namen tragen, den diese Instanz selbst nicht auflöst
-    (geteilte Horizonte: der öffentliche Name zeigt nach außen woanders hin).
-    Würde die Prüfung auch ihn treffen, bräche sie einen gültigen Aufbau —
-    und zwar beim Paaren, also genau dann, wenn niemand damit rechnet.
+    The configured default is the operator's business, goes through a review,
+    and may deliberately carry a name this instance does not resolve itself
+    (split horizons: the public name points somewhere else from the outside).
+    Were the check to hit that too, it would break a valid setup -- and do so at
+    pairing time, which is exactly when nobody expects it.
     """
     from api.routes import federation_pairing as fp
 
@@ -73,8 +73,8 @@ async def test_the_CONFIGURED_default_is_not_checked(monkeypatch):
 
 
 async def test_an_all_blank_override_still_falls_through(monkeypatch):
-    """Das vorhandene Verhalten bleibt: leere Einträge zählen nicht als
-    Übersteuerung und dürfen die Prüfung nicht auslösen."""
+    """The existing behaviour stays: empty entries do not count as an
+    override and must not trigger the check."""
     from api.routes import federation_pairing as fp
 
     monkeypatch.setattr(fp.settings, "federation_advertised_url",

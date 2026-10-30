@@ -1,14 +1,14 @@
-"""`paperless_url` kommt wirklich beim Frontend an — durch das Response-Modell.
+"""`paperless_url` really reaches the frontend -- through the response model.
 
-🛑 Der Grund, warum diese Tests NICHT den Serialisierer aufrufen, sondern
-``DocumentResponse`` bauen: Pydantic verwirft unbekannte Schluessel beim Bauen
-eines Modells STILL. Ein Test auf ``_doc_to_response_kwargs`` allein waere gruen
-geblieben, waehrend das Feld nie ausgeliefert wird und nichts es meldet. Im
-Review zu diesem Plan als Befund C1 gefunden, bevor er gebaut wurde — der Plan
-nannte nur den Serialisierer.
+🛑 The reason these tests do NOT call the serializer but build a
+``DocumentResponse``: Pydantic drops unknown keys SILENTLY when building a
+model. A test on ``_doc_to_response_kwargs`` alone would have stayed green
+while the field is never delivered and nothing reports it. Found as finding C1
+in the review of this plan, before it was built -- the plan named only the
+serializer.
 
-Die Negativkontrolle dazu steht unten: sie beweist, dass dieser Test den Fehler
-auch wirklich faengt.
+The negative control for that stands below: it proves that this test really
+does catch the defect.
 """
 from types import SimpleNamespace
 
@@ -34,11 +34,11 @@ def _doc(**over):
 
 @pytest.mark.parametrize("base,doc_id,erwartet", [
     ("http://paperless.local:8000", 42, "http://paperless.local:8000/documents/42/details"),
-    # Abschliessender Schraegstrich darf kein `//documents/` erzeugen.
+    # A trailing slash must not produce `//documents/`.
     ("http://paperless.local:8000/", 42, "http://paperless.local:8000/documents/42/details"),
     ("http://paperless.local:8000", None, None),
-    ("", 42, None),          # keine Basis konfiguriert → kein Link
-    ("http://p", True, None),  # `bool` ist ein `int` und doch keine Kennung
+    ("", 42, None),          # no base configured -> no link
+    ("http://p", True, None),  # `bool` is an `int` and still not an id
 ])
 def test_the_url_is_composed_in_one_place(monkeypatch, base, doc_id, erwartet):
     from utils.config import settings
@@ -47,7 +47,7 @@ def test_the_url_is_composed_in_one_place(monkeypatch, base, doc_id, erwartet):
 
 
 def test_the_field_SURVIVES_the_response_model(monkeypatch):
-    """🛑 Der eigentliche Test. Durch `DocumentResponse`, nicht am Serialisierer."""
+    """🛑 The actual test. Through `DocumentResponse`, not on the serializer."""
     from utils.config import settings
     monkeypatch.setattr(settings, "paperless_api_url", "http://paperless.local:8000",
                         raising=False)
@@ -60,8 +60,8 @@ def test_the_field_SURVIVES_the_response_model(monkeypatch):
 
 
 def test_a_duplicate_has_no_url_but_counts_as_filed(monkeypatch):
-    """Der Fall, der rund jeden sechsten Scan trifft: in Paperless, aber ohne
-    eigene Kennung. Daran erkennt der Knopf die Dublette."""
+    """The case that hits roughly every sixth scan: in Paperless, but without
+    an id of its own. That is how the button recognises the duplicate."""
     from utils.config import settings
     monkeypatch.setattr(settings, "paperless_api_url", "http://paperless.local:8000",
                         raising=False)
@@ -82,11 +82,11 @@ def test_still_ingesting_is_neither_filed_nor_linked(monkeypatch):
 
 
 def test_NEGATIVE_CONTROL_the_model_really_drops_unknown_keys():
-    """🛑 Beweist, dass der Test oben etwas faengt.
+    """🛑 Proves that the test above catches something.
 
-    Ohne diesen Nachweis koennte `test_the_field_SURVIVES_the_response_model`
-    auch dann gruen sein, wenn Pydantic unbekannte Schluessel durchreichte — und
-    die Behauptung „ohne Deklaration faellt es still weg" waere unbelegt.
+    Without this evidence `test_the_field_SURVIVES_the_response_model` could
+    also be green if Pydantic passed unknown keys through -- and the claim
+    "without a declaration it falls away silently" would be unevidenced.
     """
     antwort = DocumentResponse(**{
         **_doc_to_response_kwargs(_doc()),

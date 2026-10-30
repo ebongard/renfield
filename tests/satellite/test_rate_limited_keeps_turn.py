@@ -1,14 +1,14 @@
 """
-``RATE_LIMITED`` beendet keinen Sprachzug (#1284).
+``RATE_LIMITED`` ends no voice turn (#1284).
 
-Der Server meldet damit, dass EIN Frame verworfen wurde — Verbindung und Sitzung
-sind intakt. Der Satellit reichte die Meldung aber an ``on_error`` weiter, und
-``Satellite._on_error`` setzt bei jedem Serverfehler die laufende Sitzung zurueck.
-Ein einziger abgewiesener Heartbeat oder BLE-Bericht mitten im Audio-Schwall
-beendete so den Zug; der Sprecher bekam keine Antwort.
+With it the server reports that ONE frame was dropped -- connection and session
+are intact. But the satellite passed the message on to ``on_error``, and
+``Satellite._on_error`` resets the running session on every server error. So a
+single rejected heartbeat or BLE report in the middle of the audio burst ended
+the turn; the speaker got no answer.
 
-Zusaetzlich schlief der Client 1 s IN der Empfangsschleife — das bremste nie das
-Senden, es verzoegerte nur eingehende Frames (TTS, Bestaetigungen).
+On top of that the client slept 1 s INSIDE the receive loop -- that never slowed
+sending down, it only delayed incoming frames (TTS, confirmations).
 """
 
 import asyncio
@@ -35,11 +35,11 @@ async def test_rate_limited_erreicht_den_fehler_callback_nicht():
 
 @pytest.mark.satellite
 async def test_rate_limited_setzt_den_zug_des_satelliten_nicht_zurueck():
-    """Durch die ECHTE Verdrahtung: Client -> Satellite._on_error / _on_rate_limited.
+    """Through the REAL wiring: Client -> Satellite._on_error / _on_rate_limited.
 
-    Auf dem alten Code ruft der Client ``on_error``, und ``Satellite._on_error``
-    plant bei laufendem Zug ``_reset_session`` ein — genau das darf nicht mehr
-    geschehen.
+    On the old code the client calls ``on_error``, and ``Satellite._on_error``
+    schedules ``_reset_session`` while a turn is running -- which is exactly
+    what must not happen any more.
     """
     from unittest.mock import MagicMock
 
@@ -62,13 +62,13 @@ async def test_rate_limited_setzt_den_zug_des_satelliten_nicht_zurueck():
     sat._schedule_async.assert_not_called()
     sat.leds.set_pattern.assert_not_called()
     assert sat._session_id == "sess-1"
-    # ... aber sichtbar bleibt es: die Drosselung zaehlt in die Fehlermetrik.
+    # ... but it stays visible: the throttling counts towards the error metric.
     sat._error_counter.record.assert_called_once()
 
 
 @pytest.mark.satellite
 async def test_echter_fehler_setzt_den_zug_weiterhin_zurueck():
-    """Gegenprobe zur Verdrahtung oben — sonst bewiese der Test nichts."""
+    """Counter-check on the wiring above -- otherwise the test would prove nothing."""
     from unittest.mock import MagicMock
 
     from renfield_satellite.satellite import Satellite, SatelliteState
@@ -106,7 +106,7 @@ async def test_rate_limited_blockiert_die_empfangsschleife_nicht():
 @pytest.mark.satellite
 @pytest.mark.parametrize("code", ["BUFFER_FULL", "SESSION_ERROR", "UNAUTHORIZED", "UNKNOWN"])
 async def test_andere_fehler_erreichen_den_callback_weiterhin(code):
-    """Nur RATE_LIMITED ist ausgenommen — echte Sitzungsfehler setzen weiter zurueck."""
+    """Only RATE_LIMITED is exempt -- real session errors still reset."""
     client = _client()
     errors = []
     client.on_error(errors.append)

@@ -123,11 +123,11 @@ def _clear_auth_cookies(response: Response | None) -> None:
 class TokenResponse(BaseModel):
     """Response model for successful authentication.
 
-    🛑 `access_token`/`refresh_token` sind OPTIONAL, weil der Passwortpfad fuer ein
-    Konto mit `voice_second_factor_enabled` bewusst KEINE Token ausgibt: dort ist
-    der erste Faktor bestanden und die Anmeldung noch nicht fertig. Dann stehen
-    `second_factor` und `second_factor_ticket`, und der Client muss
-    `POST /auth/voice` mit Ticket + Aufnahme nachlegen.
+    🛑 `access_token`/`refresh_token` are OPTIONAL because the password path for
+    an account with `voice_second_factor_enabled` deliberately issues NO
+    tokens: the first factor has passed and the login is not finished. In that
+    case `second_factor` and `second_factor_ticket` are present and the client
+    has to follow up with `POST /auth/voice` carrying ticket + recording.
     """
     access_token: str | None = None
     refresh_token: str | None = None
@@ -137,11 +137,11 @@ class TokenResponse(BaseModel):
     # token unlocks anything beyond /change-password. Enforced server-side in
     # get_current_user; this flag lets the SPA redirect straight to the form.
     must_change_password: bool = False
-    #: Gesetzt, wenn die Anmeldung noch einen zweiten Faktor braucht. Heute nur
-    #: `"voice"`. Fehlt das Feld, ist die Anmeldung mit diesem Aufruf fertig.
+    #: Set when the login still needs a second factor. Today only `"voice"`.
+    #: If the field is absent, the login is complete with this call.
     second_factor: str | None = None
-    #: Das Einmalticket fuer den zweiten Faktor. Kurzlebig, an die Adresse
-    #: gebunden, einmalig einloesbar (`services/voice_second_factor_store`).
+    #: The one-shot ticket for the second factor. Short-lived, bound to the
+    #: address, redeemable once (`services/voice_second_factor_store`).
     second_factor_ticket: str | None = None
 
 
@@ -199,10 +199,10 @@ class UserResponse(BaseModel):
     # Security (review M5): surface the forced-rotation flag so /auth/me and the
     # login response are actionable (the frontend can force a password change).
     must_change_password: bool = False
-    # 🛑 Derselbe Grund, eine Ebene weiter: ohne dieses Feld konnte eine Person
-    # nicht einmal SEHEN, ob ihr eigenes Konto die Stimme verlangt — der Zustand
-    # stand nur in der Verwaltungsliste, die ihr verschlossen ist. Eine
-    # Einwilligung nach Art. 9 DSGVO, die man nicht einsehen kann, ist keine.
+    # 🛑 Same reason, one level further: without this field a person could not
+    # even SEE whether their own account requires the voice -- the state lived
+    # only in the administration list, which is closed to them. A consent under
+    # Art. 9 GDPR that you cannot inspect is not one.
     voice_second_factor_enabled: bool = False
 
     class Config:
@@ -333,21 +333,23 @@ async def login(
     user.last_login = datetime.now(UTC).replace(tzinfo=None)
     await db.commit()
 
-    # 🛑 ZWEITER FAKTOR: hier endet der Passwortpfad fuer ein Konto, das die
-    # Stimme verlangt. KEINE Token, KEINE Cookies — nur ein Einmalticket, das
-    # `POST /auth/voice` einloest. Ein Zusatzfaktor, der nach dem ersten schon
-    # Zugriff gewaehrt, ist keiner.
+    # 🛑 SECOND FACTOR: this is where the password path ends for an account that
+    # requires the voice. NO tokens, NO cookies -- only a one-shot ticket that
+    # `POST /auth/voice` redeems. An additional factor that already grants
+    # access after the first one is not a factor.
     #
-    # `voice_auth_enabled` muss dazu AN sein: ist der Sprachweg abgeschaltet,
-    # koennte niemand das Ticket einloesen, und ein Konto mit dem Flag waere
-    # ausgesperrt. Deshalb greift die Huerde nur, wenn es auch eine Tuer gibt —
-    # ansonsten laeuft der Passwortpfad normal weiter und die Einwilligung ruht.
-    # 🛑 Die Pruefung liegt in `services/voice_factor_preconditions`, NICHT hier.
-    # Frueher stand hier nur `voice_auth_enabled` — aber `/auth/voice` verlangt
-    # zum Einloesen mehr (Sprecherkennung an, verknuepftes Profil, Einbettungen),
-    # und jede Luecke zwischen Stellen und Abraeumen ist eine Aussperrung, weil
-    # es keinen Rueckfall auf Passwort allein gibt. Fehlt eine Vorbedingung,
-    # RUHT die Huerde (mit WARNING) und die Einwilligung bleibt gespeichert.
+    # `voice_auth_enabled` has to be ON for this: with the voice path switched
+    # off nobody could redeem the ticket, and an account with the flag would be
+    # locked out. So the hurdle only applies when there is also a door --
+    # otherwise the password path continues normally and the consent lies
+    # dormant.
+    # 🛑 The check lives in `services/voice_factor_preconditions`, NOT here. This
+    # used to test only `voice_auth_enabled` -- but redeeming at `/auth/voice`
+    # requires more (speaker recognition on, a linked profile, embeddings), and
+    # every gap between raising the hurdle and clearing it is a lockout,
+    # because there is no fallback to the password alone. If a precondition is
+    # missing, the hurdle lies DORMANT (with a WARNING) and the consent stays
+    # stored.
     from services.voice_factor_preconditions import second_factor_applies
 
     if await second_factor_applies(db, user):
@@ -355,9 +357,9 @@ async def login(
 
         ticket = await issue_ticket(user.id, client_ip)
         if ticket is None:
-            # 🛑 Fail-closed. Ohne Ticket gibt es keinen zweiten Faktor, und ohne
-            # zweiten Faktor gibt es fuer dieses Konto keine Anmeldung. Ein
-            # Redis-Ausfall darf die Huerde nicht stillschweigend entfernen.
+            # 🛑 Fail-closed. Without a ticket there is no second factor, and
+            # without a second factor there is no login for this account. A
+            # Redis outage must not silently remove the hurdle.
             record_login_failure("voice_2fa_ticket_unavailable")
             logger.error(
                 f"Login blocked: voice second factor required but no ticket could be "
@@ -905,26 +907,26 @@ async def list_all_permissions(user: User = Depends(require_permission(Permissio
 # =============================================================================
 
 class VoiceAuthResponse(BaseModel):
-    """Antwort des ZWEITEN Faktors.
+    """Response of the SECOND factor.
 
-    🛑 Bewusst schmal. Bis zum Review vom 2026-09-27 trug dieses Modell
-    `speaker_id`, `speaker_name`, `confidence`, `user_id` und `username` — und gab
-    sie auf JEDEM Fehlschlag an einen unangemeldeten Aufrufer zurueck. Das war
-    zweierlei Angriff: eine Namensliste des Haushalts ohne Zugangsdaten, und ein
-    Gradient (Aufnahme aendern, Kosinuswert steigen sehen, bei der Schwelle
-    aufhoeren) — genau die Rueckkopplung, die eine Wiedereinspielung braucht.
+    🛑 Deliberately narrow. Until the review of 2026-09-27 this model carried
+    `speaker_id`, `speaker_name`, `confidence`, `user_id` and `username` -- and
+    returned them to an unauthenticated caller on EVERY failure. That was two
+    attacks at once: a name list of the household without credentials, and a
+    gradient (change the recording, watch the cosine rise, stop at the
+    threshold) -- exactly the feedback a replay needs.
 
-    Seit dem Umbau zum Zusatzfaktor ist das ueberdies gegenstandslos: der Aufrufer
-    hat den ersten Faktor bestanden und weiss, wer er ist. Es gibt nichts
-    mitzuteilen ausser: hat geklappt, oder nicht.
+    Since the rework into an additional factor it is moot anyway: the caller
+    has passed the first factor and knows who they are. There is nothing to
+    communicate beyond: it worked, or it did not.
     """
     success: bool
     access_token: str | None = None
     refresh_token: str | None = None
     token_type: str = "bearer"
     expires_in: int = 0
-    # 🛑 Jeder andere Anmeldeweg meldet das. Ohne dieses Feld kaeme ein Konto mit
-    # Passwortzwang hier daran vorbei.
+    # 🛑 Every other login path reports this. Without the field an account with
+    # a forced password change would slip past it here.
     must_change_password: bool = False
     message: str
 
@@ -938,43 +940,43 @@ async def voice_authenticate(
     audio_file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db)
 ):
-    """Der ZWEITE Faktor: die Stimme bestaetigt eine bereits bestandene Anmeldung.
+    """The SECOND factor: the voice confirms a login that already passed.
 
-    ABLAUF
-    ------
-    1. `POST /auth/login` mit Benutzername und Passwort. Fuer ein Konto mit
-       `voice_second_factor_enabled` gibt es dort KEINE Token, sondern
-       `second_factor="voice"` und ein `second_factor_ticket`.
-    2. Diese Route mit dem Ticket und einer Aufnahme. Das Ticket nennt den Nutzer,
-       also wird 1:1 gegen SEIN Profil geprueft (`verify_speaker`) — nicht
-       identifiziert.
-    3. Erst hier entstehen Token und Cookies.
+    FLOW
+    ----
+    1. `POST /auth/login` with username and password. For an account with
+       `voice_second_factor_enabled` that returns NO tokens but
+       `second_factor="voice"` and a `second_factor_ticket`.
+    2. This route with the ticket and a recording. The ticket names the user,
+       so the check is 1:1 against THEIR profile (`verify_speaker`) -- nothing
+       is identified.
+    3. Only here do tokens and cookies come into existence.
 
-    🛑 WARUM ES DIESE FORM IST, UND NICHT DIE ALTE
+    🛑 WHY IT HAS THIS SHAPE AND NOT THE OLD ONE
     ---------------------------------------------
-    Bis 2026-09-27 war diese Route der ERSTE Faktor: Aufnahme rein, Token raus.
-    Eine Tonaufnahme der Stimme genuegte fuer eine vollstaendige Anmeldung, ohne
-    Lebendigkeitspruefung und ohne zweiten Faktor. Der Review hat daran fuenf
-    Befunde gefunden; drei davon verschwinden durch DIESE Form, statt durch einen
-    Riegel:
+    Until 2026-09-27 this route was the FIRST factor: recording in, tokens out.
+    An audio recording of the voice was enough for a complete login, with no
+    liveness check and no second factor. The review found five issues in it;
+    three of them disappear through THIS shape rather than through a guard:
 
-    * **Das Namensorakel** (1:N-Identifikation gab Klarnamen und Kosinuswert an
-      unangemeldete Aufrufer) — es wird nichts mehr identifiziert.
-    * **Der Muenzwurf** (`identify_speaker` war Argmax ohne Laeufer-Marge, die
-      Erkennung hat eine) — bei 1:1 gibt es keinen Zweitplatzierten.
-    * **Die Namensaufzaehlung** — ohne Ticket kommt man nicht bis zur Pruefung.
+    * **The name oracle** (1:N identification returned real names and the
+      cosine score to unauthenticated callers) -- nothing is identified any
+      more.
+    * **The coin flip** (`identify_speaker` was argmax without a runner-up
+      margin, which recognition has) -- at 1:1 there is no runner-up.
+    * **Name enumeration** -- without a ticket you do not reach the check.
 
-    Was BLEIBT und warum es ausgehalten wird: eine Aufnahme kann den zweiten
-    Faktor taeuschen. Als ERSTER Faktor war das die ganze Tuer; als ZWEITER braucht
-    der Angreifer zusaetzlich das Passwort. Das ist der Zugewinn.
+    What REMAINS and why it is accepted: a recording can fool the second
+    factor. As the FIRST factor that was the whole door; as the SECOND the
+    attacker also needs the password. That is the gain.
 
-    🛑 KEIN RUECKFALL. Ein Konto mit dem Flag kommt ohne Stimme nicht herein —
-    auch nicht nach vielen Fehlversuchen. Ein Rueckfall, den der Angreifer selbst
-    ausloesen kann, hebt den Faktor auf. Wiederherstellung ist ein Administrator,
-    der `voice_second_factor_enabled` fuer diese Person abschaltet.
+    🛑 NO FALLBACK. An account with the flag does not get in without the voice --
+    not even after many failed attempts. A fallback the attacker can trigger
+    themselves cancels the factor. Recovery is an administrator turning
+    `voice_second_factor_enabled` off for that person.
     """
-    # Derselbe Pruefer wie in `/auth/login`, damit Stellen und Abraeumen der
-    # Huerde nicht auseinanderlaufen koennen.
+    # The same checker as in `/auth/login`, so raising and clearing the hurdle
+    # cannot drift apart.
     from services.voice_factor_preconditions import voice_path_blocker
 
     path_blocked = voice_path_blocker()
@@ -991,11 +993,11 @@ async def voice_authenticate(
 
     client_ip = get_client_ip(request) if client_ip_is_spoof_resistant() else None
 
-    # 🛑 EIN Fehlschlag, EINE Antwort. Kein Feld, kein Text und kein Statuscode
-    # unterscheidet „Ticket unbekannt" von „Stimme passt nicht" von „Konto
-    # deaktiviert". Derselbe Grundsatz wie beim Passwortpfad, der „Nutzer
-    # unbekannt" und „Passwort falsch" nicht trennt. Die Diagnose steht im
-    # Protokoll, wo der Betreiber sie sieht und der Angreifer nicht.
+    # 🛑 ONE failure, ONE response. No field, no text and no status code
+    # distinguishes "unknown ticket" from "voice does not match" from "account
+    # disabled". Same principle as the password path, which does not separate
+    # "unknown user" from "wrong password". The diagnosis is in the log, where
+    # the operator sees it and the attacker does not.
     def _refused(reason: str) -> VoiceAuthResponse:
         logger.info(f"Voice second factor refused: {reason}")
         record_login_failure("voice_second_factor")
@@ -1006,16 +1008,16 @@ async def voice_authenticate(
 
     pending = await consume_ticket(ticket, client_ip)
     if pending is None:
-        # Unbekannt, schon benutzt, abgelaufen, oder von einer anderen Adresse.
-        # Hier ist noch kein Nutzer bekannt, also gibt es auch nichts zu sperren —
-        # die Ratenbegrenzung je Adresse ist an dieser Stelle der ganze Schutz,
-        # und sie genuegt, weil ohne Passwort kein Ticket entsteht.
+        # Unknown, already used, expired, or from a different address. No user
+        # is known at this point, so there is nothing to lock out -- the
+        # per-address rate limit is the whole protection here, and it is enough
+        # because no ticket comes into existence without the password.
         return _refused("ticket invalid, expired, reused, or bound elsewhere")
 
-    # Ab hier ist der Nutzer BEKANNT, weil der erste Faktor bestanden ist. Deshalb
-    # darf die Sperre auf den Nutzer gehen statt auf die Adresse: ein Fremder kann
-    # damit kein Konto aussperren, denn er kaeme ohne das Passwort nicht bis
-    # hierher.
+    # From here the user is KNOWN, because the first factor has passed. That is
+    # why the lockout may target the user rather than the address: a stranger
+    # cannot lock an account out that way, because without the password they
+    # would not get this far.
     from services.voice_factor_preconditions import voice_factor_lock_id
 
     lock_key = voice_factor_lock_id(pending.user_id)
@@ -1042,14 +1044,14 @@ async def voice_authenticate(
         )
         user = user_result.scalar_one_or_none()
 
-        # Erneut pruefen, nicht dem Ticket glauben: zwischen erstem und zweitem
-        # Faktor kann das Konto deaktiviert oder die Einwilligung widerrufen
-        # worden sein.
+        # Check again rather than trusting the ticket: between the first and
+        # second factor the account can have been disabled or the consent
+        # revoked.
         if not user or not user.is_active or not user.voice_second_factor_enabled:
             return _refused(f"user {pending.user_id} not eligible at redemption time")
         if not user.speaker_id:
-            # Einwilligung ohne verknuepftes Profil: nichts, wogegen geprueft
-            # werden koennte. Fail-closed, nicht durchlassen.
+            # Consent without a linked profile: nothing to check against.
+            # Fail-closed, do not let through.
             return _refused(f"user {user.id} has no linked speaker profile")
 
         speaker_result = await db.execute(
@@ -1063,25 +1065,26 @@ async def voice_authenticate(
 
         speaker_service = get_speaker_service()
 
-        # 🛑 DIE EINBETTUNG KOMMT VOM VOICE-SERVER, NICHT AUS DIESEM PROZESS.
+        # 🛑 THE EMBEDDING COMES FROM THE VOICE-SERVER, NOT FROM THIS PROCESS.
         #
-        # Hier stand `speaker_service.extract_embedding_from_bytes`. Dieser Weg
-        # konnte in der Produktion NIE gelingen, und zwar aus zwei Gruenden:
+        # This used to be `speaker_service.extract_embedding_from_bytes`. That
+        # path could NEVER have worked in production, for two reasons:
         #
-        # 1. `SpeakerService` haelt ihn zu. `speaker_inprocess_embeddings_enabled`
-        #    ist standardmaessig `False` und in keiner ConfigMap gesetzt, also auf
-        #    beiden Instanzen aus; der zentrale Riegel gibt dann `None` zurueck.
-        #    Sein eigener Docstring nennt „voice-login" als abgedeckten Aufrufer.
-        # 2. Selbst offen waere es der FALSCHE VEKTORRAUM. Gespeichert sind
-        #    voice-server-ONNX-Einbettungen (`speaker_enrollment_service`),
-        #    berechnet wuerde SpeechBrain — der Riegel nennt das „silently
+        # 1. `SpeakerService` keeps it closed.
+        #    `speaker_inprocess_embeddings_enabled` defaults to `False` and is
+        #    set in no ConfigMap, so it is off on both instances; the central
+        #    guard then returns `None`. Its own docstring names "voice-login"
+        #    as a covered caller.
+        # 2. Even open it would be the WRONG VECTOR SPACE. What is stored are
+        #    voice-server ONNX embeddings (`speaker_enrollment_service`), what
+        #    would be computed is SpeechBrain -- the guard calls that "silently
         #    corrupts identity".
         #
-        # Also derselbe Weg wie beim Anlernen: `stt()` gegen den voice-server,
-        # mit einem kurzlebigen Dienst-Token, weil hier noch niemand angemeldet
-        # ist (Vorbild: `speaker_enrollment_service._service_token`,
-        # `meeting_pipeline._service_token`). `verify_speaker` bleibt unberuehrt
-        # — es ist reine Kosinus-Aehnlichkeit und haengt nicht am Riegel.
+        # So the same path as enrolment: `stt()` against the voice-server, with
+        # a short-lived service token, because nobody is signed in here yet
+        # (precedent: `speaker_enrollment_service._service_token`,
+        # `meeting_pipeline._service_token`). `verify_speaker` is untouched --
+        # it is pure cosine similarity and does not depend on the guard.
         from services.speaker_enrollment_service import _service_token
         from services.voice_server_client import VoiceServerError
         from services.voice_server_client import stt as voice_server_stt
@@ -1093,8 +1096,8 @@ async def voice_authenticate(
                 auth_token=_service_token(),
             )
         except VoiceServerError as e:
-            # Kein `_refused`: das ist ein Betriebsfehler, kein Fehlversuch der
-            # Person. Er darf ihr nicht als Fehlschlag angerechnet werden.
+            # Not `_refused`: this is an operational error, not a failed
+            # attempt by the person. It must not be counted against them.
             logger.error(f"Voice second factor: voice-server unavailable ({e})")
             return VoiceAuthResponse(
                 success=False,
@@ -1105,10 +1108,10 @@ async def voice_authenticate(
         if not raw_embedding:
             return _refused("voice-server returned no embedding (too short / silent?)")
 
-        # 🛑 H3, damit geschlossen: eine Mindestdauer SERVERSEITIG. Die 1,5 s in
-        # der Maske sind Bedienfuehrung — ein Angreifer schickt direkt an die
-        # API. Der voice-server misst die Aufnahme selbst, und das ist die
-        # einzige Zahl, der man hier trauen kann.
+        # 🛑 H3, closed with this: a minimum duration SERVER-SIDE. The 1.5 s in
+        # the UI are guidance -- an attacker posts straight to the API. The
+        # voice-server measures the recording itself, and that is the only
+        # number that can be trusted here.
         duration_s = stt_result.get("audio_duration_s")
         if duration_s is not None and duration_s < settings.speaker_recognition_min_duration_s:
             return _refused(
@@ -1118,13 +1121,12 @@ async def voice_authenticate(
 
         query_embedding = np.asarray(raw_embedding, dtype=np.float32)
         if not np.all(np.isfinite(query_embedding)):
-            # Ein NaN rutscht durch jeden Schwellenvergleich (NaN < x ist False).
+            # A NaN slips through every threshold comparison (NaN < x is False).
             return _refused("non-finite embedding from voice-server")
 
-        # 🛑 VERIFIZIEREN, nicht identifizieren: gegen die Einbettungen GENAU
-        # DIESES Profils. Das ist der Kern des Umbaus — kein Argmax ueber alle
-        # Sprecher, also kein Zweitplatzierter, keine Marge, kein Name
-        # zurueckzugeben.
+        # 🛑 VERIFY, do not identify: against the embeddings of EXACTLY this
+        # profile. That is the core of the rework -- no argmax over all
+        # speakers, hence no runner-up, no margin, and no name to return.
         claimed = [
             speaker_service.embedding_from_base64(e.embedding)
             for e in speaker.embeddings
@@ -1144,7 +1146,7 @@ async def voice_authenticate(
                 f"{settings.voice_auth_min_confidence})"
             )
 
-        # Beide Faktoren bestanden.
+        # Both factors passed.
         user.last_login = datetime.now(UTC).replace(tzinfo=None)
         await db.commit()
 

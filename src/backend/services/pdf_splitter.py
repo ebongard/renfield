@@ -226,28 +226,27 @@ async def _record_child_id(
 
 
 async def _purge_parent_facts(db: AsyncSession, parent_id: int) -> int:
-    """Die Schicht-A-Fakten des Elternteils abräumen. Gibt die Anzahl zurück.
+    """Purge the parent's Schicht-A facts. Returns the count.
 
-    🛑 WARUM DAS NEBEN DEM ABRÄUMEN DER ABSCHNITTE STEHEN MUSS (#1374)
+    🛑 WHY THIS HAS TO STAND NEXT TO PURGING THE SECTIONS (#1374)
     ==================================================================
-    Die Abschnitte wurden schon immer entfernt — der archivierte Stapel darf
-    nicht in der Suche auftauchen. Seine FAKTEN blieben dagegen stehen, und die
-    sind bei einem Posteingang aus neun Schreiben zusammengerührt: ein
-    Absender, ein Datum, ein Betrag über den ganzen Stapel. Daneben liegen
-    dieselben Sachverhalte noch einmal, diesmal richtig, bei den Kindern.
-    Gemessen am 2026-10-04 an Dokument 460: 21 Elternfakten gegen 157 der
-    Kinder. Die Wissensbasis trug damit eine Schicht, die ein Dokument
-    beschreibt, das es nicht mehr gibt.
+    The sections were always removed -- the archived stack must not show up in
+    the search. Its FACTS stayed standing, however, and on an inbox batch of
+    nine letters those are stirred together: one sender, one date, one amount
+    across the whole stack. Next to them the same matters sit a second time,
+    this time correctly, on the children. Measured on 2026-10-04 on document
+    460: 21 parent facts against 157 of the children. The Wissensbasis thereby
+    carried a layer describing a document that no longer exists.
 
-    🛑 ÜBER `AtomPurgeService`, NIE MIT EINEM DIREKTEN DELETE. Die Faktenzeile
-    hängt per CASCADE am Atom, der Löschweg führt also über das Atom — und dort
-    sitzt die `legal_hold`-Unterscheidung für `wb_field_provenance`. Ein direktes
-    `DELETE FROM atoms` überspringt den Archivschritt und vernichtet
-    BaFin-pflichtige Prüfspuren; `tests/backend/test_no_direct_atom_delete.py`
-    verbietet es aus genau diesem Grund.
+    🛑 VIA `AtomPurgeService`, NEVER WITH A DIRECT DELETE. The fact row
+    hangs off the atom by CASCADE, so the deletion path runs through the atom --
+    and that is where the `legal_hold` distinction for `wb_field_provenance`
+    sits. A direct `DELETE FROM atoms` skips the archive step and destroys audit
+    trails required by BaFin; `tests/backend/test_no_direct_atom_delete.py`
+    forbids it for exactly that reason.
 
-    Der häufige Fall — Schnitt zur Einlieferungszeit — ist unberührt: dort hat
-    der Elternteil noch keine Fakten, die Schleife läuft null Mal.
+    The frequent case -- a split at ingest time -- is unaffected: there the
+    parent has no facts yet and the loop runs zero times.
     """
     from services.atom_purge_service import AtomPurgeService
 
@@ -266,9 +265,9 @@ async def _purge_parent_facts(db: AsyncSession, parent_id: int) -> int:
             )
             geloescht += 1
         except Exception as exc:
-            # Best-effort: ein einzelnes Atom, das schon weg ist (oder dessen
-            # Purge scheitert), darf den Schnitt nicht aufhalten — die Kinder
-            # sind zu diesem Zeitpunkt bereits materialisiert.
+            # Best-effort: a single atom that is already gone (or whose purge
+            # fails) must not hold up the split -- the children are materialised
+            # by this point.
             logger.warning(
                 f"pdf-split: Faktenatom {atom_id} von doc {parent_id} nicht "
                 f"abgeräumt: {exc!r}"
@@ -322,32 +321,31 @@ async def execute_split(
         parent.status = DOC_STATUS_SPLIT_PENDING
         await db.commit()
 
-    # Die Ablage-Absicht der Kinder — abgeleitet, nicht gespeichert (#1373).
+    # The children's filing intent -- derived, not stored (#1373).
     #
-    # 🛑 `paperless_state == 'done'` HEISST ZWEIERLEI, und darin lag der Fehler.
-    # Es bedeutet "erledigt" — entweder "erfolgreich abgelegt" ODER "beigelegt,
-    # nie abgelegt" (so stempelt diese Funktion selbst den archivierten
-    # Elternteil, s. Modul-Docstring). Die alte Ableitung las nur `pending` und
-    # machte aus beidem "nicht ablegen".
+    # 🛑 `paperless_state == 'done'` MEANS TWO THINGS, and therein lay
+    # the defect. It means "settled" -- either "filed successfully" OR "set
+    # aside, never filed" (which is how this very function stamps the archived
+    # parent, see the module docstring). The old derivation read only `pending`
+    # and turned both into "do not file".
     #
-    # Beim Schnitt zur EINLIEFERUNGSZEIT stimmte das: der Elternteil ist dort
-    # `pending`, die Absicht erbt sich richtig. Bei einem WIEDERANSTOSS ist er
-    # `done`, weil er längst in Paperless liegt — und die Absicht ist dann nicht
-    # "nicht ablegen", sondern "schon abgelegt". Zwei verschiedene Dinge, die
-    # auf denselben Wert fielen.
+    # On a split at INGEST TIME that was right: the parent is `pending` there,
+    # and the intent inherits correctly. On a RE-RUN it is `done`, because it
+    # has long been in Paperless -- and the intent is then not "do not file" but
+    # "already filed". Two different things that fell onto the same value.
     #
-    # Gemessen am 2026-10-04: der Wiederanstoss von Dokument 460 erzeugte acht
-    # Kinder, von denen KEINES Paperless erreichte. Dort stand weiter der
-    # 38-seitige Stapel mit einem Korrespondenten, der für sieben der acht
-    # Briefe falsch war — genau das Problem, das den Schnitt motiviert hatte.
+    # Measured on 2026-10-04: the re-run of document 460 produced eight
+    # children, NONE of which reached Paperless. The 38-page stack still stood
+    # there with a correspondent that was wrong for seven of the eight letters
+    # -- exactly the problem that had motivated the split.
     #
-    # Der Unterschied ist `paperless_document_id`: gesetzt heisst TATSAECHLICH
-    # abgelegt. Dann wollen die Kinder dorthin, sonst verschwinden sie.
+    # The difference is `paperless_document_id`: set means ACTUALLY filed. Then
+    # the children want to go there, otherwise they disappear.
     #
-    # 🛑 Das Original wird dabei NICHT angefasst. Es zu ersetzen hiesse, ein
-    # Paperless-Dokument zu loeschen — unwiderruflich, und moeglicherweise haengen
-    # daran von Hand gepflegte Tags. Das bleibt eine ausdrueckliche Handlung des
-    # Eigentuemers; hier waere es eine Nebenwirkung.
+    # 🛑 The original is NOT touched in the process. Replacing it would
+    # mean deleting a Paperless document -- irreversible, and tags maintained by
+    # hand may hang off it. That stays an explicit action by the owner; here it
+    # would be a side effect.
     to_paperless = (
         parent.paperless_state == PAPERLESS_STATE_PENDING
         or parent.paperless_document_id is not None
@@ -452,16 +450,15 @@ async def execute_split(
     parent.error_message = None
     await db.commit()
 
-    # 🛑 NACH dem Archiv-Commit, nicht davor. `AtomPurgeService.purge` committet
-    # selbst (einmal je Atom) — stand der Aufruf vor dieser Zeile, committete
-    # der erste Purge die Abschnittslöschung, während der Elternteil noch NICHT
-    # archiviert war. Damit war die Zusage zwei Zeilen höher — "Archive LAST,
-    # only when every piece is accounted for" — gebrochen.
+    # 🛑 AFTER the archive commit, not before. `AtomPurgeService.purge`
+    # commits by itself (once per atom) -- with the call above this line, the
+    # first purge committed the section deletion while the parent was NOT yet
+    # archived. That broke the promise two lines higher -- "Archive LAST, only
+    # when every piece is accounted for".
     #
-    # Hier gelesen ist es harmlos: die Fakten abzuräumen ist idempotent, und
-    # ein Absturz davor lässt sie stehen. Das ist der Zustand, den dieser Fix
-    # behebt, also kein neuer Schaden — ein zerrissenes Archiv-Commit wäre
-    # einer.
+    # Read here it is harmless: purging the facts is idempotent, and a crash
+    # before it leaves them standing. That is the state this fix repairs, so no
+    # new damage -- a torn archive commit would be one.
     await _purge_parent_facts(db, parent.id)
     logger.info(
         f"pdf-split: doc {parent.id} ({parent.filename!r}) split into "
@@ -668,23 +665,23 @@ async def act_on_verdict(
     (uncertain — pending proposal filed, parent parked), or ``'single'``
     (caller proceeds with / hands back to normal ingest).
 
-    🛑 ``force_review`` — EIN WIEDERANSTOSS LEGT VOR, ER FÜHRT NICHT AUS (#1372)
-    ==========================================================================
-    Beim ERSTEN Durchlauf ist Auto-Schneiden vertretbar: niemand hat das
-    Dokument je gesehen, es ist noch nirgends abgelegt, und ein falscher
-    Schnitt kostet eine Wiederholung. Bei einem WIEDERANSTOSS ist das anders —
-    das Dokument steht in Paperless, trägt vielleicht von Hand gepflegte Tags,
-    und jemand hat es angesehen. Dort gehört die Entscheidung dem Menschen.
+    🛑 ``force_review`` -- A RE-RUN PROPOSES, IT DOES NOT EXECUTE (#1372)
+    ====================================================================
+    On the FIRST run auto-splitting is defensible: nobody has ever seen the
+    document, it is not filed anywhere yet, and a wrong split costs a repeat.
+    On a RE-RUN that is different -- the document sits in Paperless, may carry
+    hand-maintained tags, and somebody has looked at it. There the decision
+    belongs to the person.
 
-    Der Unterschied ist am 2026-10-04 teuer geworden: eine lesende Probe ergab
-    Zuversicht 0,0 (also Vorlage), der echte Lauf kam über die Schwelle und
-    schnitt sofort — acht Dokumente angelegt, Original archiviert, ohne
-    Bestätigung, obwohl eine Vorlage angekündigt war. Derselbe Aufruf gab in
-    drei Durchläufen 9 Stücke, 8 Stücke und Zuversicht 0,0.
+    The difference got expensive on 2026-10-04: a read-only probe returned
+    confidence 0.0 (so: propose), the real run came out above the threshold and
+    split immediately -- eight documents created, the original archived, with
+    no confirmation, although a proposal had been announced. The same call gave
+    9 pieces, 8 pieces and confidence 0.0 across three runs.
 
-    🛑 Aus einer Leseprobe ist NICHT ableitbar, was der nächste Lauf tut. Darum
-    hängt die Entscheidung bei einem Wiederanstoß nicht an der Zuversicht,
-    sondern ist festgelegt: immer Vorlage.
+    🛑 What the next run will do is NOT derivable from a read-only probe. So on
+    a re-run the decision does not hang on the confidence but is fixed: always
+    propose.
     """
     if verdict.kind != VERDICT_MULTI:
         return "single"
@@ -714,10 +711,10 @@ async def act_on_verdict(
             )
             await db.rollback()
             return "single"
-        # Der Grund gehoert in die Zeile. Mit `force_review` kann die
-        # Zuversicht HOCH sein — "confidence X < threshold" waere dann falsch,
-        # und wer das Protokoll liest, suchte an der Schwelle statt beim
-        # Wiederanstoss.
+        # The reason belongs in the line. With `force_review` the confidence
+        # can be HIGH -- "confidence X < threshold" would then be wrong, and
+        # whoever reads the log would look at the threshold instead of at the
+        # re-run.
         grund = (
             "resplit — Entscheidung liegt beim Eigentümer"
             if force_review
@@ -786,13 +783,13 @@ async def _route_to_slow_lane(
 
     try:
         await PdfSplitTaskQueue(redis_client=get_redis()).enqueue(
-            # 🛑 `resplit` MUSS ueber Redis mitreisen. Der langsame Pfad ist
-            # genau der, ueber den Dokument 460 lief (unlesbare Seiten → VLM);
-            # faellt das Kennzeichen hier weg, wuerde ein Wiederanstoss
-            # ausgerechnet an diesem Dokument wieder automatisch schneiden.
-            # `resplit` NUR wenn gesetzt: der haeufige Pfad behaelt seine
-            # Nutzlast byte-gleich, und aeltere Eintraege im Stream bleiben
-            # lesbar (`params.get("resplit")` ist ohne Schluessel falsch).
+            # 🛑 `resplit` MUST travel along through Redis. The slow
+            # path is exactly the one document 460 took (unreadable pages ->
+            # VLM); drop the marker here and a re-run would split that very
+            # document automatically again. `resplit` ONLY when set: the
+            # frequent path keeps its payload byte-identical, and older entries
+            # in the stream stay readable (`params.get("resplit")` is false
+            # without the key).
             {"document_id": doc.id, "user_id": user_id}
             | ({"resplit": True} if resplit else {})
         )

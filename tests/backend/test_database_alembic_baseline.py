@@ -107,19 +107,19 @@ def test_stamp_pre_baseline_widens_before_insert():
 
 
 # ---------------------------------------------------------------------------
-# Die Basis-Migration und ihr Stempel (#B3)
+# The baseline migration and its stamp (#B3)
 # ---------------------------------------------------------------------------
 class TestBaselineStamp:
-    """`PRE_BASELINE_REVISION` MUSS die Vorgaengerrevision der Basis sein.
+    """`PRE_BASELINE_REVISION` MUST be the revision preceding the baseline.
 
-    🛑 Stimmt das nicht, wird die Basis auf einer frischen Datenbank
-    UEBERSPRUNGEN — und alles ist wieder wie vorher: das Roh-SQL aus den
-    Migrationen entsteht nie, und niemand merkt es, weil nichts kaputtgeht.
-    Es wird nur langsam. Genau dieser Fehlermodus hat neun Indizes auf beiden
-    Instanzen gekostet, fuenf davon HNSW.
+    🛑 If that is not the case, the baseline is SKIPPED on a fresh database --
+    and everything is as before: the raw SQL from the migrations never comes
+    into being, and nobody notices, because nothing breaks. It only gets slow.
+    Exactly that failure mode cost nine indexes on both instances, five of them
+    HNSW.
 
-    Ein blosser Vergleich zweier Zeichenketten waere wertlos: der Test LIEST
-    die Basis-Migration und nimmt ihr `down_revision`.
+    A plain comparison of two strings would be worthless: the test READS the
+    baseline migration and takes its `down_revision`.
     """
 
     @staticmethod
@@ -145,17 +145,18 @@ class TestBaselineStamp:
         )
 
     def test_the_baseline_is_the_head(self):
-        # Zeigt eine spaetere Migration auf die Basis, ist das in Ordnung — sie
-        # laeuft auf einer Neuinstallation ganz normal MIT. Der Stempel darf
-        # aber niemals auf die Basis selbst oder dahinter zeigen.
+        # A later migration pointing at the baseline is fine -- it runs
+        # normally along with it on a fresh install. But the stamp must never
+        # point at the baseline itself or behind it.
         from services.database import PRE_BASELINE_REVISION
 
         mod = self._baseline_module()
         assert PRE_BASELINE_REVISION != mod.revision
 
     def test_the_guard_names_a_table_that_exists_everywhere(self):
-        # Der Waechter entscheidet an EINER Tabelle, ob das Schema schon da ist.
-        # Waehlt jemand eine, die es auf einer aelteren Instanz nicht gibt, liefe
-        # die Basis dort an und versuchte, ein vorhandenes Schema neu zu bauen.
+        # The guard decides on ONE table whether the schema is already
+        # there. If somebody picks one that does not exist on an older
+        # instance, the baseline would run there and try to rebuild a schema
+        # that is already present.
         mod = self._baseline_module()
         assert mod.SENTINEL_TABLE == "users"

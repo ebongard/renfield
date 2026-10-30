@@ -41,7 +41,7 @@ async def close_ha_client():
 
 
 class HomeAssistantClient:
-    """Client für Home Assistant REST API"""
+    """Client for the Home Assistant REST API"""
 
     # Class-level entity map cache (shared across instances, same HA backend)
     _entity_map_cache: list[dict] | None = None
@@ -57,7 +57,7 @@ class HomeAssistantClient:
         self._cache_ttl = ha_glue_settings.ha_cache_ttl
 
     async def get_states(self) -> list[dict]:
-        """Alle Entity States abrufen"""
+        """Fetch every entity state"""
         try:
             client = await get_ha_http_client()
             response = await client.get("/api/states", timeout=ha_glue_settings.ha_timeout)
@@ -68,7 +68,7 @@ class HomeAssistantClient:
             return []
 
     async def get_state(self, entity_id: str) -> dict | None:
-        """State einer bestimmten Entity abrufen"""
+        """Fetch the state of one specific entity"""
         try:
             client = await get_ha_http_client()
             response = await client.get(f"/api/states/{entity_id}", timeout=ha_glue_settings.ha_timeout)
@@ -86,7 +86,7 @@ class HomeAssistantClient:
         service_data: dict | None = None,
         timeout: float | None = None
     ) -> bool:
-        """Service aufrufen"""
+        """Call a service"""
         try:
             data = service_data or {}
             if entity_id:
@@ -106,25 +106,25 @@ class HomeAssistantClient:
             return False
 
     async def turn_on(self, entity_id: str) -> bool:
-        """Gerät einschalten"""
+        """Switch a device on"""
         domain = entity_id.split(".")[0]
         return await self.call_service(domain, "turn_on", entity_id)
 
     async def turn_off(self, entity_id: str) -> bool:
-        """Gerät ausschalten"""
+        """Switch a device off"""
         domain = entity_id.split(".")[0]
         return await self.call_service(domain, "turn_off", entity_id)
 
     async def toggle(self, entity_id: str) -> bool:
-        """Gerät umschalten"""
+        """Toggle a device"""
         domain = entity_id.split(".")[0]
         return await self.call_service(domain, "toggle", entity_id)
 
     async def set_value(self, entity_id: str, value: any, attribute: str = "value") -> bool:
-        """Wert setzen (z.B. Helligkeit, Temperatur)"""
+        """Set a value (e.g. brightness, temperature)"""
         domain = entity_id.split(".")[0]
 
-        # Spezielle Handler für verschiedene Domains
+        # Special handlers for the various domains
         if domain == "light" and attribute in ["brightness", "brightness_pct"]:
             return await self.call_service(
                 "light",
@@ -155,7 +155,7 @@ class HomeAssistantClient:
             )
 
     async def search_entities(self, query: str) -> list[dict]:
-        """Entities nach Namen suchen"""
+        """Search entities by name"""
         all_states = await self.get_states()
         query_lower = query.lower()
 
@@ -175,7 +175,7 @@ class HomeAssistantClient:
         return results
 
     async def get_entities_by_domain(self, domain: str) -> list[dict]:
-        """Alle Entities eines bestimmten Domains"""
+        """Every entity of one domain"""
         all_states = await self.get_states()
         return [
             {
@@ -189,16 +189,16 @@ class HomeAssistantClient:
 
     async def get_keywords(self, refresh: bool = False) -> set:
         """
-        Extrahiere alle Keywords aus Home Assistant Entities
+        Extract every keyword from the Home Assistant entities
 
-        Cached für 5 Minuten, refresh=True erzwingt Neuladung
+        Cached for 5 minutes; refresh=True forces a reload
 
         Returns:
-            set: Keywords (Gerätenamen, Räume, Domains)
+            set: keywords (device names, rooms, domains)
         """
         from datetime import datetime, timedelta
 
-        # Prüfe Cache
+        # Check the cache
         if not refresh and self._keywords_cache is not None:
             if self._keywords_last_updated:
                 cache_age = datetime.now() - self._keywords_last_updated
@@ -221,23 +221,23 @@ class HomeAssistantClient:
                 attributes = state.get("attributes", {})
                 friendly_name = attributes.get("friendly_name", "")
 
-                # Domain extrahieren (light, switch, etc.)
+                # Extract the domain (light, switch, etc.)
                 if "." in entity_id:
                     domain, name = entity_id.split(".", 1)
                     keywords.add(domain)
 
-                    # Name extrahieren (z.B. arbeitszimmer aus light.arbeitszimmer)
-                    # Ersetze _ durch Leerzeichen für besseres Matching
+                    # Extract the name (e.g. arbeitszimmer from light.arbeitszimmer)
+                    # Replace _ with a space, for better matching
                     name_parts = name.replace("_", " ").split()
                     keywords.update(name_parts)
 
-                # Friendly Name parsen (z.B. "Licht Arbeitszimmer")
+                # Parse the friendly name (e.g. "Licht Arbeitszimmer")
                 if friendly_name:
-                    # Alle Wörter als Keywords (lowercase für besseres Matching)
+                    # Every word as a keyword (lowercase, for better matching)
                     name_words = friendly_name.lower().split()
                     keywords.update(name_words)
 
-            # Deutsche Übersetzungen für häufige Domains hinzufügen
+            # Add German translations for the common domains
             domain_translations = {
                 "light": ["licht", "lampe", "beleuchtung"],
                 "switch": ["schalter", "steckdose"],
@@ -250,12 +250,12 @@ class HomeAssistantClient:
                 "vacuum": ["staubsauger", "saugroboter"]
             }
 
-            # Füge Übersetzungen für vorhandene Domains hinzu
+            # Add translations for the domains that are present
             for domain, translations in domain_translations.items():
                 if domain in keywords:
                     keywords.update(translations)
 
-            # Häufige Aktions-Verben hinzufügen
+            # Add the common action verbs
             action_words = [
                 "ein", "aus", "an", "schalten", "stelle", "setze",
                 "öffne", "schließe", "öffnen", "schließen",
@@ -263,7 +263,7 @@ class HomeAssistantClient:
             ]
             keywords.update(action_words)
 
-            # Cache aktualisieren
+            # Update the cache
             self._keywords_cache = keywords
             self._keywords_last_updated = datetime.now()
 
@@ -277,7 +277,7 @@ class HomeAssistantClient:
             return self._get_fallback_keywords()
 
     def _get_fallback_keywords(self) -> set:
-        """Fallback Keywords wenn HA nicht erreichbar"""
+        """Fallback keywords for when HA is unreachable"""
         return {
             "licht", "lampe", "schalter", "thermostat", "heizung",
             "fenster", "tür", "rolladen", "ein", "aus", "an", "schalten"
@@ -285,13 +285,13 @@ class HomeAssistantClient:
 
     async def get_entity_map(self) -> list[dict]:
         """
-        Erstelle eine Map aller Entities für Intent Recognition.
+        Build a map of every entity, for intent recognition.
 
         Uses a class-level TTL cache (60s) to avoid hitting the HA REST API
         on every intent extraction call.
 
         Returns:
-            List[Dict]: Liste mit entity_id, friendly_name, domain, room (falls vorhanden)
+            List[Dict]: entity_id, friendly_name, domain, room (where present)
         """
         # Check class-level cache
         now = time.time()
@@ -321,7 +321,7 @@ class HomeAssistantClient:
                 friendly_name = attributes.get("friendly_name", "")
                 domain = entity_id.split(".")[0] if "." in entity_id else ""
 
-                # Extrahiere Raum aus friendly_name oder entity_id
+                # Extract the room from friendly_name or entity_id
                 room = self._extract_room(entity_id, friendly_name)
 
                 if domain in relevant_domains:
@@ -347,14 +347,14 @@ class HomeAssistantClient:
 
     def _extract_room(self, entity_id: str, friendly_name: str) -> str | None:
         """
-        Versuche Raum aus Entity ID oder Friendly Name zu extrahieren
+        Try to extract the room from the entity id or the friendly name
 
-        Beispiele:
+        Examples:
         - "binary_sensor.arbeitszimmer_fenster" → "arbeitszimmer"
         - "Arbeitszimmer Fenster" → "arbeitszimmer"
         - "light.wohnzimmer" → "wohnzimmer"
         """
-        # Häufige Raumnamen (lowercase)
+        # The common room names (lowercase)
         known_rooms = {
             "arbeitszimmer", "wohnzimmer", "schlafzimmer", "küche", "kueche",
             "bad", "badezimmer", "flur", "diele", "wc", "toilette",
@@ -362,7 +362,7 @@ class HomeAssistantClient:
             "dachboden", "garage", "terrasse", "balkon", "garten"
         }
 
-        # Prüfe entity_id (z.B. "arbeitszimmer" in "binary_sensor.arbeitszimmer_fenster")
+        # Check entity_id (e.g. "arbeitszimmer" in "binary_sensor.arbeitszimmer_fenster")
         entity_name = entity_id.split(".", 1)[1] if "." in entity_id else entity_id
         entity_parts = entity_name.lower().replace("_", " ").split()
 
@@ -370,7 +370,7 @@ class HomeAssistantClient:
             if part in known_rooms:
                 return part
 
-        # Prüfe friendly_name (z.B. "Arbeitszimmer" in "Arbeitszimmer Fenster")
+        # Check friendly_name (e.g. "Arbeitszimmer" in "Arbeitszimmer Fenster")
         if friendly_name:
             name_parts = friendly_name.lower().split()
             for part in name_parts:

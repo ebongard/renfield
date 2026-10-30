@@ -75,15 +75,14 @@ class NoteRetrieval:
             logger.error("🔍 Note search: operational DB error — re-raising (not masking as empty)")
             raise
         except Exception:
-            # 🛑 NICHT hier zu `[]` degradieren. Die Faecherung in
-            # `PolymorphicAtomStore.query` faengt die Ausnahme ohnehin
-            # (`gather(return_exceptions=True)`) und macht `[]` daraus — das
-            # Ergebnis ist also dasselbe. Der Unterschied: dort wird der
-            # Ausfall GEZAEHLT und protokolliert, hier verschwand er als
-            # „nichts gefunden". Am 2026-10-29 liess sich deshalb nicht
-            # feststellen, auf wie vielen Quellen eine Antwort beruhte.
-            # Diese Methode hat keinen Aufrufer ausserhalb der Faecherung
-            # (nachgemessen); der Weitergriff ist daher ohne Nebenwirkung.
+            # 🛑 Do NOT degrade to `[]` here. The fan-out in
+            # `PolymorphicAtomStore.query` catches the exception anyway
+            # (`gather(return_exceptions=True)`) and turns it into `[]`, so the
+            # outcome is identical. The difference: there the failure is
+            # COUNTED and logged, here it vanished as "found nothing". That is
+            # why on 2026-10-29 there was no way to tell how many sources an
+            # answer actually rested on. This method has no caller outside the
+            # fan-out (measured), so re-raising has no side effect.
             raise
 
     async def search(

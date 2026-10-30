@@ -1,18 +1,18 @@
 """
-Ratenbegrenzung darf keinen laufenden Sprachzug kosten (#1284).
+Rate limiting must not cost a voice turn in flight (#1284).
 
-Bis zu diesem Fix pruefte der Satelliten-Handler den Limiter VOR jeder
-Unterscheidung des Frame-Typs und verwarf einen abgelehnten Frame ersatzlos —
-auch ein ``audio_end``. Zwei Folgen:
+Until this fix the satellite handler checked the limiter BEFORE any
+distinction of frame type and discarded a rejected frame with nothing in its
+place -- an ``audio_end`` included. Two consequences:
 
-* Ein Schwall aufgestauter Audio-Chunks (die Ereignisschleife eines Pi Zero
-  stockt, danach gehen die Chunks auf einmal hinaus) riss das Sekundenlimit,
-  obwohl die Dauerrate physisch auf 12,5 Chunks/s begrenzt ist.
-* Ein verworfenes ``audio_end`` liess die Sitzung in ``listening`` stranden, bis
-  der Kehraus sie nach ``DEVICE_SESSION_TIMEOUT`` samt Aufnahme verwarf.
+* A burst of backed-up audio chunks (a Pi Zero's event loop stalls, after
+  which the chunks all go out at once) broke the per-second limit, although
+  the sustained rate is physically capped at 12.5 chunks/s.
+* A discarded ``audio_end`` left the session stranded in ``listening`` until
+  the sweep discarded it, recording included, after ``DEVICE_SESSION_TIMEOUT``.
 
-``_rate_verdict`` gibt einem abgelehnten Frame eines LAUFENDEN, EIGENEN Zuges
-eine zweite Pruefung. Alles andere wird so billig abgewiesen wie zuvor.
+``_rate_verdict`` gives a rejected frame of a LIVE, OWN turn a second check.
+Everything else is rejected as cheaply as before.
 """
 
 import ast
@@ -37,7 +37,7 @@ SESSION = "sess-1"
 
 
 def _manager(sessions: dict | None = None):
-    """Nur, was die Klassifikation anfasst: ``sessions`` mit ``satellite_id``."""
+    """Only what the classification touches: ``sessions`` with ``satellite_id``."""
     if sessions is None:
         sessions = {SESSION: SimpleNamespace(satellite_id=SAT)}
     return SimpleNamespace(sessions=sessions)
@@ -71,7 +71,7 @@ def test_burst_ok_ueberspringt_nur_das_sekundenlimit():
 
 @pytest.mark.unit
 def test_burst_ok_bleibt_am_minutenbudget_haengen():
-    """Der Schwall ist gedeckelt — eine Flut kommt auch so nicht durch."""
+    """The burst is capped -- a flood still does not get through."""
     limiter = WSRateLimiter(per_second=3, per_minute=5, enabled=True)
     for _ in range(5):
         assert limiter.check(SAT, burst_ok=True)[0]
@@ -83,7 +83,7 @@ def test_burst_ok_bleibt_am_minutenbudget_haengen():
 
 @pytest.mark.unit
 def test_burst_frames_zaehlen_gegen_das_budget_aller_frames():
-    """Ein durchgelassener Schwall ist kein Freifahrtschein fuer den Rest."""
+    """A burst that is let through is no free pass for the rest."""
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
     _exhaust_second(limiter, SAT)
     assert limiter.check(SAT, burst_ok=True)[0]
@@ -126,7 +126,7 @@ def test_alles_andere_ist_kein_zug_frame(raw):
 @pytest.mark.unit
 @pytest.mark.parametrize("raw", [_text("audio"), _text("audio_end"), _binary()])
 def test_fremde_sitzung_zaehlt_nicht(raw):
-    """Ein Satellit darf sich nicht mit der Sitzung eines anderen freikaufen."""
+    """A satellite must not buy itself out with somebody else's session."""
     assert _live_session_frame(raw, OTHER, _manager()) is None
 
 
@@ -145,7 +145,7 @@ def test_audio_schwall_eines_laufenden_zuges_kommt_durch(raw):
 
 @pytest.mark.unit
 def test_audio_end_kommt_selbst_bei_erschoepftem_minutenbudget_durch():
-    """Ein verworfenes audio_end strandet die Sitzung — es ist nie verhandelbar."""
+    """A discarded audio_end strands the session -- it is never negotiable."""
     limiter = WSRateLimiter(per_second=100, per_minute=3, enabled=True)
     for _ in range(3):
         assert limiter.check(SAT)[0]
@@ -167,7 +167,7 @@ def test_audio_jenseits_des_minutenbudgets_wird_abgewiesen():
 
 @pytest.mark.unit
 def test_anderer_frame_im_schwall_bleibt_abgewiesen():
-    """Heartbeat/BLE im selben Schwall: abgewiesen, mit dem urspruenglichen Grund."""
+    """Heartbeat/BLE in the same burst: rejected, with the original reason."""
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
     _exhaust_second(limiter, SAT)
 
@@ -178,7 +178,7 @@ def test_anderer_frame_im_schwall_bleibt_abgewiesen():
 
 @pytest.mark.unit
 def test_unregistrierte_verbindung_wird_nie_klassifiziert():
-    """Ohne satellite_id kein zweiter Blick — der Frame wird nicht einmal geparst."""
+    """No satellite_id, no second look -- the frame is not even parsed."""
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
     _exhaust_second(limiter, "10.0.0.9")
 
@@ -193,7 +193,7 @@ def test_unregistrierte_verbindung_wird_nie_klassifiziert():
 
 @pytest.mark.unit
 def test_erlaubter_frame_wird_nicht_klassifiziert():
-    """Der Normalpfad parst nichts doppelt."""
+    """The normal path parses nothing twice."""
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
 
     class Explodes:
@@ -205,12 +205,12 @@ def test_erlaubter_frame_wird_nicht_klassifiziert():
 
 
 # ---------------------------------------------------------------------------
-# Review-Befunde: Parse-Budget, ehrliche Verstossmeldung, Verdrahtung
+# Review findings: parse budget, honest violation report, wiring
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
 def test_zweiter_blick_hat_ein_eigenes_budget():
-    """Abgelehnte Frames duerfen nicht unbegrenzt geparst werden."""
+    """Rejected frames must not be parsed without limit."""
     limiter = WSRateLimiter(per_second=1, per_minute=3, enabled=True)
     assert limiter.check(SAT)[0]
 
@@ -222,8 +222,8 @@ def test_zweiter_blick_hat_ein_eigenes_budget():
             lookups.append(1)
             return {}
 
-    # Ein audio-Frame mit unbekannter Sitzung kommt bis zum Sitzungs-Nachschlagen —
-    # das Nachschlagen zaehlt damit die tatsaechlich geparsten Frames.
+    # An audio frame with an unknown session gets as far as the session
+    # lookup -- so the lookup counts the frames actually parsed.
     for _ in range(10):
         assert not _rate_verdict(_text("audio", session_id="unbekannt"), SAT, SAT, limiter, Counting())[0]
 
@@ -242,8 +242,8 @@ def test_budget_des_zweiten_blicks_belastet_das_frame_budget_nicht():
 
 @pytest.mark.unit
 def test_durchgelassener_frame_zaehlt_nicht_als_verstoss():
-    """Sonst meldet das Log "exceeded" fuer angenommene Frames und verbraucht
-    das Drei-Warnungen-Kontingent, das echte Verstoesse brauchen."""
+    """Otherwise the log reports "exceeded" for accepted frames and uses up
+    the three-warning allowance that real violations need."""
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
     for _ in range(3):
         assert limiter.check(SAT, record_violation=False)[0]
@@ -268,17 +268,17 @@ def test_endgueltige_ablehnung_zaehlt_genau_einmal():
 
 @pytest.mark.unit
 def test_sitzung_in_verarbeitung_gilt_weiter_als_laufend():
-    """"Laufend" heisst: die Sitzung existiert. Ein spaetes audio_end (oder ein
-    Nachzuegler-Chunk) einer Sitzung in PROCESSING wird nicht anders behandelt —
-    die Sitzung wird erst am Zugende geloescht."""
+    """"Live" means: the session exists. A late audio_end (or a straggler
+    chunk) of a session in PROCESSING is treated no differently -- the session
+    is only deleted at the end of the turn."""
     sessions = {SESSION: SimpleNamespace(satellite_id=SAT, state="processing")}
     assert _live_session_frame(_text("audio_end"), SAT, _manager(sessions)) == "audio_end"
 
 
 @pytest.mark.unit
 def test_empfangsschleife_nutzt_das_urteil_und_nie_den_limiter_direkt():
-    """Verdrahtung: es gibt keinen Test, der die echte WebSocket-Schleife faehrt.
-    Wer dort wieder ``rate_limiter.check`` direkt aufruft, hebt den Fix auf."""
+    """Wiring: there is no test that drives the real WebSocket loop. Anyone
+    who calls ``rate_limiter.check`` directly there again undoes the fix."""
     tree = ast.parse(inspect.getsource(satellite_handler))
     loop = next(
         n for n in ast.walk(tree)

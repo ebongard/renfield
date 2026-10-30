@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Renfield Startup Script
-# Startet alle Services und prüft die Konfiguration
+# Starts every service and checks the configuration
 
 set -e
 
@@ -11,19 +11,19 @@ cd "$(dirname "$0")/.."
 echo "🚀 Renfield wird gestartet..."
 echo ""
 
-# Farben für Output
+# Colors for the output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Prüfe ob Docker läuft
+# Check whether Docker is running
 if ! docker info > /dev/null 2>&1; then
     echo -e "${RED}❌ Docker läuft nicht. Bitte Docker starten.${NC}"
     exit 1
 fi
 
-# Prüfe ob .env existiert
+# Check whether .env exists
 if [ ! -f .env ]; then
     echo -e "${YELLOW}⚠️  .env Datei nicht gefunden. Erstelle aus .env.example...${NC}"
     cp .env.example .env
@@ -31,15 +31,15 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-# Lade .env
+# Load .env
 source .env
 
-# Prüfe wichtige Variablen
+# Check the important variables
 if [ "$POSTGRES_PASSWORD" = "changeme" ]; then
     echo -e "${YELLOW}⚠️  Bitte POSTGRES_PASSWORD in .env ändern!${NC}"
 fi
 
-# Container starten
+# Start the containers
 echo "📦 Starte Docker Container..."
 docker-compose up -d
 
@@ -64,7 +64,7 @@ check_service() {
 check_service "Backend" "http://localhost:8000/health"
 check_service "Frontend" "http://localhost:3000"
 
-# Prüfe ob Ollama Modell geladen ist
+# Check whether the Ollama model is loaded
 echo ""
 echo "🤖 Prüfe Ollama Modell..."
 if docker exec renfield-ollama ollama list | grep -q "$OLLAMA_MODEL"; then
@@ -74,7 +74,7 @@ else
     docker exec renfield-ollama ollama pull "$OLLAMA_MODEL"
 fi
 
-# Zusammenfassung
+# Summary
 echo ""
 echo "================================================"
 echo -e "${GREEN}✓ Renfield ist bereit!${NC}"

@@ -1,12 +1,12 @@
 """
-Tests für das Verschieben von Dokumenten zwischen Knowledge Bases.
+Tests for moving documents between knowledge bases.
 
-Testet:
-- Einzelnes Dokument verschieben
-- Bulk-Move mehrere Dokumente
-- Ziel-KB existiert nicht → Fehler
-- Dokument bereits in Ziel-KB → übersprungen
-- Chunks bleiben intakt nach Move
+Covers:
+- Moving a single document
+- A bulk move of several documents
+- The target KB does not exist -> error
+- A document already in the target KB -> skipped
+- Chunks stay intact after the move
 """
 
 import pytest
@@ -103,13 +103,13 @@ async def doc_with_chunks(
 
 
 class TestMoveDocuments:
-    """Tests für RAGService.move_documents()"""
+    """Tests for RAGService.move_documents()"""
 
     @pytest.mark.database
     async def test_move_single_document(
         self, db_session: AsyncSession, docs_in_source, target_kb
     ):
-        """Einzelnes Dokument verschieben"""
+        """Move a single document"""
         rag = RAGService(db_session)
         doc = docs_in_source[0]
 
@@ -138,7 +138,7 @@ class TestMoveDocuments:
     async def test_move_target_kb_not_found(
         self, db_session: AsyncSession, docs_in_source
     ):
-        """Ziel-KB existiert nicht → ValueError"""
+        """The target KB does not exist -> ValueError"""
         rag = RAGService(db_session)
 
         with pytest.raises(ValueError, match="nicht gefunden"):
@@ -148,7 +148,7 @@ class TestMoveDocuments:
     async def test_move_target_kb_inactive(
         self, db_session: AsyncSession, docs_in_source, inactive_kb
     ):
-        """Ziel-KB ist nicht aktiv → ValueError"""
+        """The target KB is not active -> ValueError"""
         rag = RAGService(db_session)
 
         with pytest.raises(ValueError, match="nicht aktiv"):
@@ -158,7 +158,7 @@ class TestMoveDocuments:
     async def test_move_already_in_target(
         self, db_session: AsyncSession, docs_in_source, source_kb
     ):
-        """Dokument bereits in Ziel-KB → wird übersprungen"""
+        """A document already in the target KB -> skipped"""
         rag = RAGService(db_session)
         doc = docs_in_source[0]
 
@@ -173,7 +173,7 @@ class TestMoveDocuments:
     async def test_move_mixed_already_and_new(
         self, db_session: AsyncSession, docs_in_source, target_kb
     ):
-        """Mischung: einige schon in Ziel, andere nicht"""
+        """A mix: some already in the target, others not"""
         rag = RAGService(db_session)
 
         # Move first doc to target first
@@ -200,7 +200,7 @@ class TestMoveDocuments:
     async def test_move_chunks_stay_intact(
         self, db_session: AsyncSession, doc_with_chunks, target_kb
     ):
-        """Chunks bleiben nach dem Move dem Dokument zugeordnet"""
+        """After the move the chunks stay assigned to the document"""
         rag = RAGService(db_session)
 
         moved = await rag.move_documents([doc_with_chunks.id], target_kb.id)

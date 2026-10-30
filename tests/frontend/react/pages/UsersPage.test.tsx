@@ -166,6 +166,44 @@ describe('UsersPage', () => {
       expect(within(modal).getByPlaceholderText(/passwort eingeben/i)).toBeInTheDocument();
       expect(within(modal).getByText(/rolle auswählen/i)).toBeInTheDocument();
     });
+
+    it('states all three validation messages in ONE language', async () => {
+      // 🛑 The occasion, 2026-10-30: the language pass turned the third
+      // message into English (`defaultValue: 'Role is required'`) while its
+      // two siblings stayed German, and the German form showed two German
+      // errors beside one English one. None of the three keys
+      // (users.validationUsernameMin / validationPasswordMin /
+      // validationRoleRequired) exists in de.json, en.json or it.json, so the
+      // `defaultValue` is what renders -- and nothing covered it, which is
+      // why 132 green tests stayed silent.
+      const user = userEvent.setup();
+      renderWithProviders(<UsersPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('admin')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /benutzer erstellen/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('modal')).toBeInTheDocument();
+      });
+
+      const modal = screen.getByTestId('modal');
+      // The modal pre-selects a default role, so `!formData.role_id` is false
+      // and the third validator never fires on a plain empty submit. That is
+      // exactly why the English string went unnoticed. Clear the select first
+      // (the placeholder option carries value="") so all three are reachable.
+      const roleSelect = within(modal)
+        .getByRole('option', { name: /rolle auswählen/i })
+        .closest('select') as HTMLSelectElement;
+      await user.selectOptions(roleSelect, '');
+      await user.click(within(modal).getByRole('button', { name: /benutzer erstellen/i }));
+
+      expect(await within(modal).findByText('Mindestens 3 Zeichen')).toBeInTheDocument();
+      expect(within(modal).getByText('Mindestens 8 Zeichen')).toBeInTheDocument();
+      expect(within(modal).getByText('Rolle ist erforderlich')).toBeInTheDocument();
+    });
   });
 
   describe('Edit User Modal', () => {

@@ -41,32 +41,31 @@ _DEFAULT_KEY_PATH = Path("/app/secrets/federation_identity_key")
 
 
 def canonical_bytes(payload: dict) -> bytes:
-    """Die Bytes, die eine Ed25519-Signatur abdeckt — fuer JEDES Protokoll hier.
+    """The bytes an Ed25519 signature covers -- for EVERY protocol here.
 
-    Kanonisches JSON: sortierte Schluessel, kompakte Trenner, ASCII-escaped,
-    NaN/Infinity verboten. Weichen Unterzeichner und Pruefer in der
-    Kanonisierung auch nur um ein Zeichen ab, scheitert JEDE Signatur — darum
-    gibt es genau diese eine Fassung.
+    Canonical JSON: sorted keys, compact separators, ASCII-escaped,
+    NaN/Infinity forbidden. If signer and verifier differ in canonicalisation
+    by even one character, EVERY signature fails -- which is why there is
+    exactly this one implementation.
 
-    🛑 Sie stand bis 2026-10-27 als `_canonical_bytes` privat im
-    `pairing_service` und ist hierher gewandert, als der Personen-Handschlag
-    (F-ID-2) ein ZWEITES Protokoll mit denselben Bytes bekam. Eine abgeschriebene
-    zweite Fassung waere der klassische stille Bruch: beide Seiten signieren
-    fleissig, und nichts verifiziert mehr. `pairing_service._canonical_bytes`
-    bleibt als Alias bestehen, weil dessen Tests den privaten Namen einfuehren.
+    🛑 Until 2026-10-27 it sat in `pairing_service` as the private
+    `_canonical_bytes`, and moved here when the person handshake (F-ID-2) got a
+    SECOND protocol over the same bytes. A copied second implementation would
+    be the classic silent break: both sides sign away happily and nothing
+    verifies any more. `pairing_service._canonical_bytes` stays on as an alias,
+    because its tests import the private name.
 
-    Die ausdruecklichen Schalter wehren je eine konkrete Falle ab:
-      - `allow_nan=False`: Pythons `json.dumps` schreibt sonst die
-        nicht-standardkonformen Literale `NaN`/`Infinity`, die kaum eine
-        andere Sprache wieder einliest. Ein boesartiger Anbietender koennte
-        eine Signatur erzeugen, die ein Peer in Go oder Rust nie nachrechnen
-        kann.
-      - `ensure_ascii=True`: entspricht der Vorgabe, steht aber ausdruecklich
-        da, damit eine Gegenstelle sie nicht unbemerkt umstellt.
+    Each explicit flag wards off one concrete trap:
+      - `allow_nan=False`: otherwise Python's `json.dumps` writes the
+        non-standard literals `NaN`/`Infinity`, which hardly any other
+        language reads back. A malicious offerer could produce a signature a
+        peer in Go or Rust can never recompute.
+      - `ensure_ascii=True`: matches the default, but is spelled out so the
+        far side cannot change it unnoticed.
 
-    Aufrufende muessen dafuer sorgen, dass die Nutzlast nur JSON-sichere
-    Grundtypen enthaelt; Pydantics dict-Durchreiche lehnt Gleitkommazahlen
-    nicht ab.
+    Callers have to make sure the payload only contains JSON-safe
+    primitive types; Pydantic's dict pass-through rejects floating-point numbers
+    does not cover that.
     """
     return json.dumps(
         payload,

@@ -313,6 +313,27 @@ class TestProcessDocumentReOCRTrigger:
         # Sanity: the converter was called exactly once for retry.
         assert processor._convert_document_ocr.call_count == 1
 
+    async def test_first_converter_failure_is_a_stable_code(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """The FIRST conversion returning None reports a stable code like its
+        siblings (`ocr_quality_low`, `ocr_retry_conversion_failed`), not a
+        sentence: the value reaches `error_message` and the Knowledge page.
+        It used to be German prose while the neighbouring branch was English
+        -- one public field in two languages."""
+        f = tmp_path / "doc.pdf"
+        f.write_bytes(b"%PDF-1.4")
+        processor._convert_document = MagicMock(return_value=None)
+        monkeypatch.setattr(
+            "services.document_processor.settings.rag_force_ocr", False
+        )
+
+        result = await processor.process_document(str(f), force_ocr=False)
+
+        assert result["status"] == "failed"
+        assert result["error"] == "conversion_failed"
+        assert result["chunks"] == []
+
 
 # ============================== text-layer-chunk path (hybrid-PDF OOM/degrade fix)
 @pytest.mark.asyncio

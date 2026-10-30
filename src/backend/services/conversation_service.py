@@ -17,6 +17,7 @@ from models.database import ATOM_TYPE_CONVERSATION, Conversation, Message
 from services.circle_sql import conversations_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Drop short tokens (≤2 chars) so single-letter / punctuation noise never
 # reaches the tsquery. Word characters only (German alphabet + digits), so the
@@ -58,21 +59,21 @@ class ConversationNotOwnedError(PermissionError):
 
 class ConversationService:
     """
-    Service für Konversations-Persistenz.
+    Service for conversation persistence.
 
 
-    Bietet:
-    - Konversations-Kontext laden
-    - Nachrichten speichern
-    - Konversations-Management (Liste, Suche, Löschen)
+    Provides:
+    - loading the conversation context
+    - storing messages
+    - conversation management (list, search, delete)
     """
 
     def __init__(self, db: AsyncSession):
         """
-        Initialisiert den Conversation Service.
+        Initializes the conversation service.
 
         Args:
-            db: AsyncSession für Datenbankoperationen
+            db: AsyncSession for database operations
         """
         self.db = db
 
@@ -414,21 +415,21 @@ class ConversationService:
         return out
 
     async def latest_message_id(self, session_id: str) -> int | None:
-        """Die hoechste Nachrichten-Kennung dieser Sitzung, oder `None`.
+        """The highest message id in this session, or `None`.
 
-        🛑 Billig und ABSICHTLICH ohne Besitzpruefung: die Zahl ist keine
-        Auskunft ueber Inhalte, sie entscheidet nur, ob die Historie neu
-        geladen werden muss. Das Laden selbst prueft den Besitz
-        (`load_context` mit `enforce_ownership`), eine fremde Sitzung ergibt
-        dort weiterhin eine leere Historie.
+        🛑 Cheap and DELIBERATELY without an ownership check: the number says
+        nothing about content, it only decides whether the history has to be
+        reloaded. The load itself checks ownership (`load_context` with
+        `enforce_ownership`), and a foreign session still yields an empty
+        history there.
 
-        Wozu: die Historie wird einmal je Socket geladen, ein ASYNCHRONER
-        Erzeuger schreibt aber in die Datenbank, ohne die lebende Liste
-        anzufassen (Scanner-Fertigmeldung, Gespraechsuebergabe,
-        Paperless-Bestaetigung). Ohne diesen Vergleich las der Agent einen
-        veralteten Kontext — gemessen am 2026-10-26, als er einen am
-        Papierstau gescheiterten Scan fuer laufend hielt und auf zwei weitere
-        Bitten nur beteuerte, er laufe.
+        Why: the history is loaded once per socket, but an ASYNCHRONOUS
+        producer writes to the database without touching the live list
+        (scanner completion notice, conversation handover, Paperless
+        confirmation). Without this comparison the agent read a
+        stale context -- measured on 2026-10-26, when it believed a scan that
+        had failed on a paper jam was still running and, on two further
+        requests, merely insisted that it was.
         """
         try:
             result = await self.db.execute(
@@ -438,9 +439,9 @@ class ConversationService:
             )
             return result.scalar_one_or_none()
         except Exception as exc:
-            # Eine fehlende Auskunft darf den Zug nicht mitnehmen. `None` heisst
-            # „keine Aussage"; der Aufrufer behandelt das wie „unveraendert".
-            logger.warning(f"⚠️ latest_message_id failed for {session_id}: {exc}")
+            # A missing answer must not take the query down with it. `None`
+            # means "no statement"; the caller treats it as "unchanged".
+            logger.warning(f"⚠️ latest_message_id failed for {session_id}: {error_text_without_content(exc)}")
             return None
 
     async def load_context(
@@ -451,11 +452,11 @@ class ConversationService:
         enforce_ownership: bool = False,
     ) -> list[dict[str, str]]:
         """
-        Lade Konversationskontext aus der Datenbank.
+        Load conversation context from the database.
 
         Args:
-            session_id: Session ID der Konversation
-            max_messages: Maximale Anzahl zu ladender Nachrichten
+            session_id: session id of the conversation
+            max_messages: Maximum number of messages to load
             user_id: Authenticated caller identity (for the ownership check).
             enforce_ownership: When True (auth-enabled deployments), a conversation
                 owned by a DIFFERENT user is treated as not-found and yields an empty
@@ -464,10 +465,10 @@ class ConversationService:
                 voice/household and other internal callers stay byte-identical.
 
         Returns:
-            Liste von Nachrichten im Format [{"role": "user|assistant", "content": "..."}]
+            A list of messages shaped [{"role": "user|assistant", "content": "..."}]
         """
         try:
-            # Finde Conversation
+            # Find the conversation
             result = await self.db.execute(
                 select(Conversation).where(Conversation.session_id == session_id)
             )
@@ -511,7 +512,7 @@ class ConversationService:
                 # expects newest-first, so hand it the descending slice.
                 messages = [by_id[i] for i in reversed(window_ids) if i in by_id]
             else:
-                # Lade letzte N Nachrichten
+                # Load the last N messages
                 result = await self.db.execute(
                     select(Message)
                     .where(Message.conversation_id == conversation.id)
@@ -520,7 +521,7 @@ class ConversationService:
                 )
                 messages = result.scalars().all()
 
-            # Konvertiere zu Chat-Format (älteste zuerst)
+            # Convert to the chat format (oldest first)
             # Reconstruct action summary prefix for LLM context (kept out of DB content for clean UI)
             context = []
             for msg in reversed(messages):
@@ -543,7 +544,7 @@ class ConversationService:
             return context
 
         except Exception as e:
-            logger.error(f"Fehler beim Laden des Kontexts: {e}")
+            logger.error(f"Fehler beim Laden des Kontexts: {error_text_without_content(e)}")
             return []
 
     async def save_message(
@@ -558,13 +559,13 @@ class ConversationService:
         circle_tier: int | None = None,
     ) -> Message:
         """
-        Speichere eine einzelne Nachricht.
+        Store a single message.
 
         Args:
-            session_id: Session ID der Konversation
-            role: "user" oder "assistant"
-            content: Nachrichteninhalt
-            metadata: Optional zusätzliche Metadaten
+            session_id: session id of the conversation
+            role: "user" or "assistant"
+            content: the message content
+            metadata: optional additional metadata
             parent_message_id: Chat branching (Phase 1). When given (a FORK), the
                 new message is inserted as a SIBLING under that parent — preserving
                 the message it replaces. When ``None`` (the normal append), the new
@@ -590,7 +591,7 @@ class ConversationService:
                 content = result.get("content", content)
                 metadata = result.get("metadata", metadata)
 
-            # Finde oder erstelle Conversation. FOR UPDATE: the append below reads
+            # Find or create the conversation. FOR UPDATE: the append below reads
             # active_leaf_message_id and writes a new leaf. Two writers into one
             # conversation (a chat turn + a background scan's outcome) otherwise
             # both chain onto the SAME parent — one message then sits on a branch
@@ -663,7 +664,7 @@ class ConversationService:
                 else conversation.active_leaf_message_id
             )
 
-            # Erstelle Message
+            # Create the message
             message = Message(
                 conversation_id=conversation.id,
                 role=role,
@@ -682,11 +683,11 @@ class ConversationService:
             await self.db.commit()
             await self.db.refresh(message)
 
-            logger.debug(f"Nachricht gespeichert: {role} - {content[:50]}...")
+            logger.debug(f"Nachricht gespeichert: {role} ({len(content)} Zeichen)")
             return message
 
         except Exception as e:
-            logger.error(f"Fehler beim Speichern der Nachricht: {e}")
+            logger.error(f"Failed to store the message: {error_text_without_content(e)}")
             await self.db.rollback()
             raise
 
@@ -925,7 +926,7 @@ class ConversationService:
                 await self.db.commit()
                 logger.debug(f"Conversation {session_id} associated: speaker={speaker_id}, user={user_id}")
         except Exception as e:
-            logger.warning(f"Failed to associate speaker with conversation: {e}")
+            logger.warning(f"Failed to associate speaker with conversation: {error_text_without_content(e)}")
             await self.db.rollback()
 
     async def save_context_vars(
@@ -955,7 +956,7 @@ class ConversationService:
             await self.db.commit()
             logger.debug(f"Context vars updated for {session_id}: {list(current.keys())}")
         except Exception as e:
-            logger.warning(f"Failed to save context vars: {e}")
+            logger.warning(f"Failed to save context vars: {error_text_without_content(e)}")
             await self.db.rollback()
 
     async def load_context_vars(self, session_id: str) -> dict:
@@ -969,7 +970,7 @@ class ConversationService:
             row = result.scalar_one_or_none()
             return dict(row) if row else {}
         except Exception as e:
-            logger.warning(f"Failed to load context vars: {e}")
+            logger.warning(f"Failed to load context vars: {error_text_without_content(e)}")
             return {}
 
     async def update_summary(
@@ -1046,7 +1047,7 @@ class ConversationService:
             return summary
 
         except Exception as e:
-            logger.warning(f"Failed to update summary: {e}")
+            logger.warning(f"Failed to update summary: {error_text_without_content(e)}")
             await self.db.rollback()
             return None
 
@@ -1060,7 +1061,7 @@ class ConversationService:
             )
             return result.scalar_one_or_none()
         except Exception as e:
-            logger.warning(f"Failed to load summary: {e}")
+            logger.warning(f"Failed to load summary: {error_text_without_content(e)}")
             return None
 
     async def get_summary(
@@ -1068,13 +1069,13 @@ class ConversationService:
         session_id: str
     ) -> dict | None:
         """
-        Hole Zusammenfassung einer Konversation.
+        Fetch the summary of a conversation.
 
         Args:
-            session_id: Session ID der Konversation
+            session_id: session id of the conversation
 
         Returns:
-            Dict mit session_id, created_at, updated_at, message_count, first_message, last_message
+            Dict with session_id, created_at, updated_at, message_count, first_message, last_message
         """
         try:
             result = await self.db.execute(
@@ -1085,14 +1086,14 @@ class ConversationService:
             if not conversation:
                 return None
 
-            # Zähle Nachrichten
+            # Count the messages
             result = await self.db.execute(
                 select(func.count(Message.id))
                 .where(Message.conversation_id == conversation.id)
             )
             message_count = result.scalar()
 
-            # Hole erste und letzte Nachricht
+            # Fetch the first and last message
             result = await self.db.execute(
                 select(Message)
                 .where(Message.conversation_id == conversation.id)
@@ -1119,7 +1120,7 @@ class ConversationService:
             }
 
         except Exception as e:
-            logger.error(f"Fehler beim Laden der Zusammenfassung: {e}")
+            logger.error(f"Failed to load the summary: {error_text_without_content(e)}")
             return None
 
     async def delete(
@@ -1127,13 +1128,13 @@ class ConversationService:
         session_id: str
     ) -> bool:
         """
-        Lösche eine komplette Konversation.
+        Delete an entire conversation.
 
         Args:
-            session_id: Session ID der zu löschenden Konversation
+            session_id: session id of the conversation to delete
 
         Returns:
-            True wenn gelöscht, False wenn nicht gefunden
+            True if deleted, False if not found
         """
         try:
             result = await self.db.execute(
@@ -1150,7 +1151,7 @@ class ConversationService:
             return False
 
         except Exception as e:
-            logger.error(f"Fehler beim Löschen der Konversation: {e}")
+            logger.error(f"Failed to delete the conversation: {error_text_without_content(e)}")
             await self.db.rollback()
             return False
 
@@ -1161,17 +1162,17 @@ class ConversationService:
         user_id: int | None = None,
     ) -> list[dict]:
         """
-        Hole Liste aller Konversationen.
+        Fetch a list of all conversations.
 
         Args:
-            limit: Maximale Anzahl
-            offset: Pagination-Offset
-            user_id: Wenn gesetzt, nur Konversationen dieses Users (auth mode).
-                Wenn None, werden alle Konversationen zurueckgegeben (single-user mode).
+            limit: maximum number of rows
+            offset: pagination offset
+            user_id: if set, only this user's conversations (auth mode).
+                If None, all conversations are returned (single-user mode).
 
         Returns:
-            Liste von Konversations-Zusammenfassungen mit `preview` (gekuerzte
-            erste User-Nachricht) und `message_count`.
+            A list of conversation summaries with `preview` (the shortened
+            first user message) and `message_count`.
         """
         try:
             # Count subquery: message count per conversation
@@ -1242,7 +1243,7 @@ class ConversationService:
             return summaries
 
         except Exception as e:
-            logger.error(f"Fehler beim Laden der Konversationen: {e}")
+            logger.error(f"Failed to load the conversations: {error_text_without_content(e)}")
             return []
 
     async def search(
@@ -1251,14 +1252,14 @@ class ConversationService:
         limit: int = 20
     ) -> list[dict]:
         """
-        Suche in Konversationen nach Text.
+        Search conversations for text.
 
         Args:
-            query: Suchbegriff
-            limit: Maximale Anzahl Ergebnisse
+            query: the search term
+            limit: maximum number of results
 
         Returns:
-            Liste von Konversationen mit passenden Nachrichten
+            A list of conversations with their matching messages
         """
         try:
             # Search messages and join conversations in a single query
@@ -1289,11 +1290,11 @@ class ConversationService:
                 })
 
             results = list(conv_groups.values())
-            logger.info(f"Gefunden: {len(results)} Konversationen mit '{query}'")
+            logger.info(f"Gefunden: {len(results)} Konversationen")
             return results
 
         except Exception as e:
-            logger.error(f"Fehler bei der Suche: {e}")
+            logger.error(f"Search failed: {error_text_without_content(e)}")
             return []
 
     def _is_postgres(self) -> bool:
@@ -1498,13 +1499,13 @@ class ConversationService:
                 for r in rows
             ]
             logger.info(
-                f"Message-Suche: {len(results)} Treffer für '{query[:50]}' "
+                f"Message-Suche: {len(results)} Treffer "
                 f"(session={session_id or 'all'})"
             )
             return {"results": results, "count": len(results), "has_more": has_more}
 
         except Exception as e:
-            logger.error(f"Fehler bei der Message-Suche: {e}")
+            logger.error(f"Message search failed: {error_text_without_content(e)}")
             return {"results": [], "count": 0, "has_more": False}
 
     async def _search_messages_sqlite(

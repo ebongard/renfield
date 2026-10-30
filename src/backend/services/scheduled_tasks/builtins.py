@@ -491,24 +491,24 @@ async def _placeholder_atom_reaper_handler(app: FastAPI, params: dict) -> str | 
 
 
 async def _satellite_fleet_watchdog_handler(app: FastAPI, params: dict) -> str | None:
-    # Kein Tor; nur Lesen. Vergleicht eingebuchte gegen verbundene Satelliten und
-    # meldet die Fehlenden. NICHT `last_authenticated_at` allein: deren Alter
-    # misst "Zeit seit dem letzten Neuverbinden", nicht "seit dem letzten
-    # Lebenszeichen" — ein Waechter darauf haette am 2026-09-26 die drei
-    # GESUNDEN gemeldet und die drei toten verschwiegen. Siehe
+    # No gate; read-only. Compares enrolled against connected satellites and
+    # reports the missing ones. NOT `last_authenticated_at` alone: its age
+    # measures "time since the last reconnect", not "since the last sign of
+    # life" -- a watchdog on it would have reported the three HEALTHY ones on
+    # 2026-09-26 and kept quiet about the three dead ones. See
     # services/satellite_fleet_watchdog.py.
     #
-    # 🛑 SELBSTTOR vor dem Import. Eine Plattform-Installation ohne `ha_glue`
-    # hat keine Satelliten; der Waechter wuerde dort `ha_glue.services.
-    # satellite_manager` importieren und die Architekturgrenze reissen. Gesaet
-    # wird die Aufgabe trotzdem (Muster wie `mcp_health_monitor`: gesaet
-    # aktiviert, Handler entscheidet zur Laufzeit), damit ein spaeter
-    # eingeschaltetes Satellitenmerkmal keine Migration der Saatzeile braucht.
+    # 🛑 SELF-GATE before the import. A platform install without `ha_glue` has
+    # no satellites; the watchdog would import `ha_glue.services.
+    # satellite_manager` there and tear through the architecture boundary. The
+    # task is seeded anyway (same pattern as `mcp_health_monitor`: seeded
+    # enabled, handler decides at runtime), so turning the satellite feature on
+    # later needs no migration of the seed row.
     if not settings.features.get("satellites"):
-        # Marker statt stummem `None`: dasselbe wie beim MCP-Gesundheitsmonitor
-        # daneben. Wer ins Laufprotokoll schaut, soll „das Tor war zu" lesen und
-        # nicht eine leere Zeile, die auch ein Fehler sein koennte.
-        return "skipped: Satellitenmerkmal aus"
+        # A marker instead of a silent `None`: the same as in the MCP health
+        # monitor. Anyone looking at the run log should read "the gate was
+        # closed" and not an empty line that might also be a failure.
+        return "skipped: satellite feature off"
 
     from services.satellite_fleet_watchdog import check_satellite_fleet
 
@@ -516,11 +516,11 @@ async def _satellite_fleet_watchdog_handler(app: FastAPI, params: dict) -> str |
 
 
 async def _vector_index_threshold_handler(app: FastAPI, params: dict) -> str | None:
-    # Kein Tor; nur Lesen, und nur EXPLAIN (keine Ausfuehrung). Fragt den PLANER,
-    # ob er den HNSW-Index naehme, wenn die Abfrage auf halfvec castete — und
-    # meldet nur dann. ZAEHLT KEINE ZEILEN: die sagen es nicht vorher (xidra nutzt
-    # den Index auf kg_entities bei 1 953 Zeilen, auf document_chunks bei 3 165
-    # nicht). Siehe services/vector_index_threshold.py.
+    # No gate; read-only, and EXPLAIN only (no execution). Asks the PLANNER
+    # whether it would take the HNSW index if the query cast to halfvec -- and
+    # only reports then. COUNTS NO ROWS: they do not predict it (xidra uses the
+    # index on kg_entities at 1,953 rows but not on document_chunks at 3,165).
+    # See services/vector_index_threshold.py.
     from services.vector_index_threshold import check_vector_index_thresholds
 
     return await check_vector_index_thresholds()
@@ -657,12 +657,12 @@ def builtin_task_seeds() -> list[TaskSeed]:
         # create_with_source. DB-only, no runtime gate; the reaper's age floor
         # protects in-flight creates.
         TaskSeed(name="Verwaiste Platzhalter-Atoms aufräumen", handler_key="placeholder_atom_reaper", interval_seconds=settings.placeholder_atom_reaper_interval, run_at_boot=True, enabled=True),
-        # Täglich, weil die beobachteten Tabellen langsam wachsen und die Aufgabe
-        # im Normalfall schweigt (sie meldet nur, wenn der Planer umschwenkt).
+        # Daily, because the observed tables grow slowly and the task is
+        # normally silent (it only reports when the planner switches over).
         TaskSeed(name="Vektorindex-Schwelle prüfen", handler_key="vector_index_threshold", interval_seconds=86400, run_at_boot=True, enabled=True),
-        # Stuendlich, nicht taeglich: ein toter Raum soll in Stunden auffallen,
-        # nicht in Tagen (BensZimmer war 30 Tage weg, ohne dass es jemand sagte).
-        # `run_at_boot=False`: direkt nach dem Start ist die Registratur leer,
-        # die Aufgabe wuerde ohnehin in ihre Karenz laufen.
+        # Hourly, not daily: a dead room should show up within hours, not
+        # days (one room was gone for 30 days without anyone saying so).
+        # `run_at_boot=False`: right after startup the registry is empty, so
+        # the task would run into its grace period anyway.
         TaskSeed(name="Satelliten-Flotte prüfen", handler_key="satellite_fleet_watchdog", interval_seconds=3600, run_at_boot=False, enabled=True),
     ]

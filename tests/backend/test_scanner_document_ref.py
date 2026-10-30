@@ -1,21 +1,21 @@
-"""Der Knopf zum Dokument haengt an der Fertigmeldung — und der TEXT bleibt gleich.
+"""The button to the document hangs off the completion notice -- and the TEXT stays the same.
 
-Anlass (2026-10-27): „wenn ich scanne, dann moechte ich danach ein Link zu dem
-Paperless Document in der Antwort haben, nicht nur die Nummer."
+The occasion (2026-10-27): "wenn ich scanne, dann moechte ich danach ein Link
+zu dem Paperless Document in der Antwort haben, nicht nur die Nummer."
 
-🛑 Die zwei Tests, die hier mehr tragen als die anderen:
+🛑 The two tests that carry more here than the others:
 
-- **Die Negativkontrolle auf den unveraenderten Meldungstext.**
-  ``render_completion_message`` ist eine Vertrauensgrenze: ihr Text wird in
-  spaeteren Agentenzuegen WIEDER EINGESPIELT. Haette jemand den Link in den Satz
-  geschrieben, waere das ein Kanal fuer Freitext in den naechsten Prompt. Ohne
-  diesen Test weicht die Grenze beim naechsten Umbau unbemerkt auf.
+- **The negative control on the unchanged notice text.**
+  ``render_completion_message`` is a trust boundary: its text is REPLAYED into
+  later agent turns. Had anybody written the link into the sentence, that would
+  be a channel for free text into the next prompt. Without this test the
+  boundary softens unnoticed at the next rework.
 
-- **Die Statusmenge.** ``scanner_jobs`` fuehrt jetzt VIER Mengen ueber dieselben
-  Zustaende. Die zweite war einmal nicht hochgezogen und vergass zwei Zustaende
-  (2026-10-04, ein echter `unrouted`-Auftrag meldete `error_code=<fehlt>`). Der
-  Strukturtest haelt fest, dass der Anhang ueber die geteilte Menge verzweigt
-  und nicht ueber ein zweites, abgeschriebenes Literal.
+- **The status set.** ``scanner_jobs`` now keeps FOUR sets over the same
+  states. The second one was once not brought along and forgot two states
+  (2026-10-04, a real `unrouted` job reported `error_code=<fehlt>`). The
+  structural test holds that the attachment branches over the shared set and
+  not over a second, copied literal.
 """
 import inspect
 
@@ -37,9 +37,9 @@ def _meta() -> dict:
 
 
 def test_a_finished_scan_carries_a_document_ref_artifact(monkeypatch):
-    # Die Selbstkennung gehoert zum Fall: `_DONE` scannt nach `household`, und
-    # erst mit gesetzter `instance_id` ist das NACHWEISLICH die eigene Instanz.
-    # Ohne sie greift die Fail-closed-Regel unten — siehe
+    # The self identity is part of the case: `_DONE` scans to `household`,
+    # and only with `instance_id` set is that PROVABLY this instance. Without
+    # it the fail-closed rule below applies -- see
     # `test_WITHOUT_a_self_identity_every_named_target_is_remote`.
     from utils.config import settings
     monkeypatch.setattr(settings, "instance_id", "household", raising=False)
@@ -53,18 +53,18 @@ def test_a_finished_scan_carries_a_document_ref_artifact(monkeypatch):
 
 
 def test_the_message_TEXT_is_byte_for_byte_unchanged():
-    """🛑 Die Vertrauensgrenze. Der Link lebt in den Metadaten, NIE im Satz."""
+    """🛑 The trust boundary. The link lives in the metadata, NEVER in the sentence."""
     text = render_completion_message("done", "Rechnung", _DONE, "de")
     assert "http" not in text, f"eine URL im Meldungstext:\n{text}"
     assert "In Paperless" not in text, text
-    # Und der Anhang veraendert ihn auch nicht nachtraeglich.
+    # And the attachment does not change it after the fact either.
     meta = _meta()
     attach_document_ref(meta, "done", _DONE, "scan-20261027-120000-abcdef12")
     assert render_completion_message("done", "Rechnung", _DONE, "de") == text
 
 
 def test_the_scanner_job_key_survives_the_merge():
-    """`merge_artifacts_into_metadata` darf die bestehenden Schluessel nicht fassen."""
+    """`merge_artifacts_into_metadata` must not touch the existing keys."""
     meta = _meta()
     meta["action_success"] = True
     attach_document_ref(meta, "done", _DONE, "scan-20261027-120000-abcdef12")
@@ -74,8 +74,8 @@ def test_the_scanner_job_key_survives_the_merge():
 
 @pytest.mark.parametrize("status", ["unrouted", "interrupted", "failed", "gibtesnicht"])
 def test_only_states_with_a_document_get_a_button(status):
-    """🛑 `unrouted` ist der wichtigste Fall: der Scan lief, aber das Ziel steht
-    aus — es gibt kein abgelegtes Dokument zu oeffnen."""
+    """🛑 `unrouted` is the most important case: the scan ran, but the target
+    is still pending -- there is no filed document to open."""
     meta = _meta()
     attach_document_ref(meta, status, _DONE, "scan-20261027-120000-abcdef12")
     assert "artifacts" not in meta, f"{status} bekam einen Knopf: {meta}"
@@ -83,8 +83,8 @@ def test_only_states_with_a_document_get_a_button(status):
 
 @pytest.mark.parametrize("doc_id", [None, "515", True, 0, -1, 3.0])
 def test_an_untrusted_document_id_is_refused(doc_id):
-    """Das Ereignis ist unvertraut. `True` ist in Python ein `int` — ohne den
-    ausdruecklichen Ausschluss waere es eine gueltige Kennung."""
+    """The event is untrusted. In Python `True` is an `int` -- without the
+    explicit exclusion it would be a valid id."""
     meta = _meta()
     attach_document_ref(meta, "done", {"renfield_document_id": doc_id},
                         "scan-20261027-120000-abcdef12")
@@ -92,8 +92,8 @@ def test_an_untrusted_document_id_is_refused(doc_id):
 
 
 def test_a_split_scan_gets_no_button():
-    """🛑 `result["documents"]` ist `list[Any]` aus dem Ereignis. Lieber kein
-    Knopf als geratene Kennungen aus Freitext."""
+    """🛑 `result["documents"]` is `list[Any]` from the event. Better no button
+    than ids guessed out of free text."""
     meta = _meta()
     attach_document_ref(meta, "done", {"documents": [{"id": 1}, {"id": 2}]},
                         "scan-20261027-120000-abcdef12")
@@ -101,7 +101,7 @@ def test_a_split_scan_gets_no_button():
 
 
 def test_a_second_delivery_replaces_instead_of_duplicating():
-    """Die Artefakt-Kennung ist stabil je Auftrag; `merge` verschluesselt nach `id`."""
+    """The artifact id is stable per job; `merge` keys on `id`."""
     meta = _meta()
     job = "scan-20261027-120000-abcdef12"
     attach_document_ref(meta, "done", _DONE, job)
@@ -110,10 +110,10 @@ def test_a_second_delivery_replaces_instead_of_duplicating():
 
 
 def test_the_attachment_branches_over_the_SHARED_state_set():
-    """🛑 Strukturtest gegen die Drift, die diese Datei schon einmal hatte.
+    """🛑 Structural test against the drift this file has already had once.
 
-    Ein abgeschriebenes `status == "done"` waere heute richtig und beim naechsten
-    neuen Zustand still falsch — genau der Fehler von 2026-10-04.
+    A copied `status == "done"` would be right today and silently wrong at the
+    next new state -- exactly the defect of 2026-10-04.
     """
     quelle = inspect.getsource(attach_document_ref)
     assert "_STATES_WITH_DOCUMENT" in quelle, (
@@ -124,13 +124,13 @@ def test_the_attachment_branches_over_the_SHARED_state_set():
         "`unrouted` hat kein abgelegtes Dokument")
 
 
-# --- Instanzgrenze -----------------------------------------------------------
+# --- Instance boundary -------------------------------------------------------
 #
-# 🛑 Der Fehler, den der Eigentümer beim Lesen fand: der Scanner schickt die
-# Fertigmeldung an die Instanz, die GEFRAGT hat — das Dokument kann aber in
-# einer anderen liegen. Die Kennung gehört dann jener anderen Instanz, und weil
-# beide eigene Zählfolgen führen, gibt es sie hier auch, für ein anderes
-# Dokument. Ein Knopf darauf führt nicht ins Leere, sondern ins FALSCHE.
+# 🛑 The defect the owner found while reading: the scanner sends the completion
+# notice to the instance that ASKED -- but the document can live in a different
+# one. The id then belongs to that other instance, and because both keep their
+# own sequences it exists here too, for a different document. A button on it
+# does not lead nowhere but somewhere WRONG.
 
 
 def _mit_ziel(ziel):
@@ -166,13 +166,13 @@ def test_the_comparison_ignores_case_and_spacing(monkeypatch):
 
 
 def test_WITHOUT_a_self_identity_every_named_target_is_remote(monkeypatch):
-    """🛑 Fail-closed. Eine unkonfigurierte Instanz verlinkt nie falsch — sie
-    verlinkt gar nicht.
+    """🛑 Fail-closed. An unconfigured instance never links wrongly -- it does
+    not link at all.
 
-    Der Mechanismus ist die Ungleichheit selbst, kein eigener Zweig: ein
-    nichtleeres Ziel ist ungleich der leeren Selbstkennung. Wer hier einen
-    zweiten Riegel einbaut, baut einen wirkungslosen — dieser Test bestünde
-    mit und ohne ihn.
+    The mechanism is the inequality itself, not a branch of its own: a
+    non-empty target is unequal to the empty self identity. Add a second guard
+    here and you add an ineffective one -- this test would pass with and
+    without it.
     """
     from utils.config import settings
     monkeypatch.setattr(settings, "instance_id", "", raising=False)
@@ -183,8 +183,9 @@ def test_WITHOUT_a_self_identity_every_named_target_is_remote(monkeypatch):
 
 
 def test_an_unnamed_target_stays_local(monkeypatch):
-    """Ohne Ziel im Ereignis gibt es nichts zu vergleichen — `n=1` kurzschliesst
-    die ganze Routing-Schicht, dort ist der Scan immer hier."""
+    """With no target in the event there is nothing to compare -- `n=1`
+    short-circuits the whole routing layer, and there the scan is always
+    here."""
     from utils.config import settings
     monkeypatch.setattr(settings, "instance_id", "household", raising=False)
     for ziel in (None, "", "   "):

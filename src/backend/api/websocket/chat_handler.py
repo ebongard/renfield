@@ -282,7 +282,7 @@ async def _replacement_session_for(
     new_id = str(uuid.uuid4())
     await websocket.send_json({"type": "session_replaced", "session_id": new_id})
     logger.info(
-        f"🔁 Session ersetzt: die genannte gehört dem Rufer nicht (user={auth_user_id})"
+        f"🔁 Session replaced: the named one does not belong to the caller (user={auth_user_id})"
     )
     return new_id
 
@@ -337,8 +337,8 @@ async def _restart_conversation_for_caller(
         {"type": "session_replaced", "session_id": new_session_id}
     )
     logger.info(
-        f"🔁 Session ersetzt: der Zug wurde in einer neuen Unterhaltung "
-        f"gespeichert (user={user_id})"
+        f"🔁 Session replaced: the turn was saved in a new conversation "
+        f"(user={user_id})"
     )
     return new_session_id, user_msg.id, assistant_msg.id
 
@@ -440,19 +440,19 @@ def _failed_agent_actions(outcomes: list, aborted_tools: set | None = None) -> l
     Order matters, dict insertion order does not: the verdict is per tool name,
     so the list is "actions that ended badly", not "calls that failed".
 
-    🛑 ``aborted_tools`` sind die Werkzeuge, deren Wiederholung der Agent-Loop
-    SELBST abgebrochen hat (Schleifenerkennung). Hat ein solches Werkzeug im
-    Zug schon einmal GEKLAPPT, zaehlt es nicht als gescheitert — die spaeteren
-    Fehlversuche hat die Schleife erzeugt, nicht das Werkzeug.
+    🛑 ``aborted_tools`` are the tools whose repetition the agent loop aborted
+    ITSELF (loop detection). If such a tool already SUCCEEDED in the turn, it
+    does not count as failed -- the later attempts were produced by the loop,
+    not by the tool.
 
-    Der Anlass, am 2026-10-29 beobachtet: „scanne nach x-idra" startete den
-    Scan in Schritt 1 (`success=True`, Job 22 s spaeter `done`), der Agent rief
-    dasselbe Werkzeug zweimal nach, bekam „laeuft bereits" und die
-    Schleifenerkennung brach ab. Nach der Regel „letzter Versuch zaehlt" galt
-    der Zug als gescheitert — der Nutzer sah einen Fehler fuer einen Scan, der
-    gelaufen war, und der stale-error-Marker (#1367) erzaehlte es dem naechsten
-    Zug weiter. Die Regel bleibt fuer jede andere Form unveraendert; nur die
-    vom Abbruch selbst erzeugten Wiederholungen kippen das Urteil nicht mehr.
+    Why, observed on 2026-10-29: "scanne nach x-idra" started the scan in
+    step 1 (`success=True`, the job `done` 22 s later), the agent called the
+    same tool twice more, got "already running", and loop detection aborted.
+    Under the "last attempt counts" rule the turn counted as failed -- the user
+    saw an error for a scan that had run, and the stale-error marker (#1367)
+    passed it on to the next turn. The rule is unchanged for every other
+    shape; only the repetitions produced by the abort itself no longer flip the
+    verdict.
     """
     last: dict[str, bool | None] = {}
     je_erfolgreich: set = set()
@@ -892,7 +892,7 @@ async def _stream_rag_response(
                             query=content,
                             kb_id=knowledge_base_id
                         )
-                        logger.info(f"📚 RAG Kontext gefunden und gecacht ({len(rag_context)} Zeichen)")
+                        logger.info(f"📚 RAG context found and cached ({len(rag_context)} characters)")
 
             if rag_context:
                 await websocket.send_json({
@@ -1317,57 +1317,57 @@ async def websocket_endpoint(
 
             # Handle session_id for conversation persistence
             if msg_session_id:
-                # 🛑 Die Historie wird NICHT nur einmal je Socket geladen. Sie
-                # waechst danach ueber `add_to_history`, und ein ASYNCHRONER
-                # Erzeuger faesst diese Liste nicht an: die Scanner-
-                # Fertigmeldung, die Gespraechsuebergabe und die
-                # Paperless-Bestaetigung schreiben direkt in die Datenbank.
-                # Der Agent las damit einen veralteten Kontext.
+                # 🛑 The history is NOT loaded only once per socket. It grows
+                # afterwards through `add_to_history`, and an ASYNCHRONOUS
+                # producer does not touch this list: the scanner completion
+                # notice, the conversation handover and the Paperless
+                # confirmation write straight to the database. The agent
+                # therefore read a stale context.
                 #
-                # Gemessen am 2026-10-26: ein Scan scheiterte am Papierstau,
-                # die Meldung stand in der Datenbank — und auf zwei weitere
-                # Bitten antwortete der Agent „der Scan laeuft bereits im
-                # Hintergrund, Du wirst benachrichtigt" und rief das Werkzeug
-                # NIE. Eine erfundene Beruhigung ueber einen Scan, der nicht
-                # lief, im SELBEN Tab.
+                # Measured on 2026-10-26: a scan failed on a paper jam, the
+                # notice was in the database -- and to two further requests
+                # the agent answered "the scan is already running in the
+                # background, you will be notified" and NEVER called the tool.
+                # Invented reassurance about a scan that was not running, in
+                # the SAME tab.
                 #
-                # Eine indizierte `max(id)`-Abfrage je Zug kostet gegen eine
-                # LLM-Runde nichts (`ix_messages_conversation_id`). `None`
-                # heisst „keine Auskunft" und laedt NICHT neu — eine fehlende
-                # Messung darf keinen Neuladezyklus erzwingen.
-                _neueste = None
+                # An indexed `max(id)` query per turn costs nothing against
+                # an LLM round (`ix_messages_conversation_id`). `None`
+                # means "no answer" and does NOT reload -- a missing
+                # measurement must not force a reload cycle.
+                _newest = None
                 if (session_state.history_loaded
                         and session_state.db_session_id == msg_session_id
                         and session_state.history_watermark is not None):
                     try:
                         from services.conversation_service import ConversationService
                         async with AsyncSessionLocal() as _db_frisch:
-                            _neueste = await ConversationService(
+                            _newest = await ConversationService(
                                 _db_frisch).latest_message_id(msg_session_id)
                     except Exception as _exc:
                         logger.warning(f"⚠️ Frischeprüfung fehlgeschlagen: {_exc}")
 
-                # Die Regel steht in `shared.history_needs_reload` — eine reine
-                # Funktion, damit sie pruefbar ist statt hier zu stecken.
+                # The rule lives in `shared.history_needs_reload` -- a pure
+                # function, so it is testable instead of buried here.
                 if history_needs_reload(
                     history_loaded=session_state.history_loaded,
                     known_session_id=session_state.db_session_id,
                     wanted_session_id=msg_session_id,
                     watermark=session_state.history_watermark,
-                    newest_in_db=_neueste,
+                    newest_in_db=_newest,
                 ):
-                    if _neueste is not None:
-                        # 🛑 Geschweifte Klammern, NICHT `%s`: der Logger dieses
-                        # Moduls ist loguru, und das ersetzt nur `{}`. Mit `%s`
-                        # fallen die Argumente still weg — die Zeile druckte
-                        # woertlich „(Datenbank %s > bekannt %s)", also genau
-                        # ohne die beiden Zahlen, die man zum Nachmessen eines
-                        # Neuladezyklus braucht. In der Abnahme zum Deploy vom
-                        # 2026-10-26 live gefunden.
+                    if _newest is not None:
+                        # 🛑 Braces, NOT `%s`: this module's logger is loguru,
+                        # which only substitutes `{}`. With `%s` the arguments
+                        # silently vanish -- the line printed literally
+                        # "(database %s > known %s)", i.e. precisely without
+                        # the two numbers needed to measure a reload cycle.
+                        # Found live during the acceptance check for the
+                        # 2026-10-26 deploy.
                         logger.info(
-                            "📬 Historie veraltet (Datenbank {} > bekannt {}) — ein "
-                            "asynchroner Erzeuger hat geschrieben, wird neu geladen",
-                            _neueste, session_state.history_watermark)
+                            "📬 History stale (database {} > known {}) -- one "
+                            "asynchronous producer wrote, reloading",
+                            _newest, session_state.history_watermark)
                     _msg_auth_uid = auth_result.get("user_id") if isinstance(auth_result, dict) else None
                     # Same boundary decision as on the `register` frame, for the
                     # client that sends none: replace BEFORE the turn keys on it.
@@ -1400,9 +1400,9 @@ async def websocket_endpoint(
                                 session_state.conversation_history = db_history
                                 logger.info(f"📚 Conversation history loaded: {len(db_history)} messages for session {msg_session_id}")
                             session_state.history_loaded = True
-                            # Die Marke gilt fuer den Stand, den wir JETZT
-                            # gelesen haben — auch wenn die Historie leer
-                            # zurueckkam (fremde Sitzung, nichts da).
+                            # The mark applies to the state we have read
+                            # JUST NOW -- even when the history came back empty
+                            # (somebody else's session, nothing there).
                             from services.conversation_service import (
                                 ConversationService as _CS,
                             )
@@ -1567,7 +1567,7 @@ async def websocket_endpoint(
                     validate_artifacts,
                 )
                 for art in validate_artifacts(raw_artifacts):
-                    turn_artifacts.append(art)  # noqa: B023 — lebt nur in dieser Runde, s. 1427/2404
+                    turn_artifacts.append(art)  # noqa: B023 -- lives only within this turn, see 1427/2404
                     await websocket.send_json(build_artifact_frame(art))
 
             media_shortcut_handled = False
@@ -1743,12 +1743,11 @@ async def websocket_endpoint(
                 # "Korrigieren & neu beantworten" regenerate maps its corrected
                 # intent to the owning role (None = fall through to normal routing).
                 _role_hint = getattr(msg, "role_hint", None)
-                # 🛑 Ausserhalb des `if` gelesen: die Korrektur steuert nicht
-                # nur die Rolle, sie muss auch die Werkzeug-VORAUSWAHL
-                # erreichen. Bis 2026-10-26 wurde nur die Rolle abgeleitet und
-                # der Werkzeugname weggeworfen — und die Rolle war in jedem
-                # gemeldeten Fehlgriff schon die richtige, die Korrektur also
-                # ohne Wirkung.
+                # 🛑 Read outside the `if`: the correction does not only steer
+                # the role, it also has to reach the tool PRESELECT. Until
+                # 2026-10-26 only the role was derived and the tool name thrown
+                # away -- and in every reported miss the role was already the
+                # right one, so the correction had no effect.
                 _corrected = getattr(msg, "corrected_intent", None)
                 if not _role_hint:
                     if _corrected:
@@ -2111,13 +2110,14 @@ async def websocket_endpoint(
                             user_id=user_id,
                             context_vars_text=_context_vars_text,
                             summary_text=_summary_text,
-                            # 🛑 Auch hier: der Orchestrator wird NICHT von einer
-                            # Korrektur unterdrueckt (die Tore bei :2030 pruefen
-                            # nur sub_queries/role/entity). Ohne diese Zeile faellt
-                            # die Korrektur bei jeder mehrdomaenigen Anfrage eine
-                            # Schicht tiefer weg — genau die stille Wirkungslosigkeit,
-                            # die dieser Zweig beenden soll. `agent_kwargs` wird in
-                            # `agent.run(**agent_kwargs)` gespreizt.
+                            # 🛑 Here too: the orchestrator is NOT suppressed by a
+                            # correction (the gates at :2030 only check
+                            # sub_queries/role/entity). Without this line the
+                            # correction falls away one layer deeper on every
+                            # multi-domain request -- precisely the silent
+                            # ineffectiveness this branch exists to end.
+                            # `agent_kwargs` is spread into
+                            # `agent.run(**agent_kwargs)`.
                             corrected_intent=_corrected,
                         ):
                             if step.step_type == "final_answer":
@@ -2144,8 +2144,8 @@ async def websocket_endpoint(
                             if step.step_type == "tool_result":
                                 agent_tool_outcomes.append((step.tool, step.success))
                                 if step.abort_reason and step.tool:
-                                    # Der Loop hat SICH SELBST gestoppt — die Wiederholungen
-                                    # davor sind seine, nicht die des Werkzeugs.
+                                    # The loop stopped ITSELF -- the repetitions
+                                    # before that are its own, not the tool's.
                                     agent_aborted_tools.add(step.tool)
                                 if step.success and step.data:
                                     agent_tool_results.append((step.tool, step.data))
@@ -2308,7 +2308,7 @@ async def websocket_endpoint(
                     _fed_sink_lock = asyncio.Lock()
 
                     async def _federation_progress_sink(payload: dict) -> None:
-                        async with _fed_sink_lock:  # noqa: B023 — Schloss dieser Runde, s. 2147/2183
+                        async with _fed_sink_lock:  # noqa: B023 -- this turn's lock, see 2147/2183
                             try:
                                 await websocket.send_json({
                                     "type": "agent_federation_progress",
@@ -2348,8 +2348,8 @@ async def websocket_endpoint(
                         if step.step_type == "tool_result":
                             agent_tool_outcomes.append((step.tool, step.success))
                             if step.abort_reason and step.tool:
-                                # Der Loop hat SICH SELBST gestoppt — die Wiederholungen
-                                # davor sind seine, nicht die des Werkzeugs.
+                                # The loop stopped ITSELF -- the repetitions
+                                # before that are its own, not the tool's.
                                 agent_aborted_tools.add(step.tool)
                             if step.success and step.data:
                                 agent_tool_results.append((step.tool, step.data))
@@ -2689,12 +2689,13 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             enforce_ownership=settings.auth_enabled,
                         )
                         saved_assistant_message_id = _asst_msg.id
-                        # 🛑 Die eigenen Schreibvorgaenge heben die Marke MIT.
-                        # Ohne das waere der naechste Zug immer „veraltet" und
-                        # die Frischepruefung wuerde zum Dauer-Neuladen — also
-                        # eine Verhaltensaenderung, die niemand bestellt hat.
-                        # Die In-Memory-Historie ist hier schon gleichauf
-                        # (`add_to_history` weiter oben), es fehlt nur die Zahl.
+                        # 🛑 Our own writes raise the mark ALONG WITH them.
+                        # Without that the next turn would always be "stale"
+                        # and the freshness check would turn into a permanent
+                        # reload -- a behaviour change nobody asked for. The
+                        # in-memory history is already level here
+                        # (`add_to_history` further up), only the number is
+                        # missing.
                         if _asst_msg.id is not None:
                             session_state.history_watermark = max(
                                 session_state.history_watermark or 0, _asst_msg.id)

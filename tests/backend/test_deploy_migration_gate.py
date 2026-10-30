@@ -1,19 +1,20 @@
-"""``bin/deploy-production.sh`` — das Vorflug-Tor, das den Alembic-Kopf IM
-GEBAUTEN BILD gegen die laufende Datenbank stellt (#1392).
+"""``bin/deploy-production.sh`` -- the pre-flight gate that puts the Alembic
+head IN THE BUILT IMAGE against the running database (#1392).
 
-Am 2026-10-11 rollte ein Deploy ohne ``--migrate`` aus, weil der PR keine
-Migration enthielt; das Bild wurde aber aus ``main`` gebaut, wo
-``pc20260929_kg_validity`` lag. Das ORM waehlt jede Spalte unbedingt → ~35 min
-Produktionsschaden, und ``/health/ready`` meldete durchgehend ``healthy``.
+On 2026-10-11 a deploy rolled out without ``--migrate``, because the PR
+contained no migration; the image, however, was built from ``main``, where
+``pc20260929_kg_validity`` sat. The ORM selects every column unconditionally ->
+~35 min of production damage, and ``/health/ready`` reported ``healthy``
+throughout.
 
-Hier wird nicht geprueft, DASS es ein Tor gibt, sondern dass es GREIFT: jeder
-Fall laeuft das echte Skript ohne ``--dry-run`` gegen Attrappen fuer
-``ssh``/``kubectl``/``rsync`` und prueft ZWEI Dinge — den Rueckgabewert UND dass
-``kubectl set image`` nie gefallen ist. Ein Tor, dessen Greifen nicht gezeigt
-wurde, ist kein Tor.
+What is checked here is not THAT there is a gate but that it BITES: every case
+runs the real script without ``--dry-run`` against stubs for
+``ssh``/``kubectl``/``rsync`` and checks TWO things -- the return code AND that
+``kubectl set image`` never happened. A gate whose biting has not been shown is
+not a gate.
 
-Die isolierte Kopie auf der Baubox braucht dafuer ``bin/`` UND ``k8s/`` (der
-``--migrate``-Schritt liest ``k8s/alembic-upgrade-job.yaml``).
+For this the isolated copy on the build box needs ``bin/`` AND ``k8s/`` (the
+``--migrate`` step reads ``k8s/alembic-upgrade-job.yaml``).
 """
 from __future__ import annotations
 
@@ -28,14 +29,14 @@ pytestmark = [pytest.mark.unit]
 
 _REPO = Path(__file__).resolve().parents[2]
 _SCRIPT = _REPO / "bin" / "deploy-production.sh"
-# Der --migrate-Zweig liest dieses Manifest. Fehlt es in der isolierten Kopie,
-# scheitert das Skript mit Code 2 und der Test behauptete sonst, das Tor habe
-# nicht durchgelassen — ein Befund am falschen Objekt. Hier bricht es stattdessen
-# mit der wahren Ursache ab.
+# The --migrate branch reads this manifest. If it is missing from the
+# isolated copy, the script fails with code 2 and the test would otherwise
+# claim the gate had refused to let it through -- a finding about the wrong
+# object. Here it aborts with the true cause instead.
 _MIGRATION_JOB = _REPO / "k8s" / "alembic-upgrade-job.yaml"
 
-# Die Attrappe fuer die Baubox. Antwortet auf die beiden Abfragen des Tores und
-# schluckt alles andere (docker build/push, rsync-Vorbereitung, Aufraeumen).
+# The stub for the build box. Answers the gate's two queries and swallows
+# everything else (docker build/push, rsync preparation, cleanup).
 _SSH_STUB = r"""#!/bin/bash
 args="$*"
 case "$args" in
@@ -46,10 +47,10 @@ case "$args" in
     fi
     printf '%s\n' "${STUB_IMG_HEADS}"; exit 0 ;;
   *"image inspect"*) exit "${STUB_IMG_PRESENT_EXIT:-0}" ;;
-  # Die Richtungs-Sonde fragt BEIDE Revisionen in EINEM Aufruf und gibt die
-  # Rueckgabewerte als Text zurueck. `STUB_PROBE_SILENT=1` spielt den Fall, in
-  # dem ssh/docker gar nicht antworten — genau der Fail-open-Pfad aus dem
-  # Review vom 2026-10-11.
+  # The direction probe asks for BOTH revisions in ONE call and returns the
+  # exit codes as text. `STUB_PROBE_SILENT=1` plays the case where ssh/docker
+  # do not answer at all -- exactly the fail-open path from the review of
+  # 2026-10-11.
   *"alembic show"*)
     if [[ "${STUB_PROBE_SILENT:-0}" == 1 ]]; then
       echo "ssh: connect to host ... port 22: Operation timed out" >&2
@@ -62,10 +63,23 @@ esac
 exit 0
 """
 
-# Die Attrappe fuer kubectl protokolliert JEDEN Aufruf — daran haengt der Beweis,
-# dass der Abbruch VOR dem ersten `set image` liegt.
+# The kubectl stub logs EVERY call -- the proof that the abort happens
+# BEFORE the first `set image` hangs on that.
 _KUBECTL_STUB = r"""#!/bin/bash
 printf '%s\n' "$*" >> "$STUB_LOG"
+# 🛑 MUST drain stdin -- on EVERY call, not per branch. The script pipes
+# `sed <manifest> | kubectl apply -f -` under `set -o pipefail`; a reader that
+# exits without reading leaves `sed` writing into a closed pipe, so `sed` dies
+# of SIGPIPE and the pipeline -- and with it the script -- returns 141.
+# Measured on the build box with the real 3041-byte manifest: 614 of 3000
+# runs, a 20% race that made `..._with_migrate_proceeds` flaky in the full
+# suite and green in isolation. Real `kubectl ... -f -` always reads stdin;
+# the stub has to as well, or it invents a failure mode the tool does not
+# have. Draining here rather than in the `apply` branch means a future
+# `replace -f -` or `create -f -` cannot reopen the race. Calls that are not
+# piped read the runner's stdin, which `_run` pins to /dev/null, so this
+# never blocks.
+cat >/dev/null
 args="$*"
 case "$args" in
   *"alembic current"*)
@@ -75,8 +89,8 @@ case "$args" in
     fi
     printf '%s\n' "${STUB_DB_OUT}"; exit 0 ;;
   *"get cm renfield-env"*)
-    # Der Plugin-Riegel vor dem Push liest PLUGIN_MODULES; eine leere Antwort
-    # laesst seine Pipeline unter `pipefail` scheitern. Eigenheit der Attrappe.
+    # The plugin guard before the push reads PLUGIN_MODULES; an empty answer
+    # makes its pipeline fail under `pipefail`. A quirk of the stub.
     printf 'stubpkg'; exit 0 ;;
   *version*) echo '{}'; exit 0 ;;
 esac
@@ -86,8 +100,8 @@ exit 0
 
 @pytest.fixture
 def deploy(tmp_path):
-    """Gibt einen Aufrufer zurueck, der das echte Skript gegen Attrappen laeuft."""
-    if shutil.which("bash") is None:  # pragma: no cover - Umgebungsschutz
+    """Returns a caller that runs the real script against the stubs."""
+    if shutil.which("bash") is None:  # pragma: no cover - environment guard
         pytest.skip("bash nicht vorhanden")
     assert _SCRIPT.is_file(), f"unvollstaendige Kopie: {_SCRIPT} fehlt (bin/ mitrsyncen)"
     assert _MIGRATION_JOB.is_file(), (
@@ -108,17 +122,18 @@ def deploy(tmp_path):
         env = dict(os.environ)
         env["PATH"] = f"{stub_dir}{os.pathsep}{env.get('PATH', '')}"
         env["RENFIELD_REGISTRY"] = "stub.example/renfield"
-        # Verhindert, dass der Drift-Schritt echte Manifeste anfasst.
+        # Keeps the drift step from touching real manifests.
         env["RENFIELD_MANIFESTS_DIR"] = str(tmp_path / "no-manifests")
         env["STUB_LOG"] = str(log)
         env.update({k: str(v) for k, v in stub_env.items()})
-        if backend_tag is None:  # frontend-only: es gibt kein neues Backend-Bild
+        if backend_tag is None:  # frontend-only: there is no new backend image
             flags = ["--frontend-tag", "v0.0.0-stub", "--skip-backend"]
         else:
             flags = ["--backend-tag", backend_tag, "--skip-frontend"]
         proc = subprocess.run(
             ["bash", str(_SCRIPT), *flags, *args],
             capture_output=True, text=True, env=env, timeout=120,
+            stdin=subprocess.DEVNULL,
         )
         rolled_out = "set image" in log.read_text()
         return proc, rolled_out
@@ -127,7 +142,7 @@ def deploy(tmp_path):
 
 
 def test_image_ahead_of_db_without_migrate_aborts_before_rollout(deploy):
-    """Der Schadensfall vom 2026-10-11: Bild VOR der DB, kein --migrate."""
+    """The damage case of 2026-10-11: image AHEAD of the DB, no --migrate."""
     proc, rolled_out = deploy(
         STUB_IMG_HEADS="pc20260929_kg_validity (head)",
         STUB_DB_OUT="INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\npc20260927_voice2fa",
@@ -135,14 +150,14 @@ def test_image_ahead_of_db_without_migrate_aborts_before_rollout(deploy):
     )
     assert proc.returncode == 1
     assert not rolled_out, "das Tor muss VOR dem ersten `set image` abbrechen"
-    # Beide Revisionen im Klartext, sonst taugt die Meldung nicht.
+    # Both revisions in plain text, or the message is no use.
     assert "pc20260929_kg_validity" in proc.stderr
     assert "pc20260927_voice2fa" in proc.stderr
     assert "--migrate" in proc.stderr
 
 
 def test_image_ahead_of_db_with_migrate_proceeds(deploy):
-    """Mit --migrate ist die Entscheidung getroffen — der Rollout darf laufen."""
+    """With --migrate the decision has been made -- the rollout may run."""
     proc, rolled_out = deploy(
         "--migrate",
         STUB_IMG_HEADS="pc20260929_kg_validity (head)",
@@ -154,7 +169,7 @@ def test_image_ahead_of_db_with_migrate_proceeds(deploy):
 
 
 def test_multiple_heads_in_image_abort_even_with_migrate(deploy):
-    """Gegabelte Kette: auf der Rollout-Seite ebenso ein Abbruch."""
+    """A forked chain: an abort on the rollout side as well."""
     proc, rolled_out = deploy(
         "--migrate",
         STUB_IMG_HEADS="aaa111_erste (head)\nbbb222_zweite (head)",
@@ -166,7 +181,7 @@ def test_multiple_heads_in_image_abort_even_with_migrate(deploy):
 
 
 def test_unreadable_image_head_aborts(deploy):
-    """Ein Tor, das bei Unklarheit durchlaesst, ist genau der Fehler aus #1392."""
+    """A gate that lets through on uncertainty is exactly the #1392 defect."""
     proc, rolled_out = deploy(STUB_IMG_FAIL=1, STUB_DB_OUT="pc20260929_kg_validity")
     assert proc.returncode == 1
     assert not rolled_out
@@ -179,7 +194,7 @@ def test_unreadable_db_revision_aborts(deploy):
 
 
 def test_empty_alembic_version_without_migrate_aborts(deploy):
-    """Leere `alembic_version`: ohne --migrate ist die Lage unklar."""
+    """Empty `alembic_version`: without --migrate the situation is unclear."""
     proc, rolled_out = deploy(
         STUB_IMG_HEADS="pc20260929_kg_validity (head)",
         STUB_DB_OUT="INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.",
@@ -189,7 +204,7 @@ def test_empty_alembic_version_without_migrate_aborts(deploy):
 
 
 def test_explicit_bypass_proceeds(deploy):
-    """Der Notausgang existiert, muss aber getippt werden."""
+    """The emergency exit exists, but it has to be typed."""
     proc, rolled_out = deploy(
         "--skip-migration-gate",
         STUB_IMG_HEADS="pc20260929_kg_validity (head)",
@@ -198,15 +213,15 @@ def test_explicit_bypass_proceeds(deploy):
     )
     assert proc.returncode == 0
     assert rolled_out
-    assert "NICHT gegen" in proc.stderr  # der Verzicht wird protokolliert
+    assert "NICHT gegen" in proc.stderr  # the waiver is logged
 
 
 def test_db_ahead_of_image_warns_but_proceeds(deploy):
-    """Rueckfall auf ein aelteres Bild: erlaubt, aber nicht verschwiegen."""
+    """A rollback to an older image: allowed, but not passed over in silence."""
     proc, rolled_out = deploy(
         STUB_IMG_HEADS="pc20260927_voice2fa (head)",
         STUB_DB_OUT="pc20260929_kg_validity",
-        STUB_SHOW_EXIT=1,  # das Bild kennt die DB-Revision NICHT
+        STUB_SHOW_EXIT=1,  # the image does NOT know the DB revision
     )
     assert proc.returncode == 0
     assert rolled_out
@@ -224,15 +239,15 @@ def test_heads_equal_proceeds_with_one_log_line(deploy):
 
 
 def test_skip_backend_skips_the_gate(deploy):
-    """Ohne neues Backend-Bild gibt es keinen Kopf zu vergleichen."""
+    """Without a new backend image there is no head to compare."""
     proc, _ = deploy(backend_tag=None)
     assert proc.returncode == 0
     assert "Vorflug-Tor" not in proc.stdout
 
 
 def test_dry_run_shows_the_verdict_but_never_aborts(deploy):
-    """Der Probelauf ist die einzige Moeglichkeit, das Tor vorher zu proben —
-    er muss es also AUSFUEHREN und darf trotzdem nicht scheitern."""
+    """The dry run is the only way to rehearse the gate beforehand -- so it
+    has to EXECUTE it and must still not fail."""
     proc, rolled_out = deploy(
         "--dry-run",
         STUB_IMG_HEADS="pc20260929_kg_validity (head)",
@@ -246,24 +261,24 @@ def test_dry_run_shows_the_verdict_but_never_aborts(deploy):
 
 
 # ---------------------------------------------------------------------------
-# Die Richtungs-Sonde darf bei EIGENEM Scheitern nicht oeffnen
-# (Review-Befund vom 2026-10-11)
+# The direction probe must not open when it fails ITSELF
+# (review finding of 2026-10-11)
 # ---------------------------------------------------------------------------
 #
-# 🛑 Der einzige Fail-open-Pfad, den das Tor hatte — und er sass im
-# gefaehrlichen Zweig. Die erste Fassung fragte nur `alembic show <db-rev>`
-# und las JEDEN Rueckgabewert != 0 als „Revision unbekannt" → Rueckfall →
-# WARNUNG → Rollout. Gemessen: Datenbank zurueck + Sonde mit Code 255 ergab
-# rc=0 und vier `kubectl set image` — exakt der Ausfall, gegen den dieses Tor
-# gebaut ist, nur mit einer Warnzeile davor.
+# 🛑 The only fail-open path the gate had -- and it sat in the dangerous
+# branch. The first version asked only `alembic show <db-rev>` and read EVERY
+# return code != 0 as "revision unknown" -> rollback -> WARNING -> rollout.
+# Measured: a database behind plus a probe exiting 255 gave rc=0 and four
+# `kubectl set image` -- exactly the outage this gate is built against, only
+# with a warning line in front of it.
 #
-# Der alte Test schrieb die Luecke als ABSICHT fest: `STUB_SHOW_EXIT=1` mit
-# rc=0 plus Rollout trennte „unbekannte Revision" nicht von „Sonde kaputt".
+# The old test wrote the gap down as INTENT: `STUB_SHOW_EXIT=1` with rc=0 plus
+# a rollout did not separate "unknown revision" from "probe broken".
 
 
 def test_a_silent_probe_aborts(deploy):
-    """ssh/docker antworten nicht → die Richtung ist UNBEKANNT, nicht
-    „Rueckfall". Im Zweifel wird nicht ausgerollt."""
+    """ssh/docker do not answer -> the direction is UNKNOWN, not a
+    "rollback". In doubt, nothing is rolled out."""
     proc, rolled_out = deploy(
         STUB_IMG_HEADS="neu_kopf (head)",
         STUB_DB_OUT="alt_rev",
@@ -275,9 +290,9 @@ def test_a_silent_probe_aborts(deploy):
 
 
 def test_a_probe_that_fails_on_its_own_head_aborts(deploy):
-    """Das Bild MUSS seinen eigenen Kopf kennen. Tut es das nicht, ist die
-    Sonde kaputt, und aus dem Fehlschlag fuer die DB-Revision ist kein Schluss
-    zu ziehen."""
+    """The image MUST know its own head. If it does not, the probe is
+    broken, and no conclusion can be drawn from its failure on the DB
+    revision."""
     proc, rolled_out = deploy(
         STUB_IMG_HEADS="neu_kopf (head)",
         STUB_DB_OUT="alt_rev",
@@ -290,10 +305,10 @@ def test_a_probe_that_fails_on_its_own_head_aborts(deploy):
 
 
 def test_a_genuine_rollback_still_proceeds(deploy):
-    """🛑 Negativkontrolle, und die wichtigere Haelfte: ein ECHTER Rueckfall —
-    das Bild kennt seinen eigenen Kopf, aber die DB-Revision nicht — muss
-    weiterhin durchlassen. Sonst blockiert das Tor jeden Rueckfall auf ein
-    aelteres Bild, wird umgangen und ist wirkungslos."""
+    """🛑 A negative control, and the more important half: a GENUINE rollback
+    -- the image knows its own head but not the DB revision -- has to keep
+    going through. Otherwise the gate blocks every rollback to an older image,
+    gets bypassed, and has no effect."""
     proc, rolled_out = deploy(
         STUB_IMG_HEADS="alt_kopf (head)",
         STUB_DB_OUT="neu_rev",
@@ -306,10 +321,10 @@ def test_a_genuine_rollback_still_proceeds(deploy):
 
 
 def test_a_missing_image_in_dry_run_is_not_an_abort(deploy):
-    """Im --dry-run ist eine noch nicht gebaute Marke der NORMALFALL (Bau und
-    Push werden dort nur gedruckt). Das Tor meldete dafuer einen Abbruch, den
-    es im echten Lauf nie gaebe — und `docker run` haette dafuer 4,08 GB aus
-    der Registry gezogen."""
+    """In --dry-run a tag that has not been built yet is the NORMAL case
+    (build and push are only printed there). The gate reported an abort for it
+    that would never happen in a real run -- and `docker run` would have pulled
+    4.08 GB from the registry for it."""
     proc, _ = deploy("--dry-run", STUB_IMG_PRESENT_EXIT=1)
     assert proc.returncode == 0
     assert "TOR WUERDE ABBRECHEN" not in proc.stdout, (
@@ -319,8 +334,28 @@ def test_a_missing_image_in_dry_run_is_not_an_abort(deploy):
 
 
 def test_a_missing_image_in_a_real_run_aborts(deploy):
-    """Im echten Lauf hat Schritt 2 das Bild gerade gebaut. Fehlt es dann, ist
-    Bau oder Push schiefgegangen — und dann wird nicht ausgerollt."""
+    """In a real run step 2 has just built the image. If it is missing then,
+    the build or the push went wrong -- and then nothing is rolled out."""
     proc, rolled_out = deploy(STUB_IMG_PRESENT_EXIT=1)
     assert proc.returncode == 1
     assert not rolled_out
+
+
+@pytest.mark.parametrize("subcommand", ["apply -f -", "replace -f -", "get pods"])
+def test_the_kubectl_stub_drains_stdin_on_every_call(tmp_path, subcommand):
+    """The 20% race above, made deterministic: with more than a pipe buffer
+    (64 KiB) in flight, a stub that does not read makes the writer die of
+    SIGPIPE every time, not one run in five. Covers a subcommand the script
+    does not pipe into today, so the guard is the stub's contract, not the
+    one branch that happens to be used."""
+    if shutil.which("bash") is None:  # pragma: no cover - environment guard
+        pytest.skip("bash not available")
+    stub = tmp_path / "kubectl"
+    stub.write_text(_KUBECTL_STUB)
+    stub.chmod(0o755)
+    proc = subprocess.run(
+        ["bash", "-c", f'set -o pipefail; head -c 262144 /dev/zero | "{stub}" {subcommand}'],
+        capture_output=True, text=True, timeout=30,
+        env={**os.environ, "STUB_LOG": str(tmp_path / "kubectl.log")},
+    )
+    assert proc.returncode == 0, f"exit {proc.returncode} (141 = SIGPIPE: the stub did not read stdin)"

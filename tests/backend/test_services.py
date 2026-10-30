@@ -1,7 +1,7 @@
 """
-Tests für Backend Services
+Tests for the backend services
 
-Testet:
+Covers:
 - OllamaService (LLM Chat, Intent Extraction)
 - RAGService (Document Processing, Search)
 - SpeakerService (Voice Embeddings, Identification)
@@ -19,7 +19,7 @@ import pytest
 # ============================================================================
 
 class TestOllamaService:
-    """Tests für OllamaService"""
+    """Tests for OllamaService"""
 
     @pytest.fixture
     def mock_ollama_client(self):
@@ -49,7 +49,7 @@ class TestOllamaService:
 
     @pytest.mark.unit
     async def test_chat_simple(self, mock_ollama_client):
-        """Testet einfachen Chat"""
+        """Tests a simple chat"""
         from services.ollama_service import OllamaService
 
         with patch('services.ollama_service.settings') as mock_settings:
@@ -69,7 +69,7 @@ class TestOllamaService:
 
     @pytest.mark.unit
     async def test_chat_with_history(self, mock_ollama_client):
-        """Testet Chat mit Historie"""
+        """Tests chat with history"""
         from services.ollama_service import OllamaService
 
         with patch('services.ollama_service.settings') as mock_settings:
@@ -94,7 +94,7 @@ class TestOllamaService:
 
     @pytest.mark.unit
     async def test_ensure_model_loaded(self, mock_ollama_client):
-        """Testet Model-Loading"""
+        """Tests model loading"""
         from services.ollama_service import OllamaService
 
         with patch('services.ollama_service.settings') as mock_settings:
@@ -118,7 +118,7 @@ class TestOllamaService:
 # ============================================================================
 
 class TestOllamaServiceRankedIntents:
-    """Tests für extract_ranked_intents()"""
+    """Tests for extract_ranked_intents()"""
 
     @pytest.fixture
     def mock_ollama_client(self):
@@ -148,7 +148,7 @@ class TestOllamaServiceRankedIntents:
 
     @pytest.mark.unit
     async def test_ranked_intents_new_format(self, mock_ollama_client):
-        """Test: Neues Format mit intents-Array wird korrekt geparst"""
+        """Test: the new format with an intents array parses correctly"""
         import json
         response_json = json.dumps({
             "intents": [
@@ -179,7 +179,7 @@ class TestOllamaServiceRankedIntents:
 
     @pytest.mark.unit
     async def test_ranked_intents_old_format_backward_compatible(self, mock_ollama_client):
-        """Test: Altes Format (einzelner Intent) wird als 1-Element-Liste zurückgegeben"""
+        """Test: the old format (a single intent) comes back as a one-element list"""
         import json
         response_json = json.dumps({
             "intent": "general.conversation",
@@ -207,7 +207,7 @@ class TestOllamaServiceRankedIntents:
 
     @pytest.mark.unit
     async def test_ranked_intents_sorted_by_confidence(self, mock_ollama_client):
-        """Test: Intents werden nach Confidence absteigend sortiert"""
+        """Test: intents are sorted by confidence, descending"""
         import json
         response_json = json.dumps({
             "intents": [
@@ -237,7 +237,7 @@ class TestOllamaServiceRankedIntents:
 
     @pytest.mark.unit
     async def test_extract_intent_returns_top_from_ranked(self, mock_ollama_client):
-        """Test: extract_intent() gibt den Top-Intent zurück wenn LLM ranked antwortet"""
+        """Test: extract_intent() returns the top intent when the LLM answers ranked"""
         import json
         response_json = json.dumps({
             "intents": [
@@ -266,7 +266,7 @@ class TestOllamaServiceRankedIntents:
 
     @pytest.mark.unit
     async def test_extract_intent_empty_response_returns_unresolved(self, mock_ollama_client):
-        """Test: Leere LLM-Antwort gibt general.unresolved zurück statt general.conversation"""
+        """Test: an empty LLM answer returns general.unresolved, not general.conversation"""
         from services.ollama_service import OllamaService
 
         # Both attempts return empty
@@ -300,7 +300,7 @@ class TestOllamaServiceRankedIntents:
 
     @pytest.mark.unit
     async def test_extract_intent_parse_error_returns_unresolved(self, mock_ollama_client):
-        """Test: JSON Parse Error gibt general.unresolved zurück"""
+        """Test: a JSON parse error returns general.unresolved"""
         from services.ollama_service import OllamaService
 
         # Return non-JSON garbage
@@ -338,11 +338,11 @@ class TestOllamaServiceRankedIntents:
 # ============================================================================
 
 class TestRAGService:
-    """Tests für RAGService"""
+    """Tests for RAGService"""
 
     @pytest.mark.unit
     async def test_get_embedding(self, db_session):
-        """Testet Embedding-Generierung"""
+        """Tests embedding generation"""
         from services.rag_service import RAGService
 
         # Create mock client
@@ -369,7 +369,7 @@ class TestRAGService:
 
     @pytest.mark.database
     async def test_ingest_document_missing_file(self, db_session):
-        """Testet Dokument-Ingestion mit fehlender Datei"""
+        """Tests document ingestion with a missing file"""
         from services.rag_service import RAGService
 
         with patch('services.rag_service.settings') as mock_settings:
@@ -395,11 +395,11 @@ class TestRAGService:
 # ============================================================================
 
 class TestSpeakerService:
-    """Tests für SpeakerService"""
+    """Tests for SpeakerService"""
 
     @pytest.mark.unit
     def test_speaker_service_availability_check(self):
-        """Testet Verfügbarkeitsprüfung"""
+        """Tests the availability check"""
         with patch('services.speaker_service.SPEECHBRAIN_AVAILABLE', True):
             from services.speaker_service import SpeakerService
 
@@ -414,7 +414,7 @@ class TestSpeakerService:
 
     @pytest.mark.unit
     def test_speaker_service_not_available(self):
-        """Testet wenn SpeechBrain nicht verfügbar"""
+        """Tests the case where SpeechBrain is unavailable"""
         # Import and test directly
         from services.speaker_service import SPEECHBRAIN_AVAILABLE, SpeakerService
 
@@ -429,7 +429,7 @@ class TestSpeakerService:
 
     @pytest.mark.unit
     def test_embedding_to_base64(self):
-        """Testet Embedding zu Base64 Konvertierung"""
+        """Tests embedding-to-Base64 conversion"""
         from services.speaker_service import SpeakerService
 
         with patch('services.speaker_service.settings') as mock_settings:
@@ -447,7 +447,7 @@ class TestSpeakerService:
 
     @pytest.mark.unit
     def test_embedding_from_base64(self):
-        """Testet Base64 zu Embedding Konvertierung"""
+        """Tests Base64-to-embedding conversion"""
         from services.speaker_service import SpeakerService
 
         with patch('services.speaker_service.settings') as mock_settings:
@@ -465,7 +465,7 @@ class TestSpeakerService:
 
     @pytest.mark.unit
     def test_compute_similarity(self):
-        """Testet Cosine Similarity Berechnung"""
+        """Tests the cosine similarity computation"""
         from services.speaker_service import SpeakerService
 
         with patch('services.speaker_service.settings') as mock_settings:
@@ -483,7 +483,7 @@ class TestSpeakerService:
 
     @pytest.mark.unit
     def test_compute_similarity_orthogonal(self):
-        """Testet Cosine Similarity für orthogonale Vektoren"""
+        """Tests cosine similarity for orthogonal vectors"""
         from services.speaker_service import SpeakerService
 
         with patch('services.speaker_service.settings') as mock_settings:
@@ -505,11 +505,11 @@ class TestSpeakerService:
 # ============================================================================
 
 class TestActionExecutor:
-    """Tests für ActionExecutor — all external integrations via MCP"""
+    """Tests for ActionExecutor -- all external integrations via MCP"""
 
     @pytest.mark.unit
     async def test_execute_conversation_intent(self):
-        """Testet dass Conversation Intent keine Aktion ausführt"""
+        """Tests that a conversation intent executes no action"""
         from services.action_executor import ActionExecutor
 
         executor = ActionExecutor()
@@ -525,7 +525,7 @@ class TestActionExecutor:
 
     @pytest.mark.unit
     async def test_execute_mcp_intent(self):
-        """Testet MCP Intent Routing"""
+        """Tests MCP intent routing"""
         from services.action_executor import ActionExecutor
 
         mock_mcp = AsyncMock()
@@ -556,7 +556,7 @@ class TestActionExecutor:
 
     @pytest.mark.unit
     async def test_execute_unknown_intent(self):
-        """Testet dass unbekannter Intent Fehler zurückgibt"""
+        """Tests that an unknown intent returns an error"""
         from services.action_executor import ActionExecutor
 
         executor = ActionExecutor()
@@ -575,11 +575,11 @@ class TestActionExecutor:
 # ============================================================================
 
 class TestAudioPreprocessor:
-    """Tests für AudioPreprocessor"""
+    """Tests for AudioPreprocessor"""
 
     @pytest.mark.unit
     def test_audio_preprocessor_init(self):
-        """Testet Initialisierung"""
+        """Tests initialization"""
         from services.audio_preprocessor import AudioPreprocessor
 
         preprocessor = AudioPreprocessor()
@@ -589,7 +589,7 @@ class TestAudioPreprocessor:
 
     @pytest.mark.unit
     def test_normalize_audio(self):
-        """Testet Audio-Normalisierung"""
+        """Tests audio normalization"""
         from services.audio_preprocessor import AudioPreprocessor
 
         preprocessor = AudioPreprocessor()
@@ -608,11 +608,11 @@ class TestAudioPreprocessor:
 # ============================================================================
 
 class TestDeviceManager:
-    """Tests für DeviceManager"""
+    """Tests for DeviceManager"""
 
     @pytest.mark.unit
     def test_device_manager_init(self):
-        """Testet Initialisierung"""
+        """Tests initialization"""
         from ha_glue.services.device_manager import DeviceManager
 
         manager = DeviceManager()
@@ -622,7 +622,7 @@ class TestDeviceManager:
 
     @pytest.mark.unit
     async def test_register_device(self):
-        """Testet Geräte-Registrierung"""
+        """Tests device registration"""
         from ha_glue.services.device_manager import DeviceManager
 
         manager = DeviceManager()
@@ -646,7 +646,7 @@ class TestDeviceManager:
 
     @pytest.mark.unit
     async def test_unregister_device(self):
-        """Testet Geräte-Abmeldung"""
+        """Tests device deregistration"""
         from ha_glue.services.device_manager import DeviceManager
 
         manager = DeviceManager()
@@ -670,7 +670,7 @@ class TestDeviceManager:
 
     @pytest.mark.unit
     async def test_get_devices_by_room(self):
-        """Testet Geräte nach Raum filtern"""
+        """Tests filtering devices by room"""
         from ha_glue.services.device_manager import DeviceManager
 
         manager = DeviceManager()
@@ -698,11 +698,11 @@ class TestDeviceManager:
 # ============================================================================
 
 class TestRoomServiceUnit:
-    """Unit Tests für RoomService"""
+    """Unit tests for RoomService"""
 
     @pytest.mark.database
     async def test_create_room(self, db_session):
-        """Testet Raum-Erstellung"""
+        """Tests room creation"""
         from ha_glue.services.room_service import RoomService
 
         # Create a fresh session to avoid transaction issues
@@ -723,7 +723,7 @@ class TestRoomServiceUnit:
 
     @pytest.mark.database
     async def test_get_room_by_alias(self, db_session, test_room):
-        """Testet Raum-Abfrage nach Alias"""
+        """Tests looking up a room by alias"""
         from ha_glue.services.room_service import RoomService
 
         # Flush to ensure test_room is in the database
@@ -738,7 +738,7 @@ class TestRoomServiceUnit:
 
     @pytest.mark.database
     async def test_get_all_rooms(self, db_session, test_room):
-        """Testet Raum-Liste"""
+        """Tests the room list"""
         from ha_glue.services.room_service import RoomService
 
         # Flush to ensure test_room is in the database

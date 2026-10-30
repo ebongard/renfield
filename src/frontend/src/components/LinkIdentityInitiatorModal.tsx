@@ -1,19 +1,18 @@
 /**
- * LinkIdentityInitiatorModal — Seite A des Personen-Handschlags (F-ID-2).
+ * LinkIdentityInitiatorModal -- side A of the person handshake (F-ID-2).
  *
- * Verknüpft „ich hier" mit „ich dort". Gespiegelt nach `PairInitiatorModal`,
- * mit zwei bewussten Unterschieden:
+ * Links "me here" with "me there". Mirrored on `PairInitiatorModal`,
+ * with two deliberate differences:
  *
- * 🛑 **Keine Stufenauswahl.** Eine Instanz-Paarung GEWÄHRT eine Stufe; eine
- * Personenverknüpfung HEBT sie auf — ab dann läuft die Anfrage mit der eigenen
- * vollen Reichweite. Ein `TierPicker` an dieser Stelle wäre eine Lüge über das,
- * was gerade passiert.
+ * 🛑 **No tier picker.** An instance pairing GRANTS a tier; a person link
+ * LIFTS it -- from then on the request runs with the person's own full reach.
+ * A `TierPicker` here would be a lie about what is happening.
  *
- * 🛑 **Das Angebot kommt beim Abschluss zurück.** Der Server merkt sich
- * zwischen Schritt 1 und 3 NICHTS; die Bindung an die Person steht in der
- * eigenen Signatur über dem Angebot. Darum hält dieser Dialog das Angebot im
- * Zustand und schickt es mit — geht es verloren (Fenster zu), ist der Vorgang
- * verloren und muss neu beginnen. Das ist gewollt: kein halber Link.
+ * 🛑 **The offer comes back at completion.** The server remembers NOTHING
+ * between step 1 and step 3; the binding to the person lives in our own
+ * signature over the offer. So this dialog keeps the offer in state and sends
+ * it along -- lose it (window closed) and the whole flow is lost and has to
+ * start over. That is intended: no half link.
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -26,14 +25,14 @@ import Alert from './Alert';
 
 type Step = 'intro' | 'await_confirmation' | 'done';
 
-/** Nur die Felder, die dieser Dialog selbst anfasst. Die Form prüft der Server. */
+/** Only the fields this dialog touches itself. The server validates the shape. */
 interface LinkOffer {
   initiator_pubkey: string;
   nonce: string;
   [k: string]: unknown;
 }
 
-/** Was eine Bestätigung mindestens tragen muss, bevor es sich lohnt zu senden. */
+/** The minimum a confirmation has to carry before sending is worthwhile. */
 const REQUIRED_CONFIRMATION_FIELDS = ['responder_pubkey', 'signature', 'nonce'] as const;
 
 interface Props {
@@ -92,7 +91,7 @@ export default function LinkIdentityInitiatorModal({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Zwischenablage kann verweigert sein — das JSON steht sichtbar daneben.
+      // The clipboard may be refused -- the JSON is visible next to it.
     }
   };
 
@@ -116,9 +115,9 @@ export default function LinkIdentityInitiatorModal({
         return;
       }
     }
-    // 🛑 Lokale Gegenprobe VOR dem Senden: antwortet die Bestätigung überhaupt
-    // auf DIESES Angebot? Spart einen Zug und eine nichtssagende 400 — der
-    // Server prüft es ohnehin noch einmal, dort zählt es.
+    // 🛑 Local cross-check BEFORE sending: does the confirmation even answer
+    // THIS offer? Saves a round trip and a meaningless 400 -- the
+    // server checks it again anyway, and there is where it counts.
     if (parsed.nonce !== offer.nonce) {
       setError(t('circles.linkConfirmationWrongNonce'));
       return;
@@ -170,8 +169,8 @@ export default function LinkIdentityInitiatorModal({
           <p className="text-sm text-gray-700 dark:text-gray-300">
             {t('circles.linkInitiateStep2Instruction')}
           </p>
-          {/* Der role="img"-Rahmen ist nicht Zierde: `qrcode.react` ist im Test
-              auf einen Stub gelegt, der Rahmen ist dort das einzig Sichtbare. */}
+          {/* The role="img" wrapper is not decoration: `qrcode.react` is
+              stubbed in tests, where the wrapper is the only visible thing. */}
           <div
             role="img"
             aria-label={t('circles.linkQrCodeOfferAria')}

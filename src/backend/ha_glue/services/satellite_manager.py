@@ -129,10 +129,10 @@ class SatelliteSession:
     started_at: float = field(default_factory=time.time)
     transcription: str | None = None
     response_text: str | None = None
-    # WARUM der Satellit aufgehört hat: "silence" | "timeout" | "button".
-    # Das Geraet schickt es mit `audio_end`; bis 2026-10-10 wurde es nur
-    # protokolliert und nie wieder gelesen — eine bei `max_recording_seconds`
-    # gekappte Äußerung war von einem fertigen Satz nicht zu unterscheiden.
+    # WHY the satellite stopped: "silence" | "timeout" | "button".
+    # The device sends it with `audio_end`; until 2026-10-10 it was only
+    # logged and never read again -- an utterance truncated at
+    # `max_recording_seconds` was indistinguishable from a finished sentence.
     turn_end_reason: str | None = None
 
 
@@ -444,13 +444,13 @@ class SatelliteManager:
         return frame_packets(session.opus_packets)
 
     def set_turn_end_reason(self, session_id: str, reason: str) -> None:
-        """Merke, WARUM der Satellit das Horchen beendet hat.
+        """Remember WHY the satellite stopped listening.
 
-        `"silence"` = zu Ende gesprochen, `"button"` = Taste, `"timeout"` =
-        `vad.max_recording_seconds` hat gegriffen, die Äußerung ist also
-        MITTEN IM SATZ abgeschnitten. Genau diese Unterscheidung ging bis
-        2026-10-10 verloren: das Backend protokollierte den Grund und gab die
-        gekappte Aufnahme wie eine vollstaendige an die Transkription.
+        `"silence"` = spoken to the end, `"button"` = the button, `"timeout"` =
+        `vad.max_recording_seconds` kicked in, so the utterance is cut off
+        MID-SENTENCE. Exactly that distinction was lost until 2026-10-10: the
+        backend logged the reason and handed the truncated recording to
+        transcription as though it were complete.
         """
         session = self.sessions.get(session_id)
         if session:
@@ -724,9 +724,9 @@ class SatelliteManager:
         self._add_event(session.satellite_id, "session_end", {
             "session_id": session_id,
             "reason": reason,
-            # Der Grund des GERAETS, getrennt vom Grund des Backends: nur so ist
-            # in der Satelliten-Historie zu sehen, dass eine Aeusserung gekappt
-            # wurde (`timeout`) und nicht einfach zu Ende gesprochen war.
+            # The DEVICE's reason, kept apart from the backend's reason: only
+            # this way does the satellite history show that an utterance was
+            # truncated (`timeout`) and not simply spoken to the end.
             "turn_end_reason": session.turn_end_reason,
             "duration": duration,
             "success": success,

@@ -35,17 +35,17 @@ class FederationAuditEntry(BaseModel):
     verified_signature: bool
     answer_excerpt: str | None
     error_message: str | None
-    #: "asked" = diese Instanz hat gefragt, "answered" = sie hat geantwortet.
+    #: "asked" = this instance asked, "answered" = this instance answered.
     direction: str
-    #: Auf WELCHER Identität die Antwort beruhte — "mapped" (als die
-    #: verknüpfte Person, volle eigene Reichweite) oder "peer_tier" (als
-    #: fremde Instanz, nur die gewährte Stufe).
+    #: WHICH identity the answer rested on -- "mapped" (as the
+    #: linked person, with that person's own full reach) or "peer_tier" (as a
+    #: foreign instance, only the granted tier).
     #:
-    #: 🛑 `None` heißt NICHT "peer_tier", sondern „nicht festgehalten": bei
-    #: Frager-Zeilen weiß diese Instanz es nicht (die Gegenseite entscheidet),
-    #: und Bestandszeilen von vor dem 2026-10-29 kennen die Angabe gar nicht.
-    #: Die Oberfläche muss das unterscheiden, sonst behauptet sie die engere
-    #: Stufe für Züge, die in Wahrheit mit voller Reichweite liefen.
+    #: 🛑 `None` does NOT mean "peer_tier" but "not recorded": on asker rows this
+    #: instance does not know (the far side decides), and rows from before
+    #: 2026-10-29 do not know the field at all. The UI has to tell those apart,
+    #: or it claims the narrower tier for queries that in truth ran with full
+    #: reach.
     identity_basis: str | None
 
 

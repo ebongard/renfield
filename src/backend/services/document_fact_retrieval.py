@@ -16,7 +16,7 @@ Three access shapes, each circle-access-filtered through the parent Document:
   - ``facts_for_document(document_id, asker_id)`` → all facts of one doc (the
     future per-document panel; the route gates access separately).
   - ``obligations(asker_id, due_before, limit)`` → the obligation agenda
-    (bills + Behörde deadlines), ordered by printed Frist.
+    (bills + deadlines set by authorities), ordered by the printed deadline.
 
 Results mirror the dict shape the ``_wrap_document_fact_results`` helper in
 ``polymorphic_atom_store`` consumes. Each query swallows its own exceptions and
@@ -38,7 +38,7 @@ from services.circle_sql import PeerScope, document_facts_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from services.lexical_retrieval import _significant_tokens
 from utils.config import settings
-from utils.log_safety import fehlertext_ohne_inhalt
+from utils.log_safety import error_text_without_content
 
 # Rank floor for rows that match ONLY via the identifier-ILIKE branch (no FTS
 # hit). Small positive constant so an exact-identifier match always sorts above
@@ -164,7 +164,7 @@ class DocumentFactRetrieval:
             logger.error(f"🔍 {label}: operational DB error — re-raising (not masking as empty)")
             raise
         except Exception as e:
-            logger.warning(f"🔍 {label} failed (ignored): {fehlertext_ohne_inhalt(e)}")
+            logger.warning(f"🔍 {label} failed (ignored): {error_text_without_content(e)}")
             return []
 
     # ------------------------------------------------------------------ #

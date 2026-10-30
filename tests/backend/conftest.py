@@ -1,11 +1,14 @@
 """
-Pytest Fixtures für Renfield Backend Tests
+Pytest fixtures for the Renfield backend tests.
 
-Bietet:
-- In-Memory SQLite Datenbank für isolierte Tests
-- Mock-Services für externe Abhängigkeiten
-- FastAPI TestClient für API-Tests
-- Async Support
+Provides:
+- A REAL Postgres test database (see the note at `RENFIELD_TEST_PG_URL` below).
+  This docstring claimed an in-memory sqlite database until 2026-10-30, which
+  had not been true since the harness was rebuilt -- and it contradicted the
+  rule stated 100 lines further down in this same file.
+- Mock services for external dependencies
+- A FastAPI TestClient for the API tests
+- Async support
 """
 
 import os as _os
@@ -132,6 +135,26 @@ def _pg_url_or_skip() -> str:
     return dsn
 
 
+@pytest.fixture
+def pg_url() -> str:
+    """The test DSN, normalised to the async driver -- or skip.
+
+    Use this instead of reading `RENFIELD_TEST_PG_URL` yourself. The documented
+    form is the async scheme, but a sync `postgresql://` is easy to hand in by
+    accident, and `create_async_engine` then resolves to the psycopg2 dialect,
+    which is not installed in the backend image. The failure reads
+    `ModuleNotFoundError: No module named 'psycopg2'` and looks like a broken
+    environment.
+
+    Measured on 2026-10-30: that is exactly what produced 15 ERRORS in
+    `test_pc20260924_restore_indexes.py` and
+    `test_pc20260927_voice_second_factor.py` -- the only two files that read
+    the variable raw. Three further files each carried their own copy of the
+    normalisation. One helper, one place.
+    """
+    return _pg_url_or_skip()
+
+
 
 _SCHEMA_READY = False
 
@@ -246,8 +269,9 @@ async def _claim_database(dsn: str) -> None:
         await conn.close()
         pytest.exit(
             "Another pytest run holds this test database "
-            f"({_os.environ.get('RENFIELD_TEST_PG_URL')}). Use a database of "
-            "your own — a second run would drop this one's schema mid-test.",
+            f"({_db_name_only(_os.environ.get('RENFIELD_TEST_PG_URL'))}). Use a "
+            "database of your own -- a second run would drop this one's schema "
+            "mid-test.",
             returncode=1,
         )
     # pg_try_advisory_lock is SESSION-level, so it survives this commit — but the
@@ -260,14 +284,27 @@ async def _claim_database(dsn: str) -> None:
     _RUN_LOCK_CONN = conn   # released when the process ends
 
 
+def _db_name_only(url: str | None) -> str:
+    """Just the database name -- NEVER the DSN.
+
+    A DSN carries user and password, and the test URL is derived from
+    DATABASE_URL, so printing it puts the live Postgres credential into
+    terminal and CI output. On 2026-10-30 the run-lock message below did
+    exactly that. `bin/run-backend-tests.sh` masks the DSN for the same
+    reason; this is the Python half of that rule.
+    """
+    if not url:
+        return "<unset>"
+    return url.rsplit("/", 1)[-1].split("?")[0]
+
+
 def _refuse_the_application_database(dsn: str) -> None:
     """Never run the suite against the database the application itself uses."""
     live = _os.environ.get("DATABASE_URL", "")
     if not live:
         return
 
-    def _name(url: str) -> str:
-        return url.rsplit("/", 1)[-1].split("?")[0]
+    _name = _db_name_only
 
     if _name(dsn) and _name(dsn) == _name(live):
         pytest.exit(

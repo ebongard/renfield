@@ -1,32 +1,33 @@
-"""Logzeilen dürfen ihre Argumente nicht still verlieren.
+"""Log lines must not lose their arguments silently.
 
-🛑 Der Anlass, in der Browser-Abnahme zum Deploy vom 2026-10-26 live gefunden:
-eine frisch ausgerollte Diagnosezeile druckte wörtlich
+🛑 The occasion, found live in the browser acceptance for the 2026-10-26
+deploy: a freshly rolled-out diagnostic line printed, verbatim,
 
-    📬 Historie veraltet (Datenbank %s > bekannt %s) — …
+    📬 Historie veraltet (Datenbank %s > bekannt %s) -- ...
 
-Der Logger des Backends ist **loguru**, und loguru ersetzt nur geschweifte
-Klammern. Bei `%s` bleibt der Platzhalter stehen und die Argumente fallen
-still weg. Gegengemessen im Produktionsbild:
+The backend's logger is **loguru**, and loguru only substitutes curly braces.
+With `%s` the placeholder stays put and the arguments fall away silently.
+Counter-measured in the production image:
 
-    NEU: (Datenbank 12 > bekannt 10) — ersetzt?
-    ALT: (Datenbank %s > bekannt %s) — ersetzt?
+    NEW: (Datenbank 12 > bekannt 10) -- substituted?
+    OLD: (Datenbank %s > bekannt %s) -- substituted?
 
-Ausgerechnet die beiden Zahlen, die man zum Nachmessen gebraucht hätte. Eine
-Diagnosezeile, die ihre Diagnose verliert, ist schlimmer als keine — sie
-täuscht Beobachtbarkeit vor.
+Of all things the two numbers one would have needed to measure with. A
+diagnostic line that loses its diagnosis is worse than none -- it feigns
+observability.
 
-Beim Auszählen waren es **40 Aufrufe in 13 Dateien**, darunter
-`"Could not parse LLM JSON: %s | raw=%r"`, das Fehler UND Rohdaten verlor.
+The count came to **40 calls in 13 files**, among them
+`"Could not parse LLM JSON: %s | raw=%r"`, which lost the error AND the raw
+data.
 
-🛑 **Die erste Fassung dieses Prüfers war selbst blind.** Sie suchte
-`%[sdifr]` — also den Buchstaben DIREKT nach dem Prozentzeichen. Damit fielen
-`%.3f`, `%5d`, `%-10s` und `%(name)s` durch, und genau so überlebte
-`meeting_fingerprint_service.py:177` den Sweep: `"… fingerprint {} (%.3f)"`
-mit vier Argumenten bei drei Klammern. Der Ähnlichkeitswert fiel weiter weg.
-Die Negativkontrolle prüfte nur `%s`/`%r` und bemerkte die Blindheit deshalb
-nicht. Jetzt deckt sie die ganze printf-Grammatik ab — die Kontrolle ist der
-Teil, der zählt.
+🛑 **The first version of this checker was itself blind.** It searched for
+`%[sdifr]` -- the letter DIRECTLY after the percent sign. That let `%.3f`,
+`%5d`, `%-10s` and `%(name)s` through, and that is exactly how
+`meeting_fingerprint_service.py:177` survived the sweep: `"... fingerprint {}
+(%.3f)"` with four arguments against three braces. The similarity score fell
+away as well. The negative control checked only `%s`/`%r` and therefore did
+not notice the blindness. Now it covers the whole printf grammar -- the control
+is the part that counts.
 """
 import ast
 import re
@@ -40,41 +41,41 @@ pytestmark = [pytest.mark.unit, pytest.mark.backend]
 _LOG_METHODEN = {"debug", "info", "warning", "error", "exception",
                  "critical", "trace", "success"}
 
-#: Die printf-Grammatik: `%(name)s`, `%-10s`, `%5d`, `%.3f`, `%05.2f`.
+#: The printf grammar: `%(name)s`, `%-10s`, `%5d`, `%.3f`, `%05.2f`.
 #:
-#: 🛑 `%%` wird als EIGENES Zeichen mitgelesen und dann verworfen, nicht per
-#: Vorschau ausgeschlossen. Sonst passiert genau das, was die Negativkontrolle
-#: hier gefunden hat: in `"echtes Prozent 50%% fertig"` greift die Regex am
-#: ZWEITEN Prozentzeichen und liest `% f` als Platzhalter — Leerzeichen-Flag
-#: plus Umwandlung `f` aus „fertig". Ein Falschtreffer auf harmlosem Text.
+#: 🛑 `%%` is read as a token OF ITS OWN and then discarded, not excluded by
+#: lookahead. Otherwise exactly what the negative control found here happens:
+#: in `"echtes Prozent 50%% fertig"` the regex grabs at the SECOND percent
+#: sign and reads `% f` as a placeholder -- the space flag plus the conversion
+#: `f` out of "fertig". A false match on harmless text.
 #:
-#: 🛑 Das Leerzeichen-Flag (`"% d"`) ist absichtlich NICHT in der Flagmenge.
-#: Es kommt in diesem Baum nirgends vor und ist auch sonst verschwindend
-#: selten, waehrend Prosa wie „50% fertig" oder „80% der Seiten" plausibel
-#: ist. Einen unplausiblen Falsch-Negativ gegen einen plausiblen
-#: Falsch-Positiv zu tauschen waere die falsche Richtung.
+#: 🛑 The space flag (`"% d"`) is deliberately NOT in the flag set. It
+#: appears nowhere in this tree and is vanishingly rare elsewhere, while prose
+#: like "50% fertig" or "80% der Seiten" is plausible. Trading an implausible
+#: false negative for a plausible false positive would be the wrong
+#: direction.
 _TOKEN = re.compile(
     r"%%|%(?:\([^)]*\))?[-+#0]*\d*(?:\.\d+)?[hlL]?[sdifrgeExXoucab]")
 
 
 def _hat_platzhalter(text: str) -> bool:
-    """Traegt der Text einen echten printf-Platzhalter (nicht bloss `%%`)?"""
+    """Does the text carry a real printf placeholder (not just `%%`)?"""
     return any(m.group(0) != "%%" for m in _TOKEN.finditer(text))
 
-#: loguru wird auch unter einem anderen Namen importiert — den Filter nicht an
-#: der genauen Zeile festmachen (`alembic/versions/…` nutzt
+#: loguru is also imported under a different name -- do not pin the filter to
+#: the exact line (`alembic/versions/...` uses
 #: `from loguru import logger as _migration_logger`).
 _LOGURU_IMPORT = re.compile(r"^\s*from\s+loguru\s+import\s+logger(?:\s+as\s+(\w+))?",
                             re.MULTILINE)
 
 
 def _loguru_namen(quelle: str) -> set[str]:
-    """Unter welchen Namen ist loguru in dieser Datei erreichbar?"""
+    """Under which names is loguru reachable in this file?"""
     return {m.group(1) or "logger" for m in _LOGURU_IMPORT.finditer(quelle)}
 
 
 def _logaufrufe(quelle: str, namen: set[str]):
-    """Jeder `<name>.<methode>(…)` — auch durch `.opt(...)`/`.bind(...)` hindurch."""
+    """Every `<name>.<method>(...)` -- including through `.opt(...)`/`.bind(...)`."""
     try:
         baum = ast.parse(quelle)
     except SyntaxError:
@@ -84,7 +85,7 @@ def _logaufrufe(quelle: str, namen: set[str]):
                 and isinstance(knoten.func, ast.Attribute)
                 and knoten.func.attr in _LOG_METHODEN):
             continue
-        # Die Wurzel der Attributkette: `logger`, `logger.opt(…)`, `logger.bind(…)`
+        # The root of the attribute chain: `logger`, `logger.opt(...)`, `logger.bind(...)`
         wurzel = knoten.func.value
         while isinstance(wurzel, ast.Call):
             wurzel = wurzel.func
@@ -105,7 +106,7 @@ def _verlierende_aufrufe(wurzel: Path) -> tuple[list[str], int]:
         geprueft += 1
         for knoten in _logaufrufe(quelle, namen):
             if len(knoten.args) < 2:
-                continue            # ohne Argumente gibt es nichts zu verlieren
+                continue            # with no arguments there is nothing to lose
             erstes = knoten.args[0]
             if (isinstance(erstes, ast.Constant) and isinstance(erstes.value, str)
                     and _hat_platzhalter(erstes.value)):
@@ -115,17 +116,17 @@ def _verlierende_aufrufe(wurzel: Path) -> tuple[list[str], int]:
 
 def _wurzel() -> Path:
     w = Path(__file__).resolve().parents[2] / "src" / "backend"
-    # 🛑 Ohne diese Zusicherung waere der Test bei falscher Wurzel STILL GRUEN:
-    # `rglob` auf ein fehlendes Verzeichnis liefert leer, ohne Fehler.
+    # 🛑 Without this assertion the test would be SILENTLY GREEN on a wrong
+    # root: `rglob` on a missing directory yields nothing, without an error.
     assert w.is_dir(), f"Wurzel nicht gefunden: {w}"
     return w
 
 
 def test_no_log_line_loses_its_arguments():
-    """🛑 loguru ersetzt `{}`, nicht `%s`. Wer Argumente uebergibt, muss
-    geschweifte Klammern benutzen — sonst verschwinden sie spurlos."""
+    """🛑 loguru substitutes `{}`, not `%s`. Whoever passes arguments has to
+    use curly braces -- otherwise they vanish without a trace."""
     verlierend, geprueft = _verlierende_aufrufe(_wurzel())
-    # Dass ueberhaupt etwas geprueft wurde, ist Teil der Zusicherung.
+    # That anything was checked at all is part of the assertion.
     assert geprueft > 50, f"nur {geprueft} Dateien mit loguru gesehen — prueft der Test ueberhaupt?"
     assert not verlierend, (
         "diese Logaufrufe verlieren ihre Argumente still (loguru ersetzt "
@@ -133,12 +134,12 @@ def test_no_log_line_loses_its_arguments():
 
 
 def test_every_loguru_literal_is_formattable():
-    """🛑 Ein NEUER Fehlermodus, den der Umstieg auf Klammern eroeffnet.
+    """🛑 A NEW failure mode that the move to braces opens up.
 
-    Gemessen: `logger.info("stray brace { here {}", 1)` wirft
-    `ValueError: unexpected '{' in field name` — am AUFRUFORT, loguru faengt es
-    nicht. Mit `%s` war das unmoeglich. Eine Logzeile, die den Aufrufer
-    mitnimmt, ist schlimmer als eine, die nichts sagt.
+    Measured: `logger.info("stray brace { here {}", 1)` raises
+    `ValueError: unexpected '{' in field name` -- AT THE CALL SITE, loguru does
+    not catch it. With `%s` that was impossible. A log line that takes its
+    caller down with it is worse than one that says nothing.
     """
     kaputt = []
     for datei in sorted(_wurzel().rglob("*.py")):
@@ -162,12 +163,13 @@ def test_every_loguru_literal_is_formattable():
 
 
 def test_the_checker_sees_the_whole_printf_grammar():
-    """Negativkontrolle, und sie ist der Teil, der zaehlt.
+    """A negative control, and it is the part that counts.
 
-    🛑 Die erste Fassung suchte nur `%[sdifr]` und war damit fuer `%.3f` blind
-    — genau so ueberlebte `meeting_fingerprint_service.py:177` den Sweep. Die
-    damalige Kontrolle prueffte nur `%s`/`%r` und bemerkte die Luecke nicht.
-    Diese hier fuehrt jede Form auf, die vorkommen kann, UND den Aliasfall.
+    🛑 The first version searched only for `%[sdifr]` and was therefore blind
+    to `%.3f` -- that is exactly how `meeting_fingerprint_service.py:177`
+    survived the sweep. The control at the time checked only `%s`/`%r` and did
+    not notice the gap. This one lists every form that can occur, AND the alias
+    case.
     """
     import tempfile
 
@@ -178,18 +180,18 @@ def test_the_checker_sees_the_whole_printf_grammar():
             (wurzel / f"f{i}.py").write_text(
                 "from loguru import logger\n"
                 f'logger.info("verliert {form}", 1)\n', encoding="utf-8")
-        # Alias — die erste Fassung filterte auf die genaue Importzeile.
+        # The alias -- the first version filtered on the exact import line.
         (wurzel / "alias.py").write_text(
             "from loguru import logger as _mig\n"
             '_mig.warning("auch hier %s", 1)\n', encoding="utf-8")
-        # Durch `.opt(...)` hindurch.
+        # Through `.opt(...)`.
         (wurzel / "opt.py").write_text(
             "from loguru import logger\n"
             'logger.opt(depth=1).info("und hier %d", 1)\n', encoding="utf-8")
-        # Und vier, die NICHT zaehlen duerfen. Die letzten beiden hat genau
-        # diese Kontrolle beim ersten Lauf aufgedeckt: `%%` wurde als
-        # Platzhalter gelesen, weil die Regex am zweiten Prozentzeichen griff
-        # und `% f` als Leerzeichen-Flag plus Umwandlung verstand.
+        # And four that must NOT count. This very control uncovered the
+        # last two on its first run: `%%` was read as a placeholder, because
+        # the regex grabbed at the second percent sign and understood `% f` as
+        # the space flag plus a conversion.
         (wurzel / "harmlos.py").write_text(
             "from loguru import logger\n"
             'logger.info("klammern {} ", 1)\n'

@@ -1,8 +1,8 @@
 """
-Notification Service — Proaktive Benachrichtigungen
+Notification service -- proactive notifications
 
-Empfängt Webhooks (z.B. von HA-Automationen), dedupliziert,
-speichert in DB und liefert an Geräte aus (WebSocket + TTS).
+Receives webhooks (e.g. from HA automations), deduplicates them, stores them in
+the database and delivers them to devices (WebSocket + TTS).
 
 Phase 2: Semantic dedup, urgency classification, LLM enrichment, feedback learning.
 """

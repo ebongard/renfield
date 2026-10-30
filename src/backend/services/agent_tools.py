@@ -63,10 +63,10 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, str] = field(default_factory=dict)  # param_name -> description
-    #: Der Steuertext des Betreibers (`tool_hints` aus `mcp_servers.yaml`),
-    #: GETRENNT von `description` — dort steckt er hinten mit drin.
-    #: 🛑 Die Werkzeug-Vorauswahl kuerzt `description`; der Hinweis darf das
-    #: nicht mitmachen, s. `agent_service._preselect_tools`.
+    #: The operator's steering text (`tool_hints` from `mcp_servers.yaml`),
+    #: SEPARATE from `description` -- where it is also appended at the end.
+    #: 🛑 The tool preselection truncates `description`; the hint must not go
+    #: along with that, see `agent_service._preselect_tools`.
     hint: str = ""
     input_schema: dict | None = None  # full JSON Schema, for native function calling
 

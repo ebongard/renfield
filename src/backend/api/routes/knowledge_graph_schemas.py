@@ -186,10 +186,11 @@ class ClusterResolveResponse(BaseModel):
     skipped_cross_type: int = 0
     skipped_unreachable: int = 0
     skipped_weak_edge: int = 0
-    # Auch auf dem ERFOLGSWEG mitgegeben. Der Riegel in der Route wirft nur,
-    # solange nichts geschrieben wurde; schriebe je eine Verweigerung TEILWEISE,
-    # fiele ihr Grund sonst ersatzlos vom Tisch — eine 200 ohne Erklaerung, also
-    # genau der Fehlermodus, gegen den die Codes gebaut sind.
+    # Carried on the SUCCESS path too. The guard in the route only raises
+    # while nothing has been written; were a refusal ever to write PARTIALLY,
+    # its reason would otherwise fall off the table with no replacement -- a
+    # 200 with no explanation, which is exactly the failure mode the codes were
+    # built against.
     refusal_code: str | None = None
     notes: list[str] = Field(default_factory=list)
 

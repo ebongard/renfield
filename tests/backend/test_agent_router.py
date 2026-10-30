@@ -1345,11 +1345,11 @@ class TestRouterModelSettings:
         router = AgentRouter(SAMPLE_CONFIG)
         ollama = make_mock_ollama('{"role": "conversation"}')
 
-        # 🛑 Ersetzt wird `get_dedicated_client` — DAS ist die Funktion, die der
-        # Router ohne konfigurierte Router-Adresse meiden muss. Bis 2026-09-27
-        # stand hier `get_agent_client`: ein Name, den das Modul nur noch in
-        # einem KOMMENTAR fuehrt. `assert_not_called()` darauf war zwangslaeufig
-        # wahr und hat nie etwas geprueft.
+        # 🛑 What gets patched is `get_dedicated_client` -- THAT is the
+        # function the router has to avoid when no router address is
+        # configured. Until 2026-09-27 this read `get_agent_client`: a name the
+        # module now carries only in a COMMENT. `assert_not_called()` on it was
+        # necessarily true and never checked anything.
         with patch("services.agent_router.settings") as s, \
              patch("services.agent_router.get_dedicated_client") as gdc:
             s.agent_router_model = "qwen3:1.7b"
@@ -1359,7 +1359,7 @@ class TestRouterModelSettings:
             s.ollama_model = "llama3.2:3b"
 
             await router.classify("Hallo", ollama)
-            # Ohne Router-Adresse bleibt es beim uebergebenen Ollama-Client.
+            # Without a router address the passed-in Ollama client is kept.
             gdc.assert_not_called()
             # Model used should be agent_router_model
             call_kwargs = ollama.client.chat.call_args
@@ -1536,14 +1536,14 @@ class TestSetSemanticRouter:
         """When semantic router returns None, LLM classification path is attempted."""
         from services.agent_router import AgentRouter
 
-        # 🛑 ZWEI Rollen, und die Antwort ist NICHT `general`. Das ist der Kern
-        # dieser Fassung: `general` ist die RUECKFALLROLLE des Routers
-        # (agent_router.py:607-617, bei invalid_role/timeout/error). Die erste
-        # Fassung liess den Mock `{"role": "general"}` antworten und pruefte
-        # `role.name == "general"` — das gilt auch, wenn die Klassifikation
-        # SCHEITERT. Und sie scheiterte: ersetzt wurde `get_agent_client`, das
-        # der Router nie aufruft, waehrend `ollama` ein blankes MagicMock war.
-        # Der Test behauptete „LLM-Pfad versucht" und belegte den Fehlerpfad.
+        # 🛑 TWO roles, and the answer is NOT `general`. That is the core of
+        # this version: `general` is the router's FALLBACK role
+        # (agent_router.py:607-617, on invalid_role/timeout/error). The first
+        # version had the mock answer `{"role": "general"}` and checked
+        # `role.name == "general"` -- which also holds when the classification
+        # FAILS. And it did fail: what got patched was `get_agent_client`,
+        # which the router never calls, while `ollama` was a bare MagicMock.
+        # The test claimed "LLM path attempted" and evidenced the error path.
         config = {
             "roles": {
                 "general": {
@@ -1564,8 +1564,8 @@ class TestSetSemanticRouter:
 
         mock_response = MagicMock()
         mock_response.message.content = '{"role": "knowledge"}'
-        # Ohne konfigurierte Router-Adresse nimmt der Router `ollama.client` —
-        # dort muss der Mock haengen, sonst laeuft er ins Leere.
+        # With no router address configured the router takes `ollama.client`
+        # -- the mock has to hang there, or it runs into nothing.
         ollama = MagicMock()
         ollama.client = AsyncMock()
         ollama.client.chat.return_value = mock_response
@@ -1579,8 +1579,8 @@ class TestSetSemanticRouter:
             role = await router.classify("something", ollama)
             # Semantic router was called and returned None
             mock_sr.classify.assert_called_once_with("something")
-            # Und die LLM-Klassifikation lief WIRKLICH: `knowledge` kann nur aus
-            # ihrer Antwort kommen, der Rueckfall waere `general`.
+            # And the LLM classification REALLY ran: `knowledge` can only
+            # come from its answer, the fallback would be `general`.
             assert role.name == "knowledge"
 
 

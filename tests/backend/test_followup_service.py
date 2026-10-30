@@ -97,10 +97,10 @@ async def test_generate_no_think_kwarg_for_non_thinking_model():
 
 
 class TestJsonObjectOutput:
-    """Das Modell soll ein JSON-Array liefern. Am 2026-09-13 lieferte es auf xidra
-    ein OBJEKT — und der Blob wurde zu genau einem tippbaren Chip, dessen Beschriftung
-    rohes JSON war. Ein Chip ist anklickbar: er wäre als nächste Nutzernachricht
-    zurückgeschickt worden."""
+    """The model is supposed to deliver a JSON array. On 2026-09-13 it
+    delivered an OBJECT on xidra -- and the blob became exactly one tappable
+    chip whose label was raw JSON. A chip is clickable: it would have been sent
+    back as the next user message."""
 
     def _parse(self, raw, count=2):
         from services.followup_service import _parse_followups
@@ -114,8 +114,8 @@ class TestJsonObjectOutput:
         assert not any(c.startswith("{") for c in out)
 
     def test_wrapper_object_with_a_list(self):
-        """Die häufigste Fehlform: {"followups": [...]} — dann gilt die Liste,
-        und der Feldname darf NICHT als Chip auftauchen."""
+        """The most common wrong shape: {"followups": [...]} -- then the list
+        counts, and the field name must NOT turn up as a chip."""
         out = self._parse('{"followups": ["Frage A", "Frage B"]}')
         assert out == ["Frage A", "Frage B"]
         assert "followups" not in out
@@ -125,12 +125,12 @@ class TestJsonObjectOutput:
         assert out == ["Frage A", "Frage B"]
 
     def test_object_with_no_usable_strings_yields_nothing(self):
-        """Lieber keine Chips als unlesbare."""
+        """Better no chips than unreadable ones."""
         assert self._parse('{"a": 1, "b": {"c": 2}}') == []
 
     def test_unparseable_json_blob_is_dropped_not_shown(self):
-        """Kaputtes JSON faellt in den zeilenbasierten Notpfad — dort muss der
-        Blob-Schutz greifen, sonst wird er zur Chip-Beschriftung."""
+        """Broken JSON falls into the line-based emergency path -- the blob
+        guard has to take hold there, or it becomes a chip label."""
         assert self._parse('{"Frage A": "Frage B",,,}') == []
 
     def test_a_normal_array_still_works(self):

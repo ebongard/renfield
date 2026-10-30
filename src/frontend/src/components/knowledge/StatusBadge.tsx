@@ -126,7 +126,7 @@ export default function StatusBadge({ doc, filename }: StatusBadgeProps) {
     if (now - lastAnnouncedAtRef.current < LIVE_REGION_MIN_GAP_MS) return;
     lastAnnouncedAtRef.current = now;
     setAnnouncement(`${label}: ${sub}`);
-    // Absichtlich nur `sub` in den Abhaengigkeiten (Begruendung oben).
+    // Deliberately only `sub` in the dependencies (reasoning above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sub]);
 

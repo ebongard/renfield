@@ -49,14 +49,15 @@ def _empty_speaker_info() -> dict[str, Any]:
 
 
 def known_speaker_flags() -> tuple[bool, bool, bool]:
-    """Die zwei Schalter, die den Vergleichsmassstab bestimmen — als Dreitupel
-    `(gating, controlled, quality_active)`, weil der dritte aus den ersten zwei folgt.
+    """The two switches that set the comparison standard -- as a triple
+    `(gating, controlled, quality_active)`, because the third follows from the
+    first two.
 
-    🛑 Beides zusammen, nicht einzeln. `quality_active` ist `gating ODER
-    controlled`: die Dauerschranke gilt unter Phase-0-Gating UND unter der
-    kontrollierten Erkennung aus Phase 3. Wer nur `speaker_quality_gating_enabled`
-    prueft, rechnet im Haushalt (controlled an, gating aus) einen ANDEREN
-    Schwerpunkt als die Erkennung.
+    🛑 Both together, not separately. `quality_active` is `gating OR controlled`:
+    the duration bar applies under phase-0 gating AND under the controlled
+    recognition from phase 3. Check only `speaker_quality_gating_enabled` and in
+    the household (controlled on, gating off) you compute a DIFFERENT centroid
+    than the recognition does.
     """
     gating = settings.speaker_quality_gating_enabled
     controlled = settings.speaker_controlled_enrollment_enabled
@@ -69,26 +70,26 @@ def build_known_speaker_centroids(
     controlled: bool,
     quality_active: bool,
 ) -> tuple[list[tuple[int, str, np.ndarray]], list[Speaker]]:
-    """Die Referenzprofile, gegen die verglichen wird — EINE Fassung fuer alle.
+    """The reference profiles that are compared against -- ONE version for all.
 
-    🛑 WARUM DAS EINE FUNKTION IST
-    ------------------------------
-    Bis 2026-09-27 baute `GET /api/speakers/identify` seinen eigenen Schwerpunkt
-    (`routes/speakers.py:get_speaker_embeddings_averaged`) und wich vom lebenden
-    Pfad in DREI Punkten ab:
+    🛑 WHY THIS IS A SINGLE FUNCTION
+    --------------------------------
+    Until 2026-09-27 `GET /api/speakers/identify` built its own centroid
+    (`routes/speakers.py:get_speaker_embeddings_averaged`) and diverged from the
+    live path in THREE points:
 
-      * normalisiert nur unter `speaker_quality_gating_enabled`, der Resolver
-        auch unter `speaker_controlled_enrollment_enabled` — im Haushalt genau
-        der Fall, also unterschiedliche Schwerpunkte;
-      * nahm ALLE Sprecher, der Resolver unter `controlled` nur die
-        eingeschriebenen;
-      * mittelte ALLE Einbettungen, der Resolver nur die
-        `MAX_EMBEDDINGS_PER_SPEAKER` jüngsten.
+      * it normalized only under `speaker_quality_gating_enabled`, the resolver
+        also under `speaker_controlled_enrollment_enabled` -- exactly the case in
+        the household, so different centroids;
+      * it took ALL speakers, the resolver under `controlled` only the enrolled
+        ones;
+      * it averaged ALL embeddings, the resolver only the
+        `MAX_EMBEDDINGS_PER_SPEAKER` most recent ones.
 
-    Damit antwortete das Diagnose-Endpunkt aus einem anderen Modell als die
-    Erkennung — und zwar ausgerechnet das Werkzeug, mit dem man einer
-    Fehlerkennung nachgeht. Eine zweite Kopie derselben Rechnung hat kein
-    Gegenmittel ausser: es gibt keine zweite Kopie.
+    So the diagnostic endpoint answered from a different model than the
+    recognition -- and it was precisely the tool one uses to chase down a
+    misidentification. A second copy of the same computation has no remedy other
+    than: there is no second copy.
     """
     known: list[tuple[int, str, np.ndarray]] = []
     with_embeddings: list[Speaker] = []
@@ -122,31 +123,31 @@ def match_known_speaker(
     *,
     controlled: bool,
 ) -> tuple[int | None, float, float]:
-    """DIE Entscheidung — nicht nur die Profile. Eine Fassung fuer alle Pfade.
+    """THE decision -- not only the profiles. One version for all paths.
 
-    🛑 WARUM DAS HIER STEHT UND NICHT IM AUFRUFER
-    ---------------------------------------------
-    Am 2026-09-27 habe ich `build_known_speaker_centroids` herausgezogen, damit
-    Anmeldung, Diagnose und Erkennung gegen DIESELBEN Referenzprofile
-    vergleichen — und dann geschrieben, sie taeten das auch. Das war wahr und
-    genau deshalb verdeckend: geteilt waren die PROFILE, nicht die ENTSCHEIDUNG.
+    🛑 WHY THIS LIVES HERE AND NOT IN THE CALLER
+    --------------------------------------------
+    On 2026-09-27 `build_known_speaker_centroids` was pulled out so that login,
+    diagnostics and recognition compare against THE SAME reference profiles --
+    and it was then written down that they did. That was true and concealing for
+    exactly that reason: what was shared were the PROFILES, not the DECISION.
 
-    `SpeakerService.identify_speaker` ist reines Argmax mit einer Schwelle
-    (`speaker_recognition_threshold`, Standard 0,25). Der Resolver verlangt unter
-    `speaker_controlled_enrollment_enabled` zusaetzlich einen Abstand zum
-    Zweitplatzierten (`speaker_match_min_margin`, 0,1), weil Kosinuswerte nahe am
-    Rauschen nicht trennen — ohne die Marge ist eine Zuordnung bei zwei aehnlich
-    guten Profilen ein Muenzwurf.
+    `SpeakerService.identify_speaker` is plain argmax with a threshold
+    (`speaker_recognition_threshold`, default 0,25). Under
+    `speaker_controlled_enrollment_enabled` the resolver additionally demands a
+    distance to the runner-up (`speaker_match_min_margin`, 0,1), because cosine
+    values close to the noise do not separate -- without the margin an
+    assignment between two similarly good profiles is a coin toss.
 
-    Folge, solange nur der Bauer geteilt war: Audio, das 0,72 gegen ZWEI
-    Haushaltsmitglieder erreicht, wird von der Erkennung als Muenzwurf
-    abgelehnt — und haette sich an der Sprachanmeldung als das naechstliegende
-    Profil ANGEMELDET. Eines davon kann das Administratorkonto sein. Die
-    Halbierung war schlimmer als keine Teilung, weil sie nach Einheit aussah.
+    The consequence while only the builder was shared: audio that reaches 0,72
+    against TWO household members is rejected by the recognition as a coin toss
+    -- and would have LOGGED IN at the voice login as the closest profile. One of
+    them can be the administrator account. Sharing half was worse than sharing
+    nothing, because it looked like unity.
 
-    Rueckgabe: `(speaker_id | None, best_score, runner_up)`. Die beiden Werte
-    kommen mit, weil die kontrollierte Erkennung einen Fehlschlag in den
-    Pruefkorb legt und dafuer die Zahlen braucht. Ein ANMELDEpfad wirft sie weg.
+    Returns `(speaker_id | None, best_score, runner_up)`. The two values come
+    along because the controlled recognition puts a failure into the review
+    bucket and needs the numbers for it. A LOGIN path throws them away.
     """
     if not known_speakers:
         return None, 0.0, -1.0
@@ -164,9 +165,9 @@ def match_known_speaker(
 
     if best_score < settings.speaker_recognition_threshold:
         return None, best_score, runner_up
-    # Die Marge gilt unter der kontrollierten Erkennung — dort sind die Profile
-    # eingeschrieben und unveraenderlich, also ist ein Muenzwurf zwischen zwei
-    # von ihnen eine echte Verwechslungsgefahr.
+    # The margin applies under the controlled recognition -- there the profiles
+    # are enrolled and immutable, so a coin toss between two of them is a real
+    # risk of confusing one person for another.
     if controlled and (best_score - runner_up) < settings.speaker_match_min_margin:
         return None, best_score, runner_up
     return best_id, best_score, runner_up
@@ -200,8 +201,8 @@ async def resolve_speaker_from_embedding(
     if not settings.speaker_recognition_enabled:
         return _empty_speaker_info()
 
-    # Die Schalter kommen aus EINER Stelle, damit die Route nicht wieder
-    # abweichen kann (s. `known_speaker_flags`).
+    # The switches come from ONE place, so the route cannot diverge again
+    # (see `known_speaker_flags`).
     gating, controlled, quality_active = known_speaker_flags()
     too_short = (
         quality_active

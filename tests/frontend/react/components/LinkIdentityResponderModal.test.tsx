@@ -1,11 +1,11 @@
 /**
- * LinkIdentityResponderModal — Seite B des Personen-Handschlags (F-ID-2).
+ * LinkIdentityResponderModal -- side B of the person handshake (F-ID-2).
  *
- * 🛑 Dies ist der Dialog, der tatsächlich SCHREIBT, und damit der folgenreichere
- * der beiden: nach der Zustimmung beantwortet diese Instanz Anfragen der
- * anderen mit der vollen eigenen Reichweite. Darum prüft dieser Lauf nicht nur,
- * dass der Ablauf funktioniert, sondern auch, dass die Warnung VOR dem
- * Zustimmungsknopf steht und nicht erst danach.
+ * 🛑 This is the dialog that actually WRITES, and therefore the more
+ * consequential of the two: after the consent this instance answers the other
+ * one's questions with its own full reach. So this run checks not only that the
+ * flow works, but also that the warning stands BEFORE the consent button and
+ * not after it.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
@@ -45,20 +45,20 @@ describe('LinkIdentityResponderModal', () => {
     post.mockReset();
   });
 
-  it('zeigt nichts, solange er geschlossen ist', () => {
+  it('shows nothing while it is closed', () => {
     renderWithRouter(<LinkIdentityResponderModal isOpen={false} />);
     expect(screen.queryByRole('button', { name: /angebot einlesen/i })).not.toBeInTheDocument();
   });
 
-  it('🛑 die Warnung steht VOR dem Zustimmungsknopf', async () => {
+  it('🛑 the warning comes BEFORE the consent button', async () => {
     einlesen();
-    // Beide müssen gleichzeitig sichtbar sein: wer zustimmt, soll im selben
-    // Blick lesen können, was er damit öffnet.
+    // Both have to be visible at the same time: whoever consents should be
+    // able to read in the same glance what they are opening.
     expect(await screen.findByText(/vollen eigenen Reichweite/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /zustimmen und verknüpfen/i })).toBeInTheDocument();
   });
 
-  it('nimmt an und zeigt die Bestaetigung als QR-Rahmen', async () => {
+  it('accepts and shows the confirmation as a QR frame', async () => {
     einlesen();
     post.mockResolvedValueOnce({ data: { nonce: ANGEBOT.nonce, signature: 'r'.repeat(128) } });
 
@@ -69,17 +69,17 @@ describe('LinkIdentityResponderModal', () => {
     expect(await screen.findByRole('img', { name: /bestätigung/i })).toBeInTheDocument();
   });
 
-  it('🛑 ein abgelaufenes Angebot wird abgewiesen, OHNE zu senden', () => {
+  it('🛑 an expired offer is rejected WITHOUT sending', () => {
     const alt = Math.floor(Date.now() / 1000) - 10;
     einlesen({ ...ANGEBOT, issued_at: alt - 600, expires_at: alt });
 
     expect(screen.getByText(/abgelaufen/i)).toBeInTheDocument();
-    // Der einzige Fehlschlag, den die Person selbst beheben kann — darum hier
-    // und nicht als blanke 400 vom Server.
+    // The only failure the person can fix themselves -- hence here, and not
+    // as a bare 400 from the server.
     expect(post).not.toHaveBeenCalled();
   });
 
-  it('nennt ein fehlendes Pflichtfeld beim Namen', () => {
+  it('names a missing required field', () => {
     const { querier_ref: _weg, ...ohne } = ANGEBOT;
     einlesen(ohne);
 
@@ -87,7 +87,7 @@ describe('LinkIdentityResponderModal', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it('weist unlesbares JSON ab', () => {
+  it('rejects unreadable JSON', () => {
     renderWithRouter(<LinkIdentityResponderModal isOpen />);
     fireEvent.change(screen.getByLabelText(/angebot der anderen instanz/i), {
       target: { value: '{kein json' },

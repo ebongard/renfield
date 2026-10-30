@@ -1,21 +1,20 @@
-"""Eine Rolle muss den Föderationspeer sehen dürfen (Schicht 4, F2′).
+"""A role has to be allowed to see the federation peer (layer 4, F2').
 
-🛑 Der Anlass, am 2026-10-29 gemessen: der Föderationskanal war fertig gebaut,
-beide Instanzen gepaart, die Personenverknüpfung geschlossen (`querier_ref` auf
-beiden Seiten identisch) — und hatte **nie** einen Aufrufer.
-`federation_query_log` zählte auf beiden Instanzen 0 Zeilen, nicht seit einem
-Tag, sondern überhaupt.
+🛑 The occasion, measured on 2026-10-29: the federation channel was fully
+built, both instances paired, the person link closed (`querier_ref` identical
+on both sides) -- and had **never** had a caller. `federation_query_log`
+counted 0 rows on both instances, not since some day but at all.
 
-Ursache: `agent_roles.yaml` gibt je Rolle eine Positivliste
-(`documents: [paperless, email, scanner]`), `agent_tools.py` vergleicht
-**exakt**, und ein Peer-Server heißt `peer_<id>` — der Name entsteht beim
-Paaren und kann in einer Konfiguration, die vorher existiert, nicht stehen. Nur
-`general` (`mcp_servers = None`) sah ihn je; Dokumentfragen landen bei
-`documents`.
+Cause: `agent_roles.yaml` gives each role an allowlist
+(`documents: [paperless, email, scanner]`), `agent_tools.py` compares
+**exactly**, and a peer server is called `peer_<id>` -- the name comes into
+being at pairing time and cannot stand in a configuration that exists before
+it. Only `general` (`mcp_servers = None`) ever saw it; document questions land
+on `documents`.
 
-Dieselbe Klasse wie die Zwei-Schritt-Falle für `internal.*` in CLAUDE.md
-(„Registrierung UND Eintrag in die Rolle"), nur schärfer: der zweite Schritt war
-**unmöglich**.
+The same class as the two-step trap for `internal.*` in CLAUDE.md
+("registration AND an entry in the role"), only sharper: the second step was
+**impossible**.
 """
 from __future__ import annotations
 
@@ -30,11 +29,11 @@ pytestmark = pytest.mark.unit
 
 
 def _manager(*, mit_peer: bool = True) -> MagicMock:
-    """Ein Manager mit zwei echten Servern und optional einem Peer.
+    """A manager with two real servers and optionally a peer.
 
-    `is_federation_server` wird NICHT nachgebaut, sondern aus dem Transport
-    abgeleitet — sonst prüfte der Test seine eigene Attrappe statt die
-    Eigenschaft, auf die der Filter sich stützt.
+    `is_federation_server` is NOT reimplemented but derived from the transport
+    -- otherwise the test would check its own stand-in instead of the property
+    the filter rests on.
     """
     werkzeuge = []
     for server, name in (("paperless", "search_documents"), ("scanner", "scan_document")):
@@ -67,8 +66,8 @@ def _namen(server_filter, federation: bool, *, mit_peer: bool = True) -> set[str
     r = AgentToolRegistry(_init_only=True)
     r._register_mcp_tools(_manager(mit_peer=mit_peer),
                           server_filter=server_filter, federation=federation)
-    # 🛑 Nur die MCP-Namen: der Konstruktor registriert auch die
-    # `internal.*`-Werkzeuge, und die gehen diesen Filter nichts an.
+    # 🛑 Only the MCP names: the constructor also registers the `internal.*`
+    # tools, and those are no business of this filter.
     return {n for n in r._tools if n.startswith("mcp.")}
 
 
@@ -77,29 +76,29 @@ class TestTheFilter:
     def test_a_federation_role_sees_the_peer_although_the_allowlist_cannot_name_it(self):
         namen = _namen(["paperless", "scanner"], True)
         assert "mcp.peer_3.query_brain" in namen
-        # Und die gelisteten bleiben da — der Zweig erweitert, er ersetzt nicht.
+        # And the listed ones stay -- the branch widens, it does not replace.
         assert "mcp.paperless.search_documents" in namen
 
     def test_WITHOUT_the_flag_the_peer_stays_out(self):
-        """🛑 Negativkontrolle. Ohne sie prüfte der Test oben nur, dass
-        Werkzeuge überhaupt ankommen. Dies ist der Zustand von vor dem Fix —
-        und der Grund, warum der Kanal nie einen Aufrufer hatte."""
+        """🛑 Negative control. Without it the test above only checked that
+        tools arrive at all. This is the state from before the fix -- and the
+        reason the channel never had a caller."""
         namen = _namen(["paperless", "scanner"], False)
         assert "mcp.peer_3.query_brain" not in namen
         assert "mcp.paperless.search_documents" in namen
 
     def test_the_flag_admits_ONLY_federation_transport(self):
-        """🛑 Das Flag ist kein Generalschlüssel: ein nicht gelisteter Server
-        mit gewöhnlichem Transport bleibt draußen, auch mit `federation=True`.
-        Sonst wäre aus der Zulassung eines Kanals das Abschalten der
-        Positivliste geworden."""
+        """🛑 The flag is not a master key: a server that is not listed and
+        has an ordinary transport stays out, even with `federation=True`.
+        Otherwise admitting one channel would have become switching the
+        allowlist off."""
         namen = _namen(["paperless"], True)
         assert "mcp.peer_3.query_brain" in namen
         assert "mcp.scanner.scan_document" not in namen
 
     def test_a_role_without_an_allowlist_is_unchanged(self):
-        """`general` trägt `None` und sah den Peer schon immer — dieser Zweig
-        darf sich nicht verändert haben."""
+        """`general` carries `None` and always saw the peer -- this branch
+        must not have changed."""
         assert "mcp.peer_3.query_brain" in _namen(None, False)
 
     def test_no_peer_connected_is_not_an_error(self):
@@ -126,19 +125,19 @@ class TestTheRouter:
         return r
 
     def test_a_peer_intent_now_finds_a_role(self):
-        """🛑 Der VORBESTEHENDE Fehler, vom Architektur-Review gefunden.
+        """🛑 The PRE-EXISTING defect, found by the architecture review.
 
-        `role_for_intent` filterte mit `role.mcp_servers and server in …`.
-        Die Positivliste kann den Peer nicht nennen, und `general` trägt
-        `None` — falsy, also hier nie Kandidat. Für `mcp.peer_3.query_brain`
-        kam `None` zurück: die Korrektur „das war eine Föderationssache" lief
-        ins Leere. Wer nur den Werkzeugfilter repariert, repariert dies NICHT
-        mit — darum gehört es in denselben Durchgang.
+        `role_for_intent` filtered with `role.mcp_servers and server in ...`.
+        The allowlist cannot name the peer, and `general` carries `None` --
+        falsy, so never a candidate here. For `mcp.peer_3.query_brain` it
+        returned `None`: the correction "that was a federation matter" ran into
+        nothing. Fixing only the tool filter does NOT fix this along with it --
+        which is why it belongs in the same pass.
         """
         assert self._router().role_for_intent("mcp.peer_3.query_brain") == "documents"
 
     def test_a_role_without_the_flag_is_not_offered_for_a_peer_intent(self):
-        """Negativkontrolle zur Zuordnung: nicht einfach irgendeine Rolle."""
+        """Negative control on the mapping: not simply any role at all."""
         from services.agent_router import AgentRole
 
         r = self._router()
@@ -148,24 +147,24 @@ class TestTheRouter:
         assert r.role_for_intent("mcp.peer_3.query_brain") is None
 
     def test_an_ordinary_intent_is_unaffected(self):
-        """Negativkontrolle zum Zweig selbst: der neue Pfad greift nur, wenn
-        die gewöhnliche Suche leer bleibt UND es ein Peer-Intent ist."""
+        """Negative control on the branch itself: the new path only takes
+        hold when the ordinary lookup stays empty AND it is a peer intent."""
         r = self._router()
         assert r.role_for_intent("mcp.paperless.search_documents") == "documents"
         assert r.role_for_intent("mcp.homeassistant.turn_on") == "smart_home"
         assert r.role_for_intent("mcp.unbekannt.tool") is None
 
     def test_a_federation_role_stays_available_on_a_peer_alone(self):
-        """🛑 Die zweite übersehene Stelle. `connected_set` enthält den Peer
-        (`peer_mcp_registry` setzt `connected=True`, im eigenen Kommentar „a
-        lie — there's no MCP session", gesetzt genau dafür). Fallen die realen
-        Server aus, während der Peer steht, galt die Rolle fälschlich als nicht
-        verfügbar."""
+        """🛑 The second place that was missed. `connected_set` contains the
+        peer (`peer_mcp_registry` sets `connected=True`, in its own comment "a
+        lie -- there's no MCP session", set for exactly this). If the real
+        servers fail while the peer is still up, the role counted wrongly as
+        unavailable."""
         from services.agent_router import _filter_available_roles
 
         uebrig = _filter_available_roles(self._router().roles, ["peer_3"])
         assert "documents" in uebrig
-        # Negativkontrolle: eine Rolle ohne Flag und ohne ihre Server fällt weg.
+        # Negative control: a role without the flag and without its servers drops out.
         assert "smart_home" not in uebrig
-        # `general` bleibt immer.
+        # `general` always stays.
         assert "general" in uebrig

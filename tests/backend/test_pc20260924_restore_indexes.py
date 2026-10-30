@@ -1,31 +1,30 @@
-"""Real-Postgres tests für ``pc20260924_restore_idx`` — die Dimensionsfalle.
+"""Real-Postgres tests for ``pc20260924_restore_idx`` -- the dimension trap.
 
-Die Migration stellt neun (acht baubare) Indizes wieder her, die einer
-Neuinstallation verlorengehen, weil `create_all` + Alembic-Stempel die
-Migrationshistorie überspringt. Sie wurde gegen einen echten Schemaabzug der
-Produktion durchlaufen (326 → 334 → 326 → 334 Indizes).
+The migration restores nine (eight buildable) indexes that a fresh install
+loses, because `create_all` plus the Alembic stamp skips the migration history.
+It was exercised against a real schema dump of production
+(326 -> 334 -> 326 -> 334 indexes).
 
-Was dieser Test bewacht, ist etwas anderes und kleiner: die eine Zeile, an der
-das alte DDL scheiterte und die man beim Abschreiben ungeprüft übernimmt.
+What this test guards is something else and smaller: the one line the old DDL
+failed on, and the one you copy over unchecked.
 
-🛑 **pgvector legt die Dimension DIREKT im typmod ab.** Der `+4`-Versatz ist die
-varlena-Konvention (`varchar`), nicht die von `vector`. Eine `vector(2560)`-Spalte
-hat `atttypmod = 2560`, nicht 2564. `pc20260402_add_episodic_hnsw_index.py:60`
-rechnet `atttypmod - 4` und hätte einen Index auf `halfvec(2556)` gebaut —
-Abfragen casten auf `halfvec(2560)`, der Index wäre also NIE benutzbar gewesen:
-gebaut, bei jedem Schreibvorgang gepflegt, nutzlos. Ein solcher Fehler bricht
-nichts, er macht nur alles langsam und sieht dabei gesund aus.
+🛑 **pgvector stores the dimension DIRECTLY in the typmod.** The `+4` offset is
+the varlena convention (`varchar`), not `vector`'s. A `vector(2560)` column has
+`atttypmod = 2560`, not 2564. `pc20260402_add_episodic_hnsw_index.py:60`
+computes `atttypmod - 4` and would have built an index on `halfvec(2556)` --
+queries cast to `halfvec(2560)`, so the index would NEVER have been usable:
+built, maintained on every write, useless. A defect like that breaks nothing,
+it only makes everything slow while looking healthy.
 
-Zweitens: bei 2560 Dimensionen ist `vector_cosine_ops` gar nicht indizierbar
-(pgvector begrenzt den regulären Typ auf 2000). Die Operatorklasse MUSS sich
-deshalb nach der gemessenen Dimension richten, statt festgeschrieben zu sein.
+Second: at 2560 dimensions `vector_cosine_ops` is not indexable at all
+(pgvector caps the regular type at 2000). So the operator class MUST follow the
+measured dimension instead of being pinned.
 
-Gated auf ``RENFIELD_TEST_PG_URL`` wie die übrigen Postgres-Tests.
+Gated on ``RENFIELD_TEST_PG_URL`` like the other Postgres tests.
 """
 from __future__ import annotations
 
 import importlib.util
-import os
 import uuid
 from pathlib import Path
 
@@ -54,24 +53,25 @@ def _load_migration():
     return module
 
 
-def _pg_test_dsn() -> str | None:
-    return os.environ.get("RENFIELD_TEST_PG_URL")
-
-
 @pytest.fixture
-async def schema_conn():
-    """(AsyncConnection, schema) in einem Wegwerf-Schema, wie in #447."""
-    dsn = _pg_test_dsn()
-    if not dsn:
-        pytest.skip("RENFIELD_TEST_PG_URL nicht gesetzt")
+async def schema_conn(pg_url):
+    """(AsyncConnection, schema) in a throwaway schema, as in #447.
+
+    Takes the DSN from the shared `pg_url` fixture rather than reading the env
+    var. This file read it raw and handed it to `create_async_engine` -- with a
+    sync `postgresql://` that resolves to the psycopg2 dialect, which is not
+    installed in the backend image, and all six tests here ERROR with
+    `ModuleNotFoundError`. Measured on 2026-10-30.
+    """
+    dsn = pg_url
     schema = f"t_{uuid.uuid4().hex[:12]}"
     engine = create_async_engine(dsn, poolclass=NullPool)
     async with engine.connect() as conn:
         await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
-        # `public` MUSS im Pfad bleiben: die `vector`-Erweiterung liegt dort,
-        # und ohne sie ist der Typ im Wegwerf-Schema nicht auflösbar
-        # ("type \"vector\" does not exist"). Neue Objekte entstehen trotzdem
-        # im Wegwerf-Schema, weil es vorne steht.
+        # `public` MUST stay in the path: the `vector` extension lives there,
+        # and without it the type is not resolvable in the throwaway schema
+        # ("type \"vector\" does not exist"). New objects are still created in
+        # the throwaway schema, because it comes first.
         await conn.execute(text(f'SET search_path TO "{schema}", public'))
         await conn.commit()
         try:
@@ -84,7 +84,7 @@ async def schema_conn():
 
 
 class TestDimensionIsReadRaw:
-    """Die Dimension wird ROH gelesen — kein `- 4`."""
+    """The dimension is read RAW -- no `- 4`."""
 
     @pytest.mark.parametrize("dim", [768, 1536, 2560])
     async def test_column_dim_matches_the_declared_dimension(self, schema_conn, dim):
@@ -95,8 +95,8 @@ class TestDimensionIsReadRaw:
 
         got = await conn.run_sync(lambda sync_conn: mig._column_dim(sync_conn, "probe", "embedding"))
 
-        # Der eigentliche Punkt: EXAKT die deklarierte Zahl. `atttypmod - 4`
-        # ergäbe hier dim-4 und der Test wäre rot — so soll er sein.
+        # The actual point: EXACTLY the declared number. `atttypmod - 4`
+        # would give dim-4 here and the test would be red -- as it should.
         assert got == dim
 
     async def test_missing_table_and_column_yield_none(self, schema_conn):
@@ -105,8 +105,8 @@ class TestDimensionIsReadRaw:
         await conn.execute(text("CREATE TABLE ohne_vektor (id serial primary key)"))
         await conn.commit()
 
-        # Eine Instanz muss nicht jede Tabelle haben — das ist ein Auslassen,
-        # kein Fehler. Sonst bräche die Migration auf der schlankeren Instanz.
+        # An instance need not have every table -- that is a skip, not an
+        # error. Otherwise the migration would break on the leaner instance.
         no_table = await conn.run_sync(
             lambda c: mig._column_dim(c, "gibt_es_nicht", "embedding"))
         no_column = await conn.run_sync(
@@ -119,7 +119,7 @@ class TestDimensionIsReadRaw:
 
 
 class TestOperatorClassFollowsTheDimension:
-    """Über 2000 Dimensionen MUSS es halfvec sein, sonst ist es nicht baubar."""
+    """Above 2000 dimensions it MUST be halfvec, otherwise it is not buildable."""
 
     @pytest.mark.parametrize(
         "dim,erwartet_halfvec",
@@ -138,9 +138,9 @@ class TestOperatorClassFollowsTheDimension:
                 if got > 2000 else "(embedding vector_cosine_ops)")
         assert ("halfvec" in expr) is erwartet_halfvec
 
-        # Nicht nur die Zeichenkette prüfen: Postgres muss den Index wirklich
-        # bauen. Genau hier stirbt das alte DDL für `intent_corrections`, das
-        # `vector_cosine_ops` festschreibt — bei 2560 nicht indizierbar.
+        # Do not just check the string: Postgres has to actually build the
+        # index. This is exactly where the old DDL for `intent_corrections`
+        # dies, which pins `vector_cosine_ops` -- not indexable at 2560.
         await conn.execute(text(
             f"CREATE INDEX probe_hnsw ON probe USING hnsw {expr} "
             f"WITH (m = 16, ef_construction = 64)"
@@ -151,8 +151,8 @@ class TestOperatorClassFollowsTheDimension:
             "SELECT indexdef FROM pg_indexes WHERE indexname = 'probe_hnsw'"
         ))).scalar_one()
         if erwartet_halfvec:
-            # Die gebaute Dimension muss der Spalte entsprechen — sonst kann
-            # keine Abfrage den Index je benutzen.
+            # The built dimension has to match the column -- otherwise no
+            # query can ever use the index.
             assert f"halfvec({dim})" in definition
         else:
             assert "vector_cosine_ops" in definition

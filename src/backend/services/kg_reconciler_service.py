@@ -678,7 +678,7 @@ class KgReconcilerService:
         SECOND INVARIANT: only TYPE-COMPATIBLE pairs take part. Folding a place
         into an organization rewrites what the entity IS. Those are counted in
         ``skipped_cross_type`` and likewise stay individually decidable. Note
-        where this bites: the review UI builds its components on primary-type
+        where this matters: the review UI builds its components on primary-type
         EQUALITY, which is transitive, so a cluster it submits can never contain
         such a pair. This bar is for the ROUTE — ``entity_ids`` is caller-supplied
         and need not come from a cluster card at all.
@@ -940,19 +940,18 @@ class KgReconcilerService:
         )
         await self.db.commit()
         if not (res.merged or res.approved):
-            # Der neunte Ausgang, und der einzige, der bis eben STUMM war: alles
-            # geprueft, nichts getan. `merge_entities` gibt `None` auf einen
-            # bereits begrabenen Verlierer, eine fehlende Zeile und ein Paar
-            # ueber Eigentuemergrenzen zurueck, und die Zusage ueberspringt, was
-            # nicht mehr offen ist — beide zaehlen dann nicht hoch. Die Route
-            # lieferte dafuer eine 200 mit lauter Nullen, die Oberflaeche
-            # verwarf das Cluster stillschweigend optimistisch und sagte nichts.
-            # Meist ist es der Doppelklick: ein zweiter Aufruf, der dasselbe
-            # Cluster schon gefaltet vorfindet. Harmlos im Ergebnis, aber eine
-            # Aktion ohne Wirkung MUSS sichtbar sein — sonst ist genau die
-            # Klasse offen, gegen die die Codes gebaut sind. Nach dem `commit`
-            # gesetzt und trotzdem gefahrlos: `folded` ist leer, also hat
-            # `_repoint_after_fold` nichts angefasst und der Commit ist leer.
+            # The ninth exit, and the only one that was SILENT until now:
+            # everything checked, nothing done. `merge_entities` returns `None`
+            # for an already-buried loser, a missing row, and a pair across
+            # owner boundaries, and the confirmation skips whatever is no
+            # longer open -- neither increments a counter. The route answered
+            # that with a 200 full of zeros, and the UI optimistically dropped
+            # the cluster without a word. Usually it is the double click: a
+            # second call finding the same cluster already folded. Harmless in
+            # outcome, but an action without effect MUST be visible --
+            # otherwise exactly the class these codes exist for stays open. Set
+            # after the `commit` and still safe: `folded` is empty, so
+            # `_repoint_after_fold` touched nothing and the commit is empty.
             res.refusal_code = "nothing_folded"
             res.notes.append("nothing left to fold in this cluster")
         logger.info(

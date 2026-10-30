@@ -146,9 +146,9 @@ export interface User {
   // route until the password is changed, so the frontend must route the user
   // to the mandatory change-password screen (login audit).
   must_change_password?: boolean;
-  // Die Stimme ist für dieses Konto zweiter Anmeldefaktor. Aus `/auth/me`, damit
-  // die Person ihren EIGENEN Zustand sehen kann — vorher stand er nur in der
-  // Verwaltungsliste, die ihr verschlossen ist.
+  // For this account the voice is a second login factor. Served from
+  // `/auth/me` so the person can see their OWN state -- before that it was
+  // only in the user administration list, which is closed to them.
   voice_second_factor_enabled?: boolean;
 }
 
@@ -167,23 +167,23 @@ export interface LoginRequest {
 }
 
 export interface LoginResponse {
-  // 🛑 Optional, seit die Stimme ein ZUSATZfaktor ist: für ein Konto mit
-  // `voice_second_factor_enabled` gibt `/auth/login` bewusst KEINE Token,
-  // sondern `second_factor` + `second_factor_ticket`. Wer hier `string`
-  // annimmt, ruft `setTokens(undefined, undefined)` und hält sich für
-  // angemeldet. Siehe `.claude/rules/auth.md`.
+  // 🛑 Optional ever since the voice became an ADDITIONAL factor: for an
+  // account with `voice_second_factor_enabled`, `/auth/login` deliberately
+  // returns NO tokens but `second_factor` + `second_factor_ticket`. Assume
+  // `string` here and you call `setTokens(undefined, undefined)` and believe
+  // you are signed in. See `.claude/rules/auth.md`.
   access_token?: string | null;
   refresh_token?: string | null;
   token_type: 'bearer';
   user: User;
-  /** Gesetzt, wenn die Anmeldung noch einen zweiten Faktor braucht. Heute nur `'voice'`. */
+  /** Set when the login still needs a second factor. Today only `'voice'`. */
   second_factor?: 'voice' | null;
-  /** Einmalticket für den zweiten Faktor. Kurzlebig, adressgebunden. */
+  /** One-time ticket for the second factor. Short-lived, address-bound. */
   second_factor_ticket?: string | null;
   must_change_password?: boolean;
 }
 
-/** Fehler, den `login()` wirft, wenn noch ein zweiter Faktor fehlt. */
+/** The error `login()` throws when a second factor is still missing. */
 export class SecondFactorRequired extends Error {
   constructor(
     public readonly factor: 'voice',

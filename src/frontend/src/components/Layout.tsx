@@ -96,12 +96,12 @@ const mainNavigationConfig: NavItemConfig[] = [
   { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare, feature: 'tasks' },
   { nameKey: 'nav.connections', href: '/connections', icon: Plug },
   { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'], feature: 'cameras' },
-  // 🛑 GEHÖRT NICHT UNTER „Admin". Der Eintrag stand dort — ohne `permission`,
-  // also für jeden erreichbar, aber in einer standardmässig ZUGEKLAPPTEN
-  // Schublade namens „Admin". Die persönlichste Einstellung der Anwendung, die
-  // Einwilligung nach Art. 9 DSGVO, lag damit ausgerechnet für die Person, für
-  // die sie gebaut wurde, am unwahrscheinlichsten Ort. Erreichbarkeit und
-  // Auffindbarkeit sind nicht dasselbe.
+  // 🛑 DOES NOT BELONG UNDER "Admin". The entry used to sit there -- without a
+  // `permission`, so reachable by everyone, but inside a drawer named "Admin"
+  // that is COLLAPSED by default. The most personal setting the application
+  // has, the consent under Art. 9 GDPR, thereby sat in the least likely place
+  // for exactly the person it was built for. Reachable and findable are not
+  // the same thing.
   { nameKey: 'nav.account', href: '/settings/account', icon: UserCircle },
 ];
 
@@ -306,7 +306,7 @@ export default function Layout({ children }: LayoutProps) {
     setSidebarOpen(false);
   };
 
-  // Check ob aktuelle Route im Admin-Bereich ist
+  // Is the current route inside the admin area?
   const isAdminRoute = visibleAdminNav.some(item => item.href === location.pathname);
 
   useEffect(() => {
@@ -339,14 +339,14 @@ export default function Layout({ children }: LayoutProps) {
     };
   }, [sidebarOpen]);
 
-  // Focus-Management: Focus auf erstes Element wenn Sidebar oeffnet
+  // Focus management: focus the first element when the sidebar opens
   useEffect(() => {
     if (sidebarOpen && firstFocusableRef.current) {
       firstFocusableRef.current.focus();
     }
   }, [sidebarOpen]);
 
-  // Body scroll lock wenn Sidebar offen
+  // Lock body scrolling while the sidebar is open
   useEffect(() => {
     if (sidebarOpen) {
       document.body.style.overflow = 'hidden';

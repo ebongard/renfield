@@ -72,7 +72,16 @@ def _significant_tokens(query: str) -> list[str]:
     to allow punctuation, switch to ``to_tsquery`` with explicit
     ``|`` operators and bound-per-token parameters.
     """
-    raw = re.findall(r"[A-Za-zÄÖÜäöüß0-9]{2,}", query or "")
+    # Umlauts as escape sequences, not literal: no umlauts in source, and
+    # this class MUST still match them -- it matches user data.
+    # AE OE UE ae oe ue ss, in that order.
+    # If you touch it: `tests/backend/test_lexical_tokens_umlauts.py` pins
+    # down what has to get through. On 2026-10-29 a blanket search-and-
+    # replace transliterated this class and thereby excluded exactly the
+    # characters it exists for.
+    raw = re.findall(
+        "[A-Za-z\u00c4\u00d6\u00dc\u00e4\u00f6\u00fc\u00df0-9]{2,}",
+        query or "")
     out = [t for t in raw if len(t) >= 3 and t.lower() not in _STOP_TOKENS]
     return out
 
@@ -133,14 +142,14 @@ class LexicalRetrieval:
         can consume the output directly.
 
         Lexical retrieval has no ``auth_enabled`` bypass — it always circle-filters
-        by ``asker_id``. Ein foederierter Aufrufer uebergibt eine ``PeerScope``
-        als ``peer``; dann entfallen Eigentuemer- und Freigabezweig, und die
-        Stufe kommt aus der Paarung.
+        by ``asker_id``. A federated caller passes a ``PeerScope`` as ``peer``;
+        the owner and grant branches then drop out and the tier comes from the
+        pairing.
 
-        🛑 Hier stand ``enforce_circles=True``, und der LOKALE Suchpfad
-        (`knowledge.py` → `document_search`) reichte dafuer
-        ``settings.auth_enabled`` durch — eine angemeldete Person bekam also die
-        peer-bezogene Form und verlor ihre eigenen nicht-oeffentlichen Treffer.
+        🛑 This used to default to ``enforce_circles=True``, and the LOCAL search
+        path (`knowledge.py` -> `document_search`) passed
+        ``settings.auth_enabled`` for it -- so a signed-in person got the
+        peer-scoped form and lost their own non-public hits.
 
         Skips silently when the query has no significant tokens, when
         the asker isn't identified (caller will scope to the right
@@ -196,15 +205,14 @@ class LexicalRetrieval:
         try:
             rows = (await self.db.execute(sql, params)).fetchall()
         except Exception:
-            # 🛑 NICHT hier zu `[]` degradieren. Die Faecherung in
-            # `PolymorphicAtomStore.query` faengt die Ausnahme ohnehin
-            # (`gather(return_exceptions=True)`) und macht `[]` daraus — das
-            # Ergebnis ist also dasselbe. Der Unterschied: dort wird der
-            # Ausfall GEZAEHLT und protokolliert, hier verschwand er als
-            # „nichts gefunden". Am 2026-10-29 liess sich deshalb nicht
-            # feststellen, auf wie vielen Quellen eine Antwort beruhte.
-            # Diese Methode hat keinen Aufrufer ausserhalb der Faecherung
-            # (nachgemessen); der Weitergriff ist daher ohne Nebenwirkung.
+            # 🛑 Do NOT degrade to `[]` here. The fan-out in
+            # `PolymorphicAtomStore.query` catches the exception anyway
+            # (`gather(return_exceptions=True)`) and turns it into `[]`, so the
+            # outcome is identical. The difference: there the failure is
+            # COUNTED and logged, here it vanished as "found nothing". That is
+            # why on 2026-10-29 there was no way to tell how many sources an
+            # answer actually rested on. This method has no caller outside the
+            # fan-out (measured), so re-raising has no side effect.
             raise
 
         out: list[dict[str, Any]] = []
@@ -356,15 +364,14 @@ class LexicalRetrieval:
         try:
             rows = (await self.db.execute(sql, params)).fetchall()
         except Exception:
-            # 🛑 NICHT hier zu `[]` degradieren. Die Faecherung in
-            # `PolymorphicAtomStore.query` faengt die Ausnahme ohnehin
-            # (`gather(return_exceptions=True)`) und macht `[]` daraus — das
-            # Ergebnis ist also dasselbe. Der Unterschied: dort wird der
-            # Ausfall GEZAEHLT und protokolliert, hier verschwand er als
-            # „nichts gefunden". Am 2026-10-29 liess sich deshalb nicht
-            # feststellen, auf wie vielen Quellen eine Antwort beruhte.
-            # Diese Methode hat keinen Aufrufer ausserhalb der Faecherung
-            # (nachgemessen); der Weitergriff ist daher ohne Nebenwirkung.
+            # 🛑 Do NOT degrade to `[]` here. The fan-out in
+            # `PolymorphicAtomStore.query` catches the exception anyway
+            # (`gather(return_exceptions=True)`) and turns it into `[]`, so the
+            # outcome is identical. The difference: there the failure is
+            # COUNTED and logged, here it vanished as "found nothing". That is
+            # why on 2026-10-29 there was no way to tell how many sources an
+            # answer actually rested on. This method has no caller outside the
+            # fan-out (measured), so re-raising has no side effect.
             raise
 
         return [

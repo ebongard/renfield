@@ -8,8 +8,8 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, Re
 import apiClient, { PASSWORD_CHANGE_REQUIRED_EVENT } from '../utils/axios';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '../utils/authTokens';
 import type { User, LoginResponse } from '../types/api';
-// Wert-Import, nicht `import type`: `SecondFactorRequired` ist eine Klasse,
-// die zur Laufzeit geworfen wird.
+// Value import, not `import type`: `SecondFactorRequired` is a class that is
+// thrown at runtime.
 import { SecondFactorRequired } from '../types/api';
 
 // Auth user with permissions
@@ -178,11 +178,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
-    // 🛑 NICHT blind Token setzen. Für ein Konto mit `voice_second_factor_enabled`
-    // gibt `/auth/login` absichtlich keine Token, sondern ein Ticket für
-    // `POST /api/auth/voice`. Ohne diese Verzweigung liefe hier
-    // `setTokens(undefined, undefined)` — die Oberfläche hielte sich für
-    // angemeldet und jede Folgeanfrage käme unauthentifiziert zurück.
+    // 🛑 Do NOT set tokens blindly. For an account with
+    // `voice_second_factor_enabled`
+    // `/auth/login` deliberately returns no tokens but a ticket for
+    // `POST /api/auth/voice`. Without this branch `setTokens(undefined,
+    // undefined)` would run here -- the UI would believe it is signed in and
+    // every follow-up request would come back unauthenticated.
     if (response.data?.second_factor) {
       throw new SecondFactorRequired(
         response.data.second_factor,

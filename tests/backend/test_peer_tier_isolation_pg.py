@@ -1,22 +1,21 @@
-"""F-ID-3 gegen ECHTES Postgres — zwei Peers, zwei Stufen, keine Verwechslung.
+"""F-ID-3 against REAL Postgres -- two peers, two tiers, no mix-up.
 
-Das Abnahmekriterium aus BL-0135, wörtlich:
+The acceptance criterion from BL-0135, verbatim:
 
-> zwei Peers unter EINEM Eigentümer, beide `remote_user_id=1`, verschiedene
-> Stufen → jeder bekommt seine eigene, kein `MultipleResultsFound`, keine
-> fremde Gewährung.
+> two peers under ONE owner, both `remote_user_id=1`, different tiers -> each
+> gets its own, no `MultipleResultsFound`, no foreign grant.
 
-🛑 Warum das gegen echtes Postgres laufen MUSS und nicht gegen sqlite:
+🛑 Why this MUST run against real Postgres and not against sqlite:
 
-1. Der Fehler, der F-ID-3 ausgelöst hat, war ein **Fremdschlüsselbruch**
-   (`circle_memberships.member_user_id` → `users.id`). sqlite erzwingt
-   Fremdschlüssel nicht; derselbe Fall wäre dort grün durchgelaufen, und zwar
-   jahrelang — er ist es auch.
-2. Die Zwei-Peer-Kollision war **latent**: sie braucht zwei echte Zeilen unter
-   einem Eigentümer. Ein Formtest auf der SQL-Zeichenkette kann sie nicht
-   zeigen, nur ein Lauf gegen Daten.
+1. The defect that set off F-ID-3 was a **foreign-key break**
+   (`circle_memberships.member_user_id` -> `users.id`). sqlite does not
+   enforce foreign keys; the same case would have run green there, for years --
+   and it did.
+2. The two-peer collision was **latent**: it needs two real rows under one
+   owner. A shape test on the SQL string cannot show it, only a run against
+   data.
 
-Gilt nur mit `RENFIELD_TEST_PG_URL` (sonst übersprungen).
+Applies only with `RENFIELD_TEST_PG_URL` (skipped otherwise).
 """
 from __future__ import annotations
 
@@ -32,11 +31,10 @@ pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 @pytest.fixture
 async def zwei_peers(pg_db_session: AsyncSession) -> dict:
-    """EIN Eigentümer, ZWEI Peers — beide mit `remote_user_id = 1`.
+    """ONE owner, TWO peers -- both with `remote_user_id = 1`.
 
-    Genau die Lage, in der die alte Fassung scheiterte: beide Gegenstellen
-    numerieren ihre Nutzer ab 1, also trafen beide dieselbe
-    `circle_memberships`-Zeile.
+    Exactly the situation the old version failed in: both far sides number
+    their users from 1, so both hit the same `circle_memberships` row.
     """
     role = Role(name="fid3-role", description="t", permissions=[])
     pg_db_session.add(role)
@@ -53,7 +51,7 @@ async def zwei_peers(pg_db_session: AsyncSession) -> dict:
     )
     fern = PeerUser(
         circle_owner_id=eigner.id, remote_pubkey="bb" * 32,
-        remote_display_name="ferner Peer", remote_user_id=1,   # DIESELBE Zahl
+        remote_display_name="ferner Peer", remote_user_id=1,   # the SAME number
         granted_tier=4, transport_config={},
     )
     pg_db_session.add_all([nah, fern])
@@ -62,10 +60,10 @@ async def zwei_peers(pg_db_session: AsyncSession) -> dict:
 
 
 async def _sichtbar(db: AsyncSession, peer: PeerUser, stufen: list[int], eigner: int) -> set[int]:
-    """Welche der gegebenen Stufen erreicht dieser Peer?
+    """Which of the given tiers does this peer reach?
 
-    Fragt den ECHTEN Filter gegen eine kleine Wertetabelle, statt eine
-    Hilfstabelle anzulegen — es geht um die Klausel, nicht um `kg_entities`.
+    Queries the REAL filter against a small VALUES table instead of creating a
+    helper table -- what matters is the clause, not `kg_entities`.
     """
     clause, params = kg_entities_circles_filter(
         0, alias="e", peer=PeerScope(owner_id=peer.circle_owner_id, tier=peer.granted_tier),
@@ -77,51 +75,51 @@ async def _sichtbar(db: AsyncSession, peer: PeerUser, stufen: list[int], eigner:
 
 
 async def test_two_peers_one_owner_keep_their_OWN_tier(pg_db_session, zwei_peers):
-    """🛑 Das Abnahmekriterium. Vorher trafen beide dieselbe Mitgliedschaft."""
+    """🛑 The acceptance criterion. Before this both hit the same membership."""
     eigner = zwei_peers["eigner"]
     stufen = [0, 1, 2, 3, 4]
 
     nah = await _sichtbar(pg_db_session, zwei_peers["nah"], stufen, eigner)
     fern = await _sichtbar(pg_db_session, zwei_peers["fern"], stufen, eigner)
 
-    # Stufe 2 erreicht 2,3,4 — die Leiter laeuft gegen die Anschauung.
+    # Tier 2 reaches 2,3,4 -- the ladder runs against intuition.
     assert nah == {2, 3, 4}, nah
-    # Stufe 4 erreicht nur Oeffentliches.
+    # Tier 4 reaches only public content.
     assert fern == {4}, fern
-    # Und das ist der Kern: die beiden sehen NICHT dasselbe, obwohl ihre
-    # `remote_user_id` identisch ist.
+    # And this is the core: the two do NOT see the same thing, although
+    # their `remote_user_id` is identical.
     assert nah != fern
 
 
 async def test_a_peer_sees_NOTHING_of_another_owner(pg_db_session, zwei_peers):
-    """🛑 Die Eigentuemer-Bindung. Ohne sie saehe der Peer seine Stufe bei
-    JEDEM Eigentuemer der Instanz — aus der Reparatur wuerde ein Leck."""
+    """🛑 The owner binding. Without it the peer would see its tier at EVERY
+    owner on the instance -- the repair would become a leak."""
     fremd = await _sichtbar(
         pg_db_session, zwei_peers["nah"], [0, 1, 2, 3], zwei_peers["fremder"])
     assert fremd == set(), fremd
 
-    # Negativkontrolle: beim EIGENEN Eigentuemer sieht derselbe Peer sehr wohl
-    # etwas — die leere Menge oben kommt also von der Bindung, nicht davon,
-    # dass die Abfrage ueberhaupt nichts findet.
+    # Negative control: at its OWN owner the same peer does see something --
+    # so the empty set above comes from the binding, not from the query
+    # finding nothing at all.
     eigen = await _sichtbar(
         pg_db_session, zwei_peers["nah"], [0, 1, 2, 3], zwei_peers["eigner"])
     assert eigen == {2, 3}, eigen
 
 
 async def test_public_stays_reachable_for_any_owner(pg_db_session, zwei_peers):
-    """Oeffentliches ist oeffentlich — auch bei einem fremden Eigentuemer.
-    Das ist der zweite Zweig der Klausel und muss erhalten bleiben."""
+    """Public is public -- at a foreign owner too. That is the second branch
+    of the clause and has to be preserved."""
     fremd = await _sichtbar(
         pg_db_session, zwei_peers["nah"], [3, 4], zwei_peers["fremder"])
     assert fremd == {4}, fremd
 
 
 async def test_pairing_writes_NO_circle_membership_anymore(pg_db_session, zwei_peers):
-    """🛑 Die Ursache, an der Datenbank gemessen.
+    """🛑 The cause, measured against the database.
 
-    Bis 2026-10-27 schrieb jede Paarung eine `circle_memberships`-Zeile mit der
-    ENTFERNTEN Nutzerkennung. Dass hier keine steht, ist kein Nebenbefund — es
-    ist der ganze Fix.
+    Until 2026-10-27 every pairing wrote a `circle_memberships` row with the
+    REMOTE user id. That none stands here is not a side finding -- it is the
+    whole fix.
     """
     n = (await pg_db_session.execute(text(
         "SELECT count(*) FROM circle_memberships WHERE circle_owner_id = :o"
@@ -130,8 +128,9 @@ async def test_pairing_writes_NO_circle_membership_anymore(pg_db_session, zwei_p
 
 
 async def test_the_tier_survives_a_round_trip_through_the_database(pg_db_session, zwei_peers):
-    """Die Spalte ist `NOT NULL` mit Vorgabe 4. Eine neu angelegte Paarung ohne
-    ausdrueckliche Stufe bekommt die ENGSTE — fail-closed, nicht grosszuegig."""
+    """The column is `NOT NULL` with a default of 4. A newly created pairing
+    without an explicit tier gets the NARROWEST -- fail-closed, not
+    generous."""
     ohne = PeerUser(
         circle_owner_id=zwei_peers["eigner"], remote_pubkey="cc" * 32,
         remote_display_name="ohne Angabe", remote_user_id=5, transport_config={},

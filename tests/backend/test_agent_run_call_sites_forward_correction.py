@@ -1,20 +1,19 @@
-"""Jeder Einstieg in den Agenten muss `corrected_intent` weiterreichen.
+"""Every entry point into the agent has to forward `corrected_intent`.
 
-🛑 Der reparierte Fehler WAR ein weggelassener Parameter eine Schicht höher:
-„Korrigieren & neu beantworten" schickte den Werkzeugnamen, der `chat_handler`
-leitete daraus nur die Rolle ab und warf den Rest weg — und die Rolle war in
-jedem gemeldeten Fehlgriff schon die richtige. Die Korrektur blieb wirkungslos,
-und zwar still.
+🛑 The defect that was fixed WAS a parameter left out one layer up: "correct &
+re-answer" sent the tool name, the `chat_handler` derived only the role from it
+and threw the rest away -- and in every misfire that was reported the role was
+already the right one. So the correction had no effect, and it had none
+silently.
 
-Gegen eine WIEDERHOLUNG schützte zunächst nichts. Im Review zu #1414 per
-Mutationstest belegt: das Entfernen von `corrected_intent=` an der
-Aufrufstelle im `chat_handler`, oder an einer der beiden Weiterleitungen in
-`agent_service`, ließ ALLE Tests grün. Zwei weitere Aufrufstellen
-(`orchestrator.py`, `routes/chat.py`) hatten den Parameter von Anfang an nicht
-und fielen niemandem auf.
+Nothing protected against a REPEAT at first. Evidenced by a mutation test in
+the review of #1414: removing `corrected_intent=` at the call site in the
+`chat_handler`, or at either of the two forwardings in `agent_service`, left
+ALL tests green. Two further call sites (`orchestrator.py`, `routes/chat.py`)
+had never had the parameter and nobody had noticed.
 
-Das ist die Klasse, nicht die Instanz: ein Strukturtest über die Aufrufstellen
-statt eines Tests je Stelle. Verwandte Vorbilder im Projekt:
+This is the class, not the instance: one structural test over the call sites
+instead of one test per site. Related precedents in this project:
 `test_ha_glue_boundary.py`, `test_loguru_placeholders.py`.
 """
 import ast
@@ -26,20 +25,21 @@ pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
 WURZEL = Path(__file__).resolve().parents[2] / "src" / "backend"
 
-#: Die Dateien, die den Agenten starten. Wächst die Liste, muss die neue Stelle
-#: den Parameter tragen — oder hier mit Begründung ausgenommen werden.
-#: 🛑 Keine Ausnahmen eintragen, ohne den Grund daneben zu schreiben.
+#: The files that start the agent. If the list grows, the new call site has to
+#: carry the parameter -- or be excepted here with a reason.
+#: 🛑 Do not enter an exception without writing the reason next to it.
 _AUSNAHMEN: dict[str, str] = {}
 
 
 def _aufrufstellen() -> list[tuple[str, int, set[str]]]:
-    """`(relativer Pfad, Zeile, Satz der Schlüsselwortnamen)` je Einstieg.
+    """`(relative path, line, set of keyword names)` per entry point.
 
-    Gesucht werden `agent.run(...)` UND `orchestrator.run_orchestrated(...)`,
-    jeweils als Attributaufruf — nicht `run(` als freie Funktion und nicht
-    `asyncio.run`/`loop.run`. Der Orchestrator gehört dazu, weil er seine
-    Argumente per `**agent_kwargs` an `agent.run` weitergibt: wer ihn füllt,
-    entscheidet, ob die Korrektur dort ankommt.
+    What is searched for is `agent.run(...)` AND
+    `orchestrator.run_orchestrated(...)`, each as an attribute call -- not
+    `run(` as a free function and not `asyncio.run`/`loop.run`. The
+    orchestrator belongs in it because it passes its arguments on to
+    `agent.run` via `**agent_kwargs`: whoever fills it decides whether the
+    correction arrives there.
     """
     treffer = []
     for datei in sorted(WURZEL.rglob("*.py")):
@@ -55,17 +55,18 @@ def _aufrufstellen() -> list[tuple[str, int, set[str]]]:
             f = knoten.func
             if not isinstance(f, ast.Attribute):
                 continue
-            # 🛑 `run_orchestrated` gehoert MIT dazu. Die erste Fassung dieses
-            # Tests nahm nur `.run`, und damit war die Stelle unbewacht, die
-            # `agent_kwargs` FUELLT (`chat_handler` -> `run_orchestrated` ->
-            # `agent.run(**agent_kwargs)`) — genau das Loch, das der Review zu
-            # #1414 gefunden hatte. Mein eigener Mutationsversuch loeschte
-            # zufaellig diese Zeile, der Test blieb gruen, und erst das
-            # Nachzaehlen der Vorkommnisse zeigte warum.
+            # 🛑 `run_orchestrated` belongs in it TOO. The first version of
+            # this test took only `.run`, which left unguarded exactly the site
+            # that FILLS `agent_kwargs` (`chat_handler` -> `run_orchestrated`
+            # -> `agent.run(**agent_kwargs)`) -- precisely the hole the review
+            # of #1414 had found. My own mutation attempt happened to delete
+            # this line, the test stayed green, and only counting the
+            # occurrences showed why.
             if f.attr not in ("run", "run_orchestrated"):
                 continue
-            # Der Empfänger muss „agent" oder „orchestrator" heissen, sonst ist
-            # es ein fremdes `run` (asyncio.run, loop.run, …).
+            # The receiver has to be named "agent" or "orchestrator",
+            # otherwise it is somebody else's `run` (asyncio.run, loop.run,
+            # ...).
             empfaenger = f.value
             name = (empfaenger.id if isinstance(empfaenger, ast.Name)
                     else empfaenger.attr if isinstance(empfaenger, ast.Attribute)
@@ -82,11 +83,11 @@ def _aufrufstellen() -> list[tuple[str, int, set[str]]]:
 
 
 def test_the_call_sites_are_found_at_all():
-    """🛑 Erst beweisen, dass die Suche greift.
+    """🛑 First prove that the search takes hold.
 
-    Ein Strukturtest, der nichts findet, ist immer grün und sagt nichts. Genau
-    diese Negativkontrolle fehlte den Tests, die das Weglassen des Parameters
-    nicht bemerkten.
+    A structural test that finds nothing is always green and says nothing.
+    Exactly this negative control was missing from the tests that failed to
+    notice the parameter being left out.
     """
     stellen = _aufrufstellen()
     assert len(stellen) >= 4, (
@@ -95,10 +96,10 @@ def test_the_call_sites_are_found_at_all():
     dateien = {d for d, _, _ in stellen}
     assert any("chat_handler" in d for d in dateien), (
         f"die Stelle im chat_handler fehlt: {sorted(dateien)}")
-    # 🛑 Und die Orchestrator-Stelle, an der die Korrektur zuerst fehlte.
+    # 🛑 And the orchestrator site, where the correction was missing first.
     assert any("orchestrator" in d for d in dateien), (
         f"die Orchestrator-Stelle fehlt: {sorted(dateien)}")
-    # Genau zwei Stellen im chat_handler: `agent.run` und `run_orchestrated`.
+    # Exactly two sites in the chat_handler: `agent.run` and `run_orchestrated`.
     im_handler = [z for d, z, _ in stellen if "chat_handler" in d]
     assert len(im_handler) == 2, (
         f"erwartet: agent.run UND run_orchestrated im chat_handler, "
@@ -106,7 +107,7 @@ def test_the_call_sites_are_found_at_all():
 
 
 def test_every_agent_entry_point_forwards_the_correction():
-    """Entweder ausdrücklich `corrected_intent=`, oder `**kwargs`."""
+    """Either an explicit `corrected_intent=`, or `**kwargs`."""
     fehlend = [
         f"{datei}:{zeile}"
         for datei, zeile, schluessel in _aufrufstellen()

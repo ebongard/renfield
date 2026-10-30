@@ -107,13 +107,12 @@ async def _fact_candidates(
         from services.document_fact_retrieval import DocumentFactRetrieval
 
         hits = await DocumentFactRetrieval(db).search(
-            # 🛑 KEIN `peer`: das hier ist der LOKALE Suchpfad. Bis 2026-10-27
-            # wurde `enforce_circles` (= `settings.auth_enabled`) als
-            # `peer_scoped` weitergereicht, wodurch eine angemeldete Person die
-            # peer-bezogene Form bekam — ohne Eigentuemerzweig und ohne
-            # Freigaben. Sie verlor damit ihre EIGENEN nicht-oeffentlichen
-            # Treffer in der Vorauswahl. Zwei Bedeutungen in einem Schalter;
-            # `enforce_circles` heisst hier nur noch „das Tor anwenden".
+            # 🛑 NO `peer`: this is the LOCAL search path. Until 2026-10-27
+            # `enforce_circles` (= `settings.auth_enabled`) was passed through as
+            # `peer_scoped`, which gave a signed-in person the peer-scoped form
+            # -- without the owner branch and without grants. They thereby lost
+            # their OWN non-public hits in the preselection. Two meanings in one
+            # switch; `enforce_circles` here now only means "apply the gate".
             q, asker_id=asker_id, top_k=_CANDIDATES
         )
         return _dedup_doc_ids(hits)

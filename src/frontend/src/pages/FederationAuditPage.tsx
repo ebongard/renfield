@@ -27,13 +27,12 @@ interface StatusIconProps {
 const PAGE_SIZE = 50;
 
 /**
- * Hilfetext zur Identitätsgrundlage einer beantworteten Anfrage.
+ * Help text for the identity basis of an answered request.
  *
- * 🛑 Der dritte Zweig ist der Grund, dass es diese Funktion gibt. Die Spalte
- * ist serverseitig ein freier Text; fiele ein unbekannter Wert in den
- * `peer_tier`-Zweig, behauptete die Ansicht die ENGERE Reichweite für einen
- * Zugriff, über den sie nichts weiß. Dann lieber den rohen Wert zeigen und
- * ausdrücklich nichts behaupten.
+ * 🛑 The third branch is the reason this function exists. Server-side the column
+ * is free text; if an unknown value fell into the `peer_tier` branch, the view
+ * would claim the NARROWER reach for an access it knows nothing about. Better
+ * to show the raw value and explicitly claim nothing.
  */
 export function basisHelpKey(basis: string): string {
   if (basis === 'mapped') return 'federationAudit.basisMappedHelp';
@@ -42,14 +41,13 @@ export function basisHelpKey(basis: string): string {
 }
 
 /**
- * Einfaerbung des Kennzeichens — DREIWERTIG, aus demselben Grund wie oben.
+ * Badge colouring -- THREE-VALUED, for the same reason as above.
  *
- * 🛑 Der Text allein genuegt nicht. In der Bildsprache dieses Plaettchens
- * heisst bernstein „volle Reichweite, hinsehen" und grau „die harmlose
- * Variante". Bekaeme ein unbekannter Wert dasselbe Grau wie `peer_tier`,
- * stuende die engere Behauptung eben in der FARBE statt im Wort — und die
- * Farbe liest man zuerst. Unbekanntes wird darum abgesetzt und gestrichelt:
- * auffaellig, nicht beruhigend.
+ * 🛑 The text alone is not enough. In this badge's visual language amber means
+ * "full reach, look here" and grey means "the harmless variant". If an unknown
+ * value got the same grey as `peer_tier`, the narrower claim would sit in the
+ * COLOUR instead of the word -- and the colour is read first. Unknown values
+ * are therefore set apart and dashed: conspicuous, not reassuring.
  */
 export function basisBadgeClass(basis: string): string {
   if (basis === 'mapped') {
@@ -70,10 +68,10 @@ function StatusIcon({ status, verified }: StatusIconProps) {
   if (status === 'failed') {
     return <XCircle className="w-4 h-4 text-red-500 dark:text-red-400" aria-hidden="true" />;
   }
-  // 🛑 Eigenes Zeichen, nicht das graue Fragezeichen von `unknown`. Ein
-  // Abbruch auf der Antwortseite kann bedeuten, dass fremde Daten BEREITS
-  // gelesen waren — bernstein ist nach DESIGN.md „Achtung, die noch kein
-  // Stopp ist", und genau das ist der Fall.
+  // 🛑 Its own icon, not the grey question mark of `unknown`. A cancellation on
+  // the responder side can mean foreign data had ALREADY been read -- amber is
+  // DESIGN.md's "attention that is not yet a stop", which is exactly the
+  // case.
   if (status === 'aborted') {
     return <CircleSlash className="w-4 h-4 text-amber-500 dark:text-amber-400" aria-hidden="true" />;
   }
@@ -212,12 +210,11 @@ export default function FederationAuditPage() {
                   <div className="flex-1 min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusIcon status={entry.final_status} verified={entry.verified_signature} />
-                      {/* 🛑 Rueckfall auf den Schluessel. Zeilen, die der
-                          ANTWORTENDE vor dem 2026-10-29 geschrieben hat,
-                          tragen einen leeren Namen — und an dieser Stelle
-                          steht, WER zugegriffen hat. Lieber ein Fingerabdruck
-                          als eine Luecke; ein erfundener Name waere schlimmer
-                          als beides. */}
+                      {/* 🛑 Fall back to the key. Rows the RESPONDER wrote
+                          before 2026-10-29 carry an empty name -- and this is
+                          the spot that says WHO accessed the data. Better a
+                          fingerprint than a gap; an invented name would be
+                          worse than either. */}
                       <span className="font-medium text-gray-900 dark:text-white truncate">
                         {entry.peer_display_name || (
                           <code className="tabular-nums text-sm">
@@ -239,9 +236,9 @@ export default function FederationAuditPage() {
                           {t('federationAudit.directionAnswered')}
                         </span>
                       )}
-                      {/* 🛑 Nur anzeigen, wenn die Angabe WIRKLICH da ist.
-                          Fehlt sie, wird nichts behauptet — nicht die engere
-                          Stufe unterstellt. */}
+                      {/* 🛑 Show it only when the value is REALLY there. If it
+                          is missing, nothing is claimed -- the narrower tier is
+                          not implied. */}
                       {entry.identity_basis && (
                         <span
                           className={`text-xs px-1.5 py-0.5 rounded ${basisBadgeClass(

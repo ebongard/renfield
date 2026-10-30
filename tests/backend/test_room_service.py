@@ -1,12 +1,12 @@
 """
-Tests für RoomService
+Tests for RoomService
 
-Testet:
-- Room CRUD Operationen
-- Device Registration und Management
-- Room Name Normalisierung
-- Home Assistant Sync
-- IP-basierte Room Detection
+Covers:
+- room CRUD operations
+- device registration and management
+- room name normalization
+- Home Assistant sync
+- IP-based room detection
 """
 
 
@@ -20,17 +20,17 @@ from models.database import DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVI
 # ============================================================================
 
 class TestNormalizeRoomName:
-    """Tests für normalize_room_name Funktion"""
+    """Tests for the normalize_room_name function"""
 
     @pytest.mark.unit
     def test_basic_normalization(self):
-        """Test: Einfache Normalisierung"""
+        """Simple normalization"""
         assert normalize_room_name("Wohnzimmer") == "wohnzimmer"
         assert normalize_room_name("Living Room") == "livingroom"
 
     @pytest.mark.unit
     def test_german_umlauts(self):
-        """Test: Deutsche Umlaute werden ersetzt"""
+        """German umlauts are replaced"""
         assert normalize_room_name("Küche") == "kueche"
         assert normalize_room_name("Gästezimmer") == "gaestezimmer"
         assert normalize_room_name("Büro") == "buero"
@@ -38,27 +38,27 @@ class TestNormalizeRoomName:
 
     @pytest.mark.unit
     def test_uppercase_umlauts(self):
-        """Test: Großbuchstaben-Umlaute"""
+        """Upper-case umlauts"""
         assert normalize_room_name("KÜCHE") == "kueche"
         assert normalize_room_name("BÜRO") == "buero"
         assert normalize_room_name("Österreich") == "oesterreich"
 
     @pytest.mark.unit
     def test_special_characters_removed(self):
-        """Test: Sonderzeichen werden entfernt"""
+        """Special characters are removed"""
         assert normalize_room_name("Bad/WC") == "badwc"
         assert normalize_room_name("Kinder-Zimmer") == "kinderzimmer"
         assert normalize_room_name("Zimmer #1") == "zimmer1"
 
     @pytest.mark.unit
     def test_whitespace_handling(self):
-        """Test: Whitespace wird entfernt"""
+        """Whitespace is removed"""
         assert normalize_room_name("  Wohnzimmer  ") == "wohnzimmer"
         assert normalize_room_name("Living Room") == "livingroom"
 
     @pytest.mark.unit
     def test_empty_string(self):
-        """Test: Leerer String"""
+        """Empty string"""
         assert normalize_room_name("") == ""
         assert normalize_room_name("   ") == ""
 
@@ -68,39 +68,39 @@ class TestNormalizeRoomName:
 # ============================================================================
 
 class TestGenerateDeviceId:
-    """Tests für generate_device_id Funktion"""
+    """Tests for the generate_device_id function"""
 
     @pytest.mark.unit
     def test_satellite_prefix(self):
-        """Test: Satellite bekommt 'sat' Prefix"""
+        """A satellite gets the 'sat' prefix"""
         device_id = generate_device_id(DEVICE_TYPE_SATELLITE, "Wohnzimmer", "main")
         assert device_id == "sat-wohnzimmer-main"
 
     @pytest.mark.unit
     def test_web_panel_prefix(self):
-        """Test: Web Panel bekommt 'panel' Prefix"""
+        """A web panel gets the 'panel' prefix"""
         device_id = generate_device_id(DEVICE_TYPE_WEB_PANEL, "Küche", "ipad1")
         assert device_id == "panel-kueche-ipad1"
 
     @pytest.mark.unit
     def test_web_browser_prefix(self):
-        """Test: Web Browser bekommt 'web' Prefix"""
+        """A web browser gets the 'web' prefix"""
         device_id = generate_device_id(DEVICE_TYPE_WEB_BROWSER, "Office", "chrome")
         assert device_id == "web-office-chrome"
 
     @pytest.mark.unit
     def test_auto_suffix_generation(self):
-        """Test: Suffix wird automatisch generiert wenn nicht angegeben"""
+        """The suffix is generated automatically when none is given"""
         device_id = generate_device_id(DEVICE_TYPE_SATELLITE, "Wohnzimmer")
         assert device_id.startswith("sat-wohnzimmer-")
         assert len(device_id.split("-")[-1]) == 6  # UUID hex suffix
 
     @pytest.mark.unit
     def test_long_room_name_truncated(self):
-        """Test: Lange Raumnamen werden gekürzt"""
+        """Long room names are shortened"""
         long_name = "Super Extra Langes Wohnzimmer Mit Vielen Worten"
         device_id = generate_device_id(DEVICE_TYPE_WEB_BROWSER, long_name, "test")
-        # Room alias sollte maximal 20 Zeichen sein
+        # Room alias should be at most 20 characters
         parts = device_id.split("-")
         assert len(parts[1]) <= 20
 
@@ -110,11 +110,11 @@ class TestGenerateDeviceId:
 # ============================================================================
 
 class TestRoomServiceCRUD:
-    """Tests für Room CRUD Operationen"""
+    """Tests for room CRUD operations"""
 
     @pytest.mark.database
     async def test_create_room(self, room_service: RoomService):
-        """Test: Room erstellen"""
+        """Create a room"""
         room = await room_service.create_room(
             name="Wohnzimmer",
             source="renfield",
@@ -129,7 +129,7 @@ class TestRoomServiceCRUD:
 
     @pytest.mark.database
     async def test_create_room_with_ha_area(self, room_service: RoomService):
-        """Test: Room mit HA Area erstellen"""
+        """Create a room with an HA area"""
         room = await room_service.create_room(
             name="Küche",
             source="homeassistant",
@@ -141,7 +141,7 @@ class TestRoomServiceCRUD:
 
     @pytest.mark.database
     async def test_get_room(self, room_service: RoomService, test_room: Room):
-        """Test: Room nach ID laden"""
+        """Load a room by id"""
         room = await room_service.get_room(test_room.id)
 
         assert room is not None
@@ -150,13 +150,13 @@ class TestRoomServiceCRUD:
 
     @pytest.mark.database
     async def test_get_room_not_found(self, room_service: RoomService):
-        """Test: Nicht existierender Room"""
+        """A room that does not exist"""
         room = await room_service.get_room(99999)
         assert room is None
 
     @pytest.mark.database
     async def test_get_room_by_name(self, room_service: RoomService, test_room: Room):
-        """Test: Room nach Namen laden"""
+        """Load a room by name"""
         room = await room_service.get_room_by_name(test_room.name)
 
         assert room is not None
@@ -164,7 +164,7 @@ class TestRoomServiceCRUD:
 
     @pytest.mark.database
     async def test_get_room_by_alias(self, room_service: RoomService, test_room: Room):
-        """Test: Room nach Alias laden"""
+        """Load a room by alias"""
         room = await room_service.get_room_by_alias("wohnzimmer")
 
         assert room is not None
@@ -172,7 +172,7 @@ class TestRoomServiceCRUD:
 
     @pytest.mark.database
     async def test_get_room_by_alias_normalized(self, room_service: RoomService):
-        """Test: Room-Suche nach Alias normalisiert Input"""
+        """Looking a room up by alias normalizes the input"""
         room = await room_service.create_room(name="Gästezimmer")
         found = await room_service.get_room_by_alias("Gästezimmer")
 
@@ -181,7 +181,7 @@ class TestRoomServiceCRUD:
 
     @pytest.mark.database
     async def test_get_all_rooms(self, room_service: RoomService):
-        """Test: Alle Rooms laden"""
+        """Load all rooms"""
         await room_service.create_room(name="Room A")
         await room_service.create_room(name="Room B")
         await room_service.create_room(name="Room C")
@@ -196,7 +196,7 @@ class TestRoomServiceCRUD:
 
     @pytest.mark.database
     async def test_update_room(self, room_service: RoomService, test_room: Room):
-        """Test: Room aktualisieren"""
+        """Update a room"""
         updated = await room_service.update_room(
             room_id=test_room.id,
             name="Neuer Name",
@@ -210,13 +210,13 @@ class TestRoomServiceCRUD:
 
     @pytest.mark.database
     async def test_update_room_not_found(self, room_service: RoomService):
-        """Test: Update für nicht existierenden Room"""
+        """Update on a room that does not exist"""
         result = await room_service.update_room(room_id=99999, name="Test")
         assert result is None
 
     @pytest.mark.database
     async def test_delete_room(self, room_service: RoomService):
-        """Test: Room löschen"""
+        """Delete a room"""
         room = await room_service.create_room(name="To Delete")
         deleted = await room_service.delete_room(room.id)
 
@@ -227,7 +227,7 @@ class TestRoomServiceCRUD:
 
     @pytest.mark.database
     async def test_delete_room_not_found(self, room_service: RoomService):
-        """Test: Löschen nicht existierender Room"""
+        """Delete a room that does not exist"""
         deleted = await room_service.delete_room(99999)
         assert deleted is False
 
@@ -237,11 +237,11 @@ class TestRoomServiceCRUD:
 # ============================================================================
 
 class TestRoomServiceDeviceOperations:
-    """Tests für Device Registration und Management"""
+    """Tests for device registration and management"""
 
     @pytest.mark.database
     async def test_register_device(self, room_service: RoomService, test_room: Room):
-        """Test: Device registrieren"""
+        """Register a device"""
         device = await room_service.register_device(
             device_id="test-device-123",
             room_name=test_room.name,
@@ -257,7 +257,7 @@ class TestRoomServiceDeviceOperations:
 
     @pytest.mark.database
     async def test_register_device_auto_create_room(self, room_service: RoomService):
-        """Test: Device mit Auto-Room-Erstellung"""
+        """A device with automatic room creation"""
         device = await room_service.register_device(
             device_id="auto-room-device",
             room_name="Auto Created Room",
@@ -273,7 +273,7 @@ class TestRoomServiceDeviceOperations:
 
     @pytest.mark.database
     async def test_register_device_no_auto_create(self, room_service: RoomService):
-        """Test: Device ohne Auto-Room-Erstellung"""
+        """A device without automatic room creation"""
         device = await room_service.register_device(
             device_id="no-auto-device",
             room_name="Non Existing Room",
@@ -287,8 +287,8 @@ class TestRoomServiceDeviceOperations:
     async def test_register_device_update_existing(
         self, room_service: RoomService, test_room: Room
     ):
-        """Test: Existierendes Device wird aktualisiert"""
-        # Erste Registrierung
+        """An existing device is updated"""
+        # First registration
         device1 = await room_service.register_device(
             device_id="update-device",
             room_name=test_room.name,
@@ -296,7 +296,7 @@ class TestRoomServiceDeviceOperations:
             device_name="First Name"
         )
 
-        # Zweite Registrierung mit gleichem device_id
+        # Second registration with the same device_id
         device2 = await room_service.register_device(
             device_id="update-device",
             room_name=test_room.name,
@@ -309,7 +309,7 @@ class TestRoomServiceDeviceOperations:
 
     @pytest.mark.database
     async def test_get_device(self, room_service: RoomService, test_device: RoomDevice):
-        """Test: Device nach ID laden"""
+        """Load a device by id"""
         device = await room_service.get_device(test_device.device_id)
 
         assert device is not None
@@ -319,7 +319,7 @@ class TestRoomServiceDeviceOperations:
     async def test_get_devices_in_room(
         self, room_service: RoomService, test_room: Room, test_device: RoomDevice
     ):
-        """Test: Alle Devices in Room laden"""
+        """Load all devices in a room"""
         devices = await room_service.get_devices_in_room(test_room.id)
 
         assert len(devices) >= 1
@@ -330,7 +330,7 @@ class TestRoomServiceDeviceOperations:
     async def test_set_device_online(
         self, room_service: RoomService, test_device: RoomDevice
     ):
-        """Test: Device Online-Status setzen"""
+        """Set a device's online status"""
         await room_service.set_device_online(test_device.device_id, False)
 
         device = await room_service.get_device(test_device.device_id)
@@ -342,7 +342,7 @@ class TestRoomServiceDeviceOperations:
 
     @pytest.mark.database
     async def test_move_device_to_room(self, room_service: RoomService, test_device: RoomDevice):
-        """Test: Device in anderen Room verschieben"""
+        """Move a device to another room"""
         new_room = await room_service.create_room(name="New Room")
 
         moved = await room_service.move_device_to_room(
@@ -357,7 +357,7 @@ class TestRoomServiceDeviceOperations:
     async def test_unregister_device(
         self, room_service: RoomService, test_room: Room
     ):
-        """Test: Device entfernen"""
+        """Remove a device"""
         device = await room_service.register_device(
             device_id="to-delete-device",
             room_name=test_room.name,
@@ -376,13 +376,13 @@ class TestRoomServiceDeviceOperations:
 # ============================================================================
 
 class TestRoomServiceIPDetection:
-    """Tests für IP-basierte Room Detection"""
+    """Tests for IP-based room detection"""
 
     @pytest.mark.database
     async def test_get_stationary_device_by_ip(
         self, room_service: RoomService, test_room: Room
     ):
-        """Test: Stationäres Device nach IP finden"""
+        """Find a stationary device by IP"""
         device = await room_service.register_device(
             device_id="stationary-ip-device",
             room_name=test_room.name,
@@ -400,7 +400,7 @@ class TestRoomServiceIPDetection:
     async def test_get_stationary_device_by_ip_not_stationary(
         self, room_service: RoomService, test_room: Room
     ):
-        """Test: Nicht-stationäres Device wird nicht gefunden"""
+        """A non-stationary device is not found"""
         await room_service.register_device(
             device_id="mobile-ip-device",
             room_name=test_room.name,
@@ -416,7 +416,7 @@ class TestRoomServiceIPDetection:
     async def test_get_room_context_by_ip(
         self, room_service: RoomService, test_room: Room
     ):
-        """Test: Room Context nach IP ermitteln"""
+        """Determine the room context by IP"""
         await room_service.register_device(
             device_id="context-device",
             room_name=test_room.name,
@@ -436,7 +436,7 @@ class TestRoomServiceIPDetection:
 
     @pytest.mark.database
     async def test_get_room_context_by_ip_not_found(self, room_service: RoomService):
-        """Test: Kein Room Context für unbekannte IP"""
+        """No room context for an unknown IP"""
         context = await room_service.get_room_context_by_ip("10.0.0.1")
         assert context is None
 
@@ -446,11 +446,11 @@ class TestRoomServiceIPDetection:
 # ============================================================================
 
 class TestRoomServiceHASync:
-    """Tests für Home Assistant Sync Operationen"""
+    """Tests for Home Assistant sync operations"""
 
     @pytest.mark.database
     async def test_link_to_ha_area(self, room_service: RoomService, test_room: Room):
-        """Test: Room mit HA Area verknüpfen"""
+        """Link a room to an HA area"""
         linked = await room_service.link_to_ha_area(test_room.id, "ha_area_123")
 
         assert linked is not None
@@ -459,7 +459,7 @@ class TestRoomServiceHASync:
 
     @pytest.mark.database
     async def test_unlink_from_ha(self, room_service: RoomService):
-        """Test: HA Verknüpfung entfernen"""
+        """Remove the HA link"""
         room = await room_service.create_room(
             name="HA Room",
             ha_area_id="to_unlink"
@@ -473,7 +473,7 @@ class TestRoomServiceHASync:
 
     @pytest.mark.database
     async def test_import_ha_areas_new(self, room_service: RoomService, sample_ha_areas):
-        """Test: HA Areas importieren (neue Rooms)"""
+        """Import HA areas (new rooms)"""
         results = await room_service.import_ha_areas(sample_ha_areas)
 
         assert results["imported"] == 3
@@ -489,7 +489,7 @@ class TestRoomServiceHASync:
     async def test_import_ha_areas_skip_existing(
         self, room_service: RoomService, sample_ha_areas
     ):
-        """Test: HA Import überspringt existierende Rooms"""
+        """The HA import skips rooms that already exist"""
         # Create room with same name
         await room_service.create_room(name="Wohnzimmer")
 
@@ -505,7 +505,7 @@ class TestRoomServiceHASync:
     async def test_import_ha_areas_link_existing(
         self, room_service: RoomService, sample_ha_areas
     ):
-        """Test: HA Import verknüpft existierende Rooms"""
+        """The HA import links rooms that already exist"""
         existing = await room_service.create_room(name="Wohnzimmer")
 
         results = await room_service.import_ha_areas(
@@ -522,7 +522,7 @@ class TestRoomServiceHASync:
 
     @pytest.mark.database
     async def test_get_room_by_ha_area_id(self, room_service: RoomService):
-        """Test: Room nach HA Area ID laden"""
+        """Load a room by HA area id"""
         room = await room_service.create_room(
             name="HA Room",
             ha_area_id="unique_ha_area"
@@ -539,11 +539,11 @@ class TestRoomServiceHASync:
 # ============================================================================
 
 class TestRoomServiceHelpers:
-    """Tests für Helper-Methoden"""
+    """Tests for the helper methods"""
 
     @pytest.mark.database
     async def test_room_to_dict(self, room_service: RoomService, test_room: Room):
-        """Test: Room zu Dictionary konvertieren"""
+        """Convert a room to a dictionary"""
         room = await room_service.get_room(test_room.id)
         data = room_service.room_to_dict(room)
 
@@ -557,7 +557,7 @@ class TestRoomServiceHelpers:
     async def test_device_to_dict(
         self, room_service: RoomService, test_device: RoomDevice
     ):
-        """Test: Device zu Dictionary konvertieren"""
+        """Convert a device to a dictionary"""
         device = await room_service.get_device(test_device.device_id)
         data = room_service.device_to_dict(device)
 

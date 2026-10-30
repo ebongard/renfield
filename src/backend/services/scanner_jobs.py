@@ -121,9 +121,9 @@ _TEXT = {
                       "übergeben. Die Ablage in Paperless folgt separat.",
         "unrouted": "Der Scan{title} ist fertig, aber sein Ziel ist noch offen. Er wartet auf dem "
                     "Scanner-Rechner auf eine Zuordnung — nichts wurde abgelegt.",
-        # Mit Kennung: die Antwort „nach Haushalt" braucht sonst erst einen
-        # Zwischenschritt (`list_pending_scans`), und am 2026-10-21 hat der
-        # Agent an dieser Stelle zu einer Paperless-Suche gegriffen.
+        # With the id: otherwise the answer "nach Haushalt" first needs an
+        # intermediate step (`list_pending_scans`), and on 2026-10-21 the
+        # agent reached for a Paperless search at this point.
         "unrouted_stage": "Der Scan{title} ist fertig, aber sein Ziel ist noch offen. Er wartet "
                           "als {stage} auf eine Zuordnung — nichts wurde abgelegt.",
         "failed": "Der Scan{title} ist fehlgeschlagen: {error}",
@@ -192,85 +192,83 @@ _TEXT = {
 }
 
 
-# Aus den Texten abgeleitet statt zweitgeschrieben: eine neue Fehlerart bekommt
-# ihren Text, und das Protokoll kennt sie damit automatisch.
+# Derived from the texts instead of written a second time: a new error kind gets
+# its text, and the log therefore knows it automatically.
 _KNOWN_ERROR_CODES = frozenset(_TEXT["de"]["errors"])
 
-# 🛑 EINE QUELLE FUER BEIDE WEICHEN.
-# `render_completion_message` und `describe_failure_for_log` verzweigen ueber
-# dieselbe Zustandsmenge, und sie sind auseinandergelaufen: der Protokollhelfer
-# behandelte JEDEN Zustand ausser "done" als Fehlschlag und schrieb
-# `error_code=<fehlt>`. Fuer `unrouted` und `interrupted` gibt es aber bewusst
-# keinen Code — sie haben eigene Texte. Ein echter Auftrag vom 2026-10-04
-# (8851f161, `unrouted`) haette damit einen fehlenden Code gemeldet, wo nie
-# einer erwartet war. Zwei Weichen auf eine Menge: die zweite vergisst man.
+# 🛑 ONE SOURCE FOR BOTH BRANCHES.
+# `render_completion_message` and `describe_failure_for_log` branch over the
+# same set of states, and they had drifted apart: the log helper treated EVERY
+# state but "done" as a failure and wrote `error_code=<fehlt>`. For `unrouted`
+# and `interrupted` there is deliberately no code -- they have their own texts.
+# A real job from 2026-10-04 (8851f161, `unrouted`) would thereby have reported
+# a missing code where none was ever expected. Two branches over one set: the
+# second one gets forgotten.
 _STATES_WITHOUT_ERROR_CODE = frozenset({"done", "unrouted", "interrupted"})
 
-#: Zustände, nach denen die Bitte der Person ERLEDIGT ist.
+#: States after which the person's request is DONE.
 #:
-#: 🛑 Eine DRITTE Menge, und sie ist absichtlich nicht `_STATES_WITHOUT_ERROR_CODE`:
-#: `interrupted` trägt keinen Fehlercode und ist für den Agenten trotzdem ein
-#: Fehlschlag — eine wiederholte Bitte braucht danach einen NEUEN Scan.
+#: 🛑 A THIRD set, and deliberately not `_STATES_WITHOUT_ERROR_CODE`:
+#: `interrupted` carries no error code and is a failure for the agent
+#: regardless -- a repeated request needs a NEW scan after it.
 #:
-#: 🛑 Und sie ist als ERFOLGS-Menge formuliert, nicht als Fehler-Menge, damit
-#: ein unbekannter Zustand als Fehlschlag gilt. Das deckt sich mit
-#: `render_completion_message`, das für alles Unbekannte auf seinen
-#: `failed`-Text zurückfällt. Eine Fehler-Menge hätte einen neuen Zustand
-#: stillschweigend als Erfolg gezählt — gerendert als Fehlschlag, markiert als
-#: Erfolg, also genau die Spaltung, die 2026-10-26 den Scan blockierte.
+#: 🛑 And it is phrased as a SUCCESS set, not a failure set, so that an
+#: unknown state counts as a failure. That matches `render_completion_message`,
+#: which falls back to its `failed` text for everything unknown. A failure set
+#: would have counted a new state silently as a success -- rendered as a
+#: failure, marked as a success, which is exactly the split that blocked the
+#: scan on 2026-10-26.
 _STATES_COUNTING_AS_SUCCESS = frozenset({"done", "unrouted"})
 
-#: Zustände, in denen ein Dokument entstanden ist — nur dort gibt es etwas zu
-#: verlinken.
+#: States in which a document came into being -- only there is something to
+#: link to.
 #:
-#: 🛑 Die VIERTE Menge über dieselben Zustände, und sie steht hier oben, weil die
-#: zweite es nicht tat: `describe_failure_for_log` zählte jeden Zustand außer
-#: „done" als Fehlschlag und meldete für einen echten `unrouted`-Auftrag am
-#: 2026-10-04 `error_code=<fehlt>`, wo nie einer erwartet war. Zwei Weichen auf
-#: eine Menge — die zweite vergisst man. Das gilt auch für eine Menge mit einem
-#: einzigen Eintrag.
+#: 🛑 The FOURTH set over the same states, and it stands up here because
+#: the second one did not: `describe_failure_for_log` counted every state but
+#: "done" as a failure and reported `error_code=<fehlt>` for a real `unrouted`
+#: job on 2026-10-04, where none was ever expected. Two branches over one set
+#: -- the second one gets forgotten. That holds for a set with a single entry
+#: too.
 #:
-#: 🛑 `unrouted` fehlt bewusst: dort steht das Ziel noch aus, es gibt also kein
-#: abgelegtes Dokument zu öffnen. Ein NEUER Zustand muss hier entscheiden,
-#: statt stillschweigend auf „kein Knopf" zu fallen.
+#: 🛑 `unrouted` is deliberately absent: there the destination is still
+#: open, so there is no filed document to open. A NEW state has to decide here
+#: instead of falling silently to "no button".
 _STATES_WITH_DOCUMENT = frozenset({"done"})
 
-#: Die bekannte Form einer Zwischenlagen-Kennung: `scan-20261021-160741-5afef3cc`.
+#: The known form of a staging id: `scan-20261021-160741-5afef3cc`.
 #:
-#: 🛑 Sie wird hier geprüft, nicht im Modell. Der Docstring von
-#: `render_completion_message` ist eine Vertrauensgrenze: die Nachricht wird in
-#: späteren Agentenzügen WIEDER EINGESPIELT, darf also kein Kanal für freien
-#: Text aus dem Ereignis sein. Eine Kennung, die nicht genau so aussieht,
-#: entfällt — der Satz bleibt dann der bisherige. Im Modell zu prüfen wäre
-#: falsch: ein 422 dort würde eine echte Fertigmeldung verwerfen.
-#: 🛑 OHNE Anker und mit `fullmatch` geprüft, nicht `match` mit `$`:
-#: Pythons `$` passt auch VOR einem abschließenden Zeilenumbruch, also
-#: käme `"scan-…cc\n"` durch — ein rohes Newline in einer Nachricht, die
-#: in späteren Agentenzügen wieder eingespielt wird. Im Review zu #1405
-#: nachgemessen.
+#: 🛑 It is checked here, not in the model. The docstring of
+#: `render_completion_message` is a trust boundary: the message is RE-INJECTED
+#: into later agent turns, so it must not be a channel for free-form text out of
+#: the event. An id that does not look exactly like this is dropped -- the
+#: sentence then stays the previous one. Checking in the model would be wrong: a
+#: 422 there would discard a genuine completion event.
+#: 🛑 Checked WITHOUT anchors and with `fullmatch`, not `match` with `$`:
+#: Python's `$` also matches BEFORE a trailing newline, so `"scan-...cc\n"`
+#: would get through -- a raw newline in a message that is re-injected into
+#: later agent turns. Measured in the review of #1405.
 _STAGE_ID = re.compile(r"scan-\d{8}-\d{6}-[0-9a-f]{8}")
 
 
 def describe_failure_for_log(status: str, result: dict) -> str:
-    """Der Grund eines Fehlschlags, kurz und protokolltauglich.
+    """The reason for a failure, short and fit for the log.
 
-    🛑 WARUM ES DAS GIBT
-    Die Zustellzeile protokollierte nur `(failed)`. WELCHER Grund — Papier
-    fehlte, Gerät nicht erreichbar, Ziel unkonfiguriert — stand danach
-    ausschliesslich in der Konversation der anfragenden Person. Der Betreiber
-    konnte einen Fehlschlag also nur beheben, indem er in einen fremden Chat
-    sah; am 2026-10-04 war genau das die Sackgasse (kein SSH auf den
-    Scanner-Rechner, kein Code im Protokoll).
+    🛑 WHY THIS EXISTS
+    The delivery line logged only `(failed)`. WHICH reason -- paper missing,
+    device unreachable, destination unconfigured -- then stood exclusively in
+    the requesting person's conversation. The operator could therefore only fix
+    a failure by looking into somebody else's chat; on 2026-10-04 that was
+    exactly the dead end (no SSH onto the scanner host, no code in the log).
 
-    🛑 Nur FEHLSCHLAEGE tragen einen Code. `done`, `unrouted` und `interrupted`
-    haben eigene Texte und nie einen `error_code` — fuer sie bleibt die Zeile
-    stumm (`_STATES_WITHOUT_ERROR_CODE`, dieselbe Menge wie in
+    🛑 Only FAILURES carry a code. `done`, `unrouted` and `interrupted`
+    have their own texts and never an `error_code` -- for them the line stays
+    silent (`_STATES_WITHOUT_ERROR_CODE`, the same set as in
     `render_completion_message`).
 
-    🛑 Der Code wird VALIDIERT, nicht durchgereicht. Er kommt aus einer fremden
-    Quelle; nur ein bekannter Wert wird als solcher geschrieben, alles andere
-    gekuerzt und als unbekannt markiert. Freitext aus dem Ereignis erreicht
-    weder Chat noch Protokoll.
+    🛑 The code is VALIDATED, not passed through. It comes from a foreign
+    source; only a known value is written as such, everything else is truncated
+    and marked unknown. Free-form text out of the event reaches neither chat nor
+    log.
     """
     if status in _STATES_WITHOUT_ERROR_CODE:
         return ""
@@ -284,26 +282,26 @@ def describe_failure_for_log(status: str, result: dict) -> str:
 
 
 def attach_document_ref(metadata: dict, status: str, result: dict, job_id: str) -> None:
-    """Hängt der Fertigmeldung einen Knopf zum Dokument an — als typisiertes Artefakt.
+    """Attaches a typed artifact to the completion message: a button to the document.
 
-    🛑 Der Meldungs-TEXT bleibt unberührt. `render_completion_message` ist eine
-    Vertrauensgrenze: ihr Text wird in späteren Agentenzügen WIEDER EINGESPIELT,
-    also gehört dort kein Link hinein. Der Knopf lebt in den Metadaten und wird
-    vom Artefakt-System gerendert, das Form und Rückfall bereits prüft.
+    🛑 The message TEXT stays untouched. `render_completion_message` is a
+    trust boundary: its text is RE-INJECTED into later agent turns, so no link
+    belongs in there. The button lives in the metadata and is rendered by the
+    artifact system, which already checks shape and fallback.
 
-    🛑 Das Artefakt trägt nur die KENNUNG, nie eine URL: zur Schreibzeit ist die
-    Paperless-Ablage meist noch nicht durch (Ingest ⌀ 363 s, am 2026-10-27 im
-    Haushalt gemessen), und eine persistierte URL wäre eingefroren.
+    🛑 The artifact carries only the ID, never a URL: at write time the
+    Paperless filing is mostly not through yet (ingest averaging 363 s, measured
+    in the household on 2026-10-27), and a persisted URL would be frozen.
 
-    🛑 `result["documents"]` wird NICHT angefasst — es ist `list[Any]` aus dem
-    unvertrauten Ereignis. Ein geteilter Scan bekommt deshalb keinen Knopf,
-    statt aus freiem Text Kennungen zu raten.
+    🛑 `result["documents"]` is NOT touched -- it is `list[Any]` out of
+    the untrusted event. A split scan therefore gets no button, instead of
+    guessing ids out of free-form text.
     """
     if status not in _STATES_WITH_DOCUMENT:
         return
     doc_id = result.get("renfield_document_id")
-    # Dieselbe Prüfung, die `render_completion_message` für denselben Wert macht.
-    # `bool` ist in Python ein `int` — ohne den Ausschluss wäre `True` eine Kennung.
+    # The same check `render_completion_message` makes for the same value.
+    # `bool` is an `int` in Python -- without the exclusion `True` would be an id.
     if not isinstance(doc_id, int) or isinstance(doc_id, bool):
         return
     from services.artifact_service import (
@@ -312,37 +310,37 @@ def attach_document_ref(metadata: dict, status: str, result: dict, job_id: str) 
         validate_artifact,
     )
 
-    # 🛑 WESSEN Kennung ist das? Der Scanner schickt die Fertigmeldung an die
-    # Instanz, die GEFRAGT hat — das Dokument kann aber in einer anderen liegen
-    # (`renfield-mcp-scanner/contract.py:29-31` sagt das ausdrücklich). Die
-    # Kennung gehört dann der ANDEREN Instanz, und weil beide eigene Zählfolgen
-    # führen, gibt es sie hier auch: für ein anderes Dokument. Ein Knopf darauf
-    # führte nicht ins Leere, sondern ins Falsche.
+    # 🛑 WHOSE id is this? The scanner sends the completion event to the
+    # instance that ASKED -- but the document can live in another one
+    # (`renfield-mcp-scanner/contract.py:29-31` says so explicitly). The id then
+    # belongs to the OTHER instance, and because both run their own sequences it
+    # exists here too: for a different document. A button on it would not lead
+    # nowhere, it would lead to the wrong thing.
     #
-    # 🛑 FAIL-CLOSED: ohne `settings.instance_id` ist jedes benannte Ziel fremd.
+    # 🛑 FAIL-CLOSED: without `settings.instance_id` every named target is foreign.
     daten: dict = {"documentId": doc_id}
     ziel = result.get("target")
     if isinstance(ziel, str) and ziel.strip():
         eigen = (settings.instance_id or "").strip().lower()
-        # Die Ungleichheit TRÄGT den Fail-closed-Fall schon allein: `ziel` ist
-        # hier nachweislich nicht leer, eine leere Selbstkennung ist also
-        # automatisch ungleich. Ein zusätzliches `or not eigen` sähe nach einem
-        # zweiten Riegel aus und wäre in JEDEM Pfad wirkungslos — und der Test
-        # dazu würde mit und ohne es bestehen.
+        # The inequality CARRIES the fail-closed case on its own: `ziel` is
+        # demonstrably not empty here, so an empty own id is automatically
+        # unequal. An additional `or not eigen` would look like a second guard
+        # and would have no effect on ANY path -- and the test for it would pass
+        # with and without it.
         if ziel.strip().lower() != eigen:
             daten["instance"] = ziel.strip()
     try:
         artifact = validate_artifact({
-            # Stabil je Auftrag: eine zweite Zustellung desselben Scans ersetzt
-            # den Eintrag, statt ihn zu verdoppeln (`merge_artifacts_into_metadata`
-            # verschlüsselt nach `id`).
+            # Stable per job: a second delivery of the same scan replaces the
+            # entry instead of duplicating it (`merge_artifacts_into_metadata`
+            # keys by `id`).
             "id": f"scanjob-{job_id}-doc",
             "kind": "document_ref",
             "data": daten,
         })
     except ArtifactRejected as e:
-        # Ein abgelehntes Artefakt darf die Zustellung NIE verhindern — die
-        # Meldung selbst ist das Wichtige.
+        # A rejected artifact must NEVER prevent the delivery -- the message
+        # itself is what matters.
         logger.warning(f"scanner: document_ref artifact rejected for {job_id}: {e}")
         return
     merge_artifacts_into_metadata(metadata, [artifact])
@@ -526,8 +524,8 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     if not await redis.set(claim_key, claim_token, nx=True, ex=_CLAIM_TTL_SECONDS):
         return "in_progress"
 
-    # Einmal gebunden: die Nachricht und die Protokollzeile beschreiben
-    # denselben Ausgang und duerfen nicht aus zwei Quellen lesen.
+    # Bound once: the message and the log line describe the same outcome and
+    # must not read from two sources.
     result = event.get("result") or {}
     try:
         # The title is the requester's own (recorded at request time), never the
@@ -547,23 +545,23 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
 
             meta = {
                 "scanner_job": {"job_id": job_id, "status": status},
-                # 🛑 OHNE dieses Feld hält der Agent einen gescheiterten
-                # Scan für laufend. Gemessen am 2026-10-26: der Scan vom
-                # 12:05 scheiterte am Papierstau, die Meldung stand im
-                # Verlauf — aber ohne `action_success` feuerte der
-                # Stale-Error-Riegel nicht (`[VORHERIGE_FEHLGESCHLAGENE_
-                # AKTION]` hängt an `action_success is False`), während die
-                # Nachricht davor „Scan gestartet" mit `true` trug. Auf
-                # zwei weitere Bitten antwortete der Agent „läuft bereits
-                # im Hintergrund, Du wirst benachrichtigt" und rief das
-                # Werkzeug NIE auf — eine erfundene Beruhigung über einen
-                # Scan, der nicht lief.
+                # 🛑 WITHOUT this field the agent takes a failed scan
+                # for a running one. Measured on 2026-10-26: the 12:05 scan
+                # failed on a paper jam, the notice was in the history -- but
+                # without `action_success` the stale-error guard did not fire
+                # (`[VORHERIGE_FEHLGESCHLAGENE_
+                # AKTION]` hangs on `action_success is False`), while the
+                # message before it carried "Scan gestartet" with `true`. On
+                # two further requests the agent answered "läuft bereits
+                # im Hintergrund, Du wirst benachrichtigt" and NEVER called
+                # the tool -- an invented reassurance about a scan that was
+                # not running.
                 #
-                # Das ist das „dritte Halbe" aus `agent-loop.md` an einer
-                # neuen Stelle: beide Hälften des Riegels waren intakt, nur
-                # schrieb niemand `False`. Ein ASYNCHRONER Fehlschlag
-                # braucht seinen eigenen Schreiber, denn der Werkzeugaufruf
-                # selbst war erfolgreich — er hat den Auftrag ja gestartet.
+                # This is the "third half" from `agent-loop.md` in a new
+                # place: both halves of the guard were intact, only nobody
+                # wrote `False`. An ASYNCHRONOUS failure needs its own
+                # writer, because the tool call itself succeeded -- it did
+                # start the job.
                 "action_success": status in _STATES_COUNTING_AS_SUCCESS,
             }
             attach_document_ref(meta, status, result, job_id)

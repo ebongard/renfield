@@ -979,15 +979,15 @@ class MCPToolInfo:
     namespaced_name: str  # "mcp.<server>.<tool>"
     description: str
     input_schema: dict = field(default_factory=dict)
-    #: Der `tool_hints`-Eintrag aus `mcp_servers.yaml`, GETRENNT aufbewahrt.
+    #: The `tool_hints` entry from `mcp_servers.yaml`, kept SEPARATELY.
     #:
-    #: 🛑 Er steckt auch in `description` (hinten angehaengt), aber dort ist er
-    #: nicht mehr herauszuloesen — und genau das hat am 2026-10-26 einen Scan
-    #: verhindert: die Werkzeug-VORAUSWAHL kuerzt die Beschreibung auf 80
-    #: Zeichen, der Hinweis steht dahinter und erreichte sie nie. Auf „scanne
-    #: nach xidra" fiel `scan_document` aus der Auswahl und der Agent suchte
-    #: in Paperless. Der Hinweis ist der absichtliche Steuertext des
-    #: Betreibers; er darf nicht an einer gewaehlten Zahl abreissen.
+    #: 🛑 It also sits in `description` (appended at the end), but there it can
+    #: no longer be extracted -- and that is exactly what prevented a scan on
+    #: 2026-10-26: the tool PRESELECTION truncates the description to 80
+    #: characters, the hint stands behind that and never reached it. On "scanne
+    #: nach xidra" `scan_document` dropped out of the selection and the agent
+    #: searched in Paperless. The hint is the operator's deliberate steering
+    #: text; it must not break off at some chosen number.
     hint: str = ""
 
 
@@ -3084,18 +3084,17 @@ class MCPManager:
     def is_federation_server(self, name: str) -> bool:
         """Is this a paired-peer server (`peer_<id>`), not a configured one?
 
-        🛑 EIN Begriff, EINE Stelle. Der Transport steht an `state.config`, nicht
-        an `MCPToolInfo` — ohne dieses Praedikat muesste jeder Aufrufer in
-        `self._servers` greifen, also in privaten Zustand. Gemessen am
-        2026-10-29: `MCPToolInfo` traegt `server_name`, `original_name`,
-        `namespaced_name`, `description`, `input_schema`, `hint` — keinen
-        Transport.
+        🛑 ONE concept, ONE place. The transport sits on `state.config`, not on
+        `MCPToolInfo` -- without this predicate every caller would have to
+        reach into `self._servers`, which is private state. Measured on
+        2026-10-29: `MCPToolInfo` carries `server_name`, `original_name`,
+        `namespaced_name`, `description`, `input_schema`, `hint` -- no
+        transport.
 
-        🛑 Und NICHT am Namenspraefix erkennen. `peer_` ist in
-        `peer_mcp_registry.py` definiert; ein Vergleich darauf bindet zwei
-        getrennt gepflegte Dateien aneinander und kollidiert mit einem
-        kuenftigen echten Server, der so heisst. Der Transport ist die
-        Eigenschaft, die zaehlt.
+        🛑 And do NOT recognise it by the name prefix. `peer_` is defined in
+        `peer_mcp_registry.py`; comparing against it ties two separately
+        maintained files together and collides with a future real server
+        called that. The transport is the property that counts.
         """
         state = self._servers.get(name)
         return (
@@ -3319,11 +3318,11 @@ class MCPManager:
         """One discovered tool as the agent sees it: the upstream description plus
         the ``tool_hints`` entry from mcp_servers.yaml, if any."""
         description = tool.description or ""
-        # 🛑 `.strip()` an der QUELLE. Die Verbindung unten strippt das Ganze;
-        # traegt der Hinweis selbst Leerzeichen am Rand (ein quotierter
-        # YAML-Eintrag genuegt), passt `description.endswith(hint)` in
-        # `preselect_tool_line` nicht mehr und der Hinweis steht DOPPELT in der
-        # Zeile. Im Review zu #1410 gemessen.
+        # 🛑 `.strip()` at the SOURCE. The join below strips the whole thing;
+        # if the hint itself carries whitespace at its edges (a quoted YAML
+        # entry is enough), `description.endswith(hint)` in
+        # `preselect_tool_line` no longer matches and the hint appears TWICE in
+        # the line. Measured in the review of #1410.
         hint = ((config.tool_hints.get(tool.name) if config.tool_hints else None) or "").strip()
         if hint:
             description = f"{description} {hint}".strip()
@@ -3349,11 +3348,11 @@ class MCPManager:
         state.all_discovered_tools = [self._tool_info_from_mcp(state.config, t) for t in raw_tools]
         state.note_discovered_tools()
         self._apply_tool_filter(state)
-        # 🛑 NACH dem Filtern: `log_hint_arrival` zaehlt auch, wie viele der
-        # behinweisten Werkzeuge noch ANGEBOTEN werden. Vor dem Filtern waere
-        # `state.tools` der alte Stand, und ein `prompt_tools`-Filter oder eine
-        # DB-Uebersteuerung, die ein behinweistes Werkzeug herauswirft, bliebe
-        # unsichtbar — gemeldet als gesund. Im Review zu #1415 gefunden.
+        # 🛑 AFTER filtering: `log_hint_arrival` also counts how many of the
+        # hinted tools are still OFFERED. Before filtering, `state.tools`
+        # would be the old state, and a `prompt_tools` filter or a DB override
+        # that throws a hinted tool out would stay invisible -- reported as
+        # healthy. Found in the review of #1415.
         log_hint_arrival(state)
 
     def _apply_tool_filter(self, state: MCPServerState) -> None:
@@ -3463,29 +3462,29 @@ class MCPManager:
 
 
 def log_hint_arrival(state: "MCPServerState") -> None:
-    """Protokolliert, ob die konfigurierten `tool_hints` wirklich ANKOMMEN.
+    """Logs whether the configured `tool_hints` really ARRIVE.
 
-    🛑 Am 2026-10-26 standen vier Hinweise für den Scanner in `mcp_servers.yaml`
-    (1426/791/186/379 Zeichen). Mount und Lader trugen sie, und derselbe
-    Codepfad lieferte in einer Nachstellung im laufenden Pod eine 1529 Zeichen
-    lange Vorauswahlzeile. Im echten Prompt war dieselbe Zeile 102 Zeichen lang
-    und trug keinen Hinweis. Vier Review-Runden arbeiteten an Texten, die nie
-    ankamen, und nichts im Protokoll sagte es.
+    🛑 On 2026-10-26 four hints for the scanner stood in `mcp_servers.yaml`
+    (1426/791/186/379 characters). Mount and loader carried them, and the same
+    code path produced a 1529-character preselection line in a reproduction
+    inside the running pod. In the real prompt the same line was 102 characters
+    long and carried no hint. Four review rounds worked on texts that never
+    arrived, and nothing in the log said so.
 
-    🛑 **Abwesenheit ist keine Diagnose.** Eine frühere Fassung kehrte bei
-    einem Server ohne Hinweise still zurück — und damit sahen drei
-    verschiedene Lagen gleich aus: Server ohne Hinweise, Konfiguration ohne
-    Hinweise (etwa ein Prozess, der vor dem Patch startete), und ein Bild ohne
-    diese Funktion. Jede erzeugte dieselbe Stille. Darum IMMER eine Zeile, auch
-    `0 hint(s) configured`. Im Review zu #1415 gefunden.
+    🛑 **Absence is not a diagnosis.** An earlier version returned silently for
+    a server without hints -- which made three different situations look the
+    same: a server without hints, a configuration without hints (a process that
+    started before the patch, say), and an image without this function. Each
+    produced the same silence. Hence ALWAYS one line, including
+    `0 hint(s) configured`. Found in the review of #1415.
 
-    Gezählt wird ZWEIMAL, und der Unterschied ist der Punkt: `attached` sind
-    Werkzeuge, denen der Hinweis angehängt wurde; `offered` sind die, die
-    danach noch in `state.tools` stehen. Ein `prompt_tools`-Filter oder eine
-    DB-Übersteuerung kann einen Hinweis tragen und das Werkzeug trotzdem
-    herausfiltern — die alte Fassung hätte das als gesund gemeldet.
+    The count is taken TWICE, and the difference is the point: `attached` are
+    tools the hint was appended to; `offered` are those still standing in
+    `state.tools` afterwards. A `prompt_tools` filter or a DB override can
+    carry a hint and filter the tool out regardless -- the old version would
+    have reported that as healthy.
 
-    Protokolliert werden NUR Namen und Längen, nie der Hinweistext.
+    ONLY names and lengths are logged, never the hint text.
     """
     konfiguriert = dict(state.config.tool_hints or {})
     entdeckt = {t.original_name for t in state.all_discovered_tools}
@@ -3494,11 +3493,11 @@ def log_hint_arrival(state: "MCPServerState") -> None:
     ohne_werkzeug = sorted(set(konfiguriert) - entdeckt)
     gefiltert = len(angehaengt) - len(angeboten)
 
-    # 🛑 Nur bei ÄNDERUNG protokollieren. Der Inhalt ändert sich erst, wenn
-    # jemand die YAML bearbeitet, die Entdeckung läuft aber alle ~60 s je
-    # Server (`mcp_refresh_interval`, und `refresh_tools` liest den
-    # per-Server-Wert nicht). Ohne das wären es ~60 Zeilen je Stunde und
-    # Server, und ein dauerhaft unpassender Schlüssel ein Dauerfeuer.
+    # 🛑 Log only on CHANGE. The content changes only when somebody edits the
+    # YAML, but discovery runs every ~60 s per server
+    # (`mcp_refresh_interval`, and `refresh_tools` does not read the
+    # per-server value). Without this it would be ~60 lines per hour per
+    # server, and a permanently mismatched key would be continuous fire.
     zustand = (len(konfiguriert), len(angehaengt), len(angeboten),
                tuple(ohne_werkzeug))
     if getattr(state, "_hint_arrival_state", None) == zustand:
@@ -3506,8 +3505,8 @@ def log_hint_arrival(state: "MCPServerState") -> None:
     state._hint_arrival_state = zustand
 
     if ohne_werkzeug or gefiltert or (konfiguriert and not angehaengt):
-        # Jeder dieser Fälle heißt: der Steuertext des Betreibers erreicht das
-        # Modell nicht oder nicht ganz.
+        # Each of these cases means: the operator's steering text does not
+        # reach the model, or does not reach it in full.
         logger.warning(
             "MCP '{}': {} hint(s) configured, {} attached, {} offered"
             "{}{}",

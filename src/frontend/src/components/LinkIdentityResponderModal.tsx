@@ -1,14 +1,14 @@
 /**
- * LinkIdentityResponderModal — Seite B des Personen-Handschlags (F-ID-2).
+ * LinkIdentityResponderModal -- side B of the person handshake (F-ID-2).
  *
- * Hier stimmt die Person zu: „der `querier_ref` aus diesem Angebot bin ich,
- * auf DIESER Instanz." Das ist der Schritt, der etwas schreibt, und zugleich
- * der folgenreichere der beiden — ab jetzt kann die andere Instanz Anfragen
- * stellen, die mit der vollen eigenen Reichweite beantwortet werden.
+ * This is where the person consents: "the `querier_ref` in this offer is me,
+ * on THIS instance." It is the step that writes something, and at the same
+ * time the more consequential of the two -- from now on the other instance
+ * can ask questions that are answered with one's own full reach.
  *
- * 🛑 Darum steht die Warnung VOR dem Knopf, nicht hinterher, und darum nennt
- * der Dialog die Gegenstelle beim Namen, sobald das Angebot eingelesen ist.
- * Wer hier zustimmt, muss wissen, wem.
+ * 🛑 That is why the warning stands BEFORE the button, not after it, and why
+ * the dialog names the far side as soon as the offer has been read in.
+ * Whoever consents here has to know to whom.
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -82,9 +82,9 @@ export default function LinkIdentityResponderModal({ isOpen, onClose, onLinked }
         return;
       }
     }
-    // 🛑 Abgelaufenes Angebot hier abfangen, statt den Server eine
-    // nichtssagende 400 schicken zu lassen: „abgelaufen" ist der einzige
-    // Fehlschlag, den die Person selbst beheben kann (neu anfordern).
+    // 🛑 Catch an expired offer here instead of letting the server send back
+    // a meaningless 400: "expired" is the only failure the person can fix
+    // themselves (request a new one).
     if (typeof parsed.expires_at === 'number' && parsed.expires_at < Date.now() / 1000) {
       setError(t('circles.linkOfferExpired'));
       return;
@@ -118,7 +118,7 @@ export default function LinkIdentityResponderModal({ isOpen, onClose, onLinked }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Siehe Initiator: das JSON steht sichtbar daneben.
+      // See the initiator: the JSON is visible right next to it.
     }
   };
 
@@ -167,7 +167,7 @@ export default function LinkIdentityResponderModal({ isOpen, onClose, onLinked }
             <Fingerprint className="w-3 h-3" aria-hidden="true" />
             <code className="tabular-nums">{parsedOffer.initiator_pubkey.slice(0, 24)}…</code>
           </div>
-          {/* Die Warnung steht VOR dem Knopf. Dieser Klick ist die Zustimmung. */}
+          {/* The warning stands BEFORE the button. This click is the consent. */}
           <Alert variant="warning">{t('circles.linkReachWarning')}</Alert>
           <div className="flex justify-end gap-2">
             <button

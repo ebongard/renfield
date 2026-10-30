@@ -26,8 +26,8 @@ router = APIRouter(tags=["admin"])
 async def refresh_keywords(user=Depends(require_permission(Permission.ADMIN))):
     """Reload Home Assistant keywords.
 
-    Nützlich nach dem Hinzufügen neuer Geräte in HA. Requires admin
-    permission when auth is enabled.
+    Useful after adding new devices in HA. Requires admin permission when
+    auth is enabled.
     """
     try:
         from ha_glue.integrations.homeassistant import HomeAssistantClient

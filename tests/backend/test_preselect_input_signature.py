@@ -1,26 +1,25 @@
-"""Die Vorauswahl muss protokollieren, WAS sie angeboten bekam — nicht nur wie viel.
+"""The preselection has to log WHAT it was offered -- not only how much.
 
-🛑 Der Anlass, am 2026-10-26 gemessen. Auf dieselbe Nachricht
-(„scanne nach xidra") lieferte die Vorauswahl in neun Zügen zwei verschiedene
-Ergebnisse: siebenmal die Scanner-Werkzeuge, zweimal die Dokumentensuche. Das
-Protokoll sagte beide Male `3/33`. Die entscheidende Frage war damit NICHT zu
-beantworten: hatte sich die Eingabe geändert, oder schwankte das Modell?
+🛑 The occasion, measured on 2026-10-26. To the same message ("scanne nach
+xidra") the preselection gave two different results across nine turns: seven
+times the scanner tools, twice the document search. The log said `3/33` both
+times. So the decisive question could NOT be answered: had the input changed,
+or was the model wavering?
 
-Drei Fehldiagnosen gingen auf diese Lücke:
+Three misdiagnoses rested on that gap:
 
-1. „Die Temperatur würfelt." Nachgemessen: live `temperature: 0`, und zehn
-   identische Anfragen gaben zehn identische Antworten. Widerlegt.
-2. „Die Position in der Liste entscheidet." Mit vollständigem Hinweistext
-   nachgemessen: 14 von 15 Positionen wählen das richtige Werkzeug. Die
-   gegenteilige erste Messung benutzte einen HINWEIS, den ich selbst mitten im
-   Satz abgeschnitten hatte — ein Artefakt meiner Testdaten, keine Eigenschaft
-   des Systems.
-3. Darauf gebaut ein neuer Prompt („Position bedeutet nichts, gehe die Liste
-   durch"). Gegen das echte Modell gemessen: 7 von 15 statt 14 von 15 — die
-   Reparatur wäre eine VERSCHLECHTERUNG gewesen. Nicht ausgerollt.
+1. "The temperature is rolling dice." Re-measured: live `temperature: 0`, and
+   ten identical requests gave ten identical answers. Disproved.
+2. "The position in the list decides." Re-measured with the complete hint
+   text: 14 of 15 positions pick the right tool. The first measurement, which
+   said the opposite, used a HINT that I had myself cut off mid-sentence -- an
+   artefact of my test data, not a property of the system.
+3. Built on that, a new prompt ("position means nothing, go through the
+   list"). Measured against the real model: 7 of 15 instead of 14 of 15 -- the
+   repair would have been a REGRESSION. Not rolled out.
 
-Was bei allen drei Versuchen fehlte, war dasselbe: die Eingabe. Dieser
-Fingerabdruck liefert sie in acht Zeichen.
+What was missing in all three attempts was the same thing: the input. This
+fingerprint supplies it in eight characters.
 """
 import pytest
 
@@ -28,8 +27,8 @@ from services.agent_service import preselect_input_signature
 
 pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
-#: So, wie `_preselect_tools` sie zusammensetzt: eine Zeile je Werkzeug, mit
-#: Name, beschnittener Beschreibung und ungekürztem Hinweis.
+#: Exactly as `_preselect_tools` assembles it: one line per tool, with the
+#: name, the trimmed description and the untruncated hint.
 LISTE = "\n".join([
     "- mcp.scanner.scan_document: Startet einen NEUEN Scan. „scanne nach <X>“ "
     "bedeutet beim PAPIERSCANNER IMMER, dass <X> das ZIEL ist.",
@@ -39,11 +38,12 @@ LISTE = "\n".join([
 
 
 def _prompt(lang: str, tool_list: str, message: str = "scanne nach xidra") -> str:
-    """Der Prompt, wie die PRODUKTION ihn baut — über den ECHTEN prompt_manager.
+    """The prompt as PRODUCTION builds it -- through the REAL prompt_manager.
 
-    🛑 Kein Nachbau der Vorlage. Täte dieser Test das, prüfte der Sprachtest
-    meine eigene Zeichenkette statt der ausgelieferten `de`- und `en`-Vorlage,
-    und die Abdeckung der Nachricht wäre behauptet statt gemessen.
+    🛑 No reimplementation of the template. If this test did that, the language
+    test would check my own string instead of the shipped `de` and `en`
+    template, and the coverage of the message would be asserted instead of
+    measured.
     """
     from services.prompt_manager import prompt_manager
 
@@ -56,22 +56,22 @@ def _prompt(lang: str, tool_list: str, message: str = "scanne nach xidra") -> st
 
 
 def test_the_same_input_gives_the_same_signature():
-    """Sonst wäre ein Vergleich zwischen zwei Zügen wertlos."""
+    """Otherwise a comparison between two turns would be worthless."""
     assert preselect_input_signature(_prompt("de", LISTE)) == \
         preselect_input_signature(_prompt("de", str(LISTE)))
 
 
 def test_a_changed_DESCRIPTION_changes_the_signature():
-    """🛑 Der Fehler der ERSTEN Fassung: sie hashte nur die Namen.
+    """🛑 The defect of the FIRST version: it hashed only the names.
 
-    In den Prompt geht `tool_list` ein, also Name PLUS beschnittene
-    Beschreibung PLUS ungekürzter Hinweis. Ein geänderter Hinweis — etwa durch
-    einen ConfigMap-Patch, wie am 2026-10-26 geschehen — stellte den Prompt um
-    und ließ die Signatur unberührt.
+    What goes into the prompt is `tool_list`, so the name PLUS the trimmed
+    description PLUS the untruncated hint. A changed hint -- through a ConfigMap
+    patch, say, as happened on 2026-10-26 -- rearranged the prompt and left the
+    signature untouched.
     """
     geaendert = LISTE.replace("das ZIEL ist", "ein Suchbegriff ist")
     assert geaendert != LISTE, "der Test soll den Hinweistext wirklich ändern"
-    # Dieselben Namen, anderer Text:
+    # The same names, different text:
     assert [z.split(":")[0] for z in geaendert.splitlines()] == \
            [z.split(":")[0] for z in LISTE.splitlines()]
     assert preselect_input_signature(_prompt("de", geaendert)) != \
@@ -81,16 +81,16 @@ def test_a_changed_DESCRIPTION_changes_the_signature():
 
 
 def test_a_MESSAGE_that_differs_only_after_60_characters_changes_the_signature():
-    """🛑 Der Fehler der ZWEITEN Fassung: sie hashte `lang` + `tool_list`.
+    """🛑 The defect of the SECOND version: it hashed `lang` + `tool_list`.
 
-    Die NACHRICHT fehlte — und die Protokollzeile zeigt nur `message[:60]`.
-    Zwei Züge, die in den ersten 60 Zeichen übereinstimmen und danach
-    auseinandergehen, hätten damit identische Nachricht UND identische Signatur
-    über zwei VERSCHIEDENE Prompts gezeigt. Genau die Aussage, die der
-    Fingerabdruck tragen soll, wäre falsch gewesen. Diktierte Sprachzüge
-    überschreiten 60 Zeichen regelmäßig.
+    The MESSAGE was missing -- and the log line shows only `message[:60]`. Two
+    turns that agree in the first 60 characters and diverge after would thereby
+    have shown an identical message AND an identical signature across two
+    DIFFERENT prompts. Exactly the statement the fingerprint is supposed to
+    carry would have been false. Dictated voice turns regularly exceed 60
+    characters.
 
-    Im Review zu #1413 gefunden, bevor es gemergt wurde.
+    Found in the review of #1413, before it was merged.
     """
     vorsilbe = "scanne bitte die Seiten aus dem Einzug ein und lege sie dann ab"
     assert len(vorsilbe) > 60, "die Vorsilbe muss die 60 Zeichen ueberschreiten"
@@ -103,21 +103,21 @@ def test_a_MESSAGE_that_differs_only_after_60_characters_changes_the_signature()
 
 
 def test_a_different_LANGUAGE_changes_the_signature():
-    """`tool_preselect_prompt` existiert in de UND en — zwei verschiedene
-    Vorlagen. Eine Signatur, die das verschweigt, behauptet Gleichheit über
-    zwei verschiedene Prompts hinweg."""
+    """`tool_preselect_prompt` exists in de AND en -- two different
+    templates. A signature that passes over that asserts equality across two
+    different prompts."""
     assert preselect_input_signature(_prompt("en", LISTE)) != \
         preselect_input_signature(_prompt("de", LISTE)), (
         "die Signatur ignoriert die Sprache")
 
 
 def test_a_different_ORDER_changes_the_signature():
-    """🛑 `get_tool_names()` gibt `list(self._tools.keys())`, also die
-    EINFÜGEREIHENFOLGE eines dict — und die ändert sich, wenn Werkzeuge neu
-    registriert werden (`refresh_interval: 300` auf den MCP-Servern).
+    """🛑 `get_tool_names()` returns `list(self._tools.keys())`, so the
+    INSERTION ORDER of a dict -- and that changes when tools are registered
+    anew (`refresh_interval: 300` on the MCP servers).
 
-    Eine Signatur, die nur die MENGE abbildet, hätte genau den Fall nicht
-    gesehen, für den sie gebaut wurde.
+    A signature that captures only the SET would not have seen exactly the case
+    it was built for.
     """
     zeilen = LISTE.splitlines()
     gedreht = "\n".join(reversed(zeilen))
@@ -131,7 +131,7 @@ def test_a_different_ORDER_changes_the_signature():
 
 
 def test_an_added_or_removed_tool_changes_the_signature():
-    """Ein Server, der weggefallen oder hinzugekommen ist, muss auffallen."""
+    """A server that has dropped out or been added has to show up."""
     zeilen = LISTE.splitlines()
     assert preselect_input_signature(_prompt("de", "\n".join(zeilen[:-1]))) != \
         preselect_input_signature(_prompt("de", LISTE))
@@ -140,11 +140,12 @@ def test_an_added_or_removed_tool_changes_the_signature():
 
 
 def test_the_signature_fits_into_a_log_line():
-    """Sie steht neben der Nachricht in einer Zeile — kurz und als Wort lesbar.
+    """It stands next to the message on one line -- short and readable as a
+    word.
 
-    🛑 Auf die FORM geprüft, nicht auf eine Zahl: `len == 8` würde nur die
-    aktuelle Wahl festnageln, ohne etwas über die Eignung zu sagen. Geprüft
-    wird, was die Zeile braucht.
+    🛑 Checked on its FORM, not on a number: `len == 8` would only pin down the
+    current choice without saying anything about fitness. What is checked is
+    what the line needs.
     """
     sig = preselect_input_signature(_prompt("de", LISTE))
     assert sig.isalnum(), f"nicht als Wort lesbar: {sig!r}"
@@ -152,14 +153,14 @@ def test_the_signature_fits_into_a_log_line():
 
 
 def test_an_empty_list_does_not_raise():
-    """Die Vorauswahl läuft bei <= 6 Werkzeugen gar nicht an, aber die Funktion
-    darf trotzdem nicht werfen — ein Protokollpfad, der stürzen kann, nimmt im
-    Zweifel die Diagnose mit."""
+    """The preselection does not start at all at <= 6 tools, but the function
+    still must not raise -- a logging path that can crash takes the diagnosis
+    down with it when it matters."""
     assert preselect_input_signature(_prompt("de", ""))
 
 
 def test_two_tools_that_differ_only_in_a_namespace_are_distinguished():
-    """Kein Abschneiden auf den Kurznamen: `mcp.a.x` und `mcp.b.x` sind
-    verschiedene Werkzeuge."""
+    """No truncation to the short name: `mcp.a.x` and `mcp.b.x` are different
+    tools."""
     assert preselect_input_signature(_prompt("de", "- mcp.scanner.scan_document: X")) != \
         preselect_input_signature(_prompt("de", "- mcp.paperless.scan_document: X"))

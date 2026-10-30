@@ -47,19 +47,19 @@ from loguru import logger
 # same unswept rows, both would MCP-fetch, both would persist. The
 # lock is cheap and prevents that class of double-processing.
 #
-# 🛑 BERICHTIGT 2026-09-27. Hier stand: „Multi-replica deployments (k8s) would
-# need a Postgres advisory lock to coordinate across processes. Out of v1 scope".
-# Das ist seit der Aufgaben-Maschine falsch: dieser Sweep läuft als geplante
-# Aufgabe (`scheduled_tasks/builtins.py:550`, Saat bei `:641`), und die Maschine
-# nimmt je Aufgabe ein Postgres-Advisory-Lock auf einer EIGENEN Verbindung
-# (`scheduled_tasks/engine.py:283`) — genau die prozessübergreifende
-# Koordinierung, die der alte Kommentar als fehlend beschrieb. Beide Instanzen
-# laufen zwar weiterhin mit einer Replik (am 2026-09-27 geprüft), aber der Schutz
-# hängt nicht mehr daran.
+# 🛑 CORRECTED 2026-09-27. This used to say: "Multi-replica deployments (k8s)
+# would need a Postgres advisory lock to coordinate across processes. Out of v1
+# scope". That has been wrong since the task engine: this sweep runs as a
+# scheduled task (`scheduled_tasks/builtins.py:550`, seeded at `:641`), and the
+# engine takes a Postgres advisory lock per task on ITS OWN connection
+# (`scheduled_tasks/engine.py:283`) -- exactly the cross-process coordination
+# the old comment described as missing. Both instances do still run with a
+# single replica (checked on 2026-09-27), but the protection no longer hangs on
+# that.
 #
-# Dieses `asyncio.Lock` bleibt trotzdem: es schützt gegen Gleichzeitigkeit INNERHALB
-# des Prozesses (ein Handaufruf neben dem Takt), und das tut ein Advisory-Lock auf
-# einer anderen Verbindung nicht.
+# This `asyncio.Lock` stays regardless: it protects against concurrency WITHIN
+# the process (a manual call alongside the tick), and an advisory lock on a
+# different connection does not do that.
 _sweep_lock = asyncio.Lock()
 
 # Fields we diff between what we uploaded and what's in Paperless now.

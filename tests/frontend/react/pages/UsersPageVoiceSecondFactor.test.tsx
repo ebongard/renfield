@@ -1,15 +1,15 @@
 /**
- * Die Stimme als zweiten Anmeldefaktor schalten — aus der Nutzerverwaltung.
+ * Switching the voice on as a second login factor -- from the user
+ * administration.
  *
- * 🛑 Diese Oberfläche ist nicht Beiwerk. `.claude/rules/auth.md` beschreibt als
- * einzigen Weg zurück aus einem defekten Mikrofon: „ein Administrator schaltet
- * `voice_second_factor_enabled` ab". Ohne Schaltfläche wäre dieser Weg eine
- * Behauptung, und das einzige Mittel ein UPDATE von Hand gegen die
- * Produktionsdatenbank.
+ * 🛑 This interface is not an accessory. `.claude/rules/auth.md` describes the
+ * only way back from a broken microphone: "an administrator switches
+ * `voice_second_factor_enabled` off". Without a button that way back would be a
+ * claim, and the only means an UPDATE by hand against the production database.
  *
- * Getestet wird vor allem die ASYMMETRIE: einschalten nur für sich selbst
- * (ein Stimmabdruck ist biometrisches Datum, Art. 9 DSGVO — einwilligen kann
- * niemand für jemanden anderen), abschalten für jedes Konto.
+ * What is tested above all is the ASYMMETRY: switching on only for oneself (a
+ * voiceprint is biometric data, Art. 9 GDPR -- nobody can consent on somebody
+ * else's behalf), switching off for any account.
  */
 import { createElement, Fragment } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -58,7 +58,7 @@ interface Row {
   voice_second_factor_enabled?: boolean;
 }
 
-/** `adminAuthMock` meldet sich als `id: 1` an — das ist „das eigene Konto". */
+/** `adminAuthMock` signs in as `id: 1` -- that is "one's own account". */
 const SELF = 1;
 
 function listing(
@@ -73,8 +73,8 @@ function listing(
       HttpResponse.json({ users: rows, total: rows.length, page: 1, page_size: 50 }),
     ),
     http.get(`${BASE_URL}/api/speakers`, () => HttpResponse.json(speakers)),
-    // Die instanzweite Haelfte der Vorbedingungen. Standard: Sprachweg AN, damit
-    // die uebrigen Faelle die Profil-Haelfte pruefen.
+    // The instance-wide half of the preconditions. Default: voice path ON, so
+    // the other cases check the profile half.
     http.get(`${BASE_URL}/api/config/features`, () =>
       HttpResponse.json({
         voice_auth_enabled: true,
@@ -98,7 +98,7 @@ function row(over: Partial<Row> & { id: number; username: string }): Row {
   };
 }
 
-/** Fängt den POST ab und gibt zurück, was an den Server ging. */
+/** Intercepts the POST and returns what went to the server. */
 function captureToggle(): { calls: Array<{ id: string; enabled: boolean }> } {
   const calls: Array<{ id: string; enabled: boolean }> = [];
   server.use(
@@ -114,18 +114,18 @@ function captureToggle(): { calls: Array<{ id: string; enabled: boolean }> } {
   return { calls };
 }
 
-describe('UsersPage — Stimme als zweiter Faktor', () => {
+describe('UsersPage — voice as second factor', () => {
   beforeEach(() => {
     server.resetHandlers();
     vi.mocked(useAuth).mockReturnValue(adminAuthMock);
   });
   afterEach(() => vi.clearAllMocks());
 
-  it('🛑 übersetzt die Gerätekonto-Absage, statt den Code roh zu zeigen', async () => {
-    // Der EINZIGE Ort, an dem `device_account` auftritt: ein Gerätekonto meldet
-    // sich nirgends selbst an, die Absage ist also nur von hier erreichbar.
-    // Beim Umbau vom 2026-09-29 blieb sie als hartkodierter ENGLISCHER Satz
-    // stehen — vier Zeilen neben den dreien, die ersetzt wurden.
+  it('🛑 translates the device-account refusal instead of showing the code raw', async () => {
+    // The ONLY place `device_account` occurs: a device account signs in
+    // nowhere itself, so the refusal is reachable only from here. In the
+    // 2026-09-29 rework it was left standing as a hard-coded ENGLISH sentence
+    // -- four lines from the three that were replaced.
     listing([row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1 })]);
     server.use(
       http.post(`${BASE_URL}/api/users/:id/voice-second-factor`, () =>
@@ -141,7 +141,7 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     expect(screen.queryByText(/device account has no voice/)).not.toBeInTheDocument();
   });
 
-  it('bietet das Einschalten für das eigene Konto an und meldet es dem Server', async () => {
+  it('offers switching on for one\'s own account and reports it to the server', async () => {
     listing([row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1 })]);
     const { calls } = captureToggle();
 
@@ -152,10 +152,10 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     await waitFor(() => expect(calls).toEqual([{ id: String(SELF), enabled: true }]));
   });
 
-  it('🛑 bietet es für ein FREMDES Konto gar nicht erst an', async () => {
-    // Das ist der Kern: eine Administratorin darf eine biometrische Erfassung
-    // nicht auferlegen. Die Verweigerung steht im Backend (403), aber eine
-    // Schaltfläche, die nur 403 erzeugt, wäre eine Falle.
+  it('🛑 does not even offer it for SOMEONE ELSE\'S account', async () => {
+    // This is the point: an administrator must not impose a biometric
+    // capture. The refusal lives in the backend (403), but a button that only
+    // produces a 403 would be a trap.
     listing([
       row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1 }),
       row({ id: 2, username: 'anna' }),
@@ -166,7 +166,7 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     expect(screen.getAllByTitle('Stimme als zweiten Faktor einschalten')).toHaveLength(1);
   });
 
-  it('bietet das ABSCHALTEN auch für ein fremdes Konto an — der Rückweg', async () => {
+  it('offers SWITCHING OFF for someone else\'s account too — the way back', async () => {
     listing([
       row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1 }),
       row({ id: 2, username: 'anna', voice_second_factor_enabled: true }),
@@ -180,24 +180,25 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     await waitFor(() => expect(calls).toEqual([{ id: '2', enabled: false }]));
   });
 
-  it('zeigt am fremden Konto an, dass der zweite Faktor scharf ist', async () => {
+  it('shows on someone else\'s account that the second factor is armed', async () => {
     listing([row({ id: 2, username: 'anna', voice_second_factor_enabled: true })]);
     renderWithProviders(<UsersPage />);
     expect(await screen.findByText('Stimme als 2. Faktor')).toBeInTheDocument();
   });
 
-  it('sperrt das Einschalten, solange kein Sprecherprofil verknüpft ist', async () => {
-    // Einschalten ohne Profil wäre eine Selbstaussperrung: `POST /auth/voice`
-    // prüft 1:1 dagegen und verweigert fail-closed, wenn keines da ist.
+  it('blocks switching on while no speaker profile is linked', async () => {
+    // Switching it on without a profile would lock oneself out:
+    // `POST /auth/voice` checks 1:1 against it and refuses fail-closed when
+    // there is none.
     listing([row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1, speaker_id: null })]);
     renderWithProviders(<UsersPage />);
     expect(await screen.findByTitle('Erst ein Sprecherprofil verknüpfen')).toBeDisabled();
   });
 
-  it('🛑 sperrt das Einschalten auch bei einem Profil OHNE Stimmproben', async () => {
-    // Das Backend verweigert BEIDE Faelle mit 409 — die Oberflaeche sperrte nur
-    // den ersten. Der zweite lief ins 409 und zeigte die englische
-    // Server-Meldung in der deutschen Maske.
+  it('🛑 also blocks switching on for a profile WITHOUT voice samples', async () => {
+    // The backend refuses BOTH cases with a 409 -- the interface blocked only
+    // the first. The second ran into the 409 and showed the English server
+    // message in the German form.
     listing(
       [row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1, speaker_id: 7 })],
       [{ id: 7, name: 'leer', embedding_count: 0 }],
@@ -208,18 +209,18 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     ).toBeDisabled();
   });
 
-  it('sperrt NICHT, wenn die Sprecherliste gar nicht geladen werden konnte', async () => {
-    // 🛑 `fetchSpeakers` schluckt Fehler und gibt `[]` zurueck. Aus einer leeren
-    // Liste „keine Einbettungen" zu folgern, wuerde bei totem /api/speakers
-    // jeden Schalter sperren — die Abwesenheit eines Profils ist kein Beweis.
+  it('does NOT block when the speaker list could not be loaded at all', async () => {
+    // 🛑 `fetchSpeakers` swallows errors and returns `[]`. Concluding "no
+    // embeddings" from an empty list would block every switch whenever
+    // /api/speakers is dead -- the absence of a profile is not proof.
     listing([row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1, speaker_id: 7 })], []);
     renderWithProviders(<UsersPage />);
     expect(await screen.findByTitle('Stimme als zweiten Faktor einschalten')).toBeEnabled();
   });
 
-  it('am eigenen Konto mit scharfem Faktor wird das ABSCHALTEN angeboten', async () => {
-    // Der Quadrant eigen+an: sonst haette sich der Eigentuemer selbst scharf
-    // gestellt und keinen Weg zurueck gesehen.
+  it('on one\'s own account with an armed factor, SWITCHING OFF is offered', async () => {
+    // The own+on quadrant: otherwise the owner would have armed themselves and
+    // seen no way back.
     listing([row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1,
                    voice_second_factor_enabled: true })]);
     const { calls } = captureToggle();
@@ -228,11 +229,11 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     await waitFor(() => expect(calls).toEqual([{ id: String(SELF), enabled: false }]));
   });
 
-  it('🛑 unterscheidet „scharf" von „ruht"', async () => {
-    // Fehlt eine Vorbedingung, haelt die Anmeldung die Token NICHT zurueck: die
-    // Einwilligung steht, wirkt aber nicht. Ein Abzeichen, das beides gleich
-    // zeigt, waere eine Anzeige, die luegt — und ein Administrator haette
-    // geglaubt, das Konto sei geschuetzt.
+  it('🛑 distinguishes „scharf" from „ruht"', async () => {
+    // If a precondition is missing, the login does NOT hold the tokens back:
+    // the consent stands but has no effect. A badge that shows both the same
+    // way would be a display that lies -- and an administrator would have
+    // believed the account was protected.
     listing(
       [row({ id: 2, username: 'anna', speaker_id: null, voice_second_factor_enabled: true })],
       [],
@@ -242,10 +243,10 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     expect(screen.queryByText('Stimme als 2. Faktor')).not.toBeInTheDocument();
   });
 
-  it('🛑 meldet „ruht", wenn der SPRACHWEG der Instanz aus ist', async () => {
-    // Der Befund aus der Browser-Abnahme vom 2026-09-28: eine eingewilligte
-    // Zeile zeigte „scharf", waehrend VOICE_AUTH_ENABLED=false die Huerde ruhen
-    // liess. Die Maske kannte nur die Profil-Haelfte der Vorbedingungen.
+  it('🛑 reports „ruht" when the instance\'s VOICE PATH is off', async () => {
+    // The finding from the browser acceptance run of 2026-09-28: a consented
+    // row showed "armed" while VOICE_AUTH_ENABLED=false left the hurdle
+    // dormant. The form knew only the profile half of the preconditions.
     listing(
       [row({ id: 2, username: 'anna', voice_second_factor_enabled: true })],
       [{ id: 7, name: 'stimme', embedding_count: 3 }],
@@ -256,7 +257,7 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     expect(screen.queryByText('Stimme als 2. Faktor')).not.toBeInTheDocument();
   });
 
-  it('meldet „ruht", wenn die SPRECHERKENNUNG aus ist', async () => {
+  it('reports „ruht" when SPEAKER RECOGNITION is off', async () => {
     listing(
       [row({ id: 2, username: 'anna', voice_second_factor_enabled: true })],
       [{ id: 7, name: 'stimme', embedding_count: 3 }],
@@ -266,11 +267,11 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     expect(await screen.findByText('2. Faktor ruht (Sprachweg aus)')).toBeInTheDocument();
   });
 
-  it('🛑 sperrt das EINSCHALTEN NICHT, nur weil der Sprachweg aus ist', async () => {
-    // Die Gegenkontrolle gegen die Regression, die ich mir beim Fix fast gebaut
-    // haette. Das Backend schliesst `voice_auth_enabled` bewusst aus dem 409 aus:
-    // die Cutover-Reihenfolge lautet erst Einwilligungen einsammeln, DANN das
-    // Flag umlegen. Sperrte die Maske hier, waere genau das unmoeglich.
+  it('🛑 does NOT block SWITCHING ON merely because the voice path is off', async () => {
+    // The counter-check against the regression I nearly built into the fix.
+    // The backend deliberately leaves `voice_auth_enabled` out of the 409: the
+    // cutover order is to collect the consents first, THEN flip the flag. If
+    // the form blocked here, exactly that would be impossible.
     listing(
       [row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1 })],
       [{ id: 7, name: 'stimme', embedding_count: 3 }],
@@ -285,9 +286,9 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     await waitFor(() => expect(calls).toEqual([{ id: String(SELF), enabled: true }]));
   });
 
-  it('sperrt das Einschalten SEHR WOHL, wenn die Sprecherkennung aus ist', async () => {
-    // Die andere Haelfte: DIESEN Fall verweigert das Backend mit 409, also darf
-    // die Maske ihn nicht ins 409 laufen lassen.
+  it('DOES block switching on when speaker recognition is off', async () => {
+    // The other half: the backend refuses THIS case with a 409, so the form
+    // must not let it run into the 409.
     listing(
       [row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1 })],
       [{ id: 7, name: 'stimme', embedding_count: 3 }],

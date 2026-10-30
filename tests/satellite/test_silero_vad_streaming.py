@@ -1,16 +1,16 @@
 """
-Silero-VAD: Streaming-Aufrufkonvention des v5-Modells.
+Silero VAD: the v5 model's streaming calling convention.
 
-Befund 2026-09-19: JEDER Sprachzug der Flotte endete nach ~3,3 s (Karenzzeit 2,0 s
-+ 1,2 s Stille) — 53 von 53 Aufnahmen eines Tages, ein langer Satz wurde
-abgeschnitten. Ursache: ``SileroVADLite`` gab dem v5-Modell (kombinierter
-``state``-Eingang) nackte 512-Sample-Frames. Das Modell verlangt vor jedem Frame
-die letzten 64 Samples des vorherigen (576 je Aufruf); ohne sie antwortet es fuer
-klare Sprache mit ~0,00 — gemessen 0 von 118 Chunks statt 114 von 118. Die VAD
-meldete also NIE Sprache.
+Finding of 2026-09-19: EVERY voice turn in the fleet ended after ~3.3 s (grace
+period 2.0 s + 1.2 s silence) -- 53 of 53 recordings on one day, a long sentence
+was cut off. Cause: ``SileroVADLite`` handed the v5 model (combined ``state``
+input) bare 512-sample frames. Before each frame the model requires the previous
+frame's last 64 samples (576 per call); without them it answers ~0.00 for clear
+speech -- measured 0 of 118 chunks instead of 114 of 118. So the VAD NEVER
+reported speech.
 
-Der Pfad hatte keinen einzigen Test, und das Modell wird unversioniert von
-``master`` geladen — so wurde aus einem Modellwechsel ein stiller Totalausfall.
+The path had not a single test, and the model is loaded unversioned from
+``master`` -- that is how a model change became a silent total failure.
 """
 
 import os
@@ -19,11 +19,11 @@ import numpy as np
 import pytest
 from renfield_satellite.audio.vad import SileroVADLite
 
-CHUNK = 1280  # Aufnahme-Chunk des Satelliten (80 ms @ 16 kHz)
+CHUNK = 1280  # the satellite's recording chunk (80 ms @ 16 kHz)
 
 
 class FakeSession:
-    """Zeichnet auf, was das Modell wirklich zu sehen bekommt."""
+    """Records what the model actually gets to see."""
 
     def __init__(self, prob=0.9):
         self.calls = []
@@ -44,13 +44,13 @@ def _vad(prob=0.9) -> tuple:
 
 
 def _ramp(n: int, start: int = 0) -> bytes:
-    """Eindeutige Samplewerte, damit sich Reihenfolge und Luecken pruefen lassen."""
+    """Distinct sample values, so order and gaps can be checked."""
     return ((np.arange(start, start + n) % 30000) + 1).astype(np.int16).tobytes()
 
 
 @pytest.mark.satellite
 def test_modell_bekommt_kontext_plus_frame():
-    """Die Kernregression: 64 + 512 = 576 Samples, nie nackte 512."""
+    """The core regression: 64 + 512 = 576 samples, never a bare 512."""
     vad, session = _vad()
     vad.get_speech_probability(_ramp(CHUNK))
 
@@ -69,8 +69,8 @@ def test_kontext_ist_das_ende_des_vorherigen_frames():
 
 @pytest.mark.satellite
 def test_strom_ist_lueckenlos_ueber_aufrufgrenzen():
-    """1280 ist kein Vielfaches von 512 — der Rest gehoert in den naechsten Aufruf,
-    nicht mit Nullen aufgefuellt in diesen."""
+    """1280 is not a multiple of 512 -- the remainder belongs in the next call,
+    not zero-padded into this one."""
     vad, session = _vad()
     vad.get_speech_probability(_ramp(CHUNK, 0))
     vad.get_speech_probability(_ramp(CHUNK, CHUNK))
@@ -78,7 +78,7 @@ def test_strom_ist_lueckenlos_ueber_aufrufgrenzen():
     fed = np.concatenate([c["input"][0, 64:] for c in session.calls])
     expected = (np.frombuffer(_ramp(2 * CHUNK), dtype=np.int16).astype(np.float32) / 32768.0)[: len(fed)]
 
-    assert len(session.calls) == 5            # 2560 Samples = 5 volle Frames
+    assert len(session.calls) == 5            # 2560 samples = 5 full frames
     assert np.array_equal(fed, expected), "kein Sample verloren, keines erfunden"
     assert not np.any(fed == 0.0), "keine eingefuegten Null-Samples"
 
@@ -114,7 +114,7 @@ def test_zu_kurzer_aufruf_wiederholt_das_letzte_urteil():
 
 @pytest.mark.satellite
 def test_inferenzfehler_wird_einmal_gemeldet(capsys):
-    """Neutral 0,5 liest sich bei Schwelle 0,5 als SPRACHE — das darf nicht still sein."""
+    """Neutral 0.5 reads as SPEECH at threshold 0.5 -- that must not be silent."""
     vad, session = _vad()
     session.run = lambda *_: (_ for _ in ()).throw(RuntimeError("kaputt"))
 
@@ -126,8 +126,8 @@ def test_inferenzfehler_wird_einmal_gemeldet(capsys):
 
 @pytest.mark.satellite
 def test_inferenzfehler_faellt_auf_rms_zurueck_statt_sprache_zu_melden():
-    """Das neutrale 0,5 darf nie beurteilt werden: bei Schwelle 0,5 hielte es
-    jeden Zug bis zur Aufnahmegrenze offen."""
+    """The neutral 0.5 must never be judged: at threshold 0.5 it would hold
+    every turn open until the recording limit."""
     from renfield_satellite.audio.vad import VADBackend, VoiceActivityDetector
 
     detector = VoiceActivityDetector(backend=VADBackend.RMS, rms_threshold=350.0)
@@ -166,7 +166,7 @@ def test_ungerade_bytezahl_ist_kein_fehler():
 
 
 # ---------------------------------------------------------------------------
-# Gegen das echte Modell (uebersprungen, wenn es nicht vorliegt)
+# Against the real model (skipped when it is not present)
 # ---------------------------------------------------------------------------
 
 MODEL = os.environ.get("SILERO_VAD_MODEL", "/opt/renfield-satellite/models/silero_vad.onnx")

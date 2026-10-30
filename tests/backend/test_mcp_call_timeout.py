@@ -179,27 +179,27 @@ def test_scanner_timeouts_follow_which_tools_still_work_inside_the_call():
 
 
 def test_scanner_wird_mit_einem_GERAETEFREIEN_werkzeug_gesondet():
-    """🛑 Die Probe darf das Gerät NICHT anfassen — und nicht am Normalfall
-    anschlagen.
+    """🛑 The probe must NOT touch the device -- and must not fire on the
+    normal case.
 
-    Der Scanner hatte bis 2026-10-21 gar keine Funktionssonde, mit der
-    Begründung in der YAML, ein schlafender Arbeitsplatzrechner lese `down`
-    und das sei erwartet. Das stimmt, und das Rahmenwerk überspringt getrennte
-    Server ohnehin — nur hat dieselbe Begründung den zweiten Fall mitgedeckt:
-    Dienst läuft, Knopf tot. Neun Tage, bei lebender Aufsicht und grüner
-    Lebendigkeit.
+    Until 2026-10-21 the scanner had no functional probe at all, on the
+    grounds, stated in the YAML, that a sleeping workstation reads `down` and
+    that this is expected. That is true, and the framework skips disconnected
+    servers anyway -- except the same reasoning covered the second case along
+    with it: the service runs, the button is dead. Nine days, with live
+    monitoring and green liveness.
 
-    Zwei Eigenschaften halten diesen Test fest, weil beide durch eine
-    naheliegende „Verbesserung" wieder verloren gehen:
+    Two properties are pinned down by this test, because both get lost again
+    through an obvious "improvement":
 
-    * `scanner_status` fasst das Gerät an (`find_device` + `read_sensors`) und
-      gibt bei AUSGESCHALTETEM Scanner eine Fehlerantwort zurück. Eine Probe
-      darauf schlüge am Normalfall an und würde abgeschaltet.
-    * Eine taktende Probe, die selbst öffnet, ist Last auf genau dem
-      Anschluss, dessen Gesundheit sie misst. Am 2026-10-21 war der Scanner
-      neun Tage am Bus angemeldet und für SANE unansprechbar, OHNE dass eine
-      Gerätesuche gelaufen war — der billige Sensorabruf ist seither der
-      Hauptverdächtige, nicht die Suche.
+    * `scanner_status` touches the device (`find_device` + `read_sensors`) and
+      returns an error response when the scanner is SWITCHED OFF. A probe on
+      it would fire on the normal case and would be switched off.
+    * A ticking probe that opens the device itself is load on exactly the
+      connection whose health it measures. On 2026-10-21 the scanner had been
+      registered on the bus for nine days and was unresponsive to SANE WITHOUT
+      a device search having run -- the cheap sensor poll has been the prime
+      suspect since, not the search.
     """
     from pathlib import Path
 

@@ -1,17 +1,16 @@
 /**
- * Mein Konto — die Einstellungen, die der Person selbst gehören.
+ * My account -- the settings that belong to the person themselves.
  *
- * 🛑 WARUM ES DIESE SEITE GIBT
- * Die Einwilligung in die Stimme als zweiten Anmeldefaktor ist eine Einwilligung
- * in die Verarbeitung biometrischer Daten (Art. 9 DSGVO). Bis zum 2026-09-28 war
- * sie ausschliesslich über die Benutzerverwaltung erreichbar, also nur für Konten
- * mit `users.manage` — ein Haushaltsmitglied konnte weder einwilligen noch auch
- * nur sehen, ob der Faktor für sein Konto gilt. Eine Einwilligung, die nur ein
- * Dritter erteilen kann, ist keine.
+ * 🛑 WHY THIS PAGE EXISTS
+ * Consenting to the voice as a second login factor is a consent to processing
+ * biometric data (Art. 9 GDPR). Until 2026-09-28 it was reachable only through
+ * user administration, i.e. only for accounts with `users.manage` -- a
+ * household member could neither consent nor even see whether the factor
+ * applies to their account. A consent only a third party can give is not one.
  *
- * Die Asymmetrie bleibt: einschalten nur für sich selbst (das ist hier), ein
- * FREMDES Konto abschalten verlangt weiterhin `admin` und geschieht in der
- * Verwaltung.
+ * The asymmetry stays: turning it on only for yourself (that is here), turning
+ * it off on ANOTHER account still requires `admin` and happens in
+ * administration.
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -37,41 +36,42 @@ export default function AccountSettingsPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  // 🛑 Nur fürs Abschalten. Der Server verlangt das Passwort dort, weil ein
-  // Token von VOR der Einwilligung sie sonst zurücknehmen könnte.
+  // 🛑 For turning it off only. The server requires the password there because a
+  // token from BEFORE the consent could otherwise revoke it.
   const [password, setPassword] = useState('');
   const [askPassword, setAskPassword] = useState(false);
 
   const armed = !!user?.voice_second_factor_enabled;
 
   /**
-   * 🛑 DER GRUND KOMMT VOM SERVER, UND ER GILT UNABHÄNGIG VON DER EINWILLIGUNG.
+   * 🛑 THE REASON COMES FROM THE SERVER, AND IT HOLDS REGARDLESS OF THE CONSENT.
    *
-   * Vorher las diese Seite nur die Feature-Flags — also die INSTANZWEITE Hälfte
-   * der Vorbedingungen — und zeigte einen Grund ausserdem nur im Zustand
-   * „scharf". Wer noch nicht eingewilligt hatte, sah ein blankes „Aus", ganz
-   * gleich wie viele Vorbedingungen fehlten, und bekam eine Schaltfläche
-   * angeboten, die mit 409 fehlschlagen musste. Gemessen im Haushalt am
-   * 2026-09-29: bei 6 von 7 Konten war `no_profile` der Blocker — genau die
-   * kontogebundene Hälfte, die diese Seite nicht sehen konnte.
+   * Previously this page read only the feature flags -- the INSTANCE-WIDE half
+   * of the preconditions -- and showed a reason only in the "armed" state.
+   * Anyone who had not consented yet saw a blank "off", no matter how many
+   * preconditions were missing, and was offered a button that was bound to
+   * fail with a 409. Measured in the household on 2026-09-29: on 6 of 7
+   * accounts `no_profile` was the blocker -- precisely the account-bound half
+   * this page could not see.
    *
-   * Solange die Antwort aussteht, wird NICHTS geschlossen: eine unbekannte
-   * Antwort ist kein Beweis, weder für noch gegen einen Blocker.
+   * While the answer is outstanding, NOTHING is concluded: an unknown answer
+   * is no evidence, neither for nor against a blocker.
    */
   const blocker = voiceState.data?.blocker ?? null;
   const blockerText = blocker ? t(`account.voiceBlocker.${blocker}`) : null;
 
   /**
-   * Was das EINSCHALTEN verhindert — nicht dasselbe wie „etwas steht im Weg".
-   * `voice_path_off` blockiert es bewusst NICHT: die Reihenfolge des Cutovers
-   * ist erst Einwilligung sammeln, dann das Flag umlegen. Der Server sieht das
-   * genauso (`POST …/voice-second-factor` prüft `voice_auth_enabled` nicht).
+   * What prevents TURNING IT ON -- not the same as "something is in the way".
+   * `voice_path_off` deliberately does NOT block it: the cutover order is
+   * collect the consents first, then flip the flag. The server sees it the
+   * same way (`POST .../voice-second-factor` does not check
+   * `voice_auth_enabled`).
    */
   const armingBlocked = blocker !== null && blocker !== 'voice_path_off';
 
   const handleToggle = async () => {
     if (!user) return;
-    // Abschalten: erst das Passwort erfragen, dann bestätigen lassen.
+    // Turning it off: ask for the password first, then confirm.
     if (armed && !askPassword) {
       setAskPassword(true);
       return;
@@ -95,15 +95,15 @@ export default function AccountSettingsPage() {
       });
       setPassword('');
       setAskPassword(false);
-      // `/auth/me` neu lesen: der Zustand dieser Seite kommt von dort, nicht aus
-      // der Antwort der Mutation — sonst zeigt die Seite etwas anderes als die
-      // Sitzung glaubt.
+      // Re-read `/auth/me`: this page's state comes from there, not from the
+      // mutation's response -- otherwise the page shows something other than
+      // what the session believes.
       await fetchUser();
       setSuccess(enabling ? t('account.voiceArmed') : t('account.voiceDisarmed'));
     } catch (err) {
-      // 🛑 Die 409-Antwort trägt den CODE, nicht den Satz — sonst stünde hier
-      // roher Text wie „no_profile" in der Oberfläche. Übersetzt wird er hier,
-      // aus demselben Vokabular wie der Zustand oben.
+      // 🛑 The 409 response carries the CODE, not the sentence -- otherwise raw
+      // text like "no_profile" would end up in the UI. It is translated here,
+      // from the same vocabulary as the state above.
       const detail = (err as { response?: { data?: { detail?: unknown } } })
         ?.response?.data?.detail;
       setError(
@@ -132,7 +132,7 @@ export default function AccountSettingsPage() {
               {t('account.voiceExplain')}
             </p>
 
-            {/* Symbol UND Text — die Farbe ist nie das einzige Signal (DESIGN.md). */}
+            {/* Symbol AND text -- colour is never the only signal (DESIGN.md). */}
             <p
               className={`mt-3 flex items-center gap-2 text-sm font-medium ${
                 armed && !blocker
@@ -153,9 +153,9 @@ export default function AccountSettingsPage() {
                   : t('account.voiceStateOn')}
             </p>
 
-            {/* 🛑 Der GRUND, und zwar in BEIDEN Zuständen. Er ist der einzige
-                Hinweis darauf, warum ein Einschalten fehlschlagen würde — vorher
-                erfuhr ihn die Person erst nach dem Drücken, und auf Englisch. */}
+            {/* 🛑 The REASON, in BOTH states. It is the only hint as to why
+                turning it on would fail -- previously the person only learned
+                it after pressing, and in English. */}
             {blockerText && (
               <p className="mt-2 text-xs text-gray-600 dark:text-gray-300">
                 {blockerText}
@@ -197,10 +197,11 @@ export default function AccountSettingsPage() {
               setVoiceSecondFactor.isPending
               || !user
               || (askPassword && !password)
-              // Einschalten, das der Server mit 409 ablehnen MUSS, wird gar
-              // nicht erst angeboten. Abschalten bleibt immer möglich — das ist
-              // der dokumentierte Rückweg und darf an keiner Vorbedingung
-              // hängen (es gibt bewusst keinen Rückfall auf Passwort allein).
+              // Turning it on where the server MUST refuse with a 409 is not
+              // offered in the first place. Turning it off stays possible
+              // always -- that is the documented way back and must not depend
+              // on any precondition (there is deliberately no fallback to the
+              // password alone).
               || (!armed && armingBlocked)
             }
             title={!armed && armingBlocked && blockerText ? blockerText : undefined}

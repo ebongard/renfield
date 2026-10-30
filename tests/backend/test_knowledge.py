@@ -1,11 +1,11 @@
 """
-Tests für Knowledge Base Funktionalität
+Tests for knowledge-base functionality
 
-Testet:
-- Model-Schema (Spalten owner_id, is_public vorhanden)
-- API-Endpoints für KB-Management
-- Dokumenten-Management
-- Permission-basierter Zugriff
+Covers:
+- the model schema (the owner_id and is_public columns being present)
+- API endpoints for KB management
+- document management
+- permission-based access
 """
 
 import pytest
@@ -20,11 +20,11 @@ from models.database import Document, KnowledgeBase, Role, User
 # ============================================================================
 
 class TestKnowledgeBaseModel:
-    """Tests für das KnowledgeBase Model"""
+    """Tests for the KnowledgeBase model"""
 
     @pytest.mark.database
     async def test_knowledge_base_has_owner_id_column(self, async_engine):
-        """Prüft, dass die owner_id Spalte im Schema existiert"""
+        """Checks that the owner_id column exists in the schema"""
         async with async_engine.connect() as conn:
             def check_columns(sync_conn):
                 inspector = inspect(sync_conn)
@@ -38,7 +38,7 @@ class TestKnowledgeBaseModel:
 
     @pytest.mark.database
     async def test_knowledge_base_has_is_public_column(self, async_engine):
-        """Prüft, dass die is_public Spalte im Schema existiert"""
+        """Checks that the is_public column exists in the schema"""
         async with async_engine.connect() as conn:
             def check_columns(sync_conn):
                 inspector = inspect(sync_conn)
@@ -52,7 +52,7 @@ class TestKnowledgeBaseModel:
 
     @pytest.mark.database
     async def test_knowledge_base_schema_complete(self, async_engine):
-        """Prüft, dass alle erwarteten Spalten vorhanden sind"""
+        """Checks that every expected column is present"""
         expected_columns = {
             'id', 'name', 'description', 'is_active',
             'owner_id', 'is_public', 'created_at', 'updated_at'
@@ -71,7 +71,7 @@ class TestKnowledgeBaseModel:
 
     @pytest.mark.database
     async def test_create_knowledge_base(self, db_session: AsyncSession, sample_knowledge_base_data):
-        """Testet das Erstellen einer Knowledge Base"""
+        """Tests creating a knowledge base"""
         kb = KnowledgeBase(**sample_knowledge_base_data)
         db_session.add(kb)
         await db_session.commit()
@@ -90,7 +90,7 @@ class TestKnowledgeBaseModel:
         test_user: User,
         sample_knowledge_base_data
     ):
-        """Testet das Erstellen einer Knowledge Base mit Owner"""
+        """Tests creating a knowledge base with an owner"""
         kb = KnowledgeBase(
             owner_id=test_user.id,
             **sample_knowledge_base_data
@@ -103,7 +103,7 @@ class TestKnowledgeBaseModel:
 
     @pytest.mark.database
     async def test_create_public_knowledge_base(self, db_session: AsyncSession):
-        """Testet das Erstellen einer öffentlichen Knowledge Base"""
+        """Tests creating a public knowledge base"""
         kb = KnowledgeBase(
             name="Public KB",
             description="A public knowledge base",
@@ -117,7 +117,7 @@ class TestKnowledgeBaseModel:
 
     @pytest.mark.database
     async def test_knowledge_base_unique_name(self, db_session: AsyncSession, test_knowledge_base):
-        """Testet, dass KB-Namen eindeutig sein müssen"""
+        """Tests that KB names have to be unique"""
         from sqlalchemy.exc import IntegrityError
 
         duplicate_kb = KnowledgeBase(
@@ -131,11 +131,11 @@ class TestKnowledgeBaseModel:
 
 
 class TestDocumentModel:
-    """Tests für das Document Model"""
+    """Tests for the Document model"""
 
     @pytest.mark.database
     async def test_document_schema_complete(self, async_engine):
-        """Prüft, dass alle erwarteten Spalten vorhanden sind"""
+        """Checks that every expected column is present"""
         expected_columns = {
             'id', 'filename', 'title', 'file_path', 'file_type',
             'file_size', 'file_hash', 'status', 'error_message',
@@ -161,7 +161,7 @@ class TestDocumentModel:
         test_knowledge_base: KnowledgeBase,
         sample_document_data
     ):
-        """Testet das Erstellen eines Dokuments"""
+        """Tests creating a document"""
         doc = Document(
             knowledge_base_id=test_knowledge_base.id,
             **sample_document_data
@@ -180,7 +180,7 @@ class TestDocumentModel:
         db_session: AsyncSession,
         test_document: Document
     ):
-        """Testet die Beziehung zwischen Document und KnowledgeBase"""
+        """Tests the relationship between Document and KnowledgeBase"""
         result = await db_session.execute(
             select(Document).where(Document.id == test_document.id)
         )
@@ -192,11 +192,11 @@ class TestDocumentModel:
 
 
 class TestRoleModel:
-    """Tests für das Role Model"""
+    """Tests for the Role model"""
 
     @pytest.mark.database
     async def test_role_schema_complete(self, async_engine):
-        """Prüft, dass alle erwarteten Spalten vorhanden sind"""
+        """Checks that every expected column is present"""
         expected_columns = {
             'id', 'name', 'description', 'permissions',
             'is_system', 'created_at', 'updated_at'
@@ -215,7 +215,7 @@ class TestRoleModel:
 
     @pytest.mark.database
     async def test_create_role(self, db_session: AsyncSession, sample_role_data):
-        """Testet das Erstellen einer Rolle"""
+        """Tests creating a role"""
         role = Role(**sample_role_data)
         db_session.add(role)
         await db_session.commit()
@@ -227,11 +227,11 @@ class TestRoleModel:
 
 
 class TestUserModel:
-    """Tests für das User Model"""
+    """Tests for the User model"""
 
     @pytest.mark.database
     async def test_user_schema_complete(self, async_engine):
-        """Prüft, dass alle erwarteten Spalten vorhanden sind"""
+        """Checks that every expected column is present"""
         expected_columns = {
             'id', 'username', 'email', 'password_hash',
             'role_id', 'is_active', 'speaker_id',
@@ -251,7 +251,7 @@ class TestUserModel:
 
     @pytest.mark.database
     async def test_create_user(self, db_session: AsyncSession, test_role: Role, sample_user_data):
-        """Testet das Erstellen eines Users"""
+        """Tests creating a user"""
         user = User(role_id=test_role.id, **sample_user_data)
         db_session.add(user)
         await db_session.commit()
@@ -263,7 +263,7 @@ class TestUserModel:
 
     @pytest.mark.database
     async def test_user_role_relationship(self, db_session: AsyncSession, test_user: User):
-        """Testet die Beziehung zwischen User und Role"""
+        """Tests the relationship between User and Role"""
         result = await db_session.execute(
             select(User).where(User.id == test_user.id)
         )
@@ -278,11 +278,11 @@ class TestUserModel:
 # ============================================================================
 
 class TestKnowledgeBaseQueries:
-    """Tests für Knowledge Base Abfragen"""
+    """Tests for knowledge-base queries"""
 
     @pytest.mark.database
     async def test_list_knowledge_bases(self, db_session: AsyncSession, test_knowledge_base):
-        """Testet das Auflisten von Knowledge Bases"""
+        """Tests listing knowledge bases"""
         result = await db_session.execute(select(KnowledgeBase))
         bases = result.scalars().all()
 
@@ -296,7 +296,7 @@ class TestKnowledgeBaseQueries:
         test_knowledge_base_with_owner: KnowledgeBase,
         test_user: User
     ):
-        """Testet das Filtern nach owner_id"""
+        """Tests filtering by owner_id"""
         result = await db_session.execute(
             select(KnowledgeBase).where(KnowledgeBase.owner_id == test_user.id)
         )
@@ -307,7 +307,7 @@ class TestKnowledgeBaseQueries:
 
     @pytest.mark.database
     async def test_list_public_knowledge_bases(self, db_session: AsyncSession):
-        """Testet das Filtern nach öffentlichen KBs"""
+        """Tests filtering for public KBs"""
         # Create a public KB
         public_kb = KnowledgeBase(
             name="Public Test KB",
@@ -330,7 +330,7 @@ class TestKnowledgeBaseQueries:
         db_session: AsyncSession,
         test_document: Document
     ):
-        """Testet das Laden einer KB mit Dokumenten"""
+        """Tests loading a KB together with its documents"""
         from sqlalchemy.orm import selectinload
 
         result = await db_session.execute(
@@ -350,11 +350,11 @@ class TestKnowledgeBaseQueries:
 # ============================================================================
 
 class TestConversationModel:
-    """Tests für das Conversation Model mit user_id"""
+    """Tests for the Conversation model with user_id"""
 
     @pytest.mark.database
     async def test_conversation_has_user_id_column(self, async_engine):
-        """Prüft, dass die user_id Spalte im Schema existiert"""
+        """Checks that the user_id column exists in the schema"""
         async with async_engine.connect() as conn:
             def check_columns(sync_conn):
                 inspector = inspect(sync_conn)
@@ -368,11 +368,11 @@ class TestConversationModel:
 
 
 # ============================================================================
-# Integration Tests (mit API)
+# Integration Tests (with API)
 # ============================================================================
 
 class TestKnowledgeBaseAPI:
-    """API Integration Tests für Knowledge Bases"""
+    """API integration tests for knowledge bases"""
 
     @pytest.mark.integration
     async def test_list_knowledge_bases_endpoint(
@@ -380,7 +380,7 @@ class TestKnowledgeBaseAPI:
         async_client: AsyncClient,
         test_knowledge_base: KnowledgeBase
     ):
-        """Testet GET /api/knowledge/bases"""
+        """Tests GET /api/knowledge/bases"""
         response = await async_client.get("/api/knowledge/bases")
 
         assert response.status_code == 200
@@ -465,7 +465,7 @@ class TestKnowledgeBaseAPI:
 
     @pytest.mark.integration
     async def test_create_knowledge_base_endpoint(self, async_client: AsyncClient):
-        """Testet POST /api/knowledge/bases"""
+        """Tests POST /api/knowledge/bases"""
         response = await async_client.post(
             "/api/knowledge/bases",
             json={
@@ -488,7 +488,7 @@ class TestKnowledgeBaseAPI:
         async_client: AsyncClient,
         test_knowledge_base: KnowledgeBase
     ):
-        """Testet GET /api/knowledge/bases/{kb_id}"""
+        """Tests GET /api/knowledge/bases/{kb_id}"""
         response = await async_client.get(f"/api/knowledge/bases/{test_knowledge_base.id}")
 
         assert response.status_code == 200
@@ -498,7 +498,7 @@ class TestKnowledgeBaseAPI:
 
     @pytest.mark.integration
     async def test_get_nonexistent_knowledge_base(self, async_client: AsyncClient):
-        """Testet GET /api/knowledge/bases/{kb_id} für nicht-existente KB"""
+        """Tests GET /api/knowledge/bases/{kb_id} for a KB that does not exist"""
         response = await async_client.get("/api/knowledge/bases/99999")
 
         assert response.status_code == 404
@@ -509,7 +509,7 @@ class TestKnowledgeBaseAPI:
         async_client: AsyncClient,
         test_knowledge_base: KnowledgeBase
     ):
-        """Testet DELETE /api/knowledge/bases/{kb_id}"""
+        """Tests DELETE /api/knowledge/bases/{kb_id}"""
         response = await async_client.delete(f"/api/knowledge/bases/{test_knowledge_base.id}")
 
         assert response.status_code == 200
@@ -520,7 +520,7 @@ class TestKnowledgeBaseAPI:
 
     @pytest.mark.integration
     async def test_knowledge_stats_endpoint(self, async_client: AsyncClient):
-        """Testet GET /api/knowledge/stats"""
+        """Tests GET /api/knowledge/stats"""
         response = await async_client.get("/api/knowledge/stats")
 
         assert response.status_code == 200
@@ -531,7 +531,7 @@ class TestKnowledgeBaseAPI:
 
 
 class TestDocumentAPI:
-    """API Integration Tests für Dokumente"""
+    """API integration tests for documents"""
 
     @pytest.mark.integration
     async def test_list_documents_endpoint(
@@ -539,7 +539,7 @@ class TestDocumentAPI:
         async_client: AsyncClient,
         test_document: Document
     ):
-        """Testet GET /api/knowledge/documents"""
+        """Tests GET /api/knowledge/documents"""
         response = await async_client.get("/api/knowledge/documents")
 
         assert response.status_code == 200
@@ -553,7 +553,7 @@ class TestDocumentAPI:
         test_document: Document,
         test_knowledge_base: KnowledgeBase
     ):
-        """Testet GET /api/knowledge/documents?knowledge_base_id=X"""
+        """Tests GET /api/knowledge/documents?knowledge_base_id=X"""
         response = await async_client.get(
             f"/api/knowledge/documents?knowledge_base_id={test_knowledge_base.id}"
         )
@@ -568,7 +568,7 @@ class TestDocumentAPI:
         async_client: AsyncClient,
         test_document: Document
     ):
-        """Testet GET /api/knowledge/documents/{document_id}"""
+        """Tests GET /api/knowledge/documents/{document_id}"""
         response = await async_client.get(f"/api/knowledge/documents/{test_document.id}")
 
         assert response.status_code == 200
@@ -578,7 +578,7 @@ class TestDocumentAPI:
 
     @pytest.mark.integration
     async def test_get_nonexistent_document(self, async_client: AsyncClient):
-        """Testet GET /api/knowledge/documents/{document_id} für nicht-existentes Dokument"""
+        """Tests GET /api/knowledge/documents/{document_id} for a document that does not exist"""
         response = await async_client.get("/api/knowledge/documents/99999")
 
         assert response.status_code == 404

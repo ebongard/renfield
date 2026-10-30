@@ -1,11 +1,11 @@
 """
-Tests für Home Assistant API
+Tests for the Home Assistant API
 
-Testet:
-- State Abfragen
-- Geräte steuern (turn_on, turn_off, toggle)
-- Service Aufrufe
-- Entity Suche
+Covers:
+- State queries
+- Controlling devices (turn_on, turn_off, toggle)
+- Service calls
+- Entity search
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,7 +19,7 @@ from httpx import AsyncClient
 
 @pytest.fixture
 def mock_ha_client_for_routes():
-    """Mock HA Client für Route-Tests"""
+    """Mock HA client for the route tests"""
     with patch('ha_glue.api.routes.homeassistant.ha_client') as mock:
         mock.get_states = AsyncMock(return_value=[
             {"entity_id": "light.wohnzimmer", "state": "on"},
@@ -58,7 +58,7 @@ def mock_auth_bypass():
 # ============================================================================
 
 class TestStateQueries:
-    """Tests für State-Abfragen"""
+    """Tests for state queries"""
 
     @pytest.mark.integration
     async def test_get_all_states(
@@ -67,7 +67,7 @@ class TestStateQueries:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet GET /api/homeassistant/states"""
+        """Tests GET /api/homeassistant/states"""
         response = await async_client.get("/api/homeassistant/states")
 
         # Either success or auth required
@@ -83,7 +83,7 @@ class TestStateQueries:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet GET /api/homeassistant/state/{entity_id}"""
+        """Tests GET /api/homeassistant/state/{entity_id}"""
         response = await async_client.get("/api/homeassistant/state/light.wohnzimmer")
 
         assert response.status_code in [200, 401, 403]
@@ -97,7 +97,7 @@ class TestStateQueries:
         async_client: AsyncClient,
         mock_auth_bypass
     ):
-        """Testet GET für nicht-existente Entity"""
+        """GET for an entity that does not exist"""
         with patch('ha_glue.api.routes.homeassistant.ha_client') as mock:
             mock.get_state = AsyncMock(return_value=None)
 
@@ -111,7 +111,7 @@ class TestStateQueries:
 # ============================================================================
 
 class TestDeviceControl:
-    """Tests für Gerätesteuerung"""
+    """Tests for device control"""
 
     @pytest.mark.integration
     async def test_turn_on(
@@ -120,7 +120,7 @@ class TestDeviceControl:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet POST /api/homeassistant/turn_on/{entity_id}"""
+        """Tests POST /api/homeassistant/turn_on/{entity_id}"""
         response = await async_client.post("/api/homeassistant/turn_on/light.wohnzimmer")
 
         assert response.status_code in [200, 401, 403]
@@ -136,7 +136,7 @@ class TestDeviceControl:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet POST /api/homeassistant/turn_off/{entity_id}"""
+        """Tests POST /api/homeassistant/turn_off/{entity_id}"""
         response = await async_client.post("/api/homeassistant/turn_off/light.wohnzimmer")
 
         assert response.status_code in [200, 401, 403]
@@ -152,7 +152,7 @@ class TestDeviceControl:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet POST /api/homeassistant/toggle/{entity_id}"""
+        """Tests POST /api/homeassistant/toggle/{entity_id}"""
         response = await async_client.post("/api/homeassistant/toggle/light.wohnzimmer")
 
         assert response.status_code in [200, 401, 403]
@@ -168,7 +168,7 @@ class TestDeviceControl:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet POST /api/homeassistant/set_value"""
+        """Tests POST /api/homeassistant/set_value"""
         response = await async_client.post(
             "/api/homeassistant/set_value",
             json={
@@ -190,7 +190,7 @@ class TestDeviceControl:
         async_client: AsyncClient,
         mock_auth_bypass
     ):
-        """Testet Fehler bei turn_on"""
+        """An error on turn_on"""
         with patch('ha_glue.api.routes.homeassistant.ha_client') as mock:
             mock.turn_on = AsyncMock(return_value=False)
 
@@ -204,7 +204,7 @@ class TestDeviceControl:
 # ============================================================================
 
 class TestServiceCalls:
-    """Tests für Service-Aufrufe"""
+    """Tests for service calls"""
 
     @pytest.mark.integration
     async def test_call_service(
@@ -213,7 +213,7 @@ class TestServiceCalls:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet POST /api/homeassistant/service"""
+        """Tests POST /api/homeassistant/service"""
         response = await async_client.post(
             "/api/homeassistant/service",
             json={
@@ -235,7 +235,7 @@ class TestServiceCalls:
         async_client: AsyncClient,
         mock_auth_bypass
     ):
-        """Testet Fehler bei Service-Aufruf"""
+        """An error on a service call"""
         with patch('ha_glue.api.routes.homeassistant.ha_client') as mock:
             mock.call_service = AsyncMock(return_value=False)
 
@@ -255,7 +255,7 @@ class TestServiceCalls:
 # ============================================================================
 
 class TestEntitySearch:
-    """Tests für Entity-Suche"""
+    """Tests for entity search"""
 
     @pytest.mark.integration
     async def test_search_entities(
@@ -264,7 +264,7 @@ class TestEntitySearch:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet GET /api/homeassistant/search"""
+        """Tests GET /api/homeassistant/search"""
         response = await async_client.get("/api/homeassistant/search?query=wohnzimmer")
 
         assert response.status_code in [200, 401, 403]
@@ -279,7 +279,7 @@ class TestEntitySearch:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet GET /api/homeassistant/domain/{domain}"""
+        """Tests GET /api/homeassistant/domain/{domain}"""
         response = await async_client.get("/api/homeassistant/domain/light")
 
         assert response.status_code in [200, 401, 403]
@@ -293,7 +293,7 @@ class TestEntitySearch:
 # ============================================================================
 
 class TestErrorHandling:
-    """Tests für Fehlerbehandlung"""
+    """Tests for error handling"""
 
     @pytest.mark.integration
     async def test_ha_client_exception(
@@ -301,7 +301,7 @@ class TestErrorHandling:
         async_client: AsyncClient,
         mock_auth_bypass
     ):
-        """Testet Exception-Handling bei HA Client Fehler"""
+        """Exception handling on an HA client error"""
         with patch('ha_glue.api.routes.homeassistant.ha_client') as mock:
             mock.get_states = AsyncMock(side_effect=Exception("Connection failed"))
 
@@ -316,7 +316,7 @@ class TestErrorHandling:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet ungültiges Entity-ID Format"""
+        """An invalid entity-id format"""
         # Home Assistant client should handle this
         response = await async_client.get("/api/homeassistant/state/invalid")
 

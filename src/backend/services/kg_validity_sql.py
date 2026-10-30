@@ -1,5 +1,5 @@
 """
-Validity filter for kg_relations — #875 Stufe 1 (docs/design/kg-bitemporal-edges.md).
+Validity filter for kg_relations — #875 stage 1 (docs/design/kg-bitemporal-edges.md).
 
 One place that defines "this relation holds at time T", in the two shapes the
 KG read paths use: a raw-SQL clause for the ``text()`` queries (kg_retrieval,
@@ -12,11 +12,11 @@ filters ``is_active`` without it.
 **Off = byte-identical.** With ``settings.kg_validity_filter_enabled`` False
 (the default) both helpers return the EMPTY value — ``("", {})`` and ``[]`` —
 so every caller's SQL is exactly what it was before the columns existed. That
-is how Stufe 1 is verified (§11: "Golden-SQL … byte-identisch").
+is how stage 1 is verified (§11: "Golden-SQL … byte-identisch").
 
-**On changes no result in Stufe 1.** Nothing sets ``valid_to`` yet, so
+**Changes nothing in stage 1.** Nothing sets ``valid_to`` yet, so
 ``valid_to IS NULL`` holds for every row. The switch only arms the filter for
-the Stufe 2 detector, which needs its own explicit go.
+the stage 2 detector, which needs its own explicit go.
 
 Timestamps are naive UTC, matching ``models.database._utcnow``.
 """

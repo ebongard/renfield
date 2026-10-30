@@ -71,7 +71,7 @@ def _content_type_for_filename(filename: str) -> str:
 
 
 class WhisperService:
-    """Service für Speech-to-Text mit Whisper"""
+    """Service for speech-to-text with Whisper"""
 
     def __init__(self):
         self.model_size = settings.whisper_model
@@ -113,7 +113,7 @@ class WhisperService:
         return self._inflight_sem
 
     def load_model(self):
-        """Modell laden"""
+        """Load the model"""
         if self.model is None:
             try:
                 logger.info(
@@ -180,7 +180,7 @@ class WhisperService:
 
     async def transcribe_file(self, audio_path: str, language: str = None, initial_prompt: str | None = None) -> str:
         """
-        Audio-Datei transkribieren mit optionalem Preprocessing.
+        Transcribe an audio file, with optional preprocessing.
 
         Args:
             audio_path: Path to the audio file
@@ -261,7 +261,7 @@ class WhisperService:
 
     async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav", language: str = None, initial_prompt: str | None = None, is_opus: bool = False) -> str:
         """
-        Audio aus Bytes transkribieren.
+        Transcribe audio from bytes.
 
         Args:
             audio_bytes: Raw audio bytes
@@ -285,7 +285,7 @@ class WhisperService:
             logger.error("opus STT requested but no voice_server_url configured")
             return ""
 
-        # Temporäre Datei erstellen
+        # Create a temporary file
         with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
@@ -293,7 +293,7 @@ class WhisperService:
         try:
             return await self.transcribe_file(tmp_path, language=language, initial_prompt=initial_prompt)
         finally:
-            # Temporäre Datei löschen
+            # Delete the temporary file
             Path(tmp_path).unlink(missing_ok=True)
 
     async def _transcribe_bytes_via_voice_server(

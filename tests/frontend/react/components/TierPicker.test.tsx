@@ -1,17 +1,17 @@
 /**
- * TierPicker: Hook-Reihenfolge, Tastaturbedienung, beide Varianten.
+ * TierPicker: hook order, keyboard operation, both variants.
  *
- * 🛑 Der wichtigste Test hier ist `it('survives a switch from pills to compact')`.
- * Er haelt den Fehler fest, der die Komponente bis 2026-09-27 latent kaputt
- * machte: `useRef` und `useEffect` standen HINTER dem vorzeitigen `return` fuer
- * `variant === 'compact'`. React fuehrt Hooks ueber die AUFRUFREIHENFOLGE — eine
- * Instanz, die die Variante wechselt, ruft dann zwei Hooks weniger auf und React
- * wirft „Rendered fewer hooks than expected".
+ * 🛑 The most important test here is `it('survives a switch from pills to
+ * compact')`. It pins the defect that left the component latently broken until
+ * 2026-09-27: `useRef` and `useEffect` stood BEHIND the early `return` for
+ * `variant === 'compact'`. React tracks hooks by CALL ORDER -- an instance that
+ * switches variant then calls two fewer hooks and React throws "Rendered fewer
+ * hooks than expected".
  *
- * Latent blieb das nur, weil alle vier Aufrufstellen die Variante als Literal
- * setzen. Genau deshalb braucht es diesen Test: ein Fehler, den keine bestehende
- * Aufrufstelle ausloest, verschwindet sonst wieder, sobald jemand die Variante
- * an einen Zustand haengt.
+ * It stayed latent only because all four call sites set the variant as a
+ * literal. That is exactly why this test is needed: a defect that no existing
+ * call site triggers would otherwise disappear again as soon as somebody binds
+ * the variant to state.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -31,9 +31,9 @@ describe('TierPicker', () => {
   });
 
   it('survives a switch from pills to compact', () => {
-    // Der eigentliche Regressionswaechter. Vor der Korrektur wirft das
-    // Neu-Rendern „Rendered fewer hooks than expected", weil die compact-Variante
-    // vor `useRef`/`useEffect` zurueckkehrte.
+    // The actual regression guard. Before the fix the re-render throws
+    // "Rendered fewer hooks than expected", because the compact variant
+    // returned before `useRef`/`useEffect`.
     const { rerender } = render(<TierPicker value={2} onChange={vi.fn()} />);
     expect(screen.getAllByRole('radio')).toHaveLength(5);
 
@@ -42,8 +42,8 @@ describe('TierPicker', () => {
     ).not.toThrow();
     expect(screen.getByRole('combobox')).toBeInTheDocument();
 
-    // Und zurueck — die Gegenrichtung ruft ZWEI Hooks MEHR auf, was React
-    // ebenso bemerkt.
+    // And back -- the other direction calls TWO hooks MORE, which React
+    // notices just as well.
     expect(() =>
       rerender(<TierPicker value={3} onChange={vi.fn()} variant="pills" />),
     ).not.toThrow();

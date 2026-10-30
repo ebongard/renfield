@@ -1,23 +1,23 @@
-"""Die Vorauswahl muss protokollieren, WAS sie gewählt hat — nicht wie viel.
+"""The pre-selection must log WHAT it chose -- not how much.
 
-🛑 Der Anlass, am 2026-10-26 im Protokoll gemessen. Auf „scanne nach xidra"
-griff der Agent dreimal zur Paperless-Suche. Im Protokoll stand nur:
+🛑 The occasion, measured in the log on 2026-10-26. On "scanne nach xidra" the
+agent reached for the Paperless search three times. All the log said was:
 
     13:20:52  Tool pre-selection: 3/33 tools selected for: 'scanne nach xidra'
 
-Aus dieser Zeile ist nicht zu entscheiden, ob `scan_document` gar nicht
-angeboten oder nur nicht gewählt wurde — also ob die Vorauswahl oder der Agent
-danebenlag. Zwei völlig verschiedene Reparaturen. Die Diagnose kostete darum
-einen eigenen Durchlauf mit nachgerüsteter Protokollzeile.
+From that line it cannot be decided whether `scan_document` was not offered at
+all or merely not chosen -- that is, whether the pre-selection or the agent was
+wrong. Two entirely different repairs. The diagnosis therefore cost a run of
+its own with a log line retrofitted.
 
-Eine Zählung ohne Namen ist für die Diagnose fast wertlos. Dieser Test hält
-fest, dass die Namen dastehen.
+A count without names is close to worthless for a diagnosis. This test holds
+that the names are there.
 
-🛑 Negativkontrolle gemessen: gegen die alte f-string-Zeile schlägt
-`test_the_log_line_names_the_chosen_tools` fehl („`mcp.scanner.scan_document`
-fehlt in der Zeile"). `test_the_log_line_still_carries_count_and_message`
-bleibt dabei GRÜN, und das ist Absicht — Zählung und Anlass trug die alte
-Zeile auch; er sichert die loguru-Umstellung, nicht die Namen.
+🛑 Negative control measured: against the old f-string line
+`test_the_log_line_names_the_chosen_tools` fails ("`mcp.scanner.scan_document`
+missing from the line"). `test_the_log_line_still_carries_count_and_message`
+stays GREEN while it does, and that is deliberate -- the old line carried the
+count and the occasion too; it secures the move to loguru, not the names.
 """
 import json
 from types import SimpleNamespace
@@ -30,7 +30,7 @@ from services.agent_tools import AgentToolRegistry, ToolDefinition
 
 pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
-#: Mehr als die sechs, unter denen die Vorauswahl gar nicht erst anläuft.
+#: More than the six below which the pre-selection does not run at all.
 ALLE = [
     "mcp.scanner.scan_document",
     "mcp.paperless.search_documents",
@@ -46,7 +46,7 @@ GEWAEHLT = ["mcp.scanner.scan_document", "internal.list_rooms"]
 
 
 def _dienst() -> AgentService:
-    """Eine Instanz mit echter Registratur — nur die LLM-Station wird gestellt."""
+    """An instance with a real registry -- only the LLM stage is stubbed."""
     svc = AgentService.__new__(AgentService)
     r = AgentToolRegistry.__new__(AgentToolRegistry)
     r._tools = {
@@ -58,7 +58,7 @@ def _dienst() -> AgentService:
 
 @pytest.fixture
 def protokoll():
-    """Fängt die echten loguru-Zeilen ab — nach der Ersetzung der Argumente."""
+    """Captures the real loguru lines -- after the arguments were substituted."""
     zeilen: list[str] = []
     sink = logger.add(lambda m: zeilen.append(m.record["message"]), level="INFO")
     yield zeilen
@@ -67,12 +67,11 @@ def protokoll():
 
 @pytest.fixture
 def gestellter_pfad(monkeypatch):
-    """Die Stationen um den LLM-Aufruf herum, damit er bis zur Zeile kommt."""
+    """The stages around the LLM call, so that it reaches the line."""
     import services.agent_service as mod
 
-    # 🛑 Die Vorlage traegt eine Marke UND die Werkzeugliste, damit ein Test
-    # den INHALT des Prompt-Auszugs pruefen kann und nicht nur, dass eine
-    # Zeile kam.
+    # 🛑 The template carries a marker AND the tool list, so a test can check
+    # the CONTENT of the prompt excerpt and not merely that a line arrived.
     monkeypatch.setattr(
         mod.prompt_manager, "get",
         lambda *a, **k: f"{PROMPT_MARKE} {k.get('message', '')} {k.get('tool_list', '')}",
@@ -95,11 +94,11 @@ async def test_the_log_line_names_the_chosen_tools(protokoll, gestellter_pfad):
         "die Vorauswahl selbst hat nicht das Erwartete geliefert — dann "
         f"prueft dieser Test die falsche Sache: {sorted(gewaehlt or [])}")
 
-    # 🛑 Auf „tools selected for:" pruefen, nicht auf „Tool pre-selection":
-    # das Praefix tragen auch die PROMPT- und die Rueckfall-Zeile. Mit
-    # angelegtem `agent_preselect_prompt_dump` griffen diese Tests sonst die
-    # falsche Zeile und schlugen irrefuehrend fehl — von der Negativkontrolle
-    # des Schalters aufgedeckt.
+    # 🛑 Check for "tools selected for:", not for "Tool pre-selection": the
+    # PROMPT line and the fallback line carry that prefix too. With
+    # `agent_preselect_prompt_dump` switched on, these tests would otherwise
+    # grab the wrong line and fail misleadingly -- uncovered by the switch's
+    # own negative control.
     zeile = next((z for z in protokoll if "tools selected for:" in z), None)
     assert zeile is not None, f"keine Vorauswahl-Zeile im Protokoll: {protokoll}"
 
@@ -111,23 +110,23 @@ async def test_the_log_line_names_the_chosen_tools(protokoll, gestellter_pfad):
 
 @pytest.mark.asyncio
 async def test_the_log_line_still_carries_count_and_message(protokoll, gestellter_pfad):
-    """Die Namen kommen HINZU; Zählung und Anlass bleiben stehen.
+    """The names are ADDED; the count and the occasion stay.
 
-    🛑 Die Zeile wurde von einem f-string auf loguru-Argumente umgestellt.
-    Steht dort ein `%s` oder bleibt ein Argument unersetzt, kommt genau hier
-    ein rohes `{}` an (siehe `test_loguru_placeholders.py` fuer die Klasse).
+    🛑 The line was moved from an f-string to loguru arguments. If a `%s` ends
+    up there, or an argument stays unsubstituted, a raw `{}` arrives exactly
+    here (see `test_loguru_placeholders.py` for the class of defect).
     """
     await _dienst()._preselect_tools(
         "scanne nach xidra", gestellter_pfad, "irgendein-modell",
     )
     zeile = next(z for z in protokoll if "tools selected for:" in z)
-    # 🛑 Der Fingerabdruck der Eingabe MUSS in der Zeile stehen — er ist der
-    # ganze Liefergegenstand von #1413. Ohne diese Behauptung bemerkt kein Test
-    # den stillen Fall: `logger.info` mit einem Argument zu wenig laesst die
-    # Zeile sauber formatieren, nur ohne `in=`. Die umgekehrte Richtung (ein
-    # Platzhalter zu viel) wirft und wird vom blanken `except Exception`
-    # geschluckt — dann faellt die Vorauswahl auf ALLE Werkzeuge zurueck und
-    # meldet das als Modellfehler. Im Review zu #1413 gefunden.
+    # 🛑 The input fingerprint MUST be in the line -- it is the entire
+    # deliverable of #1413. Without this assertion no test notices the silent
+    # case: `logger.info` with one argument too few formats the line cleanly,
+    # just without `in=`. The opposite direction (one placeholder too many)
+    # raises and is swallowed by the bare `except Exception` -- the
+    # pre-selection then falls back to ALL tools and reports that as a model
+    # error. Found in the review of #1413.
     assert "(in=" in zeile, (
         f"der Eingabe-Fingerabdruck fehlt in der Zeile:\n{zeile}")
     assert f"{len(GEWAEHLT)}/{len(ALLE)}" in zeile, f"die Zaehlung fehlt:\n{zeile}"
@@ -138,8 +137,8 @@ async def test_the_log_line_still_carries_count_and_message(protokoll, gestellte
 
 @pytest.mark.asyncio
 async def test_the_prompt_dump_is_dark_by_default(protokoll, gestellter_pfad):
-    """🛑 Dunkel heißt: KEINE Zeile. Der Prompt trägt die Nachricht des
-    Nutzers UNGEKÜRZT — die reguläre Zeile zeigt nur `message[:60]`."""
+    """🛑 Dark means: NO line. The prompt carries the user's message IN FULL
+    -- the regular line shows only `message[:60]`."""
     await _dienst()._preselect_tools(
         "scanne nach xidra", gestellter_pfad, "irgendein-modell",
     )
@@ -152,12 +151,12 @@ async def test_the_prompt_dump_is_dark_by_default(protokoll, gestellter_pfad):
 async def test_the_prompt_dump_shows_the_real_prompt_when_switched_on(
     protokoll, gestellter_pfad, monkeypatch,
 ):
-    """Angelegt liefert er den Prompt, an dem eine Diagnose scheitern kann.
+    """Switched on, it yields the prompt a diagnosis can founder on.
 
-    Am 2026-10-26 gebraucht: `scanne nach x-idra` griff reproduzierbar zur
-    Suche, die Eingabe-Signatur belegte die Reproduzierbarkeit — aber WAS im
-    Prompt stand, war nirgends ablesbar, und jede Nachbildung (6, dann 10 von
-    33 Werkzeugen) wählte richtig und bewies damit nichts.
+    Needed on 2026-10-26: `scanne nach x-idra` reproducibly reached for the
+    search, and the input signature established the reproducibility -- but WHAT
+    stood in the prompt could be read nowhere, and every reconstruction (6,
+    then 10 of 33 tools) chose correctly and thereby proved nothing.
     """
     import services.agent_service as mod
     monkeypatch.setattr(mod.settings, "agent_preselect_prompt_dump", True)
@@ -169,9 +168,9 @@ async def test_the_prompt_dump_shows_the_real_prompt_when_switched_on(
     assert zeilen, "der Schalter ist an, aber es kommt keine Zeile"
     assert "(in=" in zeilen[0], (
         "ohne die Signatur ist der Auszug keiner bestimmten Zeile zuzuordnen")
-    # 🛑 Der INHALT, nicht nur die Existenz der Zeile. Diese Behauptung fehlte,
-    # und eine Mutation, die statt des Prompts eine LEERE Zeichenkette ausgab,
-    # liess alle zehn Tests gruen — genau der Fehlschlag, den der Schalter
-    # verhindern soll. Im Review zu #1414 durch Mutationstest gefunden.
+    # 🛑 The CONTENT, not just the existence of the line. This assertion was
+    # missing, and a mutation that emitted an EMPTY string instead of the
+    # prompt left all ten tests green -- exactly the failure the switch is
+    # meant to prevent. Found by mutation testing in the review of #1414.
     assert PROMPT_MARKE in zeilen[0], (
         f"der Auszug traegt den Prompt nicht:\n{zeilen[0][:200]}")

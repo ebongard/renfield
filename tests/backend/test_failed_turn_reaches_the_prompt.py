@@ -1,23 +1,23 @@
-"""Ende zu Ende: ein asynchron gescheiterter Auftrag erreicht den PROMPT.
+"""End to end: a job that failed asynchronously reaches the PROMPT.
 
-🛑 Warum es diese Datei gibt. Am 2026-10-26 bat der Eigentümer dreimal „scanne
-nach Haushalt". Der erste Scan scheiterte am Papierstau; auf die beiden
-weiteren antwortete der Agent „der Scan läuft bereits im Hintergrund, Du wirst
-benachrichtigt" und rief `scan_document` NIE. Eine erfundene Beruhigung über
-einen Scan, der nicht lief.
+🛑 Why this file exists. On 2026-10-26 the owner asked three times for "scanne
+nach Haushalt". The first scan failed on a paper jam; to the other two the
+agent answered "der Scan laeuft bereits im Hintergrund, Du wirst
+benachrichtigt" and NEVER called `scan_document`. An invented reassurance about
+a scan that was not running.
 
-Zwei Lücken, und beide waren nur zusammen tödlich:
+Two gaps, and they were only lethal together:
 
-1. `handle_job_event` schrieb die Fertigmeldung ohne `action_success`, also
-   feuerte der Stale-Error-Riegel nicht.
-2. Die Historie einer lebenden Sitzung wird einmal je Socket geladen; ein
-   asynchroner Erzeuger fasst sie nicht an, die Meldung erreichte den
-   Agentenkontext also gar nicht.
+1. `handle_job_event` wrote the completion notice without `action_success`, so
+   the stale-error marker did not fire.
+2. A live session's history is loaded once per socket; an asynchronous
+   producer does not touch it, so the notice never reached the agent context
+   at all.
 
-Beide Reparaturen hatten Tests — aber gegen MOCKS. Die erste prüfte, dass das
-Feld ÜBERGEBEN wird, nicht dass daraus je ein Marker im Prompt entsteht. Genau
-deshalb rutschte Lücke 2 durch und wurde erst im Review gefunden. Dieser Test
-schließt die Kette: echter Schreibvorgang → echtes Laden → echter Prompt.
+Both repairs had tests -- but against MOCKS. The first checked that the field
+is PASSED, not that a marker in the prompt ever comes out of it. That is
+exactly why gap 2 slipped through and was only found in the review. This test
+closes the chain: a real write -> a real load -> a real prompt.
 """
 from unittest.mock import MagicMock
 
@@ -35,12 +35,12 @@ MARKE = "[VORHERIGE_FEHLGESCHLAGENE_AKTION]"
 
 
 def _verlaufszeile(prompt: str, suchtext: str) -> str:
-    """Die Verlaufszeile, die `suchtext` enthält.
+    """The history line that contains `suchtext`.
 
-    🛑 Nie den ganzen Prompt auf die Marke absuchen: der Hinweistext der
-    Vorlage NENNT sie („Zeilen, die mit … beginnen, beschreiben historische
-    Tool-Fehler"), ein Teilstring-Test trifft also immer und beweist nichts.
-    Genau dieser Fehler steckte in der ersten Fassung dieses Tests.
+    🛑 Never search the whole prompt for the marker: the template's
+    explanatory text NAMES it ("Zeilen, die mit ... beginnen, beschreiben
+    historische Tool-Fehler"), so a substring test always matches and proves
+    nothing. That exact mistake was in the first version of this test.
     """
     treffer = [z for z in prompt.splitlines() if suchtext in z and "beschreiben" not in z]
     assert treffer, f"keine Verlaufszeile mit {suchtext!r} im Prompt"
@@ -62,14 +62,15 @@ def _agent() -> AgentService:
 
 
 async def _verlauf_nach_dem_stau(db: AsyncSession, sid: str) -> list[dict]:
-    """Der gemessene Verlauf: Bitte, Zusage, dann die asynchrone Stau-Meldung."""
+    """The measured history: the request, the promise, then the asynchronous
+    jam notice."""
     service = ConversationService(db)
     await service.save_message(sid, "user", "scanne nach Haushalt")
     await service.save_message(
         sid, "assistant",
         "Der Scan für den Haushalt wurde gestartet. Du wirst benachrichtigt.",
         metadata={"action_success": True})
-    # Das schreibt `handle_job_event` — asynchron, nach dem Zug.
+    # This is what `handle_job_event` writes -- asynchronously, after the turn.
     await service.save_message(
         sid, "assistant",
         "Der Scan ist fehlgeschlagen: Papierstau im Einzug.",
@@ -79,8 +80,8 @@ async def _verlauf_nach_dem_stau(db: AsyncSession, sid: str) -> list[dict]:
 
 
 async def test_the_failed_scan_is_marked_in_the_built_prompt(db_session: AsyncSession):
-    """Der Marker steht im PROMPT — nicht nur in der Datenbank, nicht nur in
-    der geladenen Historie."""
+    """The marker stands in the PROMPT -- not only in the database, not only
+    in the loaded history."""
     verlauf = await _verlauf_nach_dem_stau(db_session, "prompt-kette-1")
 
     prompt = await _agent()._build_agent_prompt(
@@ -94,20 +95,20 @@ async def test_the_failed_scan_is_marked_in_the_built_prompt(db_session: AsyncSe
     assert MARKE in stau, (
         f"der Stale-Error-Marker fehlt an der Stau-Zeile — der Agent kann den "
         f"gescheiterten Scan nicht von der Gegenwart unterscheiden: {stau}")
-    # Und er sitzt NUR dort, nicht an der erfolgreichen Zusage davor.
+    # And it sits ONLY there, not on the successful promise before it.
     zusage = _verlaufszeile(prompt, "wurde gestartet")
     assert MARKE not in zusage, (
         f"die erfolgreiche Zusage wurde fälschlich markiert: {zusage}")
 
 
 async def test_the_template_keeps_its_hint_about_the_marker(db_session: AsyncSession):
-    """Bewacht die ZWEITE Hälfte: den Hinweis in der Vorlage, nicht den Marker.
+    """Guards the SECOND half: the hint in the template, not the marker.
 
-    🛑 Der Marker allein genügt NICHT. Ohne den Hinweis, dass solche Zeilen
-    HISTORISCH sind, liest das Modell den alten Fehlschlag als gegenwärtigen
-    Zustand und antwortet daraus — statt das Werkzeug erneut zu rufen. Beide
-    Hälften müssen zusammen im Prompt stehen; die Rule sagt ausdrücklich, dass
-    man sie nie einseitig ändern darf."""
+    🛑 The marker alone is NOT enough. Without the hint that such lines are
+    HISTORICAL, the model reads the old failure as the present state and
+    answers out of it -- instead of calling the tool again. Both halves have to
+    stand in the prompt together; the rule says explicitly that they must never
+    be changed one-sidedly."""
     verlauf = await _verlauf_nach_dem_stau(db_session, "prompt-kette-2")
 
     prompt = await _agent()._build_agent_prompt(
@@ -117,7 +118,7 @@ async def test_the_template_keeps_its_hint_about_the_marker(db_session: AsyncSes
         lang="de",
     )
 
-    # Die Zeile, die den Marker ERKLÄRT — nicht die, die ihn trägt.
+    # The line that EXPLAINS the marker -- not the one that carries it.
     hinweis = [z for z in prompt.splitlines() if MARKE in z and "beschreiben" in z]
     assert hinweis, (
         "der Prompt trägt den Marker, aber keine Zeile erklärt, dass er "
@@ -128,16 +129,16 @@ async def test_the_template_keeps_its_hint_about_the_marker(db_session: AsyncSes
 
 
 async def test_without_the_metadata_there_is_no_marker(db_session: AsyncSession):
-    """Die Negativkontrolle IM Test: fehlt `action_success`, fehlt der Marker.
-    Das war der Zustand bis 2026-10-26, und er ist der Grund, warum der Agent
-    den Scan für laufend hielt."""
+    """The negative control INSIDE the test: with `action_success` missing,
+    the marker is missing. That was the state until 2026-10-26, and it is the
+    reason the agent took the scan for running."""
     service = ConversationService(db_session)
     sid = "prompt-kette-3"
     await service.save_message(sid, "assistant", "Der Scan wurde gestartet.",
                                metadata={"action_success": True})
     await service.save_message(
         sid, "assistant", "Der Scan ist fehlgeschlagen: Papierstau im Einzug.",
-        metadata={"scanner_job": {"job_id": "x", "status": "failed"}})  # OHNE Marker
+        metadata={"scanner_job": {"job_id": "x", "status": "failed"}})  # WITHOUT the marker
 
     verlauf = await service.load_context(sid, max_messages=10)
     prompt = await _agent()._build_agent_prompt(
@@ -152,27 +153,28 @@ async def test_without_the_metadata_there_is_no_marker(db_session: AsyncSession)
 
 
 # ---------------------------------------------------------------------------
-# Eine WIEDERHOLTE Bitte ist eine NEUE Bitte
+# A REPEATED request is a NEW request
 # ---------------------------------------------------------------------------
 
 async def test_a_repeat_after_a_completed_action_is_steered_to_rerun(db_session: AsyncSession):
-    """🛑 Der zweite Fehler aus demselben Vorgang, und mein eigener Fix hat ihn
-    erst sichtbar gemacht.
+    """🛑 The second defect from the same incident, and the fix above is what
+    made it visible in the first place.
 
-    Gemessen am 2026-10-26, 12:37 UTC. Der Eigentümer sagte „scanne nach
-    haushalt", nachdem ein Scan erfolgreich durchgelaufen war. Der Agent
-    antwortete — wörtlich aus dem Protokoll:
+    Measured on 2026-10-26, 12:37 UTC. The owner said "scanne nach haushalt"
+    after a scan had run through successfully. The agent answered -- verbatim
+    from the log:
 
-        „der Scan für den Haushalt ist bereits abgeschlossen und das Dokument
-         (Dokument 515) wurde erfolgreich an die Instanz household übergeben"
+        "der Scan fuer den Haushalt ist bereits abgeschlossen und das Dokument
+         (Dokument 515) wurde erfolgreich an die Instanz household uebergeben"
 
-    mit der Begründung: „Der Konversationsverlauf zeigt, dass der Scan bereits
-    gestartet und abgeschlossen wurde." Er hielt die NEUE Bitte für eine Frage
-    nach dem ALTEN Scan und rief das Werkzeug nicht.
+    with the reasoning: "Der Konversationsverlauf zeigt, dass der Scan bereits
+    gestartet und abgeschlossen wurde." It took the NEW request for a question
+    about the OLD scan and did not call the tool.
 
-    Vor der Frischeprüfung sah er die Fertigmeldung gar nicht — der Fehler war
-    damit unerreichbar. Der Riegel `[VORHERIGE_FEHLGESCHLAGENE_AKTION]` deckt
-    nur GESCHEITERTE Züge; für erfolgreiche fehlte das Gegenstück.
+    Before the freshness check it did not see the completion notice at all --
+    so the defect was unreachable. The `[VORHERIGE_FEHLGESCHLAGENE_AKTION]`
+    marker covers only FAILED turns; for successful ones the counterpart was
+    missing.
     """
     service = ConversationService(db_session)
     sid = "wiederholung-1"
@@ -192,31 +194,31 @@ async def test_a_repeat_after_a_completed_action_is_steered_to_rerun(db_session:
         conversation_history=verlauf, lang="de",
     )
 
-    # 🛑 Was dieser Test BEWEIST und was nicht: er zeigt, dass der Hinweis im
-    # gebauten Prompt steht. Er zeigt NICHT, dass das Modell ihm folgt — das
-    # ist mit einem Einheitentest nicht zu haben und bleibt eine Frage der
-    # Abnahme am laufenden System. Der Verlaufsaufbau oben ist dabei nicht
-    # Dekoration: er stellt genau die Lage her, in der es schieflief.
+    # 🛑 What this test PROVES and what it does not: it shows the hint stands
+    # in the built prompt. It does NOT show that the model follows it -- that
+    # is not available from a unit test and stays a question for acceptance
+    # against the running system. The history built above is not decoration:
+    # it reproduces exactly the situation in which it went wrong.
     assert "an einem GERAET ist eine NEUE Bitte" in prompt, (
         "der Hinweis fehlt — dann antwortet das Modell aus dem alten Lauf")
-    # Und er muss zur Ausführung auffordern, nicht bloß beschreiben.
+    # And it has to call for execution, not merely describe.
     hinweis = next(z for z in prompt.splitlines() if "an einem GERAET" in z)
     assert "fuehre das Tool aus" in hinweis, hinweis
     assert "schon erledigt" in hinweis, (
         "der Hinweis muss die falsche Antwort ausdrücklich verbieten")
-    # 🛑 Und die Gegenregel muss MIT im Prompt stehen. Ohne sie wuerde
-    # derselbe Satz eine Mail zweimal schicken — im Review zu #1410 gefunden:
-    # `send_email` ist ein aktives Werkzeug, und `broadcast_announcement`
-    # warnt selbst „Do NOT retry … it would re-announce".
+    # 🛑 And the counter-rule has to stand in the prompt WITH it. Without it
+    # the same sentence would send an email twice -- found in the review of
+    # #1410: `send_email` is an active tool, and `broadcast_announcement` warns
+    # itself, "Do NOT retry ... it would re-announce".
     assert "FRAGE ZURUECK" in prompt, (
         "die Gegenregel fuer alles, was etwas HINAUSGIBT, fehlt — der Hinweis "
         "allein kann einen nicht zurueckholbaren Versand wiederholen")
 
 
 def test_the_repeat_hint_exists_in_both_languages():
-    """🛑 Die Rule `agent-loop.md` sagt es fuer den Fehlschlag-Riegel, und es
-    gilt hier genauso: beide Sprachvarianten tragen den Hinweis, oder eine
-    englische Sitzung laeuft ohne ihn.
+    """🛑 The rule `agent-loop.md` says it for the failure marker, and it
+    holds here just the same: both language variants carry the hint, or an
+    English session runs without it.
     """
     from pathlib import Path
 
@@ -224,14 +226,14 @@ def test_the_repeat_hint_exists_in_both_languages():
 
     p = Path(__file__).resolve().parents[2] / "src" / "backend" / "prompts" / "agent.yaml"
     d = yaml.safe_load(p.read_text(encoding="utf-8"))
-    # Die Vorlagen liegen je Sprache unter `de:` / `en:` — nicht oben.
+    # The templates live per language under `de:` / `en:` -- not at the top.
     assert {"de", "en"} <= set(d), sorted(d)
     de = d["de"]["conv_context_template"]
     en = d["en"]["conv_context_template"]
-    # 🛑 BEIDE Haelften gleich stark pruefen. Die erste Fassung prueffte im
-    # Englischen nur die Ueberschrift und im Deutschen zusaetzlich die
-    # Handlungsanweisung — die schwaechere Variante blieb ungedeckt, und
-    # ungleiche Prompts erzeugen ungleiches Verhalten je Sprache.
+    # 🛑 Check BOTH halves equally hard. The first version checked only the
+    # heading in English and the instruction as well in German -- the weaker
+    # variant stayed uncovered, and unequal prompts produce unequal behaviour
+    # per language.
     for name, v, marke, tun, verbot in (
         ("de", de, "an einem GERAET ist eine NEUE Bitte",
          "fuehre das Tool aus", "schon erledigt"),
@@ -243,11 +245,12 @@ def test_the_repeat_hint_exists_in_both_languages():
         assert tun in zeile, f"{name}: der Hinweis fordert keine Ausfuehrung: {zeile}"
         assert verbot in zeile, f"{name}: das falsche Verhalten ist nicht verboten"
 
-    # Und die Gegenregel fuer alles, was etwas HINAUSGIBT — ohne sie koennte
-    # der Hinweis eine Mail zweimal schicken (im Review zu #1410 gefunden).
+    # And the counter-rule for everything that SENDS something out --
+    # without it the hint could send an email twice (found in the review of
+    # #1410).
     assert "FRAGE ZURUECK" in de, "der de-Vorlage fehlt die Gegenregel"
     assert "ASK BACK" in en, "der en-Vorlage fehlt die Gegenregel"
-    # Und der ALTE Riegel muss beide weiterhin tragen; die Rule verlangt
-    # ausdruecklich, dass man die Haelften nie einseitig aendert.
+    # And the OLD marker has to keep carrying both; the rule explicitly
+    # requires that the halves are never changed one-sidedly.
     for name, v in (("de", de), ("en", en)):
         assert "[VORHERIGE_FEHLGESCHLAGENE_AKTION]" in v, name

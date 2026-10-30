@@ -1,58 +1,57 @@
 /**
- * Aufnahme für den zweiten Anmeldefaktor — Mikrofon rein, Blob raus.
+ * Recording for the second login factor -- microphone in, blob out.
  *
- * WARUM NICHT `useAudioRecording`
- * ------------------------------
- * Der Chat-Hook (`pages/ChatPage/hooks/useAudioRecording.ts`) ist für Diktat
- * gebaut und endet in einem POST an `/api/voice/stt`. Zwei seiner Eigenschaften
- * sind hier direkt falsch:
+ * WHY NOT `useAudioRecording`
+ * ---------------------------
+ * The chat hook (`pages/ChatPage/hooks/useAudioRecording.ts`) is built for
+ * dictation and ends in a POST to `/api/voice/stt`. Two of its properties are
+ * outright wrong here:
  *
- * 1. **Er schneidet per VAD bei Stille ab.** Eine Anmeldephrase mit einer kurzen
- *    Pause darin wäre abgeschnitten — und je kürzer die Aufnahme, desto
- *    schlechter trennt der Stimmvergleich.
- * 2. **Er transkribiert.** Der zweite Faktor braucht die ROHE Aufnahme; ein
- *    Text hilft ihm nicht, und der Umweg über die Spracherkennung wäre ein
- *    zusätzlicher Dienst im Anmeldeweg.
+ * 1. **It cuts on silence via VAD.** A login phrase with a short pause in it
+ *    would be truncated -- and the shorter the recording, the worse the voice
+ *    comparison separates.
+ * 2. **It transcribes.** The second factor needs the RAW recording; a
+ *    transcript does not help it, and the detour through speech recognition
+ *    would be an extra service in the login path.
  *
- * Deshalb ein eigener, kleiner Hook: kein VAD, keine Transkription, dafür eine
- * MINDEST- und eine Höchstdauer. Die ~40 Zeilen `MediaRecorder`-Gerüst ähneln
- * dem Chat-Hook; das ist Gerüst, nicht Geschäftslogik. Wer den Chat-Hook das
- * nächste Mal anfasst, kann den gemeinsamen Kern herausziehen — vorher wäre es
- * ein Umbau an einem Pfad, den `ChatContext` benutzt, für einen Gewinn von
- * vierzig Zeilen.
+ * Hence a small hook of its own: no VAD, no transcription, but a MINIMUM and a
+ * maximum duration. The ~40 lines of `MediaRecorder` scaffolding resemble the
+ * chat hook; that is scaffolding, not business logic. Whoever touches the chat
+ * hook next can extract the shared core -- doing it beforehand would be a
+ * rebuild of a path `ChatContext` uses, for a gain of forty lines.
  *
- * 🛑 DIE MINDESTDAUER IST KEINE SICHERHEITSPRÜFUNG
- * -----------------------------------------------
- * Sie ist Bedienführung: eine halbe Sekunde Audio ergibt einen schlechten
- * Vergleich, und der Nutzer soll das vor dem Absenden merken, statt eine
- * Ablehnung zu kassieren. Ein Angreifer schickt ohnehin direkt an die API. Die
- * serverseitige Dauerschranke (H3 des Reviews vom 2026-09-27) ist ein eigener,
- * offener Posten und wird hiervon NICHT ersetzt.
+ * 🛑 THE MINIMUM DURATION IS NOT A SECURITY CHECK
+ * ------------------------------------------------
+ * It is guidance: half a second of audio yields a poor comparison, and the
+ * user should notice that before submitting rather than collect a rejection.
+ * An attacker posts straight to the API anyway. The server-side duration bound
+ * (H3 of the 2026-09-27 review) is a separate, open item and is NOT replaced
+ * by this.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-/** Mindestdauer, ab der das Absenden freigeschaltet wird. */
+/** Minimum duration from which submitting is unlocked. */
 export const MIN_DURATION_MS = 1500;
-/** Höchstdauer — danach stoppt die Aufnahme selbst. */
+/** Maximum duration -- the recording stops itself after this. */
 export const MAX_DURATION_MS = 8000;
 
 export type RecordingError =
-  /** Nutzer hat das Mikrofon verweigert oder der Browser blockiert es. */
+  /** The user denied the microphone, or the browser blocks it. */
   | 'permission'
   /** Kein Mikrofon vorhanden. */
   | 'no-device'
-  /** Browser kann nicht aufnehmen (kein MediaRecorder / kein getUserMedia). */
+  /** The browser cannot record (no MediaRecorder / no getUserMedia). */
   | 'unsupported'
   /** Alles andere. */
   | 'unknown';
 
 interface State {
   recording: boolean;
-  /** 0..1, für die Aussteuerungsanzeige. */
+  /** 0..1, for the level meter. */
   level: number;
-  /** Bisherige Dauer in Millisekunden. */
+  /** Elapsed duration in milliseconds. */
   elapsedMs: number;
-  /** Fertige Aufnahme, sobald gestoppt. */
+  /** The finished recording, once stopped. */
   blob: Blob | null;
   error: RecordingError | null;
 }
@@ -77,8 +76,8 @@ export function useVoiceFactorRecording() {
   const frameRef = useRef<number | null>(null);
   const startedAtRef = useRef<number>(0);
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Verhindert, dass ein `setState` nach dem Unmount läuft (React 18 StrictMode
-  // montiert zweimal, und das Mikrofon darf dabei nicht offen bleiben).
+  // Prevents a `setState` running after unmount (React 18 StrictMode mounts
+  // twice, and the microphone must not stay open through that).
   const aliveRef = useRef(true);
 
   const teardown = useCallback(() => {
@@ -90,9 +89,9 @@ export function useVoiceFactorRecording() {
       clearTimeout(stopTimerRef.current);
       stopTimerRef.current = null;
     }
-    // 🛑 Die Spuren MÜSSEN einzeln gestoppt werden, sonst bleibt die
-    // Mikrofonanzeige des Browsers an — auf einer ANMELDESEITE ist ein
-    // heimlich offenes Mikrofon das Letzte, was man will.
+    // 🛑 The tracks MUST be stopped individually, or the browser's microphone
+    // indicator stays on -- on a LOGIN page a quietly open microphone is the
+    // last thing anyone wants.
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
@@ -114,7 +113,7 @@ export function useVoiceFactorRecording() {
   const stop = useCallback(() => {
     const rec = recorderRef.current;
     if (rec && rec.state !== 'inactive') {
-      rec.stop();   // `onstop` setzt den Blob und räumt auf
+      rec.stop();   // `onstop` sets the blob and cleans up
     }
   }, []);
 
@@ -135,15 +134,15 @@ export function useVoiceFactorRecording() {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        // Dieselben Einstellungen wie der Chat-Pfad: das Modell hat seine
-        // Referenzprofile aus so aufgenommenem Material.
+        // The same settings as the chat path: the model's reference profiles
+        // come from material recorded this way.
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
     } catch (err) {
       const name = (err as { name?: string })?.name ?? '';
-      // Diese Fälle sind ABSICHTLICH unterscheidbar: es geht um das Gerät des
-      // Nutzers, nicht um ein Geheimnis des Servers. Wer nicht weiß, dass er das
-      // Mikrofon verweigert hat, kann es nicht erlauben.
+      // These cases are DELIBERATELY distinguishable: they are about the
+      // user's device, not a secret of the server's. Somebody who does not
+      // know they denied the microphone cannot allow it.
       const error: RecordingError =
         name === 'NotAllowedError' || name === 'SecurityError' ? 'permission'
           : name === 'NotFoundError' || name === 'DevicesNotFoundError' ? 'no-device'
@@ -158,8 +157,8 @@ export function useVoiceFactorRecording() {
     }
     streamRef.current = stream;
 
-    // Aussteuerung, damit der Nutzer sieht, dass etwas ankommt. Rein visuell —
-    // es hängt keine Entscheidung daran.
+    // Level meter, so the user sees something is arriving. Purely visual --
+    // no decision hangs on it.
     try {
       const w = window as unknown as AudioContextCapableWindow;
       const Ctor = w.AudioContext ?? w.webkitAudioContext;
@@ -172,7 +171,7 @@ export function useVoiceFactorRecording() {
         analyserRef.current = analyser;
       }
     } catch {
-      // Ohne Anzeige ist die Aufnahme trotzdem gültig — kein Abbruch.
+      // Without the meter the recording is still valid -- do not abort.
       analyserRef.current = null;
     }
 
@@ -212,8 +211,8 @@ export function useVoiceFactorRecording() {
     };
     recorder.start();
 
-    // Selbststopp an der Höchstdauer. Ohne das läuft das Mikrofon, bis jemand
-    // den Knopf wiederfindet.
+    // Self-stop at the maximum duration. Without it the microphone runs
+    // until the person finds the button again.
     stopTimerRef.current = setTimeout(() => {
       if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
     }, MAX_DURATION_MS);
@@ -226,7 +225,7 @@ export function useVoiceFactorRecording() {
 
   return {
     ...state,
-    /** Lang genug, um sinnvoll verglichen zu werden. */
+    /** Long enough to be compared meaningfully. */
     longEnough: state.elapsedMs >= MIN_DURATION_MS,
     start,
     stop,

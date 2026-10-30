@@ -27,10 +27,10 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
     context: list[dict] | None = None
-    # 🛑 Dieselbe Laenge wie im WS-Rahmen (`websocket_messages.py`): das
-    # Frontend faellt auf REST zurueck, wenn die WS-Verbindung noch nicht
-    # steht, und ein „Korrigieren & neu beantworten" im Wettlauf mit dem
-    # Handschlag verlor sonst Rollenhinweis UND Festnagelung.
+    # 🛑 The same length as in the WS frame (`websocket_messages.py`): the
+    # frontend falls back to REST while the WS connection is not up yet, and a
+    # "correct & re-answer" racing the handshake otherwise lost both the role
+    # hint AND the pinning.
     corrected_intent: str | None = Field(None, max_length=128)
 
 class ChatResponse(BaseModel):
@@ -47,7 +47,7 @@ def _has_chat_all(current_user) -> bool:
 
     A tier-2 room history is owned by the DEVICE account, so no person is its
     owner — without this escape nobody could ever delete or re-branch one
-    (D-3: "Löschen, Umbenennen, Verzweigen nur durch den Admin").
+    (D-3: "deleting, renaming and branching only by the admin").
     """
     if current_user is None:
         return False
@@ -61,7 +61,7 @@ def _has_chat_all(current_user) -> bool:
         # MissingGreenlet. Swallowed, that reads as "this admin has no chat.all"
         # and the shared room history becomes undeletable by anyone — the exact
         # failure mode that hid the satellite speaker-permission bug (P0 Nr. 3).
-        logger.warning(f"⚠️ `chat.all` konnte nicht gelesen werden, verweigere: {e}")
+        logger.warning(f"⚠️ `chat.all` could not be read, refusing: {e}")
         return False
 
 
@@ -104,7 +104,7 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user)
 ):
-    """Nachricht senden und Antwort erhalten"""
+    """Send a message and receive an answer."""
     try:
         logger.info(f"📨 Neue Nachricht: '{chat_request.message[:100]}'")
 
@@ -117,10 +117,10 @@ async def send_message(
             )
             raise HTTPException(status_code=400, detail="Request blocked by input guard.")
 
-        # Session ID generieren falls nicht vorhanden
+        # Generate a session id if there is none
         session_id = chat_request.session_id or str(uuid.uuid4())
 
-        # Conversation in DB speichern/laden
+        # Save/load the conversation in the DB
         result = await db.execute(
             select(Conversation).where(Conversation.session_id == session_id)
         )
@@ -151,7 +151,7 @@ async def send_message(
             await db.commit()
             await db.refresh(conversation)
 
-        # User Message speichern
+        # Save the user message
         user_msg = Message(
             conversation_id=conversation.id,
             role="user",
@@ -159,10 +159,10 @@ async def send_message(
         )
         db.add(user_msg)
 
-        # Kontext aus DB laden falls nicht übergeben
+        # Load the context from the database if it was not passed in
         context = chat_request.context or []
         if not context:
-            # Letzte 10 Nachrichten laden
+            # Load the last 10 messages
             result = await db.execute(
                 select(Message)
                 .where(Message.conversation_id == conversation.id)
@@ -175,7 +175,7 @@ async def send_message(
                 for msg in reversed(messages)
             ]
 
-        # Ollama Service nutzen
+        # Use the Ollama service
         from main import app
         ollama: OllamaService = app.state.ollama
 
@@ -311,7 +311,7 @@ async def send_message(
             logger.info("💬 Alle Intents fehlgeschlagen, Fallback zu Konversation")
             intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
 
-        # Antwort generieren
+        # Generate the answer
         if action_result and action_result.get("success"):
             enhanced_prompt = f"""Du bist Renfield, ein persönlicher Assistent.
 
@@ -338,7 +338,7 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
         from services.output_gate import apply_check_output_gate
         response_text = await apply_check_output_gate(response_text, user_id=user_id)
 
-        # Assistant Message speichern
+        # Save the assistant message
         assistant_msg = Message(
             conversation_id=conversation.id,
             role="assistant",
@@ -375,7 +375,7 @@ async def get_history(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Chat-Historie abrufen"""
+    """Fetch the chat history"""
     try:
         query = select(Conversation).where(Conversation.session_id == session_id)
         reach = _reach_clause(current_user)
@@ -446,7 +446,7 @@ async def get_history(
                     "role": msg.role,
                     "content": msg.content,
                     "timestamp": msg.timestamp.isoformat(),
-                    "metadata": msg.message_metadata,  # Spalte heißt message_metadata
+                    "metadata": msg.message_metadata,  # the column is called message_metadata
                     # Chat branching (Phase 2): {index,count,sibling_ids} when this
                     # message has sibling branches; absent otherwise.
                     **({"branch": branch_meta[msg.id]} if msg.id in branch_meta else {}),
@@ -461,7 +461,7 @@ async def get_history(
             ]
         }
     except Exception as e:
-        logger.error(f"❌ Fehler beim Laden der Historie: {e}")
+        logger.error(f"❌ Failed to load the history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/session/{session_id}")
@@ -470,7 +470,7 @@ async def delete_session(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Chat-Session löschen"""
+    """Delete a chat session"""
     try:
         query = select(Conversation).where(Conversation.session_id == session_id)
         # Destructive: reach is NOT enough. A shared room history would
@@ -487,7 +487,7 @@ async def delete_session(
 
         return {"success": True}
     except Exception as e:
-        logger.error(f"❌ Fehler beim Löschen der Session: {e}")
+        logger.error(f"❌ Failed to delete the session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/conversations")
@@ -497,7 +497,7 @@ async def list_conversations(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Liste aller Konversationen.
+    """A list of all conversations.
 
     Authenticated users see only their own conversations; in single-user mode
     (no auth) all conversations are returned. Both paths produce the same
@@ -521,7 +521,7 @@ async def list_conversations(
             "count": len(conversations)
         }
     except Exception as e:
-        logger.error(f"❌ Fehler beim Laden der Konversationen: {e}")
+        logger.error(f"❌ Failed to load the conversations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/conversation/{session_id}/summary")
@@ -530,7 +530,7 @@ async def get_conversation_summary(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Zusammenfassung einer Konversation"""
+    """A summary of one conversation"""
     try:
         reach = _reach_clause(current_user)
         if current_user is not None:
@@ -555,7 +555,7 @@ async def get_conversation_summary(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Fehler beim Laden der Zusammenfassung: {e}")
+        logger.error(f"❌ Failed to load the summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/search")
@@ -565,7 +565,7 @@ async def search_conversations(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Suche in Konversationen"""
+    """Search within conversations"""
     try:
         if not q or len(q) < 2:
             raise HTTPException(status_code=400, detail="Suchanfrage muss mindestens 2 Zeichen lang sein")
@@ -594,7 +594,7 @@ async def search_conversations(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Fehler bei der Suche: {e}")
+        logger.error(f"❌ Search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/messages/search")
@@ -649,7 +649,7 @@ async def search_messages(
         )
         return {"query": q, **payload}
     except Exception as e:
-        logger.error(f"❌ Fehler bei der Message-Suche: {e}")
+        logger.error(f"❌ Message search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -732,20 +732,20 @@ async def get_conversation_stats(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_permission(Permission.ADMIN)),
 ):
-    """Statistiken über Konversationen"""
+    """Statistics about conversations"""
     try:
-        # Gesamt-Anzahl Konversationen
+        # Total number of conversations
         result = await db.execute(select(func.count(Conversation.id)))
         total_conversations = result.scalar()
 
-        # Gesamt-Anzahl Nachrichten
+        # Total number of messages
         result = await db.execute(select(func.count(Message.id)))
         total_messages = result.scalar()
 
-        # Durchschnittliche Nachrichten pro Konversation
+        # Average messages per conversation
         avg_messages = total_messages / total_conversations if total_conversations > 0 else 0
 
-        # Letzte aktive Konversation
+        # Most recently active conversation
         result = await db.execute(
             select(Conversation)
             .order_by(Conversation.updated_at.desc())
@@ -753,7 +753,7 @@ async def get_conversation_stats(
         )
         latest_conversation = result.scalar_one_or_none()
 
-        # Nachrichten der letzten 24h
+        # Messages from the last 24h
         from datetime import timedelta
         yesterday = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
         result = await db.execute(
@@ -770,7 +770,7 @@ async def get_conversation_stats(
             "latest_activity": latest_conversation.updated_at.isoformat() if latest_conversation else None
         }
     except Exception as e:
-        logger.error(f"❌ Fehler beim Laden der Statistiken: {e}")
+        logger.error(f"❌ Failed to load the statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/conversations/cleanup")
@@ -779,12 +779,12 @@ async def cleanup_old_conversations(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_permission(Permission.ADMIN)),
 ):
-    """Lösche alte Konversationen (älter als X Tage)"""
+    """Delete old conversations (older than X days)"""
     try:
         from datetime import timedelta
         cutoff_date = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
 
-        # Finde alte Konversationen
+        # Find old conversations
         result = await db.execute(
             select(Conversation)
             .where(Conversation.updated_at < cutoff_date)

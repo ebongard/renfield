@@ -1,7 +1,7 @@
 """
-Tests für Integration Clients
+Tests for the integration clients
 
-Testet:
+Covers:
 - HomeAssistantClient
 - FrigateClient
 """
@@ -17,7 +17,7 @@ from pydantic import SecretStr
 # ============================================================================
 
 class TestHomeAssistantClient:
-    """Tests für HomeAssistantClient"""
+    """Tests for HomeAssistantClient"""
 
     @pytest.fixture
     def ha_client(self):
@@ -39,7 +39,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     def test_client_initialization(self, ha_client):
-        """Test: Client wird korrekt initialisiert.
+        """The client is initialised correctly.
 
         The client now exposes ``base_url`` + ``token``; the Authorization
         header is built per-request inside ``get_ha_http_client()`` rather
@@ -50,7 +50,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_get_states(self, ha_client):
-        """Test: get_states ruft API korrekt auf"""
+        """get_states calls the API correctly"""
         mock_response = [
             {"entity_id": "light.wohnzimmer", "state": "on"},
             {"entity_id": "switch.tv", "state": "off"}
@@ -70,7 +70,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_get_states_error_handling(self, ha_client):
-        """Test: get_states behandelt Fehler"""
+        """get_states handles errors"""
         with patch.object(httpx.AsyncClient, 'get', new_callable=AsyncMock) as mock_get:
             mock_get.side_effect = httpx.ConnectError("Connection failed")
 
@@ -80,7 +80,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_get_state(self, ha_client):
-        """Test: get_state für einzelne Entity"""
+        """get_state for a single entity"""
         mock_response = {
             "entity_id": "light.wohnzimmer",
             "state": "on",
@@ -101,7 +101,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_call_service(self, ha_client):
-        """Test: call_service sendet korrekten Request"""
+        """call_service sends the correct request"""
         with patch.object(httpx.AsyncClient, 'post', new_callable=AsyncMock) as mock_post:
             mock_post.return_value = MagicMock(status_code=200)
             mock_post.return_value.raise_for_status = MagicMock()
@@ -124,7 +124,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_turn_on(self, ha_client):
-        """Test: turn_on leitet an call_service weiter"""
+        """turn_on forwards to call_service"""
         with patch.object(ha_client, 'call_service', new_callable=AsyncMock) as mock_call:
             mock_call.return_value = True
 
@@ -135,7 +135,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_turn_off(self, ha_client):
-        """Test: turn_off leitet an call_service weiter"""
+        """turn_off forwards to call_service"""
         with patch.object(ha_client, 'call_service', new_callable=AsyncMock) as mock_call:
             mock_call.return_value = True
 
@@ -146,7 +146,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_toggle(self, ha_client):
-        """Test: toggle leitet an call_service weiter"""
+        """toggle forwards to call_service"""
         with patch.object(ha_client, 'call_service', new_callable=AsyncMock) as mock_call:
             mock_call.return_value = True
 
@@ -157,7 +157,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_set_value_brightness(self, ha_client):
-        """Test: set_value für Helligkeit"""
+        """set_value for brightness"""
         with patch.object(ha_client, 'call_service', new_callable=AsyncMock) as mock_call:
             mock_call.return_value = True
 
@@ -177,7 +177,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_set_value_temperature(self, ha_client):
-        """Test: set_value für Temperatur"""
+        """set_value for temperature"""
         with patch.object(ha_client, 'call_service', new_callable=AsyncMock) as mock_call:
             mock_call.return_value = True
 
@@ -197,7 +197,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_search_entities(self, ha_client):
-        """Test: search_entities filtert korrekt"""
+        """search_entities filters correctly"""
         mock_states = [
             {"entity_id": "light.wohnzimmer", "attributes": {"friendly_name": "Wohnzimmer Licht"}},
             {"entity_id": "light.kueche", "attributes": {"friendly_name": "Küchen Licht"}},
@@ -215,7 +215,7 @@ class TestHomeAssistantClient:
 
     @pytest.mark.unit
     async def test_is_configured(self, ha_client):
-        """Test: is_configured prüft URL und Token"""
+        """is_configured checks the URL and the token"""
         assert ha_client.base_url is not None
         assert ha_client.token is not None
 
@@ -225,7 +225,7 @@ class TestHomeAssistantClient:
 # ============================================================================
 
 class TestFrigateClient:
-    """Tests für FrigateClient"""
+    """Tests for FrigateClient"""
 
     @pytest.fixture
     def frigate_client(self):
@@ -238,12 +238,12 @@ class TestFrigateClient:
 
     @pytest.mark.unit
     def test_client_initialization(self, frigate_client):
-        """Test: Client wird korrekt initialisiert"""
+        """The client is initialised correctly"""
         assert frigate_client.base_url == "http://frigate.local:5000"
 
     @pytest.mark.unit
     async def test_get_events(self, frigate_client):
-        """Test: get_events ruft API korrekt auf"""
+        """get_events calls the API correctly"""
         mock_events = [
             {"id": "event1", "camera": "front_door", "label": "person"},
             {"id": "event2", "camera": "garage", "label": "car"},
@@ -263,7 +263,7 @@ class TestFrigateClient:
 
     @pytest.mark.unit
     async def test_get_events_with_filter(self, frigate_client):
-        """Test: get_events mit Camera Filter"""
+        """get_events with a camera filter"""
         mock_events = [
             {"id": "event1", "camera": "front_door", "label": "person"}
         ]
@@ -283,7 +283,7 @@ class TestFrigateClient:
 
     @pytest.mark.unit
     async def test_get_events_error_handling(self, frigate_client):
-        """Test: get_events behandelt Fehler"""
+        """get_events handles errors"""
         with patch.object(httpx.AsyncClient, 'get', new_callable=AsyncMock) as mock_get:
             mock_get.side_effect = httpx.ConnectError("Connection failed")
 
@@ -293,7 +293,7 @@ class TestFrigateClient:
 
     @pytest.mark.unit
     async def test_get_snapshot(self, frigate_client):
-        """Test: get_snapshot lädt Bild"""
+        """get_snapshot loads the image"""
         fake_image = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
 
         with patch.object(httpx.AsyncClient, 'get', new_callable=AsyncMock) as mock_get:
@@ -314,11 +314,11 @@ class TestFrigateClient:
 # ============================================================================
 
 class TestIntegrationEdgeCases:
-    """Tests für Edge Cases der Integration Clients"""
+    """Tests for edge cases of the integration clients"""
 
     @pytest.mark.unit
     async def test_ha_client_not_configured(self):
-        """Test: HA Client ohne Konfiguration"""
+        """The HA client without configuration"""
         import ha_glue.integrations.homeassistant as ha_mod
 
         with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
@@ -344,7 +344,7 @@ class TestIntegrationEdgeCases:
 
     @pytest.mark.unit
     async def test_ha_client_timeout(self):
-        """Test: HA Client Timeout"""
+        """An HA client timeout"""
         with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://slow.server"
             mock_settings.home_assistant_token = SecretStr("token")
@@ -360,7 +360,7 @@ class TestIntegrationEdgeCases:
 
     @pytest.mark.unit
     async def test_frigate_client_not_configured(self):
-        """Test: Frigate Client ohne Konfiguration"""
+        """The Frigate client without configuration"""
         with patch('ha_glue.integrations.frigate.ha_glue_settings') as mock_settings:
             mock_settings.frigate_url = None
 

@@ -45,31 +45,31 @@ router = APIRouter()
 
 
 async def _refuse_unresolvable(endpoints: list[dict]) -> None:
-    """Ein Übersteuerungswert, dessen Name nicht auflöst, wird abgewiesen.
+    """An override whose host does not resolve is refused.
 
-    🛑 Der Anlass, am 2026-10-29 gefunden: in `transport_config` stand
-    `https://renfield.loca` — dem Namen fehlte das letzte `l`, UND es war der
-    Name der GEGENSEITE statt des eigenen. Beides stammte aus diesem Feld. Die
-    Paarung meldete Erfolg, und der Ausfall zeigte sich erst beim ersten echten
-    Gebrauch, Tage später, als „Name or service not known" tief im
-    Föderationsclient.
+    🛑 Why, found on 2026-10-29: `transport_config` held
+    `https://renfield.loca` -- the name was missing its final `l`, AND it was
+    the FAR SIDE's name instead of our own. Both came from this field. The
+    pairing reported success, and the failure only showed on the first real
+    use, days later, as "Name or service not known" deep inside the
+    federation client.
 
-    Die Säuberung darüber verwirft schon Leeres, mit der Begründung, sonst
-    persistiere „a garbage endpoint". Ein Tippfehler ist auch Unrat.
+    The sanitisation above already discards empty values, on the grounds that
+    otherwise "a garbage endpoint" would persist. A typo is garbage too.
 
-    🛑 Geprüft wird NUR die Eingabe aus der Oberfläche, nicht der konfigurierte
-    Standard (`federation_advertised_url`). Der ist Betreibersache, durchläuft
-    ein Review und kann bewusst einen Namen tragen, den diese Instanz selbst
-    nicht auflöst (geteilte Horizonte). Die Eingabe ist das, was sich vertippt.
+    🛑 ONLY the input from the UI is checked, not the configured default
+    (`federation_advertised_url`). That one is the operator's business, goes
+    through review, and may deliberately carry a name this instance does not
+    resolve itself (split horizon). The input is what gets mistyped.
 
-    Nur die NAMENSAUFLÖSUNG, kein HTTP-Abruf: letzterer wäre strenger, würde
-    aber einen Aufbau abweisen, in dem die Instanz sich selbst nicht über ihren
-    öffentlichen Namen erreicht. Die Auflösung allein hätte den Fall gefangen
-    (gemessen: `renfield.local` → 192.168.1.230, `renfield.loca` → Fehler).
-    🛑 `getaddrinfo` BLOCKIERT, und beide Aufrufer sind `async`. Eine
-    fehlschlagende Auflösung laeuft in den Resolver-Zeitablauf (Sekunden) und
-    legt solange die ganze Ereignisschleife still — also in einen Thread.
-    `_with_tofu_fingerprint` ist aus demselben Grund async.
+    NAME RESOLUTION only, no HTTP request: the latter would be stricter but
+    would reject a setup in which the instance cannot reach itself under its
+    public name. Resolution alone would have caught the case
+    (measured: `renfield.local` -> 192.168.1.230, `renfield.loca` -> error).
+    🛑 `getaddrinfo` BLOCKS, and both callers are `async`. A failing resolution
+    runs into the resolver timeout (seconds) and stalls the entire event loop
+    for that long -- hence a thread. `_with_tofu_fingerprint` is async for the
+    same reason.
     """
     import asyncio
     import socket
@@ -234,8 +234,8 @@ async def accept_pair_offer(
             accepted_endpoints=await _resolve_advertised_endpoints(body.accepted_endpoints),
         )
     except AlreadyPairedElsewhere as e:
-        # 🛑 VOR dem uniformen Fang: lokaler Zustand, kein kryptografischer
-        # Befund. Opak gehalten schickt er die Person an die falsche Stelle.
+        # 🛑 BEFORE the uniform catch: local state, not a cryptographic
+        # finding. Kept opaque it sends the person to the wrong place.
         logger.warning(f"Pairing accept refused for user {current_user.id}: {e}")
         raise HTTPException(status_code=409, detail=str(e)) from e
     except PairingError as e:
@@ -287,18 +287,17 @@ async def complete_pair_handshake(
 
 
 def _tier_for_peer(peer: PeerUser) -> int:
-    """Die Stufe, die dieser Eigentuemer dem Peer bei der Paarung gewaehrt hat.
+    """The tier this owner granted the peer at pairing time.
 
-    🛑 Seit F-ID-3 steht sie AN DER PAARUNG. Hier wurde bis 2026-10-27 eine
-    `CircleMembership` gesucht, deren `member_user_id` die ENTFERNTE
-    Nutzerkennung war — mit `scalar_one_or_none()`, das bei zwei Peers unter
-    einem Eigentuemer (beide numerieren ihre Nutzer ab 1) `MultipleResultsFound`
-    geworfen und im SQL-Zweig die Gewaehrung des FALSCHEN Peers getroffen haette
-    (BL-0135). Beides ist mit dieser Spalte strukturell weg: eine Paarung, eine
-    Zeile, eine Stufe.
+    🛑 Since F-ID-3 it lives ON THE PAIRING. Until 2026-10-27 this looked up a
+    `CircleMembership` whose `member_user_id` was the REMOTE user id -- with
+    `scalar_one_or_none()`, which with two peers under one owner (both number
+    their users from 1) would have raised `MultipleResultsFound` and, in the
+    SQL branch, matched the WRONG peer's grant (BL-0135). This column removes
+    both structurally: one pairing, one row, one tier.
 
-    Die Spalte ist `NOT NULL` mit Vorgabe 4 — es gibt keinen Fehlschlagfall
-    mehr, auf den man fail-closed antworten muesste.
+    The column is `NOT NULL` with a default of 4 -- there is no failure case
+    left that would need a fail-closed answer.
     """
     return peer.granted_tier
 
@@ -366,22 +365,22 @@ async def revoke_peer(
 
     peer.revoked_at = datetime.now(UTC).replace(tzinfo=None)
 
-    # 🛑 Hier stand bis 2026-10-27 ein DELETE auf `circle_memberships` mit
-    # `member_user_id = peer.remote_user_id`. Das war der Fehler selbst — die
-    # Zeile gehoerte nie dorthin — und es loeschte obendrein OHNE
-    # `dimension`-Filter, also auch `tenant`- und `project`-Zeilen desselben
-    # Paares. Die Reichweite des Peers haengt jetzt an `revoked_at` und an
-    # `granted_tier`; beides steht auf seiner eigenen Zeile.
+    # 🛑 Until 2026-10-27 there was a DELETE on `circle_memberships` here with
+    # `member_user_id = peer.remote_user_id`. That was the bug itself -- the
+    # row never belonged there -- and on top of that it deleted WITHOUT a
+    # `dimension` filter, so it also took `tenant` and `project` rows of the
+    # same pair. The peer's reach now depends on `revoked_at` and
+    # `granted_tier`; both live on its own row.
     #
-    # `granted_tier` wird mit zurueckgesetzt, damit ein spaeteres Entsperren
-    # nicht stillschweigend die alte Gewaehrung erbt.
+    # `granted_tier` is reset along with it, so a later un-revoke does not
+    # silently inherit the old grant.
     peer.granted_tier = 4
 
     await db.commit()
 
-    # Der `CircleResolver`-Zwischenspeicher wird NICHT mehr geleert: er haelt
-    # `(circle_owner_id, member_user_id)`-Paare, und ein Peer hat kein solches
-    # Paar mehr. Laufende Anfragen raeumt der Aufruf darunter weg.
+    # The `CircleResolver` cache is no longer cleared: it holds
+    # `(circle_owner_id, member_user_id)` pairs, and a peer no longer has such
+    # a pair. In-flight requests are cleaned up by the call below.
 
     # Purge in-flight pending query_brain requests bound to this peer's
     # pubkey. Without this, a revoked peer could still poll /retrieve

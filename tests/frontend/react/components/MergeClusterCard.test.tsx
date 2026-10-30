@@ -80,7 +80,7 @@ describe('MergeClusterCard', () => {
       <MergeClusterCard cluster={cluster()} onMerge={onMerge} onReject={vi.fn()} />,
     );
     fireEvent.click(screen.getByRole('button', { name: /Alle 2 zusammenführen/ }));
-    expect(onMerge).toHaveBeenCalledWith(2);   // 294 Erwähnungen
+    expect(onMerge).toHaveBeenCalledWith(2);   // 294 mentions
   });
 
   it('merges into the survivor the owner picks', () => {
@@ -89,7 +89,7 @@ describe('MergeClusterCard', () => {
       <MergeClusterCard cluster={cluster()} onMerge={onMerge} onReject={vi.fn()} />,
     );
     fireEvent.click(screen.getByRole('button', { expanded: false }));
-    fireEvent.click(screen.getAllByRole('radio')[2]);   // der dritte Eintrag
+    fireEvent.click(screen.getAllByRole('radio')[2]);   // the third entry
     fireEvent.click(screen.getByRole('button', { name: /Alle 2 zusammenführen/ }));
     expect(onMerge).toHaveBeenCalledWith(1);
   });
