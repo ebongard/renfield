@@ -1,5 +1,5 @@
 """
-Konfiguration und Settings
+Configuration and settings
 """
 import json
 import os
@@ -112,31 +112,31 @@ class Settings(BaseSettings):
     # plain-text PDFs/docx/md. Empty → falls back to ollama_vision_model,
     # then ollama_chat_model. The extractor uses whichever is set.
     paperless_extraction_model: str = ""
-    #: Basis-URL der Paperless-Oberfläche, für Links aus Renfield heraus.
+    #: Base URL of the Paperless UI, for links out of Renfield.
     #:
-    #: 🛑 Dieselbe Variable, die der Paperless-MCP-Server schon bekommt — hier nur
-    #: als Settings-Feld nachgezogen, damit das Backend einen Link bauen kann.
+    #: The same variable the Paperless MCP server already gets -- added here
+    #: as a settings field so the backend can build a link.
     #: KEINE neue Umgebungsvariable: `PAPERLESS_API_URL` steht in beiden
-    #: Instanzen bereits in `renfield-env`.
-    #: Leer heißt: kein Link. Der Knopf zeigt dann den Zustand ohne Ziel.
-    #: 🛑 Es ist eine LAN-Adresse. Der Link trägt im Heimnetz; von außen läuft er
-    #: ins Leere. Bewusst so entschieden (2026-10-27) — wird es später zum
-    #: Problem, trennt man Link-Basis und API-URL.
+    #: instances already have it in `renfield-env`.
+    #: Empty means: no link. The button then shows the state without a target.
+    #: It is a LAN address. The link works inside the home network; from
+    #: outside it goes nowhere. Decided deliberately (2026-10-27) -- if that
+    #: becomes a problem, split the link base from the API URL.
     paperless_api_url: str = ""
-    #: Der Name DIESER Instanz, wie die Scan-Zielregistratur ihn führt
+    #: The name of THIS instance as the scan target registry carries it
     #: (`household`, `xidra`). Leer heißt: unbekannt.
     #:
-    #: 🛑 Eine Instanz kannte sich bis 2026-10-27 selbst nicht — sie trug nur ihren
-    #: Ed25519-Föderationsschlüssel, der kein lesbarer Name ist. Genau diese Lücke
-    #: machte den folgenden Fehler möglich: ein Scan aus dem Haushalt nach xidra
-    #: liefert eine Fertigmeldung MIT xidras Dokumentkennung an den Haushalt. Da
+    #: Until 2026-10-27 an instance did not know itself -- it carried only its
+    #: Ed25519 federation key, which is not a readable name. That gap made the
+    #: following bug possible: a scan from the household to xidra delivers a
+    #: completion notice WITH xidra's document id to the household. Since
     #: beide Instanzen eigene Zählfolgen führen, gibt es diese Kennung hier auch —
-    #: für ein anderes Dokument. Ein Knopf darauf führt nicht ins Leere, sondern
+    #: for a different document. A button on it does not go nowhere but
     #: ins Falsche.
     #:
-    #: 🛑 FAIL-CLOSED: ist der Wert leer, gilt JEDER zielbehaftete Verweis als
-    #: entfernt. Eine unkonfigurierte Instanz verlinkt also nie falsch, sie
-    #: verlinkt gar nicht. Entwurf: `docs/design/cross-instance-document-reference.md`.
+    #: FAIL-CLOSED: if the value is empty, EVERY targeted reference counts as
+    #: remote. So an unconfigured instance never links wrongly -- it does not
+    #: link at all. Design: `docs/design/cross-instance-document-reference.md`.
     instance_id: str = ""
     ollama_embed_url: str | None = None          # Separate Ollama URL for embeddings (default: ollama_url)
 
@@ -206,7 +206,7 @@ class Settings(BaseSettings):
     whisper_device: str = "cpu"  # "cpu" or "cuda" — set WHISPER_DEVICE=cuda on GPU hosts
     whisper_compute_type: str = "int8"  # CPU default. Use "float16" with device=cuda; "int8_float16" is the GPU low-memory mode.
     whisper_beam_size: int = 5
-    whisper_initial_prompt: str = ""  # Leer = kein Kontext-Bias (Renfield ist ein offenes System)
+    whisper_initial_prompt: str = ""  # Empty = no context bias (Renfield is an open system)
     piper_voices: str = "de:de_DE-thorsten-high,en:en_US-amy-medium"  # Language:Voice mapping
     piper_default_voice: str = "de_DE-thorsten-high"  # Fallback voice when requested language has no entry in piper_voices
     # TTS LRU cache for synthesized WAV bytes. Keyed on (voice, text). 0 disables.
@@ -409,25 +409,24 @@ class Settings(BaseSettings):
     """Timeout for tool pre-selection LLM call in agent_service.py:_preselect_tools.
     Short JSON-only response, deterministic — keep low to fail fast."""
     agent_preselect_prompt_dump: bool = False
-    # Bindet die Antwort der Werkzeug-Vorauswahl an ein JSON-Schema
-    # (Wurzel-Array, `enum` ueber die angebotenen Namen). Dunkel: der Pfad mit
-    # `false` ist byteweise der alte, der Prompt ist in beiden Faellen derselbe.
+    # Binds the tool preselect's answer to a JSON schema (root array, `enum`
+    # over the offered names). Dark: the `false` path is byte-identical to the
+    # old one, and the prompt is the same either way.
     agent_preselect_typed: bool = False
-    """Protokolliert den VOLLSTÄNDIGEN Vorauswahl-Prompt auf INFO. Dunkel.
+    """Logs the COMPLETE preselect prompt at INFO. Dark.
 
-    🛑 Der Prompt enthält die Nachricht des Nutzers UNGEKÜRZT — die reguläre
-    Zeile zeigt nur `message[:60]`. Darum ein eigener Schalter und nicht
-    `LOG_LEVEL=DEBUG`: die Senke in `main.py` ist GLOBAL und mit einer Stufe,
-    ein DEBUG-Lauf würde auch `conversation_service` und
-    `conversation_memory_service` mitschreiben, die gespeicherte Nachrichten
-    und Gedächtnisauszüge protokollieren. Dieser Schalter öffnet genau eine
-    Zeile, und nur die.
+    The prompt contains the user's message UNTRUNCATED -- the regular line
+    shows only `message[:60]`. Hence a switch of its own rather than
+    `LOG_LEVEL=DEBUG`: the sink in `main.py` is GLOBAL and has one level, so a
+    DEBUG run would also capture `conversation_service` and
+    `conversation_memory_service`, which log stored messages and memory
+    excerpts. This switch opens exactly one line, and only that one.
 
-    Für eine Diagnose anlegen, den fraglichen Zug fahren, wieder ausschalten.
+    Turn it on for a diagnosis, run the query in question, turn it off.
     Am 2026-10-26 gebraucht: `scanne nach x-idra` griff reproduzierbar zur
-    Suche, die Eingabe-Signatur belegte die Reproduzierbarkeit — aber WAS im
-    Prompt stand, war nirgends ablesbar, und jede Nachbildung (6, dann 10 von
-    33 Werkzeugen) wählte richtig und bewies damit nichts."""
+    search, and the input signature proved reproducibility -- but WHAT was in
+    the prompt could not be read anywhere, and every reconstruction (6, then 10
+    of 33 tools) chose correctly and therefore proved nothing."""
     orchestrator_synthesis_timeout: float = Field(default=30.0, ge=5.0, le=300.0)
     """Timeout for orchestrator's synthesis call (combine sub-agent results into one answer)."""
     orchestrator_deterministic_merge: bool = True
@@ -1349,13 +1348,13 @@ class Settings(BaseSettings):
     # "Peer has no usable transport endpoint" — why federation has been
     # population-of-1). The pairing offer/accept already SIGN + PERSIST endpoints
     # (#408/#421); this setting just supplies the value a caller didn't override.
-    # 🛑 Die Instanz bewirbt ihren EIGENEN, allgemein erreichbaren Namen, nicht
-    # die clusterinterne Dienstadresse. Letztere stand hier bis 2026-10-29 als
+    # The instance advertises its OWN, generally reachable name, not the
+    # cluster-internal service address. The latter stood here until 2026-10-29
     # Empfehlung fuer „same-cluster peers" — sie traegt aber nur, solange beide
-    # Instanzen zufaellig im selben Cluster liegen, und erscheint fuer die
-    # bedienende Person als unverstaendlicher Name in der Paarungsoberflaeche.
-    # Genau das lud dazu ein, dort von Hand etwas einzutragen, und so entstand
-    # ein Endpunkt mit Tippfehler, der die Foederation ins Leere laufen liess.
+    # instances happen to sit in the same cluster, and it shows up for the
+    # operator as an unintelligible name in the pairing UI. That is exactly
+    # what invited typing something in by hand, which produced an endpoint with
+    # a typo and sent the federation nowhere.
     # A per-pairing UI field can override it. Empty = advertise nothing (legacy).
     federation_advertised_url: str = ""
 
@@ -1568,8 +1567,8 @@ class Settings(BaseSettings):
 
     # Voice authentication
     voice_auth_enabled: bool = False
-    # Lebensdauer des Einmaltickets zwischen Passwort und Stimme. Kurz: es
-    # ueberbrueckt nur die Sekunden zwischen den beiden Schritten.
+    # Lifetime of the one-shot ticket between password and voice. Short: it
+    # only bridges the seconds between the two steps.
     voice_second_factor_ttl_seconds: int = 180
     voice_auth_min_confidence: float = 0.7
 
@@ -1752,21 +1751,21 @@ class Settings(BaseSettings):
     # WebSocket Protocol
     ws_protocol_version: str = "1.0"
 
-    # Satellite Session Timeouts — gelesen NUR vom SatelliteManager (#1209).
-    # Browser-/Web-Geräte (DeviceManager) haben KEINEN Kehraus mehr: sie
-    # verlassen die Liste allein mit dem Socket-Schluss (BL-0502, #1277).
-    # Sicherungsnetz für einen HÄNGENDEN Satelliten, kein zweiter Aufnahme-Deckel.
-    # Die bindende Aufnahmegrenze sitzt auf dem Satelliten
-    # (vad.max_recording_seconds: Flotte 60s, Code-Vorgabe 15s) und beendet die
-    # Aufnahme über `audio_end`, womit die Sitzung LISTENING verlässt. Dieser
-    # Wert greift nur, wenn gar kein `audio_end` kommt. Er MUSS deutlich über
-    # jeder Gerätegrenze liegen: liegt er darunter, gewinnt das Backend, und die
-    # Sitzung wird samt gepuffertem Audio verworfen — die Aufnahme ist weg.
-    # Bis #1209 wurde dieser Wert nie gelesen, der Abstand war also folgenlos;
-    # seit er wirkt, waren die früheren 30s zu knapp — sie lägen inzwischen sogar
-    # UNTER der Flottengrenze von 60s.
-    device_session_timeout: float = 120.0  # Backstop, siehe oben
-    device_heartbeat_timeout: float = 60.0  # Satellit ohne Heartbeat so lange → getrennt (nur SatelliteManager)
+    # Satellite session timeouts -- read ONLY by the SatelliteManager (#1209).
+    # Browser/web devices (DeviceManager) have NO sweep any more: they leave
+    # the list on socket close alone (BL-0502, #1277).
+    # This is a safety net for a HUNG satellite, not a second recording cap.
+    # The binding recording limit sits on the satellite
+    # (vad.max_recording_seconds: fleet 60s, code default 15s) and ends the
+    # recording via `audio_end`, which takes the session out of LISTENING. This
+    # value only takes effect when no `audio_end` arrives at all. It MUST sit
+    # well above every device limit: below it the backend wins and the session
+    # is discarded together with its buffered audio -- the recording is gone.
+    # Until #1209 this value was never read, so the margin had no consequence;
+    # since it took effect, the earlier 30s were too tight -- they would now
+    # even sit BELOW the fleet limit of 60s.
+    device_session_timeout: float = 120.0  # backstop, see above
+    device_heartbeat_timeout: float = 60.0  # satellite silent this long -> disconnected (SatelliteManager only)
 
     # HA / Frigate integration timeouts moved to ha_glue/utils/config.py.
     n8n_timeout: float = Field(default=30.0, ge=1.0, le=300.0)
@@ -1804,11 +1803,11 @@ class Settings(BaseSettings):
     proactive_urgency_auto_enabled: bool = False
     proactive_enrichment_enabled: bool = False
     proactive_enrichment_model: str | None = None
-    # Gate je Meldungsart (BL-0424): NUR Meldungen dieser event_types dürfen
-    # durch das LLM (Auto-Dringlichkeit, Anreicherung). Vorgabe = die
-    # technischen Absender (ops_alert & Co.); persönliche Meldungen
-    # (Erinnerungen, Fristen, HA-Ereignisse) bleiben wörtlich und ohne
-    # LLM-Kontakt. Kommaliste, leer = keine Meldungsart.
+    # Gate per notification kind (BL-0424): ONLY notifications of these
+    # event_types may pass through the LLM (auto-urgency, enrichment). Default
+    # = the technical senders (ops_alert and friends); personal notifications
+    # (reminders, deadlines, HA events) stay verbatim and never touch the LLM.
+    # Comma list, empty = no kind at all.
     proactive_llm_event_types: str = "ops_health,mcp_health,scheduled_task_health"
     proactive_feedback_learning_enabled: bool = False
     proactive_feedback_similarity_threshold: float = 0.80
@@ -2083,7 +2082,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def assemble_database_url(self) -> "Settings":
-        """Baut DATABASE_URL aus Einzelteilen zusammen, falls nicht explizit gesetzt."""
+        """Assembles DATABASE_URL from parts when not set explicitly."""
         if self.database_url is None:
             self.database_url = (
                 f"postgresql://{self.postgres_user}:{self.postgres_password.get_secret_value()}"
@@ -2362,5 +2361,5 @@ settings = Settings()
 
 @lru_cache
 def get_settings() -> Settings:
-    """Gibt die Settings-Instanz zurück (cached)"""
+    """Returns the settings instance (cached)."""
     return settings
