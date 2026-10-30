@@ -38,6 +38,7 @@ from models.database import Document
 from services.circle_sql import document_chunks_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Per-signal candidate cap fed into RRF (generous: RRF needs only relative order,
 # and a KB is at most a few thousand docs).
@@ -74,7 +75,7 @@ async def _name_candidates(
             )
             fts_ids = [r[0] for r in (await db.execute(sql, params)).fetchall()]
         except Exception as e:
-            logger.warning(f"document_search: name FTS failed: {e}")
+            logger.warning(f"document_search: name FTS failed: {error_text_without_content(e)}")
             fts_ids = []
     ilike_ids = await _name_ilike(db, q, kb_id, status)
     seen = set(fts_ids)

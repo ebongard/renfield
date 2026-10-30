@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from loguru import logger
 
 from utils.hooks import run_hooks
+from utils.log_safety import error_text_without_content
 
 # Maximum prompt length passed to faster-whisper. The decoder uses it as
 # context for beam search; longer prompts dilute the bias and slow decoding.
@@ -161,7 +162,7 @@ class WhisperPromptBuilder:
                 else:
                     other_rooms.append(name)
         except Exception as e:
-            logger.debug(f"WhisperPromptBuilder: DB query failed, skipping bias: {e}")
+            logger.debug(f"WhisperPromptBuilder: DB query failed, skipping bias: {error_text_without_content(e)}")
             return None
 
         if not (speaker_name or room_name or other_users or other_rooms):

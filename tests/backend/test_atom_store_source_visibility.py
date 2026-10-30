@@ -113,45 +113,25 @@ def _count(**overrides):
 
 
 
-#: Raw `{exc}` sites in a DB `except` handler, per file under `services/`,
-#: as of 2026-10-30. A RATCHET: it may only shrink. Repair the backlog in its
-#: own change and lower the number with it.
-_RAW_DB_ERROR_BASELINE = {
-    "agent_service.py": 4,
-    "atom_service.py": 1,
-    "chat_upload_tool.py": 2,
-    "conversation_handoff.py": 2,
-    "conversation_memory_service.py": 2,
-    "database.py": 2,
-    "document_dedupe_tool.py": 1,
-    "document_search.py": 1,
-    "email_ingest.py": 1,
-    "federation_audit.py": 1,
-    "kb_maintenance_tool.py": 10,
-    "knowledge_graph_service.py": 1,
-    "notification_service.py": 3,
-    "obligation_calendar_sync.py": 1,
-    "schicht_a_extractor.py": 2,
-    "simba_ingest_review.py": 2,
-    "speaker_resolver.py": 3,
-    "speaker_vocabulary_service.py": 3,
-    "system_health_tool.py": 1,
-    "turn_extraction.py": 2,
-    "user_events.py": 1,
-    "vector_index_threshold.py": 1,
-    "whisper_prompt_builder.py": 1,
-    "whisper_service.py": 3,
-}
-
 
 def _raw_db_error_logs(tree) -> list[int]:
     """Line numbers where an `except ... as <name>` handler around a `try`
-    that calls `.execute(...)` formats `<name>` raw into an f-string."""
+    that calls `.execute(...)` formats `<name>` raw into a LOGGER call.
+
+    Only logger calls: a tool result handed back to the asking user's own
+    agent is a different question (what the model sees), not a log leak."""
     import ast
+
+    levels = {"debug", "info", "warning", "error", "exception", "critical"}
 
     def has_execute(node) -> bool:
         return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                    and n.func.attr == "execute" for n in ast.walk(node))
+
+    def is_log(call) -> bool:
+        f = call.func
+        return (isinstance(f, ast.Attribute) and f.attr in levels
+                and isinstance(f.value, ast.Name) and f.value.id == "logger")
 
     lines = []
     for try_node in (n for n in ast.walk(tree) if isinstance(n, ast.Try)):
@@ -160,11 +140,15 @@ def _raw_db_error_logs(tree) -> list[int]:
         for handler in try_node.handlers:
             if not handler.name:
                 continue
-            lines.extend(
-                n.lineno for n in ast.walk(handler)
-                if isinstance(n, ast.FormattedValue)
-                and isinstance(n.value, ast.Name) and n.value.id == handler.name)
+            for call in (c for c in ast.walk(handler)
+                         if isinstance(c, ast.Call) and is_log(c)):
+                lines.extend(
+                    n.lineno for n in ast.walk(call)
+                    if isinstance(n, ast.FormattedValue)
+                    and isinstance(n.value, ast.Name)
+                    and n.value.id == handler.name)
     return sorted(lines)
+
 
 class TestItTellsCrashApartFromEmpty:
     """🛑 The distinction IS the point. An empty source is a measurement, a
@@ -347,7 +331,7 @@ class TestTheGuardAgainstContentInTheLog:
         finally:
             _l.remove(sink_id)
 
-    def test_no_NEW_raw_DB_error_log_anywhere_in_services(self):
+    def test_no_raw_DB_error_log_anywhere_in_services(self):
         """🛑 The guard was bypassed by the sources themselves in the first
         version: four logged `{e}` raw, `[SQL: ...]` tail and the bound
         user query included.
@@ -355,19 +339,16 @@ class TestTheGuardAgainstContentInTheLog:
         What is checked: every `except ... as <name>` handler whose `try`
         body contains a `.execute(...)` -- there and only there can a SQL
         tail arise, and only there does the cut help -- must not put
-        `<name>` raw into an f-string. An embedding or LLM error carries no
+        `<name>` raw into a log call. An embedding or LLM error carries no
         `[SQL:` tail; the guard would be theatre there. (Closing THAT gap
         needs a different guard, not the same one in more places.)
 
         🛑 The scope is ALL of `services/`. Until 2026-10-30 it was a hard
         list of seven retrieval modules whose comment claimed it was
-        "neither arbitrary nor a list that rots" -- and it missed 64 sites
-        in 25 other files, among them `conversation_service` logging the
-        raw INSERT of a chat message and the raw search query. Those 13 are
-        fixed; the remaining sites are a ratchet (`_RAW_DB_ERROR_BASELINE`):
-        a file may only go DOWN, a new file may not appear, and a baseline
-        that is higher than the file is a failure too, so a repair has to
-        lower it and the ratchet cannot quietly widen again.
+        "neither arbitrary nor a list that rots" -- and it missed 55 log
+        sites in 24 other files, among them `conversation_service` logging
+        the raw INSERT of a chat message. All are fixed (#1433 and the
+        follow-up); the interim per-file ratchet is gone with them.
 
         Checked on the BODY (`ast`), not by text search over the file -- a
         text search would match my own comments.
@@ -381,26 +362,18 @@ class TestTheGuardAgainstContentInTheLog:
             hits = _raw_db_error_logs(ast.parse(path.read_text()))
             if hits:
                 found[path.relative_to(root).as_posix()] = hits
-
-        grown = {f: lines for f, lines in found.items()
-                 if len(lines) > _RAW_DB_ERROR_BASELINE.get(f, 0)}
-        assert not grown, (
+        assert len(list(root.rglob("*.py"))) > 50, "scanned the wrong directory"
+        assert not found, (
             "raw exception in a log line whose `try` contains a query -- the "
             "SQL tail goes out uncut; wrap it in "
-            f"`error_text_without_content`: {grown}")
-        stale = {f: (n, len(found.get(f, [])))
-                 for f, n in _RAW_DB_ERROR_BASELINE.items()
-                 if len(found.get(f, [])) < n}
-        assert not stale, (
-            "fewer raw sites than the baseline says -- lower "
-            f"`_RAW_DB_ERROR_BASELINE` to the new count: {stale}")
+            f"`error_text_without_content`: {found}")
 
     def test_the_structural_sweep_FINDS_the_obvious_case(self):
         """🛑 Negative control on the check itself -- on the SAME helper the
         sweep uses, not a copy of it (the first version tested its own
         re-implementation). Any handler name counts, not only `e`; the
-        wrapped form does not count; a handler around a non-query `try`
-        does not count."""
+        wrapped form does not count; an f-string outside a logger call does
+        not count; a handler around a non-query `try` does not count."""
         import ast
 
         source = (
@@ -410,6 +383,7 @@ class TestTheGuardAgainstContentInTheLog:
             "    except Exception as exc:\n"
             "        logger.warning(f'broken: {exc}')\n"
             "        logger.warning(f'ok: {error_text_without_content(exc)}')\n"
+            "        return {'message': f'tool result, not a log: {exc}'}\n"
             "    try:\n"
             "        return embed(sql)\n"
             "    except Exception as e:\n"

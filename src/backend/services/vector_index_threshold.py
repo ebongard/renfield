@@ -37,6 +37,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from services.database import AsyncSessionLocal
+from utils.log_safety import error_text_without_content
 
 # Tables whose ORDER BY search deliberately does NOT cast to halfvec TODAY, with
 # the files that would then have to be adjusted. The index exists regardless --
@@ -114,7 +115,7 @@ async def check_vector_index_thresholds() -> str | None:
                     text(f"EXPLAIN (FORMAT JSON) {probe}")
                 )).scalar_one()
             except Exception as exc:  # pragma: no cover - a planner error is not an outage
-                logger.debug(f"Vektorindex-Probe fuer {table} fehlgeschlagen: {exc}")
+                logger.debug(f"Vektorindex-Probe fuer {table} fehlgeschlagen: {error_text_without_content(exc)}")
                 continue
 
             plans = json.loads(raw) if isinstance(raw, str) else raw

@@ -53,6 +53,7 @@ from models.database import (
 )
 from services.kg_reconciler_service import _resolve_lock_engine
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # pg_advisory_lock namespace (int4); objid is the user_id. Distinct from the
 # notifier (0x4F42), digest (0x4F44), and KG reconciler (0x4B47).
@@ -278,7 +279,7 @@ class ObligationCalendarSync:
                             report.errors += 1
             except Exception as e:
                 report.errors += 1
-                logger.warning(f"calendar sync: fact {fact_id} create/update failed: {e}")
+                logger.warning(f"calendar sync: fact {fact_id} create/update failed: {error_text_without_content(e)}")
                 await self.db.rollback()
 
         # delete ledger rows whose obligation is no longer desired (confirmed,

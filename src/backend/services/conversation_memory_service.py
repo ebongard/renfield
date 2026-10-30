@@ -38,6 +38,7 @@ from models.database import (
 from services.atom_owner import AtomOwnerResolverMixin
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
+from utils.log_safety import error_text_without_content
 
 # ---------------------------------------------------------------------------
 # Memory Poisoning Defense — pattern lists for extraction gating
@@ -785,7 +786,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             return row[1] or row[0]
         except Exception as e:
             logger.warning(
-                f"Subsume subject resolution failed for subject={subject!r}: {e}"
+                f"Subsume subject resolution failed for subject={subject!r}: {error_text_without_content(e)}"
             )
             return None
 
@@ -935,7 +936,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             return rel.first() is not None
         except Exception as e:
             logger.warning(
-                f"Subsume KG-representability probe failed for subject={subject!r}: {e}"
+                f"Subsume KG-representability probe failed for subject={subject!r}: {error_text_without_content(e)}"
             )
             return False
 

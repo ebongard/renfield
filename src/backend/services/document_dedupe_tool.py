@@ -29,6 +29,7 @@ from models.database import (
 from services.database import AsyncSessionLocal
 from services.document_dedupe_service import DocumentDedupeService
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 FIND_DUPLICATE_DOCUMENTS_TOOL: dict = {
     "internal.find_duplicate_documents": {
@@ -97,7 +98,7 @@ async def find_duplicate_documents(parameters: dict, user_id: int | None = None)
                     "shared_key": p.shared_key,
                 })
     except Exception as exc:
-        logger.error(f"find_duplicate_documents failed: {exc}")
+        logger.error(f"find_duplicate_documents failed: {error_text_without_content(exc)}")
         return {
             "success": False,
             "action_taken": False,

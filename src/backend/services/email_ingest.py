@@ -45,6 +45,7 @@ from services.ingest_common import (
     verify_ingest_token,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Cross-repo push-contract version (mirrors FOLDER_INGEST_CONTRACT_VERSION).
 # Sent in the request + response header; bump on ANY request/response shape or
@@ -152,7 +153,7 @@ async def _record_ledger(
             )
         await db.commit()
     except Exception as exc:
-        logger.warning(f"email-ingest: ledger write failed (non-fatal): {exc}")
+        logger.warning(f"email-ingest: ledger write failed (non-fatal): {error_text_without_content(exc)}")
         await db.rollback()
 
 

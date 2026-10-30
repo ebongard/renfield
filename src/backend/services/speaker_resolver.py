@@ -27,6 +27,7 @@ from sqlalchemy.orm import selectinload
 from models.database import Speaker, SpeakerCandidate, SpeakerEmbedding
 from services.speaker_service import get_speaker_service
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 MAX_EMBEDDINGS_PER_SPEAKER = 10
 
@@ -355,7 +356,7 @@ async def resolve_speaker_from_embedding(
             logger.info("🎤 Speaker not recognised (auto-enrol disabled)")
 
     except Exception as e:
-        logger.warning(f"Speaker resolution from wire-embedding failed: {e}")
+        logger.warning(f"Speaker resolution from wire-embedding failed: {error_text_without_content(e)}")
         return _empty_speaker_info()
 
     return speaker_info
@@ -396,7 +397,7 @@ async def _append_embedding(
         )
         await db_session.commit()
     except Exception as e:
-        logger.warning(f"Continuous-learning append failed for speaker {speaker_id}: {e}")
+        logger.warning(f"Continuous-learning append failed for speaker {speaker_id}: {error_text_without_content(e)}")
 
 
 async def _capture_candidate(
@@ -433,4 +434,4 @@ async def _capture_candidate(
             )
         await db_session.commit()
     except Exception as e:
-        logger.warning(f"Review-bucket capture failed: {e}")
+        logger.warning(f"Review-bucket capture failed: {error_text_without_content(e)}")

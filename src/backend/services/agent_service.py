@@ -32,6 +32,7 @@ from utils.llm_client import (
     get_classification_chat_kwargs,
     use_openai_for_tier,
 )
+from utils.log_safety import error_text_without_content
 from utils.prompt_safety import neutralize_delimiters
 from utils.token_counter import token_counter
 
@@ -2601,7 +2602,7 @@ class AgentService:
                     user_id=user_id, progress_sink=progress_sink,
                 )
             except Exception as e:
-                logger.error(f"❌ Agent tool execution failed: {action} — {e}")
+                logger.error(f"❌ Agent tool execution failed: {action} — {error_text_without_content(e)}")
                 error_msg = f"Tool error: {e!s}" if lang == "en" else f"Tool-Fehler: {e!s}"
                 result = {
                     "success": False,
@@ -3217,7 +3218,7 @@ async def _post_turn_skill_bookkeeping(
             except Exception as e:
                 logger.warning(
                     f"⚠️ Trajectory conv_id resolve failed for "
-                    f"session={session_id!r}: {e}"
+                    f"session={session_id!r}: {error_text_without_content(e)}"
                 )
         try:
             async with AsyncSessionLocal() as db:

@@ -28,6 +28,7 @@ from loguru import logger
 
 from services.database import AsyncSessionLocal
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Prevent background tasks from being garbage-collected mid-flight.
 _background_tasks: set[asyncio.Task] = set()
@@ -102,10 +103,10 @@ async def extract_memories_background(
                             await db.commit()
                 except Exception as _ge:
                     logger.warning(
-                        f"⚠️ Post-extraction branch recompute failed: {_ge}"
+                        f"⚠️ Post-extraction branch recompute failed: {error_text_without_content(_ge)}"
                     )
     except Exception as e:
-        logger.warning(f"Memory extraction failed: {e}", exc_info=True)
+        logger.warning(f"Memory extraction failed: {error_text_without_content(e)}", exc_info=True)
 
 
 async def extract_structured_background(
