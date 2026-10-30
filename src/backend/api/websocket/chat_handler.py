@@ -337,8 +337,8 @@ async def _restart_conversation_for_caller(
         {"type": "session_replaced", "session_id": new_session_id}
     )
     logger.info(
-        f"🔁 Session replaced: the turn was started in a new conversation "
-        f"gespeichert (user={user_id})"
+        f"🔁 Session replaced: the turn was saved in a new conversation "
+        f"(user={user_id})"
     )
     return new_session_id, user_msg.id, assistant_msg.id
 

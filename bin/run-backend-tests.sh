@@ -16,7 +16,7 @@ print((base + "/renfield_test").replace("postgresql://", "postgresql+asyncpg://"
 PY
 )
 export RENFIELD_TEST_PG_URL
-echo "TEST_PG_URL gesetzt: $(printf '%s' "$RENFIELD_TEST_PG_URL" | sed 's#//[^@]*@#//<verdeckt>@#')"
+echo "TEST_PG_URL set: $(printf '%s' "$RENFIELD_TEST_PG_URL" | sed 's#//.*@#//<redacted>@#')"
 cd "$ROOT/src/backend"
 
 # NEVER pipe this through `tail -N` or `grep` at the call site. On 2026-10-30
@@ -24,4 +24,11 @@ cd "$ROOT/src/backend"
 # summary line and the `-rE` error list sit ABOVE pytest's teardown noise, so a
 # fixed-size tail shows warnings and hides the result. Capture the whole output
 # and search it afterwards.
-PYTHONPATH="$ROOT/src/backend" exec python -m pytest "$@"
+# 🛑 `-o asyncio_mode=auto` is MANDATORY and belongs here, not at the call
+# site. `asyncio_mode` lives in pyproject.toml, and the documented rsync set
+# for the build box (src/backend + tests + bin + config + k8s) does NOT
+# include it -- so in the isolated copy pytest finds no ini file, falls back
+# to strict, and every unmarked async test errors. That is the whole reason
+# this script exists: to standardise the invocation.
+PYTHONPATH="$ROOT/src/backend" exec python -m pytest \
+  -o asyncio_mode=auto -p no:cacheprovider "$@"

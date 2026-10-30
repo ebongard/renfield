@@ -269,8 +269,9 @@ async def _claim_database(dsn: str) -> None:
         await conn.close()
         pytest.exit(
             "Another pytest run holds this test database "
-            f"({_os.environ.get('RENFIELD_TEST_PG_URL')}). Use a database of "
-            "your own — a second run would drop this one's schema mid-test.",
+            f"({_db_name_only(_os.environ.get('RENFIELD_TEST_PG_URL'))}). Use a "
+            "database of your own -- a second run would drop this one's schema "
+            "mid-test.",
             returncode=1,
         )
     # pg_try_advisory_lock is SESSION-level, so it survives this commit — but the
@@ -283,14 +284,27 @@ async def _claim_database(dsn: str) -> None:
     _RUN_LOCK_CONN = conn   # released when the process ends
 
 
+def _db_name_only(url: str | None) -> str:
+    """Just the database name -- NEVER the DSN.
+
+    A DSN carries user and password, and the test URL is derived from
+    DATABASE_URL, so printing it puts the live Postgres credential into
+    terminal and CI output. On 2026-10-30 the run-lock message below did
+    exactly that. `bin/run-backend-tests.sh` masks the DSN for the same
+    reason; this is the Python half of that rule.
+    """
+    if not url:
+        return "<unset>"
+    return url.rsplit("/", 1)[-1].split("?")[0]
+
+
 def _refuse_the_application_database(dsn: str) -> None:
     """Never run the suite against the database the application itself uses."""
     live = _os.environ.get("DATABASE_URL", "")
     if not live:
         return
 
-    def _name(url: str) -> str:
-        return url.rsplit("/", 1)[-1].split("?")[0]
+    _name = _db_name_only
 
     if _name(dsn) and _name(dsn) == _name(live):
         pytest.exit(

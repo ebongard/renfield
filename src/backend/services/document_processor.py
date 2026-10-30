@@ -154,7 +154,7 @@ class DocumentProcessor:
             logger.error(f"Docling is not installed: {e}")
             raise RuntimeError(
                 "Docling is not installed. "
-                "Bitte 'pip install docling docling-core' ausführen."
+                "Run 'pip install docling docling-core'."
             ) from e
         except Exception as e:
             logger.error(f"Fehler beim Initialisieren von Docling: {e}")

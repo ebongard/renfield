@@ -44,7 +44,7 @@ export default function TierPicker({ value, onChange, disabled = false, classNam
   }, [value]);
 
   // 🛑 EVERY hook stands BEFORE this exit. Until 2026-09-27
-  // `pendingFocusTier` and the `useEffect` BEHIND it: with
+  // `pendingFocusTier` and the `useEffect` STOOD BEHIND it: with
   // `variant="compact"` the component used to return early and call two fewer
   // hooks. React tracks hooks by call order, not by name -- if an instance
   // switches variant, the whole hook state shifts and React throws "Rendered

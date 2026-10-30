@@ -106,7 +106,7 @@ def _count(**overrides):
     """Just the counts, without the wrapped hits."""
     off = overrides.pop("off", set())
     duration = overrides.pop("duration_s", 0.05)
-    federated = overrides.pop("foederiert", False)
+    federated = overrides.pop("federated", False)
     _, counts = _wrap_and_count(
         _sources(**overrides), disabled=off, duration_s=duration, federated=federated)
     return counts

@@ -172,7 +172,7 @@ export default function UsersPage() {
       errors.password = t('users.validationPasswordMin', { defaultValue: 'Mindestens 8 Zeichen' });
     }
     if (!formData.role_id) {
-      errors.role_id = t('users.validationRoleRequired', { defaultValue: 'Role is required' });
+      errors.role_id = t('users.validationRoleRequired', { defaultValue: 'Rolle ist erforderlich' });
     }
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);

@@ -283,7 +283,7 @@ def _peer_scope_for(pending: _PendingRequest) -> PeerScope | None:
         return None
     if pending.peer_owner_id is None:
         raise PendingScopeError(
-            f"Rueckfall ohne Eigentuemer (request_id={pending.request_id}) — "
+            f"Fallback without an owner (request_id={pending.request_id}) -- "
             "probably a record from an older version; refused"
         )
     return PeerScope(owner_id=pending.peer_owner_id, tier=pending.max_visible_tier)
@@ -842,9 +842,9 @@ class FederationQueryResponder:
             # in would be the same class of bug F-ID-3 just removed: a
             # foreign value deciding local reach.
             logger.warning(
-                f"Federation query_brain: {len(candidates)} aktive Paarungen mit "
-                f"demselben Schluessel (Eigentuemer "
-                f"{[k.circle_owner_id for k in candidates]}) — abgewiesen. "
+                f"Federation query_brain: {len(candidates)} active pairings with "
+                f"the same key (owners "
+                f"{[k.circle_owner_id for k in candidates]}) -- refused. "
                 f"Exactly one of them may be active."
             )
             raise FederationQueryError("Unknown or revoked peer")

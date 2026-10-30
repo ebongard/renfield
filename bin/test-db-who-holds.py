@@ -5,7 +5,12 @@ import os
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-URL = os.environ["DATABASE_URL"].replace("postgresql://", "postgresql+asyncpg://")
+# 🛑 The TEST database, never the live one. `pg_stat_activity` is
+# cluster-wide, so there is no reason to connect to production -- and its
+# sibling bin/test-db-stale-rows.py already does it this way.
+URL = (os.environ["DATABASE_URL"].rsplit("/", 1)[0] + "/renfield_test").replace(
+    "postgresql://", "postgresql+asyncpg://", 1
+)
 
 
 async def main():
