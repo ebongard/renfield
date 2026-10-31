@@ -48,7 +48,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.backend, pytest.mark.asyncio]
 
 
 @pytest.fixture
-def instanz_a(tmp_path):
+def instance_a(tmp_path):
     """Instance A via the singleton -- the way the production code sees it."""
     reset_federation_identity_for_tests()
     init_federation_identity(tmp_path / "a_key")
@@ -57,14 +57,14 @@ def instanz_a(tmp_path):
 
 
 @pytest.fixture
-def instanz_b():
+def instance_b():
     """Instance B built ALONGSIDE, without the singleton -- the pattern from
     `test_federation_pairing.py` that lets two instances be simulated in one
     process."""
     return FederationIdentity(ed25519.Ed25519PrivateKey.generate())
 
 
-def _nutzer(uid: int):
+def _user(uid: int):
     u = MagicMock()
     u.id = uid
     return u
@@ -79,7 +79,7 @@ def _peer(pid: int, pubkey: str):
 
 
 @pytest.fixture
-def frischer_nonce_speicher():
+def fresh_nonce_store():
     """The nonce store is module-global -- without clearing it one test bleeds
     into the next and `Nonce already used` fires for no reason."""
     from services.federation_pending_store import get_pending_store, reset_store_for_tests
@@ -91,7 +91,7 @@ def frischer_nonce_speicher():
     reset_store_for_tests()
 
 
-def _dienst(identity, *, peer=None, links=None):
+def _service(identity, *, peer=None, links=None):
     """A service with a stubbed identity, a stubbed peer lookup and a counted
     `create_link`."""
     svc = LinkHandshakeService(db=MagicMock())
@@ -102,20 +102,20 @@ def _dienst(identity, *, peer=None, links=None):
 
 
 @pytest.fixture
-def create_link_zaehler(monkeypatch):
+def create_link_calls(monkeypatch):
     """Counts real write attempts. A refusal MUST stay at 0."""
     import services.link_handshake_service as mod
-    aufrufe = []
+    calls = []
 
     async def _fake(db, **kw):
-        aufrufe.append(kw)
+        calls.append(kw)
         row = MagicMock()
-        row.id = 100 + len(aufrufe)
+        row.id = 100 + len(calls)
         row.peer_id = kw["peer_id"]
         return row
 
     monkeypatch.setattr(mod, "create_link", _fake)
-    return aufrufe
+    return calls
 
 
 # =============================================================================
@@ -124,33 +124,33 @@ def create_link_zaehler(monkeypatch):
 
 
 async def test_both_sides_write_the_SAME_querier_ref(
-    instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
+    instance_a, instance_b, create_link_calls, fresh_nonce_store,
 ):
     """🛑 The core: the two rows are connected only by the same `querier_ref`.
     If they drift apart, the far side never resolves the person and falls back
     silently to the pairing tier."""
-    u, x = _nutzer(1), _nutzer(9)
+    u, x = _user(1), _user(9)
 
-    a = _dienst(instanz_a, peer=_peer(7, instanz_b.public_key_hex()))
-    angebot = a.create_offer(u, _peer(7, instanz_b.public_key_hex()))
+    a = _service(instance_a, peer=_peer(7, instance_b.public_key_hex()))
+    offer = a.create_offer(u, _peer(7, instance_b.public_key_hex()))
 
-    b = _dienst(instanz_b, peer=_peer(3, instanz_a.public_key_hex()))
-    bestaetigung = await b.accept_offer(x, angebot)
+    b = _service(instance_b, peer=_peer(3, instance_a.public_key_hex()))
+    confirmation = await b.accept_offer(x, offer)
 
-    link = await a.complete(u, angebot, bestaetigung)
+    link = await a.complete(u, offer, confirmation)
 
-    assert len(create_link_zaehler) == 2, create_link_zaehler
-    assert create_link_zaehler[0]["querier_ref"] == create_link_zaehler[1]["querier_ref"]
-    assert create_link_zaehler[0]["local_user_id"] == 9   # X on B
-    assert create_link_zaehler[1]["local_user_id"] == 1   # U on A
+    assert len(create_link_calls) == 2, create_link_calls
+    assert create_link_calls[0]["querier_ref"] == create_link_calls[1]["querier_ref"]
+    assert create_link_calls[0]["local_user_id"] == 9   # X on B
+    assert create_link_calls[1]["local_user_id"] == 1   # U on A
     assert link.id
 
 
-async def test_step_one_writes_NOTHING(instanz_a, create_link_zaehler):
+async def test_step_one_writes_NOTHING(instance_a, create_link_calls):
     """If the person aborts after the offer, no half link may be left standing."""
-    a = _dienst(instanz_a)
-    a.create_offer(_nutzer(1), _peer(7, "cd" * 32))
-    assert create_link_zaehler == []
+    a = _service(instance_a)
+    a.create_offer(_user(1), _peer(7, "cd" * 32))
+    assert create_link_calls == []
 
 
 # =============================================================================
@@ -159,154 +159,154 @@ async def test_step_one_writes_NOTHING(instanz_a, create_link_zaehler):
 
 
 async def test_an_offer_for_SOMEONE_ELSE_is_refused(
-    instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
+    instance_a, instance_b, create_link_calls, fresh_nonce_store,
 ):
     """🛑 The offer names its recipient. An offer intended for B must not pass
     at C -- otherwise C would write a row for a person nobody ever consented
     for."""
-    instanz_c = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
-    a = _dienst(instanz_a)
-    angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
+    instance_c = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
+    a = _service(instance_a)
+    offer = a.create_offer(_user(1), _peer(7, instance_b.public_key_hex()))
 
-    c = _dienst(instanz_c, peer=_peer(5, instanz_a.public_key_hex()))
+    c = _service(instance_c, peer=_peer(5, instance_a.public_key_hex()))
     with pytest.raises(LinkHandshakeError, match="different responder"):
-        await c.accept_offer(_nutzer(9), angebot)
-    assert create_link_zaehler == []
+        await c.accept_offer(_user(9), offer)
+    assert create_link_calls == []
 
 
 async def test_an_offer_is_NOT_transferable(
-    instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
+    instance_a, instance_b, create_link_calls, fresh_nonce_store,
 ):
     """🛑 `stated_by` binds the offer to the person who declared it. Without
     the check another signed-in person completes an intercepted offer in THEIR
     own name."""
-    a = _dienst(instanz_a, peer=_peer(7, instanz_b.public_key_hex()))
-    angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
-    b = _dienst(instanz_b, peer=_peer(3, instanz_a.public_key_hex()))
-    bestaetigung = await b.accept_offer(_nutzer(9), angebot)
-    create_link_zaehler.clear()
+    a = _service(instance_a, peer=_peer(7, instance_b.public_key_hex()))
+    offer = a.create_offer(_user(1), _peer(7, instance_b.public_key_hex()))
+    b = _service(instance_b, peer=_peer(3, instance_a.public_key_hex()))
+    confirmation = await b.accept_offer(_user(9), offer)
+    create_link_calls.clear()
 
     with pytest.raises(LinkHandshakeError, match="different user"):
-        await a.complete(_nutzer(2), angebot, bestaetigung)   # NOT user 1
-    assert create_link_zaehler == []
+        await a.complete(_user(2), offer, confirmation)   # NOT user 1
+    assert create_link_calls == []
 
 
 async def test_a_tampered_offer_is_refused(
-    instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
+    instance_a, instance_b, create_link_calls, fresh_nonce_store,
 ):
     """A changed field breaks the signature -- here the person's id, which is
     exactly the field worth forging."""
-    a = _dienst(instanz_a)
-    angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
-    verbogen = angebot.model_copy(update={"stated_by": 999})
+    a = _service(instance_a)
+    offer = a.create_offer(_user(1), _peer(7, instance_b.public_key_hex()))
+    tampered = offer.model_copy(update={"stated_by": 999})
 
-    b = _dienst(instanz_b, peer=_peer(3, instanz_a.public_key_hex()))
+    b = _service(instance_b, peer=_peer(3, instance_a.public_key_hex()))
     with pytest.raises(LinkHandshakeError, match="signature"):
-        await b.accept_offer(_nutzer(9), verbogen)
-    assert create_link_zaehler == []
+        await b.accept_offer(_user(9), tampered)
+    assert create_link_calls == []
 
 
 async def test_a_FORGED_offer_from_an_unknown_key_is_refused(
-    instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
+    instance_a, instance_b, create_link_calls, fresh_nonce_store,
 ):
     """A stranger builds a formally impeccable offer and signs it with their
     own key. But the peer row names A's key."""
-    fremd = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
+    stranger = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
     now = int(time.time())
     unsigned = {
         "version": 1,
-        "initiator_pubkey": instanz_a.public_key_hex(),   # CLAIMS to be A
-        "responder_pubkey": instanz_b.public_key_hex(),
+        "initiator_pubkey": instance_a.public_key_hex(),   # CLAIMS to be A
+        "responder_pubkey": instance_b.public_key_hex(),
         "stated_by": 1,
         "querier_ref": "ef" * 32,
         "nonce": "0123456789abcdef0123456789abcdef",
         "issued_at": now,
         "expires_at": now + 600,
     }
-    gefaelscht = LinkOffer(
-        **unsigned, signature=fremd.sign(canonical_bytes(unsigned)).hex())
+    forged = LinkOffer(
+        **unsigned, signature=stranger.sign(canonical_bytes(unsigned)).hex())
 
-    b = _dienst(instanz_b, peer=_peer(3, instanz_a.public_key_hex()))
+    b = _service(instance_b, peer=_peer(3, instance_a.public_key_hex()))
     with pytest.raises(LinkHandshakeError, match="signature"):
-        await b.accept_offer(_nutzer(9), gefaelscht)
-    assert create_link_zaehler == []
+        await b.accept_offer(_user(9), forged)
+    assert create_link_calls == []
 
 
 async def test_an_expired_offer_is_refused(
-    instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
+    instance_a, instance_b, create_link_calls, fresh_nonce_store,
 ):
-    a = _dienst(instanz_a)
-    angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
-    alt = int(time.time()) - LINK_OFFER_TTL_SECONDS - 1
-    abgelaufen = angebot.model_copy(update={"issued_at": alt, "expires_at": alt + 1})
+    a = _service(instance_a)
+    offer = a.create_offer(_user(1), _peer(7, instance_b.public_key_hex()))
+    past = int(time.time()) - LINK_OFFER_TTL_SECONDS - 1
+    expired = offer.model_copy(update={"issued_at": past, "expires_at": past + 1})
 
-    b = _dienst(instanz_b, peer=_peer(3, instanz_a.public_key_hex()))
+    b = _service(instance_b, peer=_peer(3, instance_a.public_key_hex()))
     with pytest.raises(LinkHandshakeError, match="expired"):
-        await b.accept_offer(_nutzer(9), abgelaufen)
-    assert create_link_zaehler == []
+        await b.accept_offer(_user(9), expired)
+    assert create_link_calls == []
 
 
 async def test_a_confirmation_from_ANOTHER_instance_is_refused(
-    instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
+    instance_a, instance_b, create_link_calls, fresh_nonce_store,
 ):
     """The confirmation must come from the instance the offer was meant for."""
-    instanz_c = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
-    a = _dienst(instanz_a, peer=_peer(7, instanz_b.public_key_hex()))
-    angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
+    instance_c = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
+    a = _service(instance_a, peer=_peer(7, instance_b.public_key_hex()))
+    offer = a.create_offer(_user(1), _peer(7, instance_b.public_key_hex()))
 
     # C confirms, although the offer names B.
     unsigned = {
         "version": 1,
-        "nonce": angebot.nonce,
-        "querier_ref": angebot.querier_ref,
-        "responder_pubkey": instanz_c.public_key_hex(),
+        "nonce": offer.nonce,
+        "querier_ref": offer.querier_ref,
+        "responder_pubkey": instance_c.public_key_hex(),
         "responder_user_id": 9,
         "accepted_at": int(time.time()),
     }
-    fremde = LinkConfirmation(
-        **unsigned, signature=instanz_c.sign(canonical_bytes(unsigned)).hex())
+    foreign_confirmation = LinkConfirmation(
+        **unsigned, signature=instance_c.sign(canonical_bytes(unsigned)).hex())
 
     with pytest.raises(LinkHandshakeError, match="different instance"):
-        await a.complete(_nutzer(1), angebot, fremde)
-    assert create_link_zaehler == []
+        await a.complete(_user(1), offer, foreign_confirmation)
+    assert create_link_calls == []
 
 
 async def test_a_confirmation_answering_ANOTHER_offer_is_refused(
-    instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
+    instance_a, instance_b, create_link_calls, fresh_nonce_store,
 ):
     """Two offers side by side: the confirmation of one must not complete the
     other."""
-    a = _dienst(instanz_a, peer=_peer(7, instanz_b.public_key_hex()))
-    erstes = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
-    zweites = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
+    a = _service(instance_a, peer=_peer(7, instance_b.public_key_hex()))
+    first_offer = a.create_offer(_user(1), _peer(7, instance_b.public_key_hex()))
+    second_offer = a.create_offer(_user(1), _peer(7, instance_b.public_key_hex()))
 
-    b = _dienst(instanz_b, peer=_peer(3, instanz_a.public_key_hex()))
-    bestaetigung_zum_zweiten = await b.accept_offer(_nutzer(9), zweites)
-    create_link_zaehler.clear()
+    b = _service(instance_b, peer=_peer(3, instance_a.public_key_hex()))
+    confirmation_of_second = await b.accept_offer(_user(9), second_offer)
+    create_link_calls.clear()
 
     with pytest.raises(LinkHandshakeError, match="does not answer"):
-        await a.complete(_nutzer(1), erstes, bestaetigung_zum_zweiten)
-    assert create_link_zaehler == []
+        await a.complete(_user(1), first_offer, confirmation_of_second)
+    assert create_link_calls == []
 
 
 async def test_WITHOUT_a_pairing_there_is_nothing_to_link(
-    instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
+    instance_a, instance_b, create_link_calls, fresh_nonce_store,
 ):
     """🛑 The handshake PRESUPPOSES the instance pairing, it does not replace
     it. Without an active peer row there is no key to check against."""
-    a = _dienst(instanz_a)
-    angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
+    a = _service(instance_a)
+    offer = a.create_offer(_user(1), _peer(7, instance_b.public_key_hex()))
 
-    b = _dienst(instanz_b)
+    b = _service(instance_b)
     b._peer_by_pubkey = AsyncMock(
         side_effect=LinkHandshakeError("No active pairing with that instance"))
     with pytest.raises(LinkHandshakeError, match="No active pairing"):
-        await b.accept_offer(_nutzer(9), angebot)
-    assert create_link_zaehler == []
+        await b.accept_offer(_user(9), offer)
+    assert create_link_calls == []
 
 
 async def test_the_same_offer_cannot_be_accepted_twice_in_the_nonce_window(
-    instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
+    instance_a, instance_b, create_link_calls, fresh_nonce_store,
 ):
     """The cheap early rejector against a double submit.
 
@@ -316,14 +316,14 @@ async def test_the_same_offer_cannot_be_accepted_twice_in_the_nonce_window(
     service's module docstring. This test checks exactly the slice the nonce
     covers, and no more.
     """
-    a = _dienst(instanz_a)
-    angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
-    b = _dienst(instanz_b, peer=_peer(3, instanz_a.public_key_hex()))
+    a = _service(instance_a)
+    offer = a.create_offer(_user(1), _peer(7, instance_b.public_key_hex()))
+    b = _service(instance_b, peer=_peer(3, instance_a.public_key_hex()))
 
-    await b.accept_offer(_nutzer(9), angebot)
+    await b.accept_offer(_user(9), offer)
     with pytest.raises(LinkHandshakeError, match="Nonce already used"):
-        await b.accept_offer(_nutzer(9), angebot)
-    assert len(create_link_zaehler) == 1
+        await b.accept_offer(_user(9), offer)
+    assert len(create_link_calls) == 1
 
 
 # =============================================================================
@@ -347,24 +347,24 @@ def test_the_handshake_routes_are_NOT_admin_gated():
     """
     from api.routes import federation_links, federation_user_links
 
-    def waechter(router) -> set[str]:
-        namen: set[str] = set()
+    def guards(router) -> set[str]:
+        names: set[str] = set()
         for route in router.routes:
             for dep in getattr(route, "dependant", None).dependencies:
                 if dep.call is not None:
-                    namen.add(dep.call.__name__)
-        return namen
+                    names.add(dep.call.__name__)
+        return names
 
-    frei = waechter(federation_links.router)
-    gesperrt = waechter(federation_user_links.router)
+    open_deps = guards(federation_links.router)
+    gated_deps = guards(federation_user_links.router)
 
     # Negative control first: the neighbour IS gated, so the detector measures.
-    assert "permission_checker" in gesperrt, (
+    assert "permission_checker" in gated_deps, (
         "The negative control no longer bites — `federation_user_links` is no "
-        f"longer admin-gated. Found: {sorted(gesperrt)}")
-    assert "permission_checker" not in frei, (
+        f"longer admin-gated. Found: {sorted(gated_deps)}")
+    assert "permission_checker" not in open_deps, (
         "The person handshake is admin-gated and therefore pointless. "
-        f"Found: {sorted(frei)}")
+        f"Found: {sorted(open_deps)}")
 
 
 def test_both_protocols_sign_the_SAME_bytes():

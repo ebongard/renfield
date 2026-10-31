@@ -130,45 +130,45 @@ from types import SimpleNamespace
 
 
 @pytest.mark.unit
-def test_bezeichnung_prefers_generated_title():
+def test_upload_description_prefers_generated_title():
     doc = SimpleNamespace(generated_title="Audi Rechnung", title="raw", filename="x.pdf")
-    assert review._bezeichnung(doc) == "Audi Rechnung"
+    assert review._upload_description(doc) == "Audi Rechnung"
 
 
 @pytest.mark.unit
-def test_bezeichnung_falls_back_to_title_then_filename_stem():
-    assert review._bezeichnung(
+def test_upload_description_falls_back_to_title_then_filename_stem():
+    assert review._upload_description(
         SimpleNamespace(generated_title=None, title="Der Titel", filename="x.pdf")
     ) == "Der Titel"
-    assert review._bezeichnung(
+    assert review._upload_description(
         SimpleNamespace(generated_title=None, title=None, filename="scan_2026.pdf")
     ) == "scan_2026"
 
 
 @pytest.mark.unit
-def test_bezeichnung_sanitizes_disallowed_chars():
+def test_upload_description_sanitizes_disallowed_chars():
     # em-dash, comma, colon, slash → collapsed to single spaces; umlauts kept.
     doc = SimpleNamespace(
         generated_title="Audi AG — Rechnung, 14/07: Ölwechsel", title=None, filename="x.pdf"
     )
-    assert review._bezeichnung(doc) == "Audi AG Rechnung 14 07 Ölwechsel"
+    assert review._upload_description(doc) == "Audi AG Rechnung 14 07 Ölwechsel"
 
 
 @pytest.mark.unit
-def test_bezeichnung_caps_at_100():
+def test_upload_description_caps_at_100():
     doc = SimpleNamespace(generated_title="A" * 250, title=None, filename="x.pdf")
-    assert len(review._bezeichnung(doc)) == 100
+    assert len(review._upload_description(doc)) == 100
 
 
 @pytest.mark.unit
-def test_bezeichnung_empty_when_no_source():
-    assert review._bezeichnung(SimpleNamespace(generated_title=None, title=None, filename="")) == ""
+def test_upload_description_empty_when_no_source():
+    assert review._upload_description(SimpleNamespace(generated_title=None, title=None, filename="")) == ""
 
 
 @pytest.mark.unit
 def test_sanitize_desc_all_disallowed_or_none_is_empty():
     # An all-disallowed edited value (or None) sanitizes to "" so confirm()'s
-    # `_sanitize_desc(description) or _bezeichnung(doc)` falls back to the title.
+    # `_sanitize_desc(description) or _upload_description(doc)` falls back to the title.
     assert review._sanitize_desc("///") == ""
     assert review._sanitize_desc(None) == ""
     assert review._sanitize_desc("  ") == ""

@@ -252,11 +252,11 @@ class TestTheRealColdCase:
     def test_the_three_callerless_sources_report_a_crash(self):
         from sqlalchemy.exc import InvalidRequestError
 
-        kalt = InvalidRequestError(
+        cold_error = InvalidRequestError(
             "This session is provisioning a new connection; "
             "concurrent operations are not permitted")
         _, _, crashed = _count(
-            lexical_chunks=kalt, lexical_memories=kalt, note=kalt)
+            lexical_chunks=cold_error, lexical_memories=cold_error, note=cold_error)
         assert set(crashed) == {"lexical_chunks", "lexical_memories", "note"}
 
     def test_a_still_swallowing_source_shows_up_as_empty(self):
@@ -474,7 +474,7 @@ class TestQueryACTUALLYCallsIt:
             import importlib
             module = importlib.import_module(f"services.{module_name}")
             inst = MagicMock()
-            for methode, source in mapping.items():
+            for method_name, source in mapping.items():
                 def make(source=source):
                     async def call(*a, **k):
                         value = plan.get(source, _WITH_HITS[source])
@@ -484,7 +484,7 @@ class TestQueryACTUALLYCallsIt:
                             return _WITHOUT_HITS.get(source, [])
                         return value
                     return call
-                setattr(inst, methode, make())
+                setattr(inst, method_name, make())
             monkeypatch.setattr(module, cls_name, MagicMock(return_value=inst))
 
         install("rag_retrieval", "RAGRetrieval", {"search": "rag"})

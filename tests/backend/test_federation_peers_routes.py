@@ -126,21 +126,21 @@ class TestTierForPeer:
         # there -- so a string check would hit the explanation instead of the
         # code. I made exactly this mistake once already on 2026-10-27 (in the
         # guard test for the person handshake).
-        baum = ast.parse(textwrap.dedent(
+        tree = ast.parse(textwrap.dedent(
             inspect.getsource(federation_pairing._tier_for_peer)))
-        fn = baum.body[0]
-        rumpf = ast.unparse(ast.Module(
+        fn = tree.body[0]
+        body_src = ast.unparse(ast.Module(
             body=[k for k in fn.body if not (
                 isinstance(k, ast.Expr) and isinstance(k.value, ast.Constant)
                 and isinstance(k.value.value, str))],
             type_ignores=[]))
-        assert "execute" not in rumpf, rumpf
-        assert "CircleMembership" not in rumpf, rumpf
-        assert "scalar_one_or_none" not in rumpf, rumpf
+        assert "execute" not in body_src, body_src
+        assert "CircleMembership" not in body_src, body_src
+        assert "scalar_one_or_none" not in body_src, body_src
         assert not inspect.iscoroutinefunction(federation_pairing._tier_for_peer)
         # Negative control: the body is not empty, so the check measures
         # something at all.
-        assert "granted_tier" in rumpf, rumpf
+        assert "granted_tier" in body_src, body_src
 
     @pytest.mark.unit
     def test_two_peers_under_one_owner_keep_their_own_tiers(self):
@@ -354,10 +354,10 @@ class TestRevokePeer:
         db.execute = AsyncMock(return_value=r)
         db.commit = AsyncMock()
 
-        gerufen: list = []
+        called: list = []
 
         def fake_invalidate(cls, owner_id, member_id):
-            gerufen.append((owner_id, member_id))
+            called.append((owner_id, member_id))
 
         from services.circle_resolver import CircleResolver
         monkeypatch.setattr(
@@ -368,5 +368,5 @@ class TestRevokePeer:
         await revoke_peer(peer_id=1, request=_mock_request(), db=db,
                           current_user=MagicMock(id=42))
 
-        assert gerufen == [], gerufen
+        assert called == [], called
 

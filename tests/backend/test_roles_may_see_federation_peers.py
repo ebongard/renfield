@@ -35,13 +35,13 @@ def _manager(*, mit_peer: bool = True) -> MagicMock:
     -- otherwise the test would check its own stand-in instead of the property
     the filter rests on.
     """
-    werkzeuge = []
+    tools = []
     for server, name in (("paperless", "search_documents"), ("scanner", "scan_document")):
         w = MagicMock()
         w.server_name, w.original_name = server, name
         w.namespaced_name = f"mcp.{server}.{name}"
         w.description, w.hint, w.input_schema = f"{name} tool", "", {}
-        werkzeuge.append(w)
+        tools.append(w)
     transporte = {
         "paperless": MCPTransportType.STDIO,
         "scanner": MCPTransportType.STREAMABLE_HTTP,
@@ -51,11 +51,11 @@ def _manager(*, mit_peer: bool = True) -> MagicMock:
         w.server_name, w.original_name = "peer_3", "query_brain"
         w.namespaced_name = "mcp.peer_3.query_brain"
         w.description, w.hint, w.input_schema = "ask a paired peer", "", {}
-        werkzeuge.append(w)
+        tools.append(w)
         transporte["peer_3"] = MCPTransportType.FEDERATION
 
     m = MagicMock()
-    m.get_all_tools.return_value = werkzeuge
+    m.get_all_tools.return_value = tools
     m.is_federation_server.side_effect = (
         lambda n: transporte.get(n) == MCPTransportType.FEDERATION
     )
@@ -162,9 +162,9 @@ class TestTheRouter:
         unavailable."""
         from services.agent_router import _filter_available_roles
 
-        uebrig = _filter_available_roles(self._router().roles, ["peer_3"])
-        assert "documents" in uebrig
+        remaining = _filter_available_roles(self._router().roles, ["peer_3"])
+        assert "documents" in remaining
         # Negative control: a role without the flag and without its servers drops out.
-        assert "smart_home" not in uebrig
+        assert "smart_home" not in remaining
         # `general` always stays.
-        assert "general" in uebrig
+        assert "general" in remaining

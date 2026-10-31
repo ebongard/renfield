@@ -32,21 +32,21 @@ def main():
 
     # 1. Ensure KBs exist
     print("\n[1/3] Creating/checking knowledge bases...")
-    kb_arbeit = ensure_kb_exists("Arbeit", "Berufliche Dokumente, Verträge, Emails")
-    kb_privat = ensure_kb_exists("Privat", "Private Dokumente, Rechnungen, Versicherungen")
-    kb_verein = ensure_kb_exists("Vereinsarbeit", "TV Angermund 04 e.V. Vereinsdokumente")
-    print(f"  Arbeit: KB {kb_arbeit}")
-    print(f"  Privat: KB {kb_privat}")
-    print(f"  Vereinsarbeit: KB {kb_verein}")
+    kb_work = ensure_kb_exists("Arbeit", "Berufliche Dokumente, Verträge, Emails")
+    kb_private = ensure_kb_exists("Privat", "Private Dokumente, Rechnungen, Versicherungen")
+    kb_club = ensure_kb_exists("Vereinsarbeit", "TV Angermund 04 e.V. Vereinsdokumente")
+    print(f"  Arbeit: KB {kb_work}")
+    print(f"  Privat: KB {kb_private}")
+    print(f"  Vereinsarbeit: KB {kb_club}")
 
     # 2. Build upload list: (filename, title, content, kb_id)
     all_docs = []
     for fname, title, content in ARBEIT_DOCS:
-        all_docs.append((fname, title, content, kb_arbeit))
+        all_docs.append((fname, title, content, kb_work))
     for fname, title, content in PRIVAT_DOCS:
-        all_docs.append((fname, title, content, kb_privat))
+        all_docs.append((fname, title, content, kb_private))
     for fname, title, content in VEREIN_DOCS:
-        all_docs.append((fname, title, content, kb_verein))
+        all_docs.append((fname, title, content, kb_club))
 
     print(f"\n[2/3] Generating and uploading {len(all_docs)} documents...")
     total = len(all_docs)

@@ -90,8 +90,8 @@ class TestValidateBoundaries:
         assert pieces is not None and len(pieces) == 9
         # Gapless and through to the last page.
         assert pieces[0].start_page == 1 and pieces[-1].end_page == 38
-        for vorher, danach in pairwise(pieces):
-            assert danach.start_page == vorher.end_page + 1
+        for before, after in pairwise(pieces):
+            assert after.start_page == before.end_page + 1
 
     def test_a_gap_too_large_for_blank_backs_is_rejected(self):
         """🛑 An addition from the review: the repair was UNBOUNDED.
@@ -114,10 +114,10 @@ class TestValidateBoundaries:
     def test_the_gap_limit_sits_at_two_pages(self):
         """The limit itself, approached from both sides."""
         # Two pages (a separator sheet blank on both sides) are closed.
-        zwei = validate_boundaries(
+        two_pieces = validate_boundaries(
             _payload((1, 2), (5, 6)), 1, 6, absorb_gaps=True
         )
-        assert [(p.start_page, p.end_page) for p in zwei] == [(1, 4), (5, 6)]
+        assert [(p.start_page, p.end_page) for p in two_pieces] == [(1, 4), (5, 6)]
         # Three are not.
         assert validate_boundaries(
             _payload((1, 2), (6, 7)), 1, 7, absorb_gaps=True

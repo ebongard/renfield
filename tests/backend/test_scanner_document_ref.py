@@ -133,15 +133,15 @@ def test_the_attachment_branches_over_the_SHARED_state_set():
 # does not lead nowhere but somewhere WRONG.
 
 
-def _mit_ziel(ziel):
-    return {**_DONE, "target": ziel}
+def _with_target(target):
+    return {**_DONE, "target": target}
 
 
 def test_a_scan_into_THIS_instance_stays_linkable(monkeypatch):
     from utils.config import settings
     monkeypatch.setattr(settings, "instance_id", "household", raising=False)
     meta = _meta()
-    attach_document_ref(meta, "done", _mit_ziel("household"), "scan-20261027-120000-abcdef12")
+    attach_document_ref(meta, "done", _with_target("household"), "scan-20261027-120000-abcdef12")
     assert "instance" not in meta["artifacts"][0]["data"], (
         "a local document needs no instance — otherwise the "
         "component does not even ask")
@@ -151,7 +151,7 @@ def test_a_scan_into_ANOTHER_instance_is_marked_remote(monkeypatch):
     from utils.config import settings
     monkeypatch.setattr(settings, "instance_id", "household", raising=False)
     meta = _meta()
-    attach_document_ref(meta, "done", _mit_ziel("xidra"), "scan-20261027-120000-abcdef12")
+    attach_document_ref(meta, "done", _with_target("xidra"), "scan-20261027-120000-abcdef12")
     assert meta["artifacts"][0]["data"]["instance"] == "xidra", (
         "without the marker the component would resolve xidra's id LOCALLY and "
         "hit a foreign document with the same number")
@@ -161,7 +161,7 @@ def test_the_comparison_ignores_case_and_spacing(monkeypatch):
     from utils.config import settings
     monkeypatch.setattr(settings, "instance_id", "  Household ", raising=False)
     meta = _meta()
-    attach_document_ref(meta, "done", _mit_ziel("HOUSEHOLD"), "scan-20261027-120000-abcdef12")
+    attach_document_ref(meta, "done", _with_target("HOUSEHOLD"), "scan-20261027-120000-abcdef12")
     assert "instance" not in meta["artifacts"][0]["data"]
 
 
@@ -177,7 +177,7 @@ def test_WITHOUT_a_self_identity_every_named_target_is_remote(monkeypatch):
     from utils.config import settings
     monkeypatch.setattr(settings, "instance_id", "", raising=False)
     meta = _meta()
-    attach_document_ref(meta, "done", _mit_ziel("household"), "scan-20261027-120000-abcdef12")
+    attach_document_ref(meta, "done", _with_target("household"), "scan-20261027-120000-abcdef12")
     assert meta["artifacts"][0]["data"]["instance"] == "household", (
         "without a self id EVERY named target must count as foreign")
 
@@ -188,9 +188,9 @@ def test_an_unnamed_target_stays_local(monkeypatch):
     here."""
     from utils.config import settings
     monkeypatch.setattr(settings, "instance_id", "household", raising=False)
-    for ziel in (None, "", "   "):
+    for target in (None, "", "   "):
         meta = _meta()
-        attach_document_ref(meta, "done", {**_DONE, "target": ziel},
+        attach_document_ref(meta, "done", {**_DONE, "target": target},
                             "scan-20261027-120000-abcdef12")
-        assert "instance" not in meta["artifacts"][0]["data"], f"target={ziel!r}"
+        assert "instance" not in meta["artifacts"][0]["data"], f"target={target!r}"
 

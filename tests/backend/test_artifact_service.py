@@ -44,8 +44,8 @@ def test_allowed_kinds_are_exactly_lane_a():
 @pytest.mark.unit
 def test_lane_b_kinds_stay_out():
     """The actual guard behind the list: no markup kind sneaks in."""
-    for verboten in ("html", "svg", "iframe", "script", "markdown"):
-        assert verboten not in ALLOWED_KINDS, verboten
+    for forbidden in ("html", "svg", "iframe", "script", "markdown"):
+        assert forbidden not in ALLOWED_KINDS, forbidden
 
 
 @pytest.mark.unit

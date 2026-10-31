@@ -57,7 +57,7 @@ def _band_share(data: np.ndarray, sample_rate: int, lo: float, hi: float) -> flo
 
 
 @pytest.mark.unit
-def test_hifi_speech_verschiebt_die_energie_messbar():
+def test_hifi_speech_shifts_the_energy_measurably():
     """The core claim: less bass, more presence -- measured, not asserted."""
     original = _wav(_voice_like())
     _, before = _read(original)
@@ -68,7 +68,7 @@ def test_hifi_speech_verschiebt_die_energie_messbar():
 
 
 @pytest.mark.unit
-def test_frequenzgang_des_shelfs_ist_festgenagelt():
+def test_the_shelf_frequency_response_is_pinned():
     """The band-share test above does not see every coefficient error: an a1
     with the wrong sign passes it (a review finding, evidenced by a mutant).
     Hence the frequency response itself here."""
@@ -85,7 +85,7 @@ def test_frequenzgang_des_shelfs_ist_festgenagelt():
 
 
 @pytest.mark.unit
-def test_hochpass_nimmt_den_bass_unter_dem_grundton_weg():
+def test_the_high_pass_removes_the_bass_below_the_fundamental():
     from scipy.signal import butter, sosfreqz
 
     profile = TTS_EQ_PROFILES["hifi_speech"]
@@ -99,7 +99,7 @@ def test_hochpass_nimmt_den_bass_unter_dem_grundton_weg():
 
 
 @pytest.mark.unit
-def test_leise_eingabe_bleibt_leise():
+def test_quiet_input_stays_quiet():
     """Do not pull it up to full scale -- the level belongs to `tts_volume`."""
     quiet = (_voice_like().astype(np.float64) * 0.05).astype("<i2")
     _, before = _read(_wav(quiet))
@@ -109,7 +109,7 @@ def test_leise_eingabe_bleibt_leise():
 
 
 @pytest.mark.unit
-def test_format_und_laenge_bleiben_erhalten():
+def test_format_and_length_are_preserved():
     original = _wav(_voice_like())
     before, _ = _read(original)
     after, _ = _read(apply_profile(original, "hifi_speech"))
@@ -120,7 +120,7 @@ def test_format_und_laenge_bleiben_erhalten():
 
 
 @pytest.mark.unit
-def test_vollausgesteuerte_eingabe_wird_bei_minus_1_dbfs_gedeckelt():
+def test_full_scale_input_is_capped_at_minus_1_dbfs():
     """The shelf boosts -- without a ceiling a loud answer would clip. That is
     how the real voice arrives: Piper delivers peaks at about 0 dBFS."""
     loud = (_voice_like().astype(np.float64) / 20000 * 32767).astype("<i2")
@@ -131,7 +131,7 @@ def test_vollausgesteuerte_eingabe_wird_bei_minus_1_dbfs_gedeckelt():
 
 
 @pytest.mark.unit
-def test_pegel_der_eingabe_bleibt_erhalten():
+def test_the_input_level_is_preserved():
     """Below the ceiling the result keeps the input's peak."""
     _, before = _read(_wav(_voice_like()))
     _, after = _read(apply_profile(_wav(_voice_like()), "hifi_speech"))
@@ -140,7 +140,7 @@ def test_pegel_der_eingabe_bleibt_erhalten():
 
 
 @pytest.mark.unit
-def test_stereo_wird_kanalweise_gefiltert():
+def test_stereo_is_filtered_per_channel():
     left = _voice_like()
     right = np.zeros_like(left)
     interleaved = np.column_stack([left, right]).astype("<i2").ravel()
@@ -154,39 +154,39 @@ def test_stereo_wird_kanalweise_gefiltert():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("profile", [None, ""])
-def test_ohne_profil_byte_identisch(profile):
+def test_without_a_profile_byte_identical(profile):
     original = _wav(_voice_like())
     assert apply_profile(original, profile) is original
 
 
 @pytest.mark.unit
-def test_unbekanntes_profil_spielt_unbearbeitet():
+def test_an_unknown_profile_plays_unprocessed():
     original = _wav(_voice_like())
     assert apply_profile(original, "gibt_es_nicht") == original
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("payload", [b"", b"kein wav", b"RIFF\x00\x00\x00\x00WAVEkaputt"])
-def test_kaputtes_audio_kostet_nie_die_antwort(payload):
+def test_broken_audio_never_costs_the_answer(payload):
     """Fail-safe: an equalisation that failed returns the input."""
     assert apply_profile(payload, "hifi_speech") == payload
 
 
 @pytest.mark.unit
-def test_nicht_16_bit_wird_uebersprungen():
+def test_non_16_bit_is_skipped():
     eight_bit = _wav(np.full(1000, 128, dtype=np.uint8), sampwidth=1)
     assert apply_profile(eight_bit, "hifi_speech") == eight_bit
 
 
 @pytest.mark.unit
-def test_stille_bleibt_unveraendert():
+def test_silence_stays_unchanged():
     """A peak of 0 -- the normalisation must not divide by zero."""
     silence = _wav(np.zeros(SR, dtype="<i2"))
     assert apply_profile(silence, "hifi_speech") == silence
 
 
 @pytest.mark.unit
-def test_telefonie_abtastrate_ueberspringt_den_shelf_statt_zu_scheitern():
+def test_a_telephony_sample_rate_skips_the_shelf_instead_of_failing():
     """At a 4 kHz sample rate the shelf (2.5 kHz) lies above Nyquist."""
     low_rate = _wav(_voice_like(sample_rate=4000), sample_rate=4000)
     params, after = _read(apply_profile(low_rate, "hifi_speech"))

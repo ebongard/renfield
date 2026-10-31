@@ -49,7 +49,7 @@ def _ramp(n: int, start: int = 0) -> bytes:
 
 
 @pytest.mark.satellite
-def test_modell_bekommt_kontext_plus_frame():
+def test_the_model_gets_context_plus_frame():
     """The core regression: 64 + 512 = 576 samples, never a bare 512."""
     vad, session = _vad()
     vad.get_speech_probability(_ramp(CHUNK))
@@ -58,7 +58,7 @@ def test_modell_bekommt_kontext_plus_frame():
 
 
 @pytest.mark.satellite
-def test_kontext_ist_das_ende_des_vorherigen_frames():
+def test_the_context_is_the_end_of_the_previous_frame():
     vad, session = _vad()
     vad.get_speech_probability(_ramp(CHUNK))
     first, second = session.calls[0]["input"], session.calls[1]["input"]
@@ -68,7 +68,7 @@ def test_kontext_ist_das_ende_des_vorherigen_frames():
 
 
 @pytest.mark.satellite
-def test_strom_ist_lueckenlos_ueber_aufrufgrenzen():
+def test_the_stream_is_seamless_across_call_boundaries():
     """1280 is not a multiple of 512 -- the remainder belongs in the next call,
     not zero-padded into this one."""
     vad, session = _vad()
@@ -84,7 +84,7 @@ def test_strom_ist_lueckenlos_ueber_aufrufgrenzen():
 
 
 @pytest.mark.satellite
-def test_zustand_wird_von_frame_zu_frame_weitergereicht():
+def test_the_state_is_passed_on_from_frame_to_frame():
     vad, session = _vad()
     vad.get_speech_probability(_ramp(CHUNK))
 
@@ -93,7 +93,7 @@ def test_zustand_wird_von_frame_zu_frame_weitergereicht():
 
 
 @pytest.mark.satellite
-def test_reset_loescht_zustand_kontext_und_rest():
+def test_reset_clears_state_context_and_remainder():
     vad, session = _vad()
     vad.get_speech_probability(_ramp(CHUNK))
     vad.reset()
@@ -106,14 +106,14 @@ def test_reset_loescht_zustand_kontext_und_rest():
 
 
 @pytest.mark.satellite
-def test_zu_kurzer_aufruf_wiederholt_das_letzte_urteil():
+def test_a_too_short_call_repeats_the_last_verdict():
     vad, _ = _vad(prob=0.9)
     assert vad.get_speech_probability(_ramp(CHUNK)) == pytest.approx(0.9)
     assert vad.get_speech_probability(_ramp(100)) == pytest.approx(0.9)
 
 
 @pytest.mark.satellite
-def test_inferenzfehler_wird_einmal_gemeldet(capsys):
+def test_an_inference_error_is_reported_once(capsys):
     """Neutral 0.5 reads as SPEECH at threshold 0.5 -- that must not be silent."""
     vad, session = _vad()
     session.run = lambda *_: (_ for _ in ()).throw(RuntimeError("kaputt"))
@@ -125,7 +125,7 @@ def test_inferenzfehler_wird_einmal_gemeldet(capsys):
 
 
 @pytest.mark.satellite
-def test_inferenzfehler_faellt_auf_rms_zurueck_statt_sprache_zu_melden():
+def test_an_inference_error_falls_back_to_rms_instead_of_reporting_speech():
     """The neutral 0.5 must never be judged: at threshold 0.5 it would hold
     every turn open until the recording limit."""
     from renfield_satellite.audio.vad import VADBackend, VoiceActivityDetector
@@ -145,7 +145,7 @@ def test_inferenzfehler_faellt_auf_rms_zurueck_statt_sprache_zu_melden():
 
 
 @pytest.mark.satellite
-def test_gesunder_aufruf_loescht_das_fehlerkennzeichen():
+def test_a_healthy_call_clears_the_error_flag():
     vad, session = _vad()
     good_run = session.run
     session.run = lambda *_: (_ for _ in ()).throw(RuntimeError("kaputt"))
@@ -157,7 +157,7 @@ def test_gesunder_aufruf_loescht_das_fehlerkennzeichen():
 
 
 @pytest.mark.satellite
-def test_ungerade_bytezahl_ist_kein_fehler():
+def test_an_odd_byte_count_is_not_an_error():
     vad, session = _vad()
     vad.get_speech_probability(_ramp(CHUNK) + b"\x01")
 
@@ -184,7 +184,7 @@ def _chunks(pcm: np.ndarray):
 
 @needs_model
 @pytest.mark.satellite
-def test_echtes_modell_erkennt_sprache_und_verwirft_stille():
+def test_the_real_model_detects_speech_and_rejects_silence():
     import wave
 
     with wave.open(SPEECH) as w:

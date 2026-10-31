@@ -106,8 +106,8 @@ async def list_armed() -> int:
         return 0
     print(f"{len(rows)} account(s) with an armed second factor:")
     for uid, username, speaker_id in rows:
-        profil = f"profile {speaker_id}" if speaker_id else "NO profile (hurdle at rest)"
-        print(f"  id={uid:<5} {username:<24} {profil}")
+        profile_label = f"profile {speaker_id}" if speaker_id else "NO profile (hurdle at rest)"
+        print(f"  id={uid:<5} {username:<24} {profile_label}")
     return 0
 
 

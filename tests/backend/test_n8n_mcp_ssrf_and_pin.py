@@ -28,10 +28,10 @@ import yaml
 
 pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
-WURZEL = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[2]
 
 
-def _globale_installationszeilen() -> list[tuple[str, str]]:
+def _global_install_lines() -> list[tuple[str, str]]:
     """The real `npm install -g` lines of ALL backend image files.
 
     Returns: `(file name, line)`, so an error message can say WHERE.
@@ -53,22 +53,22 @@ def _globale_installationszeilen() -> list[tuple[str, str]]:
     Continuation lines are joined, otherwise a `RUN npm install -g` with a line
     break and the package on the next line escapes the check.
     """
-    treffer: list[tuple[str, str]] = []
-    for datei in sorted((WURZEL / "src" / "backend").glob("Dockerfile*")):
-        if not datei.is_file():
+    hits: list[tuple[str, str]] = []
+    for dockerfile in sorted((ROOT / "src" / "backend").glob("Dockerfile*")):
+        if not dockerfile.is_file():
             continue
         # Join continuations into one logical statement.
-        text = datei.read_text().replace("\\\n", " ")
-        for zeile in text.splitlines():
-            if "npm install -g" in zeile and not zeile.lstrip().startswith("#"):
-                treffer.append((datei.name, " ".join(zeile.split())))
-    return treffer
+        text = dockerfile.read_text().replace("\\\n", " ")
+        for line in text.splitlines():
+            if "npm install -g" in line and not line.lstrip().startswith("#"):
+                hits.append((dockerfile.name, " ".join(line.split())))
+    return hits
 
 
 def _server(name: str) -> dict:
-    eintraege = yaml.safe_load(
-        (WURZEL / "config" / "mcp_servers.yaml").read_text())["servers"]
-    return next(e for e in eintraege if e["name"] == name)
+    entries = yaml.safe_load(
+        (ROOT / "config" / "mcp_servers.yaml").read_text())["servers"]
+    return next(e for e in entries if e["name"] == name)
 
 
 def test_n8n_mcp_is_allowed_to_reach_a_private_address():
@@ -88,13 +88,13 @@ def test_the_probe_that_catches_it_still_exists():
     goes away, the silent mode comes back -- the server was reporting
     "connected", after all.
     """
-    sonde = _server("n8n").get("health_probe") or {}
-    assert sonde.get("tool") == "n8n_list_workflows", (
+    probe = _server("n8n").get("health_probe") or {}
+    assert probe.get("tool") == "n8n_list_workflows", (
         "the n8n functional probe is gone or calls a different tool — then "
         "a total outage of the connection again goes unnoticed by anyone")
 
 
-def _npx_server_pakete() -> list[tuple[str, str]]:
+def _npx_server_packages() -> list[tuple[str, str]]:
     """`(server name, package)` for EVERY stdio server that starts via npx.
 
     🛑 The derivation starts from the CONFIGURATION, not from the Dockerfile.
@@ -105,26 +105,26 @@ def _npx_server_pakete() -> list[tuple[str, str]]:
     configuration, a NEWLY added npx server fails by itself instead of slipping
     past a Dockerfile check. Found in the review of #1412.
     """
-    eintraege = yaml.safe_load(
-        (WURZEL / "config" / "mcp_servers.yaml").read_text())["servers"]
-    treffer = []
-    for e in eintraege:
+    entries = yaml.safe_load(
+        (ROOT / "config" / "mcp_servers.yaml").read_text())["servers"]
+    hits = []
+    for e in entries:
         if e.get("command") != "npx":
             continue
         args = [a for a in (e.get("args") or []) if not a.startswith("-")]
         assert args, f"npx server `{e['name']}` names no package in args"
-        treffer.append((e["name"], args[0]))
-    return treffer
+        hits.append((e["name"], args[0]))
+    return hits
 
 
-def _installierte_pakete() -> dict[str, dict[str, str]]:
+def _installed_packages() -> dict[str, dict[str, str]]:
     """`{file name: {package name: version}}` from all backend image files."""
-    je_datei: dict[str, dict[str, str]] = {}
-    for datei, zeile in _globale_installationszeilen():
-        for token in re.findall(r"(?<=\s)([@\w][\w@/.-]*@[\w.+-]+)", " " + zeile):
+    per_file: dict[str, dict[str, str]] = {}
+    for dockerfile, line in _global_install_lines():
+        for token in re.findall(r"(?<=\s)([@\w][\w@/.-]*@[\w.+-]+)", " " + line):
             name, _, version = token.rpartition("@")
-            je_datei.setdefault(datei, {})[name] = version
-    return je_datei
+            per_file.setdefault(dockerfile, {})[name] = version
+    return per_file
 
 
 def test_every_npx_mcp_server_is_pinned_in_every_backend_image():
@@ -138,20 +138,20 @@ def test_every_npx_mcp_server_is_pinned_in_every_backend_image():
     `{"dependencies": {"mcp-newsapi": "^1.0.0"}}` -- a caret range, resolved at
     runtime, with `NEWS_ENABLED: "true"`.
     """
-    erwartet = _npx_server_pakete()
-    assert erwartet, "no npx server left in the configuration — adjust the test"
-    installiert = _installierte_pakete()
-    assert installiert, "no global npm install in the image files"
+    expected = _npx_server_packages()
+    assert expected, "no npx server left in the configuration — adjust the test"
+    installed = _installed_packages()
+    assert installed, "no global npm install in the image files"
 
-    fehlend = []
-    for datei, pakete in sorted(installiert.items()):
-        for server, paket in erwartet:
-            if paket not in pakete:
-                fehlend.append(f"{datei}: `{paket}` (server `{server}`) missing")
-    assert not fehlend, (
+    missing = []
+    for dockerfile, packages in sorted(installed.items()):
+        for server, package in expected:
+            if package not in packages:
+                missing.append(f"{dockerfile}: `{package}` (server `{server}`) missing")
+    assert not missing, (
         "an MCP server started via npx is not pinned in the image — "
         "the pod then downloads it from the network on start:\n  "
-        + "\n  ".join(fehlend))
+        + "\n  ".join(missing))
 
 
 def test_no_mcp_package_in_the_image_floats_on_latest():
@@ -163,12 +163,12 @@ def test_no_mcp_package_in_the_image_floats_on_latest():
     build decides that, and a change in behaviour comes in without a single
     line of diff -- which is exactly how it happened.
     """
-    offen = [f"{d}: {z}" for d, z in _globale_installationszeilen()
+    floating = [f"{d}: {z}" for d, z in _global_install_lines()
              if "@latest" in z]
-    assert not offen, (
+    assert not floating, (
         "an MCP package hangs on `@latest` — every image build can then pull in "
         "different behaviour without the diff showing anything:\n  "
-        + "\n  ".join(offen))
+        + "\n  ".join(floating))
 
 
 def test_every_globally_installed_mcp_package_names_an_exact_version():
@@ -181,14 +181,14 @@ def test_every_globally_installed_mcp_package_names_an_exact_version():
     `latest`, a dist-tag, `^`, `~` and `x` are not. Found in the review of
     #1412.
     """
-    zeilen = _globale_installationszeilen()
-    assert zeilen, "no global npm install left in the image — adjust the test"
-    pakete = [(d, m) for d, z in zeilen
+    lines = _global_install_lines()
+    assert lines, "no global npm install left in the image — adjust the test"
+    packages = [(d, m) for d, z in lines
               for m in re.findall(r"npm install -g\s+(\S+)", z)]
-    for datei, paket in pakete:
-        assert "@" in paket, f"{datei}: `{paket}` names no version"
-        version = paket.rsplit("@", 1)[1]
+    for dockerfile, package in packages:
+        assert "@" in package, f"{dockerfile}: `{package}` names no version"
+        version = package.rsplit("@", 1)[1]
         assert re.match(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$", version), (
-            f"{datei}: `{paket}` floats — `latest`, a dist-tag, `^x.y`, "
+            f"{dockerfile}: `{package}` floats — `latest`, a dist-tag, `^x.y`, "
             "`~x.y` or `x` let the image build decide which code talks "
             "to the service")

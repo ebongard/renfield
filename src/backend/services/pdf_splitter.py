@@ -255,7 +255,7 @@ async def _purge_parent_facts(db: AsyncSession, parent_id: int) -> int:
             DocumentFact.document_id == parent_id
         )
     )).all()
-    geloescht = 0
+    deleted = 0
     for _fact_id, atom_id in rows:
         if not atom_id:
             continue
@@ -263,7 +263,7 @@ async def _purge_parent_facts(db: AsyncSession, parent_id: int) -> int:
             await AtomPurgeService.purge(
                 db, atom_id=atom_id, reason="pdf_split_parent_archived"
             )
-            geloescht += 1
+            deleted += 1
         except Exception as exc:
             # Best-effort: a single atom that is already gone (or whose purge
             # fails) must not hold up the split -- the children are materialised
@@ -272,12 +272,12 @@ async def _purge_parent_facts(db: AsyncSession, parent_id: int) -> int:
                 f"pdf-split: fact atom {atom_id} of doc {parent_id} not "
                 f"cleared: {exc!r}"
             )
-    if geloescht:
+    if deleted:
         logger.info(
-            f"pdf-split: {geloescht} parent fact(s) of doc {parent_id} "
+            f"pdf-split: {deleted} parent fact(s) of doc {parent_id} "
             f"cleared — the archived batch no longer describes a document"
         )
-    return geloescht
+    return deleted
 
 
 async def execute_split(
@@ -715,7 +715,7 @@ async def act_on_verdict(
         # can be HIGH -- "confidence X < threshold" would then be wrong, and
         # whoever reads the log would look at the threshold instead of at the
         # re-run.
-        grund = (
+        held_reason = (
             "resplit — Entscheidung liegt beim Eigentümer"
             if force_review
             else f"min confidence {verdict.min_confidence:.2f} < "
@@ -723,7 +723,7 @@ async def act_on_verdict(
         )
         logger.info(
             f"pdf-split: doc {doc.id} looks like {len(verdict.pieces)} "
-            f"documents ({grund}) — held for owner review (proposal {row.id})"
+            f"documents ({held_reason}) — held for owner review (proposal {row.id})"
         )
         return "review"
 

@@ -382,18 +382,18 @@ def validate_boundaries(
         if absorb_gaps and s > expected_start and pieces:
             # Gap: the skipped pages fall to the preceding document -- the
             # same rule the prompt gives the model.
-            luecke = s - expected_start
-            if luecke > _MAX_ABSORBED_GAP:
+            gap = s - expected_start
+            if gap > _MAX_ABSORBED_GAP:
                 logger.warning(
-                    f"pdf-split: gap of {luecke} pages before page {s} "
+                    f"pdf-split: gap of {gap} pages before page {s} "
                     f"(range {start_page}-{end_page}) — too large for blank "
                     f"back sides, a whole document is missing here. Rejected "
                     f"instead of added to the preceding document."
                 )
                 return None
-            absorbed += luecke
-            vorher = pieces[-1]
-            pieces[-1] = replace(vorher, end_page=s - 1)
+            absorbed += gap
+            previous = pieces[-1]
+            pieces[-1] = replace(previous, end_page=s - 1)
             expected_start = s
         if s != expected_start or e < s or e > end_page:
             return None
@@ -416,15 +416,15 @@ def validate_boundaries(
         if not absorb_gaps or not pieces:
             return None  # coverage gap at the tail
         # Gap at the tail: the same limit as in the middle.
-        luecke = end_page + 1 - expected_start
-        if luecke > _MAX_ABSORBED_GAP:
+        gap = end_page + 1 - expected_start
+        if gap > _MAX_ABSORBED_GAP:
             logger.warning(
-                f"pdf-split: gap of {luecke} pages at the end "
+                f"pdf-split: gap of {gap} pages at the end "
                 f"(range {start_page}-{end_page}) — too large for blank "
                 f"back sides. Rejected."
             )
             return None
-        absorbed += luecke
+        absorbed += gap
         pieces[-1] = replace(pieces[-1], end_page=end_page)
     if absorbed:
         logger.info(

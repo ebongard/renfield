@@ -628,7 +628,7 @@ class TestTheRouteCarriesTheIdentityBasis:
     coming into being at all.
     """
 
-    def _zeile(self, **ueber):
+    def _row(self, **overrides):
         basis = dict(
             id=7,
             direction="answered",
@@ -644,26 +644,26 @@ class TestTheRouteCarriesTheIdentityBasis:
             answer_excerpt="eine Antwort",
             error_message=None,
         )
-        basis.update(ueber)
+        basis.update(overrides)
         return SimpleNamespace(**basis)
 
-    async def _aufrufen(self, zeile, monkeypatch):
+    async def _call(self, audit_row, monkeypatch):
         from api.routes import federation_audit as route
 
         monkeypatch.setattr(
-            route, "list_audit_for_user", AsyncMock(return_value=[zeile]))
+            route, "list_audit_for_user", AsyncMock(return_value=[audit_row]))
         # 🛑 limit/offset explicitly: calling the function directly leaves
         # the defaults as `Query(...)` objects, which land in the answer
         # unchanged.
-        antwort = await route.list_federation_audit(
+        response = await route.list_federation_audit(
             limit=50, offset=0, peer_pubkey=None,
             current_user=SimpleNamespace(id=1))
-        return antwort.entries[0]
+        return response.entries[0]
 
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_both_fields_land_in_the_right_place(self, monkeypatch):
-        e = await self._aufrufen(self._zeile(), monkeypatch)
+        e = await self._call(self._row(), monkeypatch)
         assert e.direction == "answered"
         assert e.identity_basis == "mapped"
 
@@ -673,8 +673,8 @@ class TestTheRouteCarriesTheIdentityBasis:
         """Negative control for the test above: with the values swapped in
         the ROW, the fields have to come out swapped too. Were the route
         hard-wired instead of passing through, both would stay the same."""
-        e = await self._aufrufen(
-            self._zeile(direction="asked", identity_basis="peer_tier"),
+        e = await self._call(
+            self._row(direction="asked", identity_basis="peer_tier"),
             monkeypatch)
         assert e.direction == "asked"
         assert e.identity_basis == "peer_tier"
@@ -685,6 +685,6 @@ class TestTheRouteCarriesTheIdentityBasis:
         """🛑 Existing rows and asking-side rows carry `None`. The route must
         NOT turn that into "peer_tier" -- that would assert the narrower tier
         for turns that ran with full reach."""
-        e = await self._aufrufen(
-            self._zeile(direction="asked", identity_basis=None), monkeypatch)
+        e = await self._call(
+            self._row(direction="asked", identity_basis=None), monkeypatch)
         assert e.identity_basis is None

@@ -121,7 +121,7 @@ class TestPeerScoped:
     PEER = PeerScope(owner_id=7, tier=2)
 
     @staticmethod
-    def _nennt_fragenden(clause: str) -> bool:
+    def _names_the_asker(clause: str) -> bool:
         """Does `:asker_id` occur ON ITS OWN -- not as a prefix of
         `:asker_id_pub`, `:asker_id_peer_owner`, `:asker_id_peer_tier`?
 
@@ -134,7 +134,7 @@ class TestPeerScoped:
 
     def test_peer_omits_owner_branch(self):
         clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities", peer=self.PEER)
-        assert not self._nennt_fragenden(clause), clause
+        assert not self._names_the_asker(clause), clause
 
     def test_peer_omits_explicit_grant_branch(self):
         clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities", peer=self.PEER)
@@ -147,7 +147,7 @@ class TestPeerScoped:
             owner_table_alias="kb", source_id_expr="d.id", owner_atom_id_expr="d.atom_id",
             peer=self.PEER,
         )
-        assert not self._nennt_fragenden(clause), clause
+        assert not self._names_the_asker(clause), clause
         assert "atom_explicit_grants" not in clause
         # The null-KB fallback belongs to the owner branch -> also gone.
         assert "atoms da" not in clause
@@ -221,7 +221,7 @@ class TestPeerScoped:
             assert "circle_memberships" not in clause
             assert ":asker_id_peer_owner" in clause
         clause, _ = document_chunks_circles_filter(42, peer=self.PEER)
-        assert not self._nennt_fragenden(clause), clause
+        assert not self._names_the_asker(clause), clause
         assert "atoms da" not in clause
         assert "atom_explicit_grants" not in clause
 

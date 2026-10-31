@@ -96,7 +96,7 @@ def _build_query_brain_tool(peer: PeerUser) -> MCPToolInfo:
             # INSTANCE NAME would have to appear here -- and it is not
             # available: `peer_users` carries no remote `INSTANCE_ID`, and the
             # pairing offer does not carry it along. Its own item.
-            f"Ask {_kurzer_name(peer.remote_display_name)}'s Renfield \u2014 "
+            f"Ask {_short_name(peer.remote_display_name)}'s Renfield \u2014 "
             f"another paired INSTANCE \u2014 for information its people chose "
             f"to share with you through circles. Use for \u201efrag "
             f"<jemand>s Renfield\u201c, \u201ewas liegt in <Instanz>\u201c, "
@@ -130,7 +130,7 @@ def _build_query_brain_tool(peer: PeerUser) -> MCPToolInfo:
 _NAME_IN_DESC_CHARS = 40
 
 
-def _kurzer_name(name: str) -> str:
+def _short_name(name: str) -> str:
     """The display name, truncated -- see `_NAME_IN_DESC_CHARS`."""
     return name[:_NAME_IN_DESC_CHARS]
 

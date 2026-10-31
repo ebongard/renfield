@@ -67,13 +67,13 @@ from collections import defaultdict
 # services/agent_service.py and `get_classification_chat_kwargs` -- otherwise
 # the bench measures something other than production. `num_ctx` is missing on
 # purpose: the OpenAI path does not map it (see `_options_to_openai`).
-AUFRUF = {"temperature": 0, "max_tokens": 512,
+REQUEST_OPTIONS = {"temperature": 0, "max_tokens": 512,
           "chat_template_kwargs": {"enable_thinking": False}}
 
 # The sentence that kept tipping over in the paper/search branch.
 # `expect: "treffer"` means `--tool` MUST be chosen; "kein-treffer" means it
 # must NOT be.
-STANDARDFAELLE = [
+DEFAULT_CASES = [
     # A target after "scanne nach <X>" -- no object in between
     {"task": "scanne nach x-idra", "expect": "treffer"},
     {"task": "scanne nach X-IDRA", "expect": "treffer"},
@@ -100,12 +100,12 @@ STANDARDFAELLE = [
 ]
 
 
-def signatur(prompt: str) -> str:
+def signature(prompt: str) -> str:
     """Like `agent_service.preselect_input_signature` -- the FINISHED prompt."""
     return hashlib.sha1(prompt.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
 
 
-def aufgabe_finden(prompt: str) -> str:
+def find_task(prompt: str) -> str:
     treffer = re.search(r'^Aufgabe: "(.*)"$', prompt, re.M) or \
               re.search(r'^Task: "(.*)"$', prompt, re.M)
     if not treffer:
@@ -113,52 +113,52 @@ def aufgabe_finden(prompt: str) -> str:
     return treffer.group(1)
 
 
-def aufgabe_einsetzen(prompt: str, alt: str, neu: str) -> str:
+def replace_task(prompt: str, old: str, new: str) -> str:
     """Swaps the task -- exclusively in the `Aufgabe:`/`Task:` line.
 
-    🛑 A bare `prompt.replace(alt, neu)` has two silent failures, and both
+    🛑 A bare `prompt.replace(old, new)` has two silent failures, and both
     look like a result:
-    - if `alt` is absent from one variant, EVERY case measures the same prompt,
+    - if `old` is absent from one variant, EVERY case measures the same prompt,
       and the output is full of clean 5/5 or 0/5;
-    - if `alt` happens to appear in a tool description too, the list gets
+    - if `old` happens to appear in a tool description too, the list gets
       changed along with it and something other than the intent is measured.
     Hence line-exact -- and a failure aborts instead of keeping quiet.
     """
-    zeilen = prompt.split("\n")
-    getroffen = 0
-    for i, zeile in enumerate(zeilen):
-        if zeile.startswith(("Aufgabe: ", "Task: ")) and alt in zeile:
-            zeilen[i] = zeile.replace(alt, neu)
-            getroffen += 1
-    if getroffen != 1:
+    lines = prompt.split("\n")
+    matched = 0
+    for i, line in enumerate(lines):
+        if line.startswith(("Aufgabe: ", "Task: ")) and old in line:
+            lines[i] = line.replace(old, new)
+            matched += 1
+    if matched != 1:
         raise ValueError(
-            f"Aufgabe {alt!r} steht {getroffen}x in einer `Aufgabe:`/`Task:`-Zeile "
+            f"Aufgabe {old!r} steht {matched}x in einer `Aufgabe:`/`Task:`-Zeile "
             "— erwartet genau einmal. Falsche Datei oder falsches --original-task?")
-    return "\n".join(zeilen)
+    return "\n".join(lines)
 
 
-def werkzeugnamen(prompt: str) -> list:
+def tool_names(prompt: str) -> list:
     """The offered tool names, taken from the prompt -- for the `enum`.
 
     🛑 `re.split(r"(?m)^- ")` and NOT `splitlines()`: an entry runs across
     line breaks, because the hint texts contain some. This cut produced a false
     finding twice on 2026-10-27.
     """
-    namen = []
-    for stueck in re.split(r"(?m)^- ", prompt):
-        kopf = stueck.split(":", 1)[0].strip()
-        if kopf.startswith(("mcp.", "internal.")):
-            namen.append(kopf)
-    return namen
+    names = []
+    for chunk in re.split(r"(?m)^- ", prompt):
+        head = chunk.split(":", 1)[0].strip()
+        if head.startswith(("mcp.", "internal.")):
+            names.append(head)
+    return names
 
 
-def frage(url: str, modell: str, prompt: str, zeit: float, typisiert: bool = False) -> list:
-    nutzlast = {"model": modell, "messages": [{"role": "user", "content": prompt}],
-                **AUFRUF}
-    if typisiert:
+def ask(url: str, model_name: str, prompt: str, timeout_s: float, use_schema: bool = False) -> list:
+    payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}],
+                **REQUEST_OPTIONS}
+    if use_schema:
         # A root array, so the PROMPT stays unchanged: that way the two
         # measurements differ in exactly one variable.
-        nutzlast["response_format"] = {
+        payload["response_format"] = {
             "type": "json_schema",
             "json_schema": {"name": "preselect", "strict": True, "schema": {
                 # `maxItems` is mandatory: `uniqueItems` is NOT enforced, so
@@ -166,18 +166,18 @@ def frage(url: str, modell: str, prompt: str, zeit: float, typisiert: bool = Fal
                 # budget is used up and the answer comes back truncated. Has to
                 # match `_build_preselect_schema`.
                 "type": "array", "maxItems": 8, "uniqueItems": True,
-                "items": {"type": "string", "enum": werkzeugnamen(prompt)},
+                "items": {"type": "string", "enum": tool_names(prompt)},
             }},
         }
-    anfrage = urllib.request.Request(
-        url, data=json.dumps(nutzlast).encode(),
+    http_request = urllib.request.Request(
+        url, data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(anfrage, timeout=zeit) as antwort:
-        text = json.loads(antwort.read())["choices"][0]["message"]["content"]
-    werkzeuge = json.loads(text.strip())
-    if not isinstance(werkzeuge, list):
+    with urllib.request.urlopen(http_request, timeout=timeout_s) as response:
+        text = json.loads(response.read())["choices"][0]["message"]["content"]
+    tools = json.loads(text.strip())
+    if not isinstance(tools, list):
         raise ValueError(f"keine Liste: {text[:80]!r}")
-    return werkzeuge
+    return tools
 
 
 def main() -> int:
@@ -209,92 +209,92 @@ def main() -> int:
                    help="bricht ab, wenn eine Datei nicht diese Signatur hat")
     a = p.parse_args()
 
-    fassungen: dict[str, str] = {}
-    for eintrag in a.variant:
-        if "=" not in eintrag:
-            sys.exit(f"--variant needs LABEL=PATH, got {eintrag!r}")
-        label, pfad = eintrag.split("=", 1)
-        with open(pfad) as datei:
-            fassungen[label] = datei.read()
+    versions: dict[str, str] = {}
+    for entry in a.variant:
+        if "=" not in entry:
+            sys.exit(f"--variant needs LABEL=PATH, got {entry!r}")
+        label, path = entry.split("=", 1)
+        with open(path) as fh:
+            versions[label] = fh.read()
 
     if a.cases:
-        with open(a.cases) as datei:
-            faelle = json.load(datei)
+        with open(a.cases) as fh:
+            case_list = json.load(fh)
     else:
-        faelle = STANDARDFAELLE
-    erlaubt = {"treffer", "kein-treffer"}
-    for nr, fall in enumerate(faelle, 1):
-        if fall.get("expect") not in erlaubt:
+        case_list = DEFAULT_CASES
+    allowed = {"treffer", "kein-treffer"}
+    for case_no, case in enumerate(case_list, 1):
+        if case.get("expect") not in allowed:
             # 🛑 Without this check a typo counts silently as "kein-treffer"
             # and inverts the case's verdict.
-            sys.exit(f"Case {nr} ({fall.get('task')!r}): expect="
-                     f"{fall.get('expect')!r}, allowed are {sorted(erlaubt)}.")
-    original = a.original_task or aufgabe_finden(next(iter(fassungen.values())))
+            sys.exit(f"Case {case_no} ({case.get('task')!r}): expect="
+                     f"{case.get('expect')!r}, allowed are {sorted(allowed)}.")
+    original = a.original_task or find_task(next(iter(versions.values())))
 
     # 🛑 Every version has to carry the task BEFORE 100+ calls run.
-    for label, text in fassungen.items():
+    for label, text in versions.items():
         try:
-            aufgabe_einsetzen(text, original, original)
+            replace_task(text, original, original)
         except ValueError as e:
             sys.exit(f"Version {label!r}: {e}")
 
     print(f"  Task in the files: {original!r}")
-    for label, text in fassungen.items():
-        sig = signatur(text)
-        marke = ""
+    for label, text in versions.items():
+        sig = signature(text)
+        marker = ""
         if a.verify_signature:
             # 🛑 Only the UNCHANGED version can carry the signature from the
             # log; a variant is by definition a different prompt. Hence a
             # warning, not an abort -- unless it matches NOWHERE, in which case
             # the wrong file was measured.
-            marke = "  <= matches the log" if sig == a.verify_signature else ""
-        print(f"    {label:12s} {len(text):6d} chars, signature {sig}{marke}")
+            marker = "  <= matches the log" if sig == a.verify_signature else ""
+        print(f"    {label:12s} {len(text):6d} chars, signature {sig}{marker}")
     if a.verify_signature and not any(
-            signatur(t) == a.verify_signature for t in fassungen.values()):
+            signature(t) == a.verify_signature for t in versions.values()):
         sys.exit(f"\n  ABORT: no file has the signature {a.verify_signature}. "
                  "The bench would then not measure the production prompt.")
     print()
 
-    auftraege = [(label, f["task"], f["expect"], i)
-                 for label in fassungen for f in faelle for i in range(a.reps)]
-    random.Random(a.seed).shuffle(auftraege)
+    jobs = [(label, f["task"], f["expect"], i)
+                 for label in versions for f in case_list for i in range(a.reps)]
+    random.Random(a.seed).shuffle(jobs)
 
     treffer: dict = defaultdict(int)
-    laeufe: dict = defaultdict(int)
-    fehler = 0
-    for n, (label, aufgabe, soll, _) in enumerate(auftraege, 1):
-        prompt = aufgabe_einsetzen(fassungen[label], original, aufgabe)
+    runs: dict = defaultdict(int)
+    errors = 0
+    for n, (label, task, expected, _) in enumerate(jobs, 1):
+        prompt = replace_task(versions[label], original, task)
         try:
-            werkzeuge = frage(a.url, a.model, prompt, a.timeout, a.typed)
+            tools = ask(a.url, a.model, prompt, a.timeout, a.typed)
         except Exception as e:
-            fehler += 1
-            print(f"  ERROR {label}/{aufgabe!r}: {e}", file=sys.stderr)
+            errors += 1
+            print(f"  ERROR {label}/{task!r}: {e}", file=sys.stderr)
             continue
-        getroffen = any(a.tool in str(w) for w in werkzeuge)
-        laeufe[(label, aufgabe)] += 1
-        if getroffen == (soll == "treffer"):
-            treffer[(label, aufgabe)] += 1
-        if n % max(1, len(auftraege) // 4) == 0:
-            print(f"  … {n}/{len(auftraege)}", flush=True)
+        matched = any(a.tool in str(w) for w in tools)
+        runs[(label, task)] += 1
+        if matched == (expected == "treffer"):
+            treffer[(label, task)] += 1
+        if n % max(1, len(jobs) // 4) == 0:
+            print(f"  … {n}/{len(jobs)}", flush=True)
 
-    labels = list(fassungen)
-    kopf = "  " + "Task".ljust(38) + "expect".ljust(7) + \
+    labels = list(versions)
+    head = "  " + "Task".ljust(38) + "expect".ljust(7) + \
            "".join(lbl.rjust(9) for lbl in labels)
-    print("\n" + kopf)
-    for f in faelle:
-        zeile = f"  {f['task']:38s}{'YES' if f['expect'] == 'treffer' else 'NO':7s}"
+    print("\n" + head)
+    for f in case_list:
+        line = f"  {f['task']:38s}{'YES' if f['expect'] == 'treffer' else 'NO':7s}"
         for lbl in labels:
-            zeile += f"{treffer[(lbl, f['task'])]}/{laeufe[(lbl, f['task'])]}".rjust(9)
-        print(zeile)
+            line += f"{treffer[(lbl, f['task'])]}/{runs[(lbl, f['task'])]}".rjust(9)
+        print(line)
     print()
     for lbl in labels:
-        richtig = sum(v for (x, _), v in treffer.items() if x == lbl)
-        gesamt = sum(v for (x, _), v in laeufe.items() if x == lbl)
-        quote = 100 * richtig / max(gesamt, 1)
-        print(f"  {lbl}: {richtig}/{gesamt} correct ({quote:.0f} %)")
-    if fehler:
-        print(f"\n  🛑 {fehler} call(s) failed — the rates are incomplete.")
-    return 1 if fehler else 0
+        correct = sum(v for (x, _), v in treffer.items() if x == lbl)
+        total = sum(v for (x, _), v in runs.items() if x == lbl)
+        rate = 100 * correct / max(total, 1)
+        print(f"  {lbl}: {correct}/{total} correct ({rate:.0f} %)")
+    if errors:
+        print(f"\n  🛑 {errors} call(s) failed — the rates are incomplete.")
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":

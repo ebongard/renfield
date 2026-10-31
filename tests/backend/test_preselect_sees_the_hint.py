@@ -26,11 +26,11 @@ from services.agent_tools import AgentToolRegistry, ToolDefinition
 pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
 #: As long as the real `scan_document` hint was on 2026-10-26.
-HINWEIS = ('Startet einen NEUEN Scan. Nimmt selbst ein `target` — '
+HINT = ('Startet einen NEUEN Scan. Nimmt selbst ein `target` — '
            '„scanne die Seiten nach <Ziel>", „einscannen und nach <Ziel> '
            'ablegen" gehören hierher, nicht zu route_scan.')
 #: Long and English, like the vendor description.
-BESCHREIBUNG = ("START scanning every sheet in the document feeder into one "
+DESCRIPTION = ("START scanning every sheet in the document feeder into one "
                 "searchable PDF and filing it into a single Renfield instance. "
                 "This returns IMMEDIATELY with a job_id — the scan itself runs "
                 "in the background and takes from half a minute to several "
@@ -39,20 +39,20 @@ BESCHREIBUNG = ("START scanning every sheet in the document feeder into one "
 
 
 
-def _scan_document_hinweis() -> str:
+def _scan_document_hint() -> str:
     """The hint from the REAL configuration -- the same file that ships."""
     from pathlib import Path
 
     import yaml
 
-    wurzel = Path(__file__).resolve().parents[2]
-    eintraege = yaml.safe_load(
-        (wurzel / "config" / "mcp_servers.yaml").read_text())["servers"]
-    scanner = next(e for e in eintraege if e["name"] == "scanner")
+    root = Path(__file__).resolve().parents[2]
+    entries = yaml.safe_load(
+        (root / "config" / "mcp_servers.yaml").read_text())["servers"]
+    scanner = next(e for e in entries if e["name"] == "scanner")
     return (scanner.get("tool_hints") or {}).get("scan_document", "")
 
 
-def _zeilen(tools: list[ToolDefinition]) -> list[str]:
+def _lines(tools: list[ToolDefinition]) -> list[str]:
     """The lines as PRODUCTION builds them.
 
     🛑 No reimplementation. The first version of this file built the line
@@ -66,15 +66,15 @@ def test_the_hint_survives_uncut():
     """The steering text goes along IN FULL -- it is the reason it exists."""
     tool = ToolDefinition(
         name="mcp.scanner.scan_document",
-        description=f"{BESCHREIBUNG} {HINWEIS}",
-        hint=HINWEIS,
+        description=f"{DESCRIPTION} {HINT}",
+        hint=HINT,
     )
-    zeile = _zeilen([tool])[0]
-    assert HINWEIS in zeile, (
+    line = _lines([tool])[0]
+    assert HINT in line, (
         "the hint is missing or truncated — then the preselection "
-        f"decides without it:\n{zeile}")
+        f"decides without it:\n{line}")
     # And the German wording it concretely failed on:
-    assert "scanne die Seiten nach <Ziel>" in zeile
+    assert "scanne die Seiten nach <Ziel>" in line
 
 
 def test_the_generic_description_is_still_clipped():
@@ -82,8 +82,8 @@ def test_the_generic_description_is_still_clipped():
     merely be moved rather than justified."""
     tool = ToolDefinition(
         name="mcp.scanner.scan_document",
-        description=f"{BESCHREIBUNG} {HINWEIS}",
-        hint=HINWEIS,
+        description=f"{DESCRIPTION} {HINT}",
+        hint=HINT,
     )
     # 🛑 Long enough that the limit really applies -- otherwise the test
     # checks nothing. The first version had
@@ -91,19 +91,19 @@ def test_the_generic_description_is_still_clipped():
     # true, because `rumpf` had itself been cut to that length. An empty
     # assertion. Found in the review of #1410.
     lang = "X" * (_PRESELECT_DESC_CHARS + 200) + "ENDE_DER_BESCHREIBUNG"
-    tool = ToolDefinition(name="mcp.a.b", description=f"{lang} {HINWEIS}", hint=HINWEIS)
-    zeile = _zeilen([tool])[0]
-    assert "ENDE_DER_BESCHREIBUNG" not in zeile, (
+    tool = ToolDefinition(name="mcp.a.b", description=f"{lang} {HINT}", hint=HINT)
+    line = _lines([tool])[0]
+    assert "ENDE_DER_BESCHREIBUNG" not in line, (
         "the generic description was not clipped")
-    assert HINWEIS in zeile, "the hint must still stand there in full"
+    assert HINT in line, "the hint must still stand there in full"
 
 
 def test_a_tool_without_a_hint_is_unchanged():
     """Tools without a steering text behave as before -- the change must not
     inflate the whole list."""
-    tool = ToolDefinition(name="mcp.other.thing", description=BESCHREIBUNG)
-    zeile = _zeilen([tool])[0]
-    assert zeile == f"- mcp.other.thing: {BESCHREIBUNG[:_PRESELECT_DESC_CHARS]}"
+    tool = ToolDefinition(name="mcp.other.thing", description=DESCRIPTION)
+    line = _lines([tool])[0]
+    assert line == f"- mcp.other.thing: {DESCRIPTION[:_PRESELECT_DESC_CHARS]}"
 
 
 def test_the_hint_is_not_duplicated():
@@ -115,29 +115,29 @@ def test_the_hint_is_not_duplicated():
     character limit cuts the hint off anyway, and the negative control stayed
     green. Only below the limit does the duplication become visible.
     """
-    kurz = "Scan a stack."          # clearly under _PRESELECT_DESC_CHARS
+    short_desc = "Scan a stack."          # clearly under _PRESELECT_DESC_CHARS
     tool = ToolDefinition(
         name="mcp.scanner.scan_document",
-        description=f"{kurz} {HINWEIS}",
-        hint=HINWEIS,
+        description=f"{short_desc} {HINT}",
+        hint=HINT,
     )
-    zeile = _zeilen([tool])[0]
+    line = _lines([tool])[0]
     # 🛑 Check a piece of text that fits ENTIRELY inside the character
     # limit. The second version of this test took "scanne die Seiten nach
     # <Ziel>" -- that gets cut off inside the window and therefore appears in
     # full only once even without the subtraction. The control stayed green.
     # "Startet einen NEUEN Scan." lies entirely within the 80 characters and
     # does duplicate.
-    assert zeile.count("Startet einen NEUEN Scan.") == 1, (
-        f"the hint stands twice in the line:\n{zeile}")
-    assert kurz in zeile, "the short description must not get lost"
+    assert line.count("Startet einen NEUEN Scan.") == 1, (
+        f"the hint stands twice in the line:\n{line}")
+    assert short_desc in line, "the short description must not get lost"
 
 
 def test_the_hint_survives_the_whole_chain():
     """🛑 The REAL stations, not the dataclass.
 
     The first version built `MCPToolInfo(hint=...)` itself and checked
-    `info.hint == HINWEIS` -- that tested the field, not the HANDOVER. Both
+    `info.hint == HINT` -- that tested the field, not the HANDOVER. Both
     stations (`mcp_client._tool_info_from_mcp` and
     `agent_tools._register_mcp_tools`) stayed unmeasured, while the docstring
     claimed that is exactly where it had failed. Found in the review of #1410.
@@ -147,14 +147,14 @@ def test_the_hint_survives_the_whole_chain():
     from services.mcp_client import MCPManager, MCPServerConfig
 
     cfg = MCPServerConfig(name="scanner", transport="streamable_http",
-                          tool_hints={"scan_document": HINWEIS})
-    rohes = SimpleNamespace(name="scan_document", description=BESCHREIBUNG,
+                          tool_hints={"scan_document": HINT})
+    raw_tool = SimpleNamespace(name="scan_document", description=DESCRIPTION,
                             inputSchema={"properties": {}, "required": []})
 
     # Station 1: discovery
-    info = MCPManager._tool_info_from_mcp(cfg, rohes)
-    assert info.hint == HINWEIS, "station 1 loses the hint"
-    assert info.description.endswith(HINWEIS), (
+    info = MCPManager._tool_info_from_mcp(cfg, raw_tool)
+    assert info.hint == HINT, "station 1 loses the hint"
+    assert info.description.endswith(HINT), (
         "the description must carry the hint at its end — the subtraction in "
         "`preselect_tool_line` relies on that")
 
@@ -164,10 +164,10 @@ def test_the_hint_survives_the_whole_chain():
     mgr = SimpleNamespace(get_all_tools=lambda: [info])
     AgentToolRegistry._register_mcp_tools(r, mgr)
     tool = r._tools["mcp.scanner.scan_document"]
-    assert tool.hint == HINWEIS, "station 2 loses the hint"
+    assert tool.hint == HINT, "station 2 loses the hint"
 
     # And the line that results from it carries it untruncated.
-    assert HINWEIS in preselect_tool_line(tool.name, tool)
+    assert HINT in preselect_tool_line(tool.name, tool)
 
 
 def test_a_hint_with_stray_whitespace_is_not_duplicated():
@@ -179,15 +179,15 @@ def test_a_hint_with_stray_whitespace_is_not_duplicated():
     from services.mcp_client import MCPManager, MCPServerConfig
 
     cfg = MCPServerConfig(name="scanner", transport="streamable_http",
-                          tool_hints={"scan_document": f"  {HINWEIS}  "})
-    rohes = SimpleNamespace(name="scan_document", description="Scan a stack.",
+                          tool_hints={"scan_document": f"  {HINT}  "})
+    raw_tool = SimpleNamespace(name="scan_document", description="Scan a stack.",
                             inputSchema={"properties": {}, "required": []})
-    info = MCPManager._tool_info_from_mcp(cfg, rohes)
+    info = MCPManager._tool_info_from_mcp(cfg, raw_tool)
     tool = ToolDefinition(name=info.namespaced_name,
                           description=info.description, hint=info.hint)
-    zeile = preselect_tool_line(tool.name, tool)
-    assert zeile.count("Startet einen NEUEN Scan.") == 1, (
-        f"the hint stands twice in the line:\n{zeile}")
+    line = preselect_tool_line(tool.name, tool)
+    assert line.count("Startet einen NEUEN Scan.") == 1, (
+        f"the hint stands twice in the line:\n{line}")
 
 
 def test_a_tool_without_a_hint_has_an_empty_field():
@@ -203,21 +203,21 @@ def test_the_real_config_still_rules_out_the_search_reading():
     the hint at the time did not name that. The model took <X> as a search term
     and reached for `paperless.search_documents`.
 
-    Everything above it in this file works with `HINWEIS`, a constant -- the
+    Everything above it in this file works with `HINT`, a constant -- the
     hint that takes effect in production was touched by no test. If it is
     "tidied up" later, that only shows in the next incident. That is exactly
     how it happened. Found in the review of #1411.
     """
-    hinweis = _scan_document_hinweis()
+    hint_text = _scan_document_hint()
 
-    assert hinweis, "`scan_document` no longer has a hint — the preselection then decides blind"
+    assert hint_text, "`scan_document` no longer has a hint — the preselection then decides blind"
     # The ambiguity has to be DENIED, not just the target named.
-    assert "Suchbegriff" in hinweis, (
+    assert "Suchbegriff" in hint_text, (
         "the hint no longer rules out the reading 'Suchbegriff' — that "
         "was the wrong grab of 2026-10-26")
-    assert "ZIEL" in hinweis, "the hint no longer says that <X> is the target"
+    assert "ZIEL" in hint_text, "the hint no longer says that <X> is the target"
     # And the wording it concretely failed on has to appear.
-    assert "scanne nach" in hinweis, (
+    assert "scanne nach" in hint_text, (
         "the hint no longer names the ambiguous wording itself")
 
 
@@ -236,14 +236,14 @@ def test_the_hint_does_not_claim_the_bluetooth_scan():
     exactly the pattern `.claude/rules/scanner.md` already records twice, two
     lines above. Found in the adversarial pass on #1411.
     """
-    hinweis = _scan_document_hinweis()
-    assert "bluetooth_scan" in hinweis, (
+    hint_text = _scan_document_hint()
+    assert "bluetooth_scan" in hint_text, (
         "the hint does not fence off the radio search — „scanne nach "
         "Bluetooth-Geraeten\" then lands at the paper scanner")
     # 🛑 Do not check for "PAPIER": that also matches INSIDE
     # "PAPIERSCANNER", so the delimiting sentence could fall away and the test
     # would stay green. Check the restriction itself.
-    assert "gilt nur für PAPIER" in hinweis, (
+    assert "gilt nur für PAPIER" in hint_text, (
         "the hint no longer restricts its rule to paper")
 
 
@@ -256,15 +256,15 @@ def test_the_hint_keeps_the_way_back_from_a_display_name():
     `route_scan` has always carried that resolution; `scan_document` had lost
     it.
     """
-    hinweis = _scan_document_hinweis()
+    hint_text = _scan_document_hint()
     # 🛑 Do not check mere co-presence: "Haushalt" and "household" also stand
     # in other sentences ("Derzeit `household` und `xidra`"), so the mapping
     # sentence could fall away and the test would stay green. Check the
     # instruction that actually performs the mapping.
-    assert "`target=household`" in hinweis, (
+    assert "`target=household`" in hint_text, (
         "the hint no longer walks through the mapping display name -> id "
         "on an example")
-    assert "Haushalt" in hinweis, (
+    assert "Haushalt" in hint_text, (
         "the hint no longer names the German display name it "
         "fails on")
 
@@ -293,14 +293,14 @@ def test_the_hint_promises_no_error_channel_that_is_walled_off():
 
     Found in the second adversarial pass on #1411.
     """
-    hinweis = _scan_document_hinweis()
-    assert "known:" not in hinweis, (
+    hint_text = _scan_document_hint()
+    assert "known:" not in hint_text, (
         "the hint promises the `known: [...]` list — that can never reach the "
         "agent on this path")
     # Emphasis through capitals is a device used in these hints ("NICHT
     # raten"), so compare independently of it.
-    klein = hinweis.lower()
-    assert "nicht raten" in klein or "nie raten" in klein, (
+    lowered = hint_text.lower()
+    assert "nicht raten" in lowered or "nie raten" in lowered, (
         "the hint does not say what to do when the target is uncertain")
 
 
@@ -322,13 +322,13 @@ def test_the_pending_scans_hint_does_not_claim_the_general_question():
 
     import yaml
 
-    wurzel = Path(__file__).resolve().parents[2]
-    eintraege = yaml.safe_load(
-        (wurzel / "config" / "mcp_servers.yaml").read_text())["servers"]
-    scanner = next(e for e in eintraege if e["name"] == "scanner")
-    hinweis = (scanner.get("tool_hints") or {}).get("list_pending_scans", "")
+    root = Path(__file__).resolve().parents[2]
+    entries = yaml.safe_load(
+        (root / "config" / "mcp_servers.yaml").read_text())["servers"]
+    scanner = next(e for e in entries if e["name"] == "scanner")
+    hint_text = (scanner.get("tool_hints") or {}).get("list_pending_scans", "")
 
-    assert hinweis, "`list_pending_scans` no longer has a hint"
-    assert "ingest_status" in hinweis or "list_unfiled_documents" in hinweis, (
+    assert hint_text, "`list_pending_scans` no longer has a hint"
+    assert "ingest_status" in hint_text or "list_unfiled_documents" in hint_text, (
         "the hint does not fence off the general question „was ist offen\" against "
         "the neighbours")

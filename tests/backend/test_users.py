@@ -1427,12 +1427,12 @@ class TestTheConsentBelongsToThePerson:
         quelle = inspect.getsource(users_routes.set_voice_second_factor)
         # Every `detail=` in a 409 branch has to be an identifier (a code),
         # not a string literal. `detail="..."` is the relapse being forbidden.
-        blockweise = quelle.split("HTTP_409_CONFLICT")
-        for block in blockweise[1:]:
-            kopf = block[:200]
-            assert not re.search(r'detail\s*=\s*["\']', kopf), (
+        blocks = quelle.split("HTTP_409_CONFLICT")
+        for block in blocks[1:]:
+            head = block[:200]
+            assert not re.search(r'detail\s*=\s*["\']', head), (
                 "A 409 from this route hands out a SENTENCE instead of a code:\n"
-                + kopf
+                + head
             )
 
     def test_the_route_no_longer_demands_users_manage(self):
@@ -1471,19 +1471,19 @@ class TestTheConsentBelongsToThePerson:
 
         fremder = _plain_member(test_user.id + 1000)
 
-        with pytest.raises(HTTPException) as vorhanden:
+        with pytest.raises(HTTPException) as existing:
             await users_routes.set_voice_second_factor(
                 user_id=test_user.id,
                 request=users_routes.VoiceSecondFactorRequest(enabled=True),
                 db=db_session, current_user=fremder,
             )
-        with pytest.raises(HTTPException) as gibtsnicht:
+        with pytest.raises(HTTPException) as missing:
             await users_routes.set_voice_second_factor(
                 user_id=987654,
                 request=users_routes.VoiceSecondFactorRequest(enabled=True),
                 db=db_session, current_user=fremder,
             )
-        assert vorhanden.value.status_code == gibtsnicht.value.status_code == 403, (
+        assert existing.value.status_code == missing.value.status_code == 403, (
             "existing and non-existing must be indistinguishable for an "
             "unauthorized caller"
         )
@@ -1548,20 +1548,20 @@ class TestTheConsentBelongsToThePerson:
 
         await TestVoiceSecondFactorConsent._with_voice(db_session, test_user)
         await _with_password(db_session, test_user)
-        ich = _plain_member(test_user.id)
+        me = _plain_member(test_user.id)
 
-        gesehen: list[tuple[str, str]] = []
+        seen: list[tuple[str, str]] = []
         sink = loguru_logger.add(
-            lambda m: gesehen.append((m.record["level"].name, m.record["message"])),
+            lambda m: seen.append((m.record["level"].name, m.record["message"])),
             level="INFO",
         )
         try:
             await users_routes.set_voice_second_factor(
-                user_id=test_user.id, db=db_session, current_user=ich,
+                user_id=test_user.id, db=db_session, current_user=me,
                 request=users_routes.VoiceSecondFactorRequest(enabled=True),
             )
             await users_routes.set_voice_second_factor(
-                user_id=test_user.id, db=db_session, current_user=ich,
+                user_id=test_user.id, db=db_session, current_user=me,
                 request=users_routes.VoiceSecondFactorRequest(
                     enabled=False, current_password="testpassword123"
                 ),
@@ -1569,11 +1569,11 @@ class TestTheConsentBelongsToThePerson:
         finally:
             loguru_logger.remove(sink)
 
-        ein = [m for lvl, m in gesehen if "enabled for user" in m]
-        weg = [(lvl, m) for lvl, m in gesehen if "REMOVED" in m]
-        assert ein, "granting must be logged"
-        assert weg, "removal must be logged"
-        assert weg[0][0] == "WARNING", f"removal was only {weg[0][0]}"
+        granted = [m for lvl, m in seen if "enabled for user" in m]
+        removed = [(lvl, m) for lvl, m in seen if "REMOVED" in m]
+        assert granted, "granting must be logged"
+        assert removed, "removal must be logged"
+        assert removed[0][0] == "WARNING", f"removal was only {removed[0][0]}"
 
     @pytest.mark.database
     async def test_removing_your_own_factor_needs_the_password(
@@ -1599,18 +1599,18 @@ class TestTheConsentBelongsToThePerson:
 
         test_user.voice_second_factor_enabled = True
         await _with_password(db_session, test_user)
-        ich = _plain_member(test_user.id)
+        me = _plain_member(test_user.id)
 
-        for falsch in (None, "", "das-falsche-passwort"):
+        for wrong_password in (None, "", "das-falsche-passwort"):
             with pytest.raises(HTTPException) as exc:
                 await users_routes.set_voice_second_factor(
                     user_id=test_user.id,
                     request=users_routes.VoiceSecondFactorRequest(
-                        enabled=False, current_password=falsch
+                        enabled=False, current_password=wrong_password
                     ),
-                    db=db_session, current_user=ich,
+                    db=db_session, current_user=me,
                 )
-            assert exc.value.status_code == 400, f"for {falsch!r}"
+            assert exc.value.status_code == 400, f"for {wrong_password!r}"
             await db_session.refresh(test_user)
             assert test_user.voice_second_factor_enabled is True, "nothing may have been written"
 

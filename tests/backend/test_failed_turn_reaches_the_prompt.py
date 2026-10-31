@@ -31,20 +31,20 @@ from services.conversation_service import ConversationService
 pytestmark = [pytest.mark.backend, pytest.mark.database]
 
 
-MARKE = "[VORHERIGE_FEHLGESCHLAGENE_AKTION]"
+MARKER = "[VORHERIGE_FEHLGESCHLAGENE_AKTION]"
 
 
-def _verlaufszeile(prompt: str, suchtext: str) -> str:
-    """The history line that contains `suchtext`.
+def _history_line(prompt: str, needle: str) -> str:
+    """The history line that contains `needle`.
 
     🛑 Never search the whole prompt for the marker: the template's
     explanatory text NAMES it ("Zeilen, die mit ... beginnen, beschreiben
     historische Tool-Fehler"), so a substring test always matches and proves
     nothing. That exact mistake was in the first version of this test.
     """
-    treffer = [z for z in prompt.splitlines() if suchtext in z and "beschreiben" not in z]
-    assert treffer, f"no history line with {suchtext!r} in the prompt"
-    return treffer[0]
+    hits = [z for z in prompt.splitlines() if needle in z and "beschreiben" not in z]
+    assert hits, f"no history line with {needle!r} in the prompt"
+    return hits[0]
 
 
 def _agent() -> AgentService:
@@ -61,7 +61,7 @@ def _agent() -> AgentService:
     return AgentService(registry, role=role)
 
 
-async def _verlauf_nach_dem_stau(db: AsyncSession, sid: str) -> list[dict]:
+async def _history_after_the_jam(db: AsyncSession, sid: str) -> list[dict]:
     """The measured history: the request, the promise, then the asynchronous
     jam notice."""
     service = ConversationService(db)
@@ -82,23 +82,23 @@ async def _verlauf_nach_dem_stau(db: AsyncSession, sid: str) -> list[dict]:
 async def test_the_failed_scan_is_marked_in_the_built_prompt(db_session: AsyncSession):
     """The marker stands in the PROMPT -- not only in the database, not only
     in the loaded history."""
-    verlauf = await _verlauf_nach_dem_stau(db_session, "prompt-kette-1")
+    history = await _history_after_the_jam(db_session, "prompt-kette-1")
 
     prompt = await _agent()._build_agent_prompt(
         "scanne nach Haushalt",
         AgentContext(original_message="scanne nach Haushalt"),
-        conversation_history=verlauf,
+        conversation_history=history,
         lang="de",
     )
 
-    stau = _verlaufszeile(prompt, "Papierstau")
-    assert MARKE in stau, (
+    jam_line = _history_line(prompt, "Papierstau")
+    assert MARKER in jam_line, (
         f"the stale-error marker is missing on the jam line — the agent cannot "
-        f"tell the failed scan apart from the present: {stau}")
+        f"tell the failed scan apart from the present: {jam_line}")
     # And it sits ONLY there, not on the successful promise before it.
-    zusage = _verlaufszeile(prompt, "wurde gestartet")
-    assert MARKE not in zusage, (
-        f"the successful promise was wrongly marked: {zusage}")
+    promise_line = _history_line(prompt, "wurde gestartet")
+    assert MARKER not in promise_line, (
+        f"the successful promise was wrongly marked: {promise_line}")
 
 
 async def test_the_template_keeps_its_hint_about_the_marker(db_session: AsyncSession):
@@ -109,23 +109,23 @@ async def test_the_template_keeps_its_hint_about_the_marker(db_session: AsyncSes
     answers out of it -- instead of calling the tool again. Both halves have to
     stand in the prompt together; the rule says explicitly that they must never
     be changed one-sidedly."""
-    verlauf = await _verlauf_nach_dem_stau(db_session, "prompt-kette-2")
+    history = await _history_after_the_jam(db_session, "prompt-kette-2")
 
     prompt = await _agent()._build_agent_prompt(
         "scanne nach Haushalt",
         AgentContext(original_message="scanne nach Haushalt"),
-        conversation_history=verlauf,
+        conversation_history=history,
         lang="de",
     )
 
     # The line that EXPLAINS the marker -- not the one that carries it.
-    hinweis = [z for z in prompt.splitlines() if MARKE in z and "beschreiben" in z]
-    assert hinweis, (
+    hint = [z for z in prompt.splitlines() if MARKER in z and "beschreiben" in z]
+    assert hint, (
         "the prompt carries the marker, but no line explains that it is "
         "HISTORICAL — then the model answers out of the old failure")
-    unten = hinweis[0].lower()
-    assert any(w in unten for w in ("neu aus", "erneut", "nochmal", "wiederhol")), (
-        f"the hint does not call for a re-run: {hinweis[0]}")
+    lowered = hint[0].lower()
+    assert any(w in lowered for w in ("neu aus", "erneut", "nochmal", "wiederhol")), (
+        f"the hint does not call for a re-run: {hint[0]}")
 
 
 async def test_without_the_metadata_there_is_no_marker(db_session: AsyncSession):
@@ -140,16 +140,16 @@ async def test_without_the_metadata_there_is_no_marker(db_session: AsyncSession)
         sid, "assistant", "Der Scan ist fehlgeschlagen: Papierstau im Einzug.",
         metadata={"scanner_job": {"job_id": "x", "status": "failed"}})  # WITHOUT the marker
 
-    verlauf = await service.load_context(sid, max_messages=10)
+    history = await service.load_context(sid, max_messages=10)
     prompt = await _agent()._build_agent_prompt(
         "scanne nach Haushalt",
         AgentContext(original_message="scanne nach Haushalt"),
-        conversation_history=verlauf, lang="de",
+        conversation_history=history, lang="de",
     )
-    stau = _verlaufszeile(prompt, "Papierstau")
-    assert MARKE not in stau, (
+    jam_line = _history_line(prompt, "Papierstau")
+    assert MARKER not in jam_line, (
         f"without `action_success: False` the history line must not carry a "
-        f"marker — otherwise the test above proves nothing: {stau}")
+        f"marker — otherwise the test above proves nothing: {jam_line}")
 
 
 # ---------------------------------------------------------------------------
@@ -186,12 +186,12 @@ async def test_a_repeat_after_a_completed_action_is_steered_to_rerun(db_session:
         "Der Scan ist fertig: 4 Seiten an „household“ übergeben.",
         metadata={"scanner_job": {"job_id": "x", "status": "done"},
                   "action_success": True})
-    verlauf = await service.load_context(sid, max_messages=10)
+    history = await service.load_context(sid, max_messages=10)
 
     prompt = await _agent()._build_agent_prompt(
         "scanne nach haushalt",
         AgentContext(original_message="scanne nach haushalt"),
-        conversation_history=verlauf, lang="de",
+        conversation_history=history, lang="de",
     )
 
     # 🛑 What this test PROVES and what it does not: it shows the hint stands
@@ -202,9 +202,9 @@ async def test_a_repeat_after_a_completed_action_is_steered_to_rerun(db_session:
     assert "an einem GERAET ist eine NEUE Bitte" in prompt, (
         "the hint is missing — then the model answers out of the old run")
     # And it has to call for execution, not merely describe.
-    hinweis = next(z for z in prompt.splitlines() if "an einem GERAET" in z)
-    assert "fuehre das Tool aus" in hinweis, hinweis
-    assert "schon erledigt" in hinweis, (
+    hint = next(z for z in prompt.splitlines() if "an einem GERAET" in z)
+    assert "fuehre das Tool aus" in hint, hint
+    assert "schon erledigt" in hint, (
         "the hint must explicitly forbid the wrong answer")
     # 🛑 And the counter-rule has to stand in the prompt WITH it. Without it
     # the same sentence would send an email twice -- found in the review of
@@ -234,16 +234,16 @@ def test_the_repeat_hint_exists_in_both_languages():
     # heading in English and the instruction as well in German -- the weaker
     # variant stayed uncovered, and unequal prompts produce unequal behaviour
     # per language.
-    for name, v, marke, tun, verbot in (
+    for name, v, marker, action, forbidden in (
         ("de", de, "an einem GERAET ist eine NEUE Bitte",
          "fuehre das Tool aus", "schon erledigt"),
         ("en", en, "at a DEVICE is a NEW request",
          "run the tool", "already done"),
     ):
-        assert marke in v, f"the {name} template lacks the hint"
-        zeile = next(z for z in v.splitlines() if marke in z)
-        assert tun in zeile, f"{name}: the hint does not call for execution: {zeile}"
-        assert verbot in zeile, f"{name}: the wrong behaviour is not forbidden"
+        assert marker in v, f"the {name} template lacks the hint"
+        line = next(z for z in v.splitlines() if marker in z)
+        assert action in line, f"{name}: the hint does not call for execution: {line}"
+        assert forbidden in line, f"{name}: the wrong behaviour is not forbidden"
 
     # And the counter-rule for everything that SENDS something out --
     # without it the hint could send an email twice (found in the review of

@@ -356,14 +356,14 @@ class TestDefaultRoles:
         assert "mcp.*" in admin["permissions"]
 
     @pytest.mark.unit
-    def test_familie_has_mcp_wildcard(self):
-        familie = next(r for r in DEFAULT_ROLES if r["name"] == "Familie")
-        assert "mcp.*" in familie["permissions"]
+    def test_the_family_role_has_mcp_wildcard(self):
+        family_role = next(r for r in DEFAULT_ROLES if r["name"] == "Familie")
+        assert "mcp.*" in family_role["permissions"]
 
     @pytest.mark.unit
     def test_gast_has_no_mcp(self):
-        gast = next(r for r in DEFAULT_ROLES if r["name"] == "Gast")
-        assert not any(p.startswith("mcp.") for p in gast["permissions"])
+        guest_role = next(r for r in DEFAULT_ROLES if r["name"] == "Gast")
+        assert not any(p.startswith("mcp.") for p in guest_role["permissions"])
 
 
 # ============================================================================
