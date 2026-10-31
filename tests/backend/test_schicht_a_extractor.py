@@ -73,7 +73,7 @@ class TestCleanCurrency:
 
 # The doc-44 reality: poppler -layout letter-spaces the wide-tracked line, both
 # the keyword AND the value.
-LETTER_SPACED_STEUER = (
+LETTER_SPACED_TAX_NUMBER = (
     "Finanzverwaltung NRW Muenster\n"
     "*6871*0001086*  I h r e   S t e u e r n u m m e r :   11 4 / 5 8 7 6 / 5 2 9 3\n"
     "Frist zur Aktivierung: 23.07.2026"
@@ -101,13 +101,13 @@ class TestNormalize:
 class TestExtractIdentifiers:
     def test_letter_spaced_steuernummer_recovered(self):
         """The headline case: raw exact-match fails, the extractor recovers it."""
-        assert "114/5876/5293" not in LETTER_SPACED_STEUER          # raw: defeated
-        facts = extract_identifiers(LETTER_SPACED_STEUER)
-        steuer = [f for f in facts if f.kind == "steuernummer"]
-        assert len(steuer) == 1
-        assert steuer[0].normalized_value == "114/5876/5293"
-        assert steuer[0].category == "identifier"
-        assert steuer[0].source == "deterministic"
+        assert "114/5876/5293" not in LETTER_SPACED_TAX_NUMBER          # raw: defeated
+        facts = extract_identifiers(LETTER_SPACED_TAX_NUMBER)
+        tax_numbers = [f for f in facts if f.kind == "steuernummer"]
+        assert len(tax_numbers) == 1
+        assert tax_numbers[0].normalized_value == "114/5876/5293"
+        assert tax_numbers[0].category == "identifier"
+        assert tax_numbers[0].source == "deterministic"
 
     def test_steuernummer_requires_keyword_gate(self):
         """A NN/NNNN/NNNN run with no 'steuernummer' anywhere is not emitted as one."""
@@ -130,8 +130,8 @@ class TestExtractIdentifiers:
 
     def test_dedup_repeated_steuernummer(self):
         text = "Steuernummer 114/5876/5293 ... siehe oben 114/5876/5293"
-        steuer = [f for f in extract_identifiers(text) if f.kind == "steuernummer"]
-        assert len(steuer) == 1
+        tax_numbers = [f for f in extract_identifiers(text) if f.kind == "steuernummer"]
+        assert len(tax_numbers) == 1
 
     def test_empty_returns_nothing(self):
         assert extract_identifiers("") == []
@@ -337,7 +337,7 @@ class TestExtract:
             '"excerpt": "Frist zur Aktivierung: 23.07.2026"}], "universal_facts": {}}'
         )
         result = await SchichtAExtractor(llm_client=client).extract(
-            LETTER_SPACED_STEUER, lang="de"
+            LETTER_SPACED_TAX_NUMBER, lang="de"
         )
         kinds = {f.kind for f in result.facts}
         assert "steuernummer" in kinds      # deterministic
@@ -350,7 +350,7 @@ class TestExtract:
         )
         client = self._client("not json at all")
         result = await SchichtAExtractor(llm_client=client).extract(
-            LETTER_SPACED_STEUER, lang="de"
+            LETTER_SPACED_TAX_NUMBER, lang="de"
         )
         assert any(f.kind == "steuernummer" for f in result.facts)
         assert result.error == "llm_extraction_failed"
@@ -365,11 +365,11 @@ class TestExtract:
             '[{"kind": "steuernummer", "value": "114/5876/5293"}]}}'
         )
         result = await SchichtAExtractor(llm_client=client).extract(
-            LETTER_SPACED_STEUER, lang="de"
+            LETTER_SPACED_TAX_NUMBER, lang="de"
         )
-        steuer = [f for f in result.facts if f.kind == "steuernummer"]
-        assert len(steuer) == 1
-        assert steuer[0].source == "deterministic"
+        tax_numbers = [f for f in result.facts if f.kind == "steuernummer"]
+        assert len(tax_numbers) == 1
+        assert tax_numbers[0].source == "deterministic"
 
     async def test_llm_spaced_identifier_deduped_against_deterministic(self, monkeypatch):
         """The deterministic IBAN is stored normalized; the LLM echoes it

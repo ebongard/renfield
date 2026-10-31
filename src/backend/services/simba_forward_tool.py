@@ -174,9 +174,9 @@ def _interpret_upload_result(mcp_result: dict) -> dict:
         except (TypeError, ValueError):
             return None
 
-    uebertragen = _int(inner.get("uebertragen"))
-    fehlgeschlagen = _int(inner.get("fehlgeschlagen"))
-    if uebertragen is not None and uebertragen > 0 and not (fehlgeschlagen or 0):
+    transferred = _int(inner.get("uebertragen"))
+    failed = _int(inner.get("fehlgeschlagen"))
+    if transferred is not None and transferred > 0 and not (failed or 0):
         return {"success": True, "message": raw or "Übertragen.", "action_taken": True}
 
     res0 = (inner.get("ergebnisse") or [{}])
@@ -287,12 +287,12 @@ async def forward_attachment_to_simba(
         )
 
         now_period = period.get("month") and period.get("year")
-        zeitraum = f"{period['month']:02d}/{period['year']}" if now_period else "aktueller Monat"
+        period_label = f"{period['month']:02d}/{period['year']}" if now_period else "aktueller Monat"
         preview = (
             "Ich würde folgendes an die Steuerkanzlei (Simba) übertragen:\n"
             f"  Datei:     {upload.filename}\n"
             f"  Ablage:    {category} / {type_}\n"
-            f"  Zeitraum:  {zeitraum}\n"
+            f"  Zeitraum:  {period_label}\n"
             + (f"  Bezeichn.: {params['description']}\n" if params.get("description") else "")
             + (f"  Kommentar: {params['comment']}\n" if params.get("comment") else "")
             + "\nSoll ich das ENDGÜLTIG übertragen? (nicht widerrufbar) — "

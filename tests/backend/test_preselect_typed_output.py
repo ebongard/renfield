@@ -39,9 +39,9 @@ def test_only_the_offered_names_are_allowed():
     """`enum` is the stronger half: an invented name cannot come into being at
     all, instead of falling away silently further down at the registry
     filter."""
-    namen = ["mcp.scanner.scan_document", "internal.knowledge_search"]
-    s = _build_preselect_schema(namen)
-    assert s["items"]["enum"] == namen
+    names = ["mcp.scanner.scan_document", "internal.knowledge_search"]
+    s = _build_preselect_schema(names)
+    assert s["items"]["enum"] == names
 
 
 def test_maxItems_is_present_because_uniqueItems_is_NOT_enforced():
@@ -93,24 +93,24 @@ def test_the_binding_is_the_ONLY_difference_the_flag_makes():
     # 🛑 `dedent` is mandatory: `getsource` of a METHOD yields indented code,
     # and `ast.parse` raises `IndentationError` on it. This test failed on that
     # before it ever checked anything.
-    quelle = textwrap.dedent(
+    source = textwrap.dedent(
         inspect.getsource(agent_service.AgentService._preselect_tools))
-    baum = ast.parse(ast.unparse(ast.parse(quelle)))  # comments fall away
+    tree = ast.parse(ast.unparse(ast.parse(source)))  # comments fall away
 
-    zuweisungen: list[str] = []
-    for knoten in ast.walk(baum):
-        if not isinstance(knoten, ast.If):
+    assignments: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
             continue
-        bedingung = ast.unparse(knoten.test)
-        if "typed_format" not in bedingung:
+        condition = ast.unparse(node.test)
+        if "typed_format" not in condition:
             continue
-        for k in ast.walk(knoten):
+        for k in ast.walk(node):
             if isinstance(k, ast.Subscript) and isinstance(k.ctx, ast.Store):
-                zuweisungen.append(ast.unparse(k))
+                assignments.append(ast.unparse(k))
 
-    assert zuweisungen, "the flag branch was not found — test or code is drifting"
-    assert all("format" in z for z in zuweisungen), (
-        f"the flag branch sets more than `format`: {zuweisungen}")
+    assert assignments, "the flag branch was not found — test or code is drifting"
+    assert all("format" in z for z in assignments), (
+        f"the flag branch sets more than `format`: {assignments}")
 
 
 def test_the_harness_measures_the_SAME_schema_as_production():
@@ -123,27 +123,27 @@ def test_the_harness_measures_the_SAME_schema_as_production():
     and the shape of `items`. The `enum` values themselves come from the prompt
     at runtime in the harness and cannot be equal here.
     """
-    skript = pathlib.Path(__file__).resolve().parents[2] / "bin" / "measure-preselect.py"
-    baum = ast.parse(skript.read_text(encoding="utf-8"))
+    script = pathlib.Path(__file__).resolve().parents[2] / "bin" / "measure-preselect.py"
+    tree = ast.parse(script.read_text(encoding="utf-8"))
 
-    kandidaten = [
-        d for d in ast.walk(baum)
+    candidates = [
+        d for d in ast.walk(tree)
         if isinstance(d, ast.Dict)
         and {ast.unparse(k).strip("'\"") for k in d.keys if isinstance(k, ast.Constant)}
         >= {"type", "maxItems", "items"}
     ]
-    assert kandidaten, "the harness holds no schema with type/maxItems/items"
+    assert candidates, "the harness holds no schema with type/maxItems/items"
 
-    stand = _build_preselect_schema(["x"])
-    for d in kandidaten:
-        paare = {
+    production = _build_preselect_schema(["x"])
+    for d in candidates:
+        pairs = {
             k.value: v for k, v in zip(d.keys, d.values, strict=False)
             if isinstance(k, ast.Constant)
         }
-        assert paare["type"].value == stand["type"]
-        assert paare["maxItems"].value == stand["maxItems"], (
-            f"maxItems drifts: harness {paare['maxItems'].value} "
-            f"versus production {stand['maxItems']}")
+        assert pairs["type"].value == production["type"]
+        assert pairs["maxItems"].value == production["maxItems"], (
+            f"maxItems drifts: harness {pairs['maxItems'].value} "
+            f"versus production {production['maxItems']}")
 
 
 class TestTheEnumMatchesTheOffer:
@@ -175,16 +175,16 @@ class TestTheEnumMatchesTheOffer:
         registry._tools = tools
         registry.get_tool_names.return_value = list(tools.keys())
 
-        rolle = MagicMock()
-        rolle.max_steps, rolle.prompt_key = 5, "agent_prompt"
-        rolle.model = rolle.ollama_url = None
-        rolle.name = "general"
-        agent = AgentService(registry, role=rolle)
+        fake_role = MagicMock()
+        fake_role.max_steps, fake_role.prompt_key = 5, "agent_prompt"
+        fake_role.model = fake_role.ollama_url = None
+        fake_role.name = "general"
+        agent = AgentService(registry, role=fake_role)
 
-        antwort = MagicMock()
-        antwort.message.content = '["mcp.server.tool_0"]'
+        response = MagicMock()
+        response.message.content = '["mcp.server.tool_0"]'
         client = AsyncMock()
-        client.chat = AsyncMock(return_value=antwort)
+        client.chat = AsyncMock(return_value=response)
 
         monkeypatch.setattr(settings, "agent_preselect_typed", True)
         await agent._preselect_tools("Test", client, "qwen3.6")
@@ -217,16 +217,16 @@ class TestTheEnumMatchesTheOffer:
             tools[f"mcp.server.tool_{i}"] = w
         registry._tools = tools
         registry.get_tool_names.return_value = list(tools.keys())
-        rolle = MagicMock()
-        rolle.max_steps, rolle.prompt_key = 5, "agent_prompt"
-        rolle.model = rolle.ollama_url = None
-        rolle.name = "general"
-        agent = AgentService(registry, role=rolle)
+        fake_role = MagicMock()
+        fake_role.max_steps, fake_role.prompt_key = 5, "agent_prompt"
+        fake_role.model = fake_role.ollama_url = None
+        fake_role.name = "general"
+        agent = AgentService(registry, role=fake_role)
 
-        antwort = MagicMock()
-        antwort.message.content = '["mcp.server.tool_0"]'
+        response = MagicMock()
+        response.message.content = '["mcp.server.tool_0"]'
         client = AsyncMock()
-        client.chat = AsyncMock(return_value=antwort)
+        client.chat = AsyncMock(return_value=response)
 
         monkeypatch.setattr(settings, "agent_preselect_typed", False)
         await agent._preselect_tools("Test", client, "qwen3.6")

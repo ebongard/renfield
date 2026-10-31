@@ -30,65 +30,65 @@ pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
 
 @dataclass
-class _Werkzeug:
+class _Tool:
     original_name: str
     hint: str = ""
 
 
 @dataclass
-class _Zustand:
+class _State:
     """As much of `MCPServerState` as the function touches."""
     config: object
     all_discovered_tools: list = field(default_factory=list)
     tools: list = field(default_factory=list)
 
 
-def _zustand(hinweise: dict, entdeckt: list[_Werkzeug],
-             angeboten: list[_Werkzeug] | None = None) -> _Zustand:
-    """`angeboten=None` means: the filter throws nothing away (the normal case)."""
-    return _Zustand(
-        config=SimpleNamespace(name="scanner", tool_hints=hinweise),
-        all_discovered_tools=entdeckt,
-        tools=list(entdeckt) if angeboten is None else angeboten,
+def _state(hints: dict, discovered: list[_Tool],
+             offered: list[_Tool] | None = None) -> _State:
+    """`offered=None` means: the filter throws nothing away (the normal case)."""
+    return _State(
+        config=SimpleNamespace(name="scanner", tool_hints=hints),
+        all_discovered_tools=discovered,
+        tools=list(discovered) if offered is None else offered,
     )
 
 
 @pytest.fixture
-def protokoll():
-    zeilen: list[tuple[str, str]] = []
+def log_lines():
+    lines: list[tuple[str, str]] = []
     sink = logger.add(
-        lambda m: zeilen.append((m.record["level"].name, m.record["message"])),
+        lambda m: lines.append((m.record["level"].name, m.record["message"])),
         level="INFO")
-    yield zeilen
+    yield lines
     logger.remove(sink)
 
 
-def test_a_key_that_matches_no_tool_is_a_WARNING(protokoll):
+def test_a_key_that_matches_no_tool_is_a_WARNING(log_lines):
     """A key that matches no discovered tool used to be a silent no-op:
     `config.tool_hints.get(tool.name)` returns `None`, leaving no trace."""
-    log_hint_arrival(_zustand(
+    log_hint_arrival(_state(
         {"scan_document": "x" * 1426, "tippfehler_tool": "y" * 100},
-        [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("scanner_status")],
+        [_Tool("scan_document", "x" * 1426), _Tool("scanner_status")],
     ))
-    warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
-    assert warnungen, f"no WARNING: {protokoll}"
-    assert "tippfehler_tool" in warnungen[0], (
+    warnings = [m for severity, m in log_lines if severity == "WARNING"]
+    assert warnings, f"no WARNING: {log_lines}"
+    assert "tippfehler_tool" in warnings[0], (
         "the warning does not name the key that matches nothing — then "
-        f"it is not actionable:\n{warnungen[0]}")
+        f"it is not actionable:\n{warnings[0]}")
 
 
-def test_hints_configured_but_NONE_attached_is_a_WARNING(protokoll):
+def test_hints_configured_but_NONE_attached_is_a_WARNING(log_lines):
     """Exactly the situation of 2026-10-26: configured yes, arrived nothing."""
-    log_hint_arrival(_zustand(
+    log_hint_arrival(_state(
         {"scan_document": "x" * 1426},
-        [_Werkzeug("scan_document"), _Werkzeug("scanner_status")],
+        [_Tool("scan_document"), _Tool("scanner_status")],
     ))
-    warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
-    assert warnungen, f"no WARNING: {protokoll}"
-    assert "0 attached" in warnungen[0], warnungen[0]
+    warnings = [m for severity, m in log_lines if severity == "WARNING"]
+    assert warnings, f"no WARNING: {log_lines}"
+    assert "0 attached" in warnings[0], warnings[0]
 
 
-def test_a_hinted_tool_filtered_OUT_of_the_offered_set_is_a_WARNING(protokoll):
+def test_a_hinted_tool_filtered_OUT_of_the_offered_set_is_a_WARNING(log_lines):
     """🛑 Attached is not offered.
 
     `prompt_tools` or a DB override can throw a tool out of `state.tools` AFTER
@@ -96,34 +96,34 @@ def test_a_hinted_tool_filtered_OUT_of_the_offered_set_is_a_WARNING(protokoll):
     `all_discovered_tools` and would have reported that as HEALTHY. Found in
     the review of #1415.
     """
-    log_hint_arrival(_zustand(
+    log_hint_arrival(_state(
         {"scan_document": "x" * 1426},
-        [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("scanner_status")],
-        angeboten=[_Werkzeug("scanner_status")],   # the hinted one dropped out
+        [_Tool("scan_document", "x" * 1426), _Tool("scanner_status")],
+        offered=[_Tool("scanner_status")],   # the hinted one dropped out
     ))
-    warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
-    assert warnungen, (
+    warnings = [m for severity, m in log_lines if severity == "WARNING"]
+    assert warnings, (
         f"a hinted tool was filtered out and that counted as "
-        f"healthy: {protokoll}")
-    assert "filtered out" in warnungen[0], warnungen[0]
+        f"healthy: {log_lines}")
+    assert "filtered out" in warnings[0], warnings[0]
 
 
-def test_the_healthy_case_is_INFO_with_counts(protokoll):
+def test_the_healthy_case_is_INFO_with_counts(log_lines):
     """When everything arrives a count is enough -- with the total length,
     otherwise a truncated hint would be indistinguishable from a complete
     one."""
-    log_hint_arrival(_zustand(
+    log_hint_arrival(_state(
         {"scan_document": "x" * 1426, "route_scan": "y" * 791},
-        [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("route_scan", "y" * 791)],
+        [_Tool("scan_document", "x" * 1426), _Tool("route_scan", "y" * 791)],
     ))
-    infos = [m for stufe, m in protokoll if stufe == "INFO"]
-    assert infos, f"no INFO line: {protokoll}"
-    assert "2 hint(s) configured, 2 attached, 2 offered" in infos[0], infos[0]
-    assert str(1426 + 791) in infos[0], infos[0]
-    assert not [m for stufe, m in protokoll if stufe == "WARNING"]
+    info_lines = [m for severity, m in log_lines if severity == "INFO"]
+    assert info_lines, f"no INFO line: {log_lines}"
+    assert "2 hint(s) configured, 2 attached, 2 offered" in info_lines[0], info_lines[0]
+    assert str(1426 + 791) in info_lines[0], info_lines[0]
+    assert not [m for severity, m in log_lines if severity == "WARNING"]
 
 
-def test_a_server_WITHOUT_hints_still_says_so(protokoll):
+def test_a_server_WITHOUT_hints_still_says_so(log_lines):
     """🛑 Reversed from the first version, and that is the core.
 
     It returned silently here, and a test held that silence in place. That made
@@ -132,55 +132,55 @@ def test_a_server_WITHOUT_hints_still_says_so(protokoll):
     three situations, one silence. Exactly the guesswork that set off this
     branch.
     """
-    log_hint_arrival(_zustand({}, [_Werkzeug("irgendwas")]))
-    assert protokoll, (
+    log_hint_arrival(_state({}, [_Tool("irgendwas")]))
+    assert log_lines, (
         "a server without hints stays silent — then absence is a diagnosis "
         "again, and three different situations look the same")
-    stufe, nachricht = protokoll[0]
-    assert stufe == "INFO", f"this is not a problem, so no WARNING: {nachricht}"
-    assert "0 hint(s) configured" in nachricht, nachricht
+    severity, message = log_lines[0]
+    assert severity == "INFO", f"this is not a problem, so no WARNING: {message}"
+    assert "0 hint(s) configured" in message, message
 
 
-def test_the_line_appears_only_ON_CHANGE(protokoll):
+def test_the_line_appears_only_ON_CHANGE(log_lines):
     """🛑 Discovery runs about every 60 s per server (`mcp_refresh_interval`;
     `refresh_tools` does NOT read the per-server value). One line per pass
     would be about 60 an hour, and a permanently mismatched key would be a
     constant barrage that buries the real cases."""
-    z = _zustand({"scan_document": "x" * 10},
-                 [_Werkzeug("scan_document", "x" * 10)])
+    z = _state({"scan_document": "x" * 10},
+                 [_Tool("scan_document", "x" * 10)])
     log_hint_arrival(z)
     log_hint_arrival(z)
     log_hint_arrival(z)
-    assert len(protokoll) == 1, (
-        f"three passes, {len(protokoll)} lines — an unchanged "
+    assert len(log_lines) == 1, (
+        f"three passes, {len(log_lines)} lines — an unchanged "
         "state may log only once")
 
     # If something changes, it has to appear again.
-    z.all_discovered_tools = [_Werkzeug("scan_document")]
+    z.all_discovered_tools = [_Tool("scan_document")]
     z.tools = list(z.all_discovered_tools)
     log_hint_arrival(z)
-    assert len(protokoll) == 2, (
+    assert len(log_lines) == 2, (
         "the hint dropped out and the log stays silent — then "
         "the throttling is useless")
 
 
-def test_the_hint_TEXT_never_reaches_the_log(protokoll):
+def test_the_hint_TEXT_never_reaches_the_log(log_lines):
     """🛑 Only names and lengths -- and on BOTH branches.
 
     The first version checked only the INFO branch; but the WARNING branch is
     the one that inserts variable content. Found in the review of #1415.
     """
-    geheim = "DIESER-TEXT-DARF-NICHT-INS-PROTOKOLL"
-    log_hint_arrival(_zustand({"a": geheim}, [_Werkzeug("a", geheim)]))
-    log_hint_arrival(_zustand(
-        {"a": geheim, "fehlt": geheim}, [_Werkzeug("a", geheim)]))
-    assert [s for s, _ in protokoll].count("WARNING") == 1, protokoll
-    for _, nachricht in protokoll:
-        assert geheim not in nachricht, (
-            f"the hint text is in the log:\n{nachricht}")
+    secret = "DIESER-TEXT-DARF-NICHT-INS-PROTOKOLL"
+    log_hint_arrival(_state({"a": secret}, [_Tool("a", secret)]))
+    log_hint_arrival(_state(
+        {"a": secret, "fehlt": secret}, [_Tool("a", secret)]))
+    assert [s for s, _ in log_lines].count("WARNING") == 1, log_lines
+    for _, message in log_lines:
+        assert secret not in message, (
+            f"the hint text is in the log:\n{message}")
 
 
-def test_the_discovery_path_actually_calls_it(protokoll):
+def test_the_discovery_path_actually_calls_it(log_lines):
     """🛑 The WIRING, not just the function.
 
     That day's defect was the same one five times over: a guard built
@@ -194,20 +194,20 @@ def test_the_discovery_path_actually_calls_it(protokoll):
         tool_hints={"scan_document": "H" * 50, "gibtesnicht": "X" * 10},
     )
     state = MCPServerState(config=cfg)
-    rohe = [SimpleNamespace(name="scan_document", description="Scan a stack.",
+    raw_tools = [SimpleNamespace(name="scan_document", description="Scan a stack.",
                             inputSchema={"properties": {}, "required": []})]
 
     # 🛑 A REAL manager, not `__new__`: `_apply_tool_filter` needs state that
     # `__init__` creates (`_tool_overrides`). Checked: `__init__` does no I/O
     # -- only assignments.
     mgr = MCPManager()
-    mgr._install_discovered_tools(state, rohe)
+    mgr._install_discovered_tools(state, raw_tools)
 
-    warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
-    assert warnungen, (
+    warnings = [m for severity, m in log_lines if severity == "WARNING"]
+    assert warnings, (
         "the discovery path logs nothing about the hints — then "
-        f"their absence stays invisible again: {protokoll}")
-    assert "gibtesnicht" in warnungen[0], warnungen[0]
+        f"their absence stays invisible again: {log_lines}")
+    assert "gibtesnicht" in warnings[0], warnings[0]
     assert state.all_discovered_tools[0].hint == "H" * 50
 
 
@@ -222,7 +222,7 @@ def test_the_two_discovery_entry_points_reach_the_install():
     from services.mcp_client import MCPManager
 
     for name in ("_connect_server", "refresh_tools"):
-        quelle = inspect.getsource(getattr(MCPManager, name))
-        assert "_install_discovered_tools" in quelle, (
+        source = inspect.getsource(getattr(MCPManager, name))
+        assert "_install_discovered_tools" in source, (
             f"`{name}` no longer goes through `_install_discovered_tools` — "
             "then the hint count is lost on this path")

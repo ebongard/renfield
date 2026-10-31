@@ -213,7 +213,7 @@ class TestRenderConfirmMessage:
         assert "Korrespondent" in msg
 
     @pytest.mark.unit
-    def test_resolution_no_near_matches_offers_neu_and_skip(self):
+    def test_resolution_no_near_matches_offers_new_and_skip(self):
         resolutions = [
             {
                 "field": "correspondent",

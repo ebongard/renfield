@@ -455,17 +455,17 @@ def _failed_agent_actions(outcomes: list, aborted_tools: set | None = None) -> l
     verdict.
     """
     last: dict[str, bool | None] = {}
-    je_erfolgreich: set = set()
+    ever_succeeded: set = set()
     for tool, success in outcomes:
         name = tool or "?"
         last[name] = success
         if success:
-            je_erfolgreich.add(name)
-    abgebrochen = aborted_tools or set()
+            ever_succeeded.add(name)
+    aborted = aborted_tools or set()
     return [
         tool for tool, success in last.items()
         if success is False
-        and not (tool in abgebrochen and tool in je_erfolgreich)
+        and not (tool in aborted and tool in ever_succeeded)
     ]
 
 
@@ -1341,9 +1341,9 @@ async def websocket_endpoint(
                         and session_state.history_watermark is not None):
                     try:
                         from services.conversation_service import ConversationService
-                        async with AsyncSessionLocal() as _db_frisch:
+                        async with AsyncSessionLocal() as _db_fresh:
                             _newest = await ConversationService(
-                                _db_frisch).latest_message_id(msg_session_id)
+                                _db_fresh).latest_message_id(msg_session_id)
                     except Exception as _exc:
                         logger.warning(f"⚠️ Freshness check failed: {_exc}")
 

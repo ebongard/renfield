@@ -31,7 +31,7 @@ from services.agent_tools import AgentToolRegistry, ToolDefinition
 pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
 #: More than the six below which the pre-selection does not run at all.
-ALLE = [
+ALL_TOOLS = [
     "mcp.scanner.scan_document",
     "mcp.paperless.search_documents",
     "internal.list_rooms",
@@ -41,32 +41,32 @@ ALLE = [
     "mcp.email.send",
     "mcp.calendar.list_events",
 ]
-PROMPT_MARKE = "VORAUSWAHL-PROMPT-MARKE"
-GEWAEHLT = ["mcp.scanner.scan_document", "internal.list_rooms"]
+PROMPT_MARKER = "VORAUSWAHL-PROMPT-MARKE"
+CHOSEN = ["mcp.scanner.scan_document", "internal.list_rooms"]
 
 
-def _dienst() -> AgentService:
+def _service() -> AgentService:
     """An instance with a real registry -- only the LLM stage is stubbed."""
     svc = AgentService.__new__(AgentService)
     r = AgentToolRegistry.__new__(AgentToolRegistry)
     r._tools = {
-        n: ToolDefinition(name=n, description=f"does {n}") for n in ALLE
+        n: ToolDefinition(name=n, description=f"does {n}") for n in ALL_TOOLS
     }
     svc.tool_registry = r
     return svc
 
 
 @pytest.fixture
-def protokoll():
+def log_lines():
     """Captures the real loguru lines -- after the arguments were substituted."""
-    zeilen: list[str] = []
-    sink = logger.add(lambda m: zeilen.append(m.record["message"]), level="INFO")
-    yield zeilen
+    lines: list[str] = []
+    sink = logger.add(lambda m: lines.append(m.record["message"]), level="INFO")
+    yield lines
     logger.remove(sink)
 
 
 @pytest.fixture
-def gestellter_pfad(monkeypatch):
+def staged_client(monkeypatch):
     """The stages around the LLM call, so that it reaches the line."""
     import services.agent_service as mod
 
@@ -74,52 +74,52 @@ def gestellter_pfad(monkeypatch):
     # the CONTENT of the prompt excerpt and not merely that a line arrived.
     monkeypatch.setattr(
         mod.prompt_manager, "get",
-        lambda *a, **k: f"{PROMPT_MARKE} {k.get('message', '')} {k.get('tool_list', '')}",
+        lambda *a, **k: f"{PROMPT_MARKER} {k.get('message', '')} {k.get('tool_list', '')}",
     )
 
     async def chat(**kwargs):
         return SimpleNamespace(
-            message=SimpleNamespace(content=json.dumps(GEWAEHLT))
+            message=SimpleNamespace(content=json.dumps(CHOSEN))
         )
 
     return SimpleNamespace(chat=chat)
 
 
 @pytest.mark.asyncio
-async def test_the_log_line_names_the_chosen_tools(protokoll, gestellter_pfad):
-    gewaehlt = await _dienst()._preselect_tools(
-        "scanne nach xidra", gestellter_pfad, "irgendein-modell",
+async def test_the_log_line_names_the_chosen_tools(log_lines, staged_client):
+    chosen = await _service()._preselect_tools(
+        "scanne nach xidra", staged_client, "irgendein-modell",
     )
-    assert set(gewaehlt) == set(GEWAEHLT), (
+    assert set(chosen) == set(CHOSEN), (
         "the preselection itself did not deliver what was expected — then "
-        f"this test checks the wrong thing: {sorted(gewaehlt or [])}")
+        f"this test checks the wrong thing: {sorted(chosen or [])}")
 
     # 🛑 Check for "tools selected for:", not for "Tool pre-selection": the
     # PROMPT line and the fallback line carry that prefix too. With
     # `agent_preselect_prompt_dump` switched on, these tests would otherwise
     # grab the wrong line and fail misleadingly -- uncovered by the switch's
     # own negative control.
-    zeile = next((z for z in protokoll if "tools selected for:" in z), None)
-    assert zeile is not None, f"no preselection line in the log: {protokoll}"
+    line = next((z for z in log_lines if "tools selected for:" in z), None)
+    assert line is not None, f"no preselection line in the log: {log_lines}"
 
-    for name in GEWAEHLT:
-        assert name in zeile, (
+    for name in CHOSEN:
+        assert name in line, (
             f"`{name}` is missing from the line — then the log cannot "
-            f"tell whether the tool was offered:\n{zeile}")
+            f"tell whether the tool was offered:\n{line}")
 
 
 @pytest.mark.asyncio
-async def test_the_log_line_still_carries_count_and_message(protokoll, gestellter_pfad):
+async def test_the_log_line_still_carries_count_and_message(log_lines, staged_client):
     """The names are ADDED; the count and the occasion stay.
 
     🛑 The line was moved from an f-string to loguru arguments. If a `%s` ends
     up there, or an argument stays unsubstituted, a raw `{}` arrives exactly
     here (see `test_loguru_placeholders.py` for the class of defect).
     """
-    await _dienst()._preselect_tools(
-        "scanne nach xidra", gestellter_pfad, "irgendein-modell",
+    await _service()._preselect_tools(
+        "scanne nach xidra", staged_client, "irgendein-modell",
     )
-    zeile = next(z for z in protokoll if "tools selected for:" in z)
+    line = next(z for z in log_lines if "tools selected for:" in z)
     # 🛑 The input fingerprint MUST be in the line -- it is the entire
     # deliverable of #1413. Without this assertion no test notices the silent
     # case: `logger.info` with one argument too few formats the line cleanly,
@@ -127,29 +127,29 @@ async def test_the_log_line_still_carries_count_and_message(protokoll, gestellte
     # raises and is swallowed by the bare `except Exception` -- the
     # pre-selection then falls back to ALL tools and reports that as a model
     # error. Found in the review of #1413.
-    assert "(in=" in zeile, (
-        f"the input fingerprint is missing from the line:\n{zeile}")
-    assert f"{len(GEWAEHLT)}/{len(ALLE)}" in zeile, f"the count is missing:\n{zeile}"
-    assert "scanne nach xidra" in zeile, f"the occasion is missing:\n{zeile}"
-    assert "{}" not in zeile, (
-        f"an argument was not substituted — the line is blind:\n{zeile}")
+    assert "(in=" in line, (
+        f"the input fingerprint is missing from the line:\n{line}")
+    assert f"{len(CHOSEN)}/{len(ALL_TOOLS)}" in line, f"the count is missing:\n{line}"
+    assert "scanne nach xidra" in line, f"the occasion is missing:\n{line}"
+    assert "{}" not in line, (
+        f"an argument was not substituted — the line is blind:\n{line}")
 
 
 @pytest.mark.asyncio
-async def test_the_prompt_dump_is_dark_by_default(protokoll, gestellter_pfad):
+async def test_the_prompt_dump_is_dark_by_default(log_lines, staged_client):
     """🛑 Dark means: NO line. The prompt carries the user's message IN FULL
     -- the regular line shows only `message[:60]`."""
-    await _dienst()._preselect_tools(
-        "scanne nach xidra", gestellter_pfad, "irgendein-modell",
+    await _service()._preselect_tools(
+        "scanne nach xidra", staged_client, "irgendein-modell",
     )
-    assert not [z for z in protokoll if "PROMPT" in z], (
+    assert not [z for z in log_lines if "PROMPT" in z], (
         "the prompt dump appears without the switch — then the full "
         "message of every turn would stand in the log")
 
 
 @pytest.mark.asyncio
 async def test_the_prompt_dump_shows_the_real_prompt_when_switched_on(
-    protokoll, gestellter_pfad, monkeypatch,
+    log_lines, staged_client, monkeypatch,
 ):
     """Switched on, it yields the prompt a diagnosis can founder on.
 
@@ -161,16 +161,16 @@ async def test_the_prompt_dump_shows_the_real_prompt_when_switched_on(
     import services.agent_service as mod
     monkeypatch.setattr(mod.settings, "agent_preselect_prompt_dump", True)
 
-    await _dienst()._preselect_tools(
-        "scanne nach xidra", gestellter_pfad, "irgendein-modell",
+    await _service()._preselect_tools(
+        "scanne nach xidra", staged_client, "irgendein-modell",
     )
-    zeilen = [z for z in protokoll if "PROMPT" in z]
-    assert zeilen, "the switch is on, but no line comes"
-    assert "(in=" in zeilen[0], (
+    lines = [z for z in log_lines if "PROMPT" in z]
+    assert lines, "the switch is on, but no line comes"
+    assert "(in=" in lines[0], (
         "without the signature the dump cannot be matched to a specific line")
     # 🛑 The CONTENT, not just the existence of the line. This assertion was
     # missing, and a mutation that emitted an EMPTY string instead of the
     # prompt left all ten tests green -- exactly the failure the switch is
     # meant to prevent. Found by mutation testing in the review of #1414.
-    assert PROMPT_MARKE in zeilen[0], (
-        f"the dump does not carry the prompt:\n{zeilen[0][:200]}")
+    assert PROMPT_MARKER in lines[0], (
+        f"the dump does not carry the prompt:\n{lines[0][:200]}")

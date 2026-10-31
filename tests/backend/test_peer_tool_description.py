@@ -34,7 +34,7 @@ from services.peer_mcp_registry import _build_query_brain_tool
 pytestmark = pytest.mark.unit
 
 #: The version that measured 36/39 -- byte for byte, with `evdb` as the display name.
-GEMESSEN = (
+MEASURED_DESCRIPTION = (
     "Ask evdb's Renfield — another paired INSTANCE — for information its "
     "people chose to share with you through circles. Use for „frag <jemand>s "
     "Renfield“, „was liegt in <Instanz>“, „die andere Instanz“ "
@@ -52,7 +52,7 @@ def _peer(name: str = "evdb") -> MagicMock:
 def test_the_shipped_description_is_the_MEASURED_one_byte_for_byte():
     """🛑 The guard against an unmeasured change. If this test goes red it is
     not a formatting slip: the text was changed without measuring again."""
-    assert _build_query_brain_tool(_peer()).description == GEMESSEN
+    assert _build_query_brain_tool(_peer()).description == MEASURED_DESCRIPTION
 
 
 def test_it_names_the_INSTANCE_not_only_the_person():
@@ -100,9 +100,9 @@ class TestTheCapCannotEatTheBoundary:
     def test_the_boundary_survives_the_line_build(self, name):
         """Do not check the description alone but the LINE the prompt really
         carries -- built with the production function, not reimplemented."""
-        werkzeug = _build_query_brain_tool(_peer(name))
-        zeile = preselect_tool_line(werkzeug.namespaced_name, werkzeug)
-        assert "filing target, not an instance" in zeile
+        tool = _build_query_brain_tool(_peer(name))
+        line = preselect_tool_line(tool.namespaced_name, tool)
+        assert "filing target, not an instance" in line
 
     def test_a_long_name_is_SHORTENED_not_the_sentence(self):
         """Negative control on the cap: it takes hold on the NAME, not on the

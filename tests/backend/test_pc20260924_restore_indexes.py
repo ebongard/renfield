@@ -122,11 +122,11 @@ class TestOperatorClassFollowsTheDimension:
     """Above 2000 dimensions it MUST be halfvec, otherwise it is not buildable."""
 
     @pytest.mark.parametrize(
-        "dim,erwartet_halfvec",
+        "dim,expect_halfvec",
         [(768, False), (2000, False), (2001, True), (2560, True)],
     )
     async def test_index_is_actually_creatable_at_that_dimension(
-        self, schema_conn, dim, erwartet_halfvec,
+        self, schema_conn, dim, expect_halfvec,
     ):
         conn, _ = schema_conn
         mig = _load_migration()
@@ -136,7 +136,7 @@ class TestOperatorClassFollowsTheDimension:
         got = await conn.run_sync(lambda c: mig._column_dim(c, "probe", "embedding"))
         expr = (f"((embedding::halfvec({got})) halfvec_cosine_ops)"
                 if got > 2000 else "(embedding vector_cosine_ops)")
-        assert ("halfvec" in expr) is erwartet_halfvec
+        assert ("halfvec" in expr) is expect_halfvec
 
         # Do not just check the string: Postgres has to actually build the
         # index. This is exactly where the old DDL for `intent_corrections`
@@ -150,7 +150,7 @@ class TestOperatorClassFollowsTheDimension:
         definition = (await conn.execute(text(
             "SELECT indexdef FROM pg_indexes WHERE indexname = 'probe_hnsw'"
         ))).scalar_one()
-        if erwartet_halfvec:
+        if expect_halfvec:
             # The built dimension has to match the column -- otherwise no
             # query can ever use the index.
             assert f"halfvec({dim})" in definition

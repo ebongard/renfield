@@ -274,11 +274,11 @@ async def _process_entry(
             from services.pdf_splitter import maybe_split_at_ingest
 
             async with AsyncSessionLocal() as db:
-                besitzt = await maybe_split_at_ingest(
+                owns = await maybe_split_at_ingest(
                     db, doc_id, user_id=user_id, resplit=True
                 )
             logger.info(
-                f"resplit doc {doc_id}: split lifecycle owns it={besitzt} "
+                f"resplit doc {doc_id}: split lifecycle owns it={owns} "
                 f"(entry {entry.entry_id})"
             )
         except Exception as e:

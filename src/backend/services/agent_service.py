@@ -1007,10 +1007,10 @@ def _tools_pinned_by_correction(
     """
     if not corrected_intent:
         return []
-    teile = corrected_intent.split(".")
-    if teile[0] == "mcp" and len(teile) >= 3:
-        praefix = f"mcp.{teile[1]}."
-        return sorted(n for n in registry if n.startswith(praefix))
+    parts = corrected_intent.split(".")
+    if parts[0] == "mcp" and len(parts) >= 3:
+        prefix = f"mcp.{parts[1]}."
+        return sorted(n for n in registry if n.startswith(prefix))
     if corrected_intent in registry:
         return [corrected_intent]
     return []
@@ -1080,9 +1080,9 @@ def preselect_tool_line(name: str, tool) -> str:
     hint = str(getattr(tool, "hint", "") or "")
     if hint and desc.endswith(hint):
         desc = desc[: len(desc) - len(hint)].rstrip()
-    grenze = _PRESELECT_DESC_BUDGET.get(name, _PRESELECT_DESC_CHARS)
-    zeile = f"- {name}: {desc[:grenze]}"
-    return f"{zeile} {hint}" if hint else zeile
+    limit = _PRESELECT_DESC_BUDGET.get(name, _PRESELECT_DESC_CHARS)
+    desc_line = f"- {name}: {desc[:limit]}"
+    return f"{desc_line} {hint}" if hint else desc_line
 
 
 class AgentService:
@@ -1243,13 +1243,13 @@ class AgentService:
         # below only checks `name in _tools`, not the value, so it would let a
         # `None` tool through. Offer and permitted answer must be the same
         # set.
-        angebotene = [
+        offered = [
             name for name in tool_names
             if self.tool_registry._tools.get(name) is not None
         ]
         tool_lines = [
             preselect_tool_line(name, self.tool_registry._tools[name])
-            for name in angebotene
+            for name in offered
         ]
 
         tool_list = "\n".join(tool_lines)
@@ -1272,7 +1272,7 @@ class AgentService:
         # Compute once and pass to every log line: loguru evaluates its
         # arguments eagerly, even when a line is never
         # erscheint.
-        eingabe_signatur = preselect_input_signature(preselect_prompt)
+        input_signature = preselect_input_signature(preselect_prompt)
 
         # 🛑 The whole prompt, behind a switch of its OWN -- not behind DEBUG.
         # The sink in `main.py` is global and single-level; a DEBUG run would
@@ -1287,7 +1287,7 @@ class AgentService:
             # effect: the excerpt stays ONE line and is therefore greppable.
             logger.info(
                 "Tool pre-selection PROMPT (in={}): {!r}",
-                eingabe_signatur, preselect_prompt,
+                input_signature, preselect_prompt,
             )
 
         try:
@@ -1305,7 +1305,7 @@ class AgentService:
             # run; the miss was not in the prompt but in the free form of the
             # answer.
             typed_format = (
-                _build_preselect_schema(angebotene)
+                _build_preselect_schema(offered)
                 if settings.agent_preselect_typed else None
             )
             if typed_format is not None:
@@ -1332,7 +1332,7 @@ class AgentService:
                 logger.warning(
                     "Tool pre-selection unusable response (in={}): {!r} "
                     "— using all {} tools",
-                    eingabe_signatur, response_text[:100], len(tool_names),
+                    input_signature, response_text[:100], len(tool_names),
                 )
                 return None
 
@@ -1364,11 +1364,11 @@ class AgentService:
             # matter", not "call `list_scanners`". An `internal.<x>`, by
             # contrast, IS one tool and stays one.
             if corrected_intent:
-                festgenagelt = _tools_pinned_by_correction(
+                pinned = _tools_pinned_by_correction(
                     corrected_intent, self.tool_registry._tools,
                 )
-                neu_dazu = [n for n in festgenagelt if n not in filtered]
-                for name in neu_dazu:
+                newly_added = [n for n in pinned if n not in filtered]
+                for name in newly_added:
                     filtered[name] = self.tool_registry._tools[name]
                 # 🛑 ONE line, always -- even when nothing was pinned down.
                 # Without it five different cases look identical, namely
@@ -1381,15 +1381,15 @@ class AgentService:
                 logger.info(
                     "Tool pre-selection: correction {!r} pinned {} tool(s), "
                     "{} newly added{} (in={})",
-                    corrected_intent, len(festgenagelt), len(neu_dazu),
-                    f" {sorted(neu_dazu)}" if neu_dazu else "",
-                    eingabe_signatur,
+                    corrected_intent, len(pinned), len(newly_added),
+                    f" {sorted(newly_added)}" if newly_added else "",
+                    input_signature,
                 )
 
             if not filtered:
                 logger.warning(
                     "Tool pre-selection matched 0 valid tools (in={}) "
-                    "— using all {}", eingabe_signatur, len(tool_names),
+                    "— using all {}", input_signature, len(tool_names),
                 )
                 return None
 
@@ -1408,7 +1408,7 @@ class AgentService:
             logger.info(
                 "Tool pre-selection: {}/{} tools selected for: '{}' (in={}) -> {}",
                 len(filtered), len(tool_names), message[:60],
-                eingabe_signatur, sorted(filtered),
+                input_signature, sorted(filtered),
             )
             # 🛑 At DEBUG, one digest of ITS line per tool, in list order.
             # Writing the full lines here would be unusable (they carry the
@@ -1418,16 +1418,16 @@ class AgentService:
             # moved can be named.
             logger.debug(
                 "Tool pre-selection input (in={}): {}",
-                eingabe_signatur,
-                [f"{name}:{preselect_input_signature(zeile)[:4]}"
-                 for name, zeile in zip(tool_names, tool_lines, strict=False)],
+                input_signature,
+                [f"{name}:{preselect_input_signature(desc_line)[:4]}"
+                 for name, desc_line in zip(tool_names, tool_lines, strict=False)],
             )
             return filtered
 
         except (TimeoutError, json.JSONDecodeError, Exception) as e:
             logger.warning(
                 "Tool pre-selection failed (in={}, using all {} tools): {}",
-                eingabe_signatur, len(tool_names), e,
+                input_signature, len(tool_names), e,
             )
             return None
 

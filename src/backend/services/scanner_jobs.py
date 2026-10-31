@@ -318,17 +318,17 @@ def attach_document_ref(metadata: dict, status: str, result: dict, job_id: str) 
     # nowhere, it would lead to the wrong thing.
     #
     # 🛑 FAIL-CLOSED: without `settings.instance_id` every named target is foreign.
-    daten: dict = {"documentId": doc_id}
-    ziel = result.get("target")
-    if isinstance(ziel, str) and ziel.strip():
-        eigen = (settings.instance_id or "").strip().lower()
-        # The inequality CARRIES the fail-closed case on its own: `ziel` is
+    data: dict = {"documentId": doc_id}
+    target_instance = result.get("target")
+    if isinstance(target_instance, str) and target_instance.strip():
+        own_instance = (settings.instance_id or "").strip().lower()
+        # The inequality CARRIES the fail-closed case on its own: `target_instance` is
         # demonstrably not empty here, so an empty own id is automatically
-        # unequal. An additional `or not eigen` would look like a second guard
+        # unequal. An additional `or not own_instance` would look like a second guard
         # and would have no effect on ANY path -- and the test for it would pass
         # with and without it.
-        if ziel.strip().lower() != eigen:
-            daten["instance"] = ziel.strip()
+        if target_instance.strip().lower() != own_instance:
+            data["instance"] = target_instance.strip()
     try:
         artifact = validate_artifact({
             # Stable per job: a second delivery of the same scan replaces the
@@ -336,7 +336,7 @@ def attach_document_ref(metadata: dict, status: str, result: dict, job_id: str) 
             # keys by `id`).
             "id": f"scanjob-{job_id}-doc",
             "kind": "document_ref",
-            "data": daten,
+            "data": data,
         })
     except ArtifactRejected as e:
         # A rejected artifact must NEVER prevent the delivery -- the message

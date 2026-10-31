@@ -45,22 +45,22 @@ pytestmark = [pytest.mark.unit, pytest.mark.backend]
 # The notice itself
 # ---------------------------------------------------------------------------
 
-def test_kappung_erzeugt_einen_hinweis():
+def test_truncation_produces_a_notice():
     """The precondition for everything else: on `timeout` text comes out.
 
     Checked first, so that the negative controls below are not green merely
     because the helper returns empty AS A RULE.
     """
-    hinweis = truncation_notice(TURN_END_TIMEOUT, "de")
-    assert hinweis, "on `timeout` a notice must arise — otherwise the truncation is silent"
-    assert hinweis.endswith(" "), (
+    notice = truncation_notice(TURN_END_TIMEOUT, "de")
+    assert notice, "on `timeout` a notice must arise — otherwise the truncation is silent"
+    assert notice.endswith(" "), (
         "the notice is PREPENDED to the answer and therefore needs a "
         "separating space, otherwise it sticks to the first word"
     )
 
 
-@pytest.mark.parametrize("grund", ["silence", "button", "unknown", None, ""])
-def test_vollstaendige_aeusserung_erzeugt_KEINEN_hinweis(grund):
+@pytest.mark.parametrize("reason", ["silence", "button", "unknown", None, ""])
+def test_a_complete_utterance_produces_NO_notice(reason):
     """🛑 Negative control. `silence` is the NORMAL CASE -- every sentence
     spoken to the end passes through here.
 
@@ -68,10 +68,10 @@ def test_vollstaendige_aeusserung_erzeugt_KEINEN_hinweis(grund):
     recording had been cut off. That would be worse than the silence this
     change is built against.
     """
-    assert truncation_notice(grund, "de") == ""
+    assert truncation_notice(reason, "de") == ""
 
 
-def test_sprache_wird_beachtet():
+def test_the_language_is_respected():
     """The text goes to the satellite's TTS, so it is in that language.
 
     A German-speaking household member must not hear an English sentence here
@@ -85,15 +85,15 @@ def test_sprache_wird_beachtet():
     assert "maximum length" in en
 
 
-def test_unbekannte_sprache_faellt_auf_englisch_zurueck():
+def test_an_unknown_language_falls_back_to_english():
     """A language with no text must not return empty -- empty would mean the
     truncation goes mute again."""
-    hinweis = truncation_notice(TURN_END_TIMEOUT, "it")
-    assert hinweis
-    assert "maximum length" in hinweis
+    notice = truncation_notice(TURN_END_TIMEOUT, "it")
+    assert notice
+    assert "maximum length" in notice
 
 
-def test_gesprochener_text_benutzt_echte_umlaute():
+def test_the_spoken_text_uses_real_umlauts():
     """🛑 The text is SPOKEN. The TTS would read "Hoechstdauer" aloud as
     "Ho-echst-dauer".
 
@@ -107,13 +107,13 @@ def test_gesprochener_text_benutzt_echte_umlaute():
     # would have failed on that -- on the test, not on the text. So: real
     # umlauts must occur, and the substitute spellings OF EXACTLY THE WORDS
     # that stand here must not.
-    assert any(zeichen in de for zeichen in "äöüÄÖÜß"), (
+    assert any(char in de for char in "äöüÄÖÜß"), (
         f"no real umlaut in the spoken text: {de!r}"
     )
-    de_klein = de.lower()
-    for ersatz in ("hoechst", "gehoert", "aeusserung", "fuer", "ueber"):
-        assert ersatz not in de_klein, (
-            f"substitute spelling {ersatz!r} in the spoken text: {de!r} — "
+    de_lower = de.lower()
+    for substitute in ("hoechst", "gehoert", "aeusserung", "fuer", "ueber"):
+        assert substitute not in de_lower, (
+            f"substitute spelling {substitute!r} in the spoken text: {de!r} — "
             "the TTS would mispronounce it"
         )
 
@@ -122,23 +122,23 @@ def test_gesprochener_text_benutzt_echte_umlaute():
 # The reason survives into the history
 # ---------------------------------------------------------------------------
 
-def test_sitzung_haelt_den_grund_fest():
+def test_the_session_records_the_reason():
     """The reason must outlive the session, otherwise it is not in the
     satellite history -- and "was truncated" can no longer be established
     afterwards."""
-    sitzung = SatelliteSession(
+    session = SatelliteSession(
         session_id="sat-test-1",
         satellite_id="sat-test",
         room="Prüfraum",
         state=SatelliteState.LISTENING,
     )
-    assert sitzung.turn_end_reason is None, "no report, no reason"
+    assert session.turn_end_reason is None, "no report, no reason"
 
-    sitzung.turn_end_reason = TURN_END_TIMEOUT
-    assert sitzung.turn_end_reason == TURN_END_TIMEOUT
+    session.turn_end_reason = TURN_END_TIMEOUT
+    assert session.turn_end_reason == TURN_END_TIMEOUT
 
 
-def test_manager_setzt_den_grund_und_vertraegt_eine_unbekannte_sitzung():
+def test_the_manager_sets_the_reason_and_tolerates_an_unknown_session():
     """`set_turn_end_reason` is the way from the handler into the session.
 
     An unknown session id must NOT raise: `audio_end` can arrive after a
@@ -148,16 +148,16 @@ def test_manager_setzt_den_grund_und_vertraegt_eine_unbekannte_sitzung():
     from ha_glue.services.satellite_manager import SatelliteManager
 
     manager = SatelliteManager()
-    sitzung = SatelliteSession(
+    session = SatelliteSession(
         session_id="sat-test-2",
         satellite_id="sat-test",
         room="Prüfraum",
         state=SatelliteState.LISTENING,
     )
-    manager.sessions["sat-test-2"] = sitzung
+    manager.sessions["sat-test-2"] = session
 
     manager.set_turn_end_reason("sat-test-2", TURN_END_TIMEOUT)
-    assert sitzung.turn_end_reason == TURN_END_TIMEOUT
+    assert session.turn_end_reason == TURN_END_TIMEOUT
 
     manager.set_turn_end_reason("gibt-es-nicht", TURN_END_TIMEOUT)  # must not raise
 
@@ -166,7 +166,7 @@ def test_manager_setzt_den_grund_und_vertraegt_eine_unbekannte_sitzung():
 # The handler really uses the helper
 # ---------------------------------------------------------------------------
 
-def test_handler_stellt_den_hinweis_VORAN():
+def test_the_handler_PREPENDS_the_notice():
     """The order is part of the intent: the notice frames the answer.
 
     Placed afterwards it would come too late -- the speaker would already have
@@ -176,14 +176,14 @@ def test_handler_stellt_den_hinweis_VORAN():
 
     from ha_glue.api.websocket import satellite_handler
 
-    quelle = inspect.getsource(satellite_handler)
-    assert "response_text = _cut_notice + response_text" in quelle, (
+    source = inspect.getsource(satellite_handler)
+    assert "response_text = _cut_notice + response_text" in source, (
         "the notice must be PREPENDED, not appended"
     )
-    assert "truncation_notice(reason, satellite_language)" in quelle, (
+    assert "truncation_notice(reason, satellite_language)" in source, (
         "the handler must use the production helper, not its own text"
     )
-    assert "satellite_manager.set_turn_end_reason(session_id, reason)" in quelle, (
+    assert "satellite_manager.set_turn_end_reason(session_id, reason)" in source, (
         "the reason must be recorded, not merely logged — "
         "exactly that was the bug"
     )
@@ -193,7 +193,7 @@ def test_handler_stellt_den_hinweis_VORAN():
 # Half a sentence does not become knowledge (review finding 2026-10-10)
 # ---------------------------------------------------------------------------
 
-def test_gekappter_durchlauf_extrahiert_NICHT(monkeypatch):
+def test_a_truncated_turn_does_NOT_extract(monkeypatch):
     """🛑 An utterance cut off mid-word must produce no PERSISTENT memory and
     no KG edge.
 
@@ -203,17 +203,17 @@ def test_gekappter_durchlauf_extrahiert_NICHT(monkeypatch):
     wrong KG edge is practically impossible to take back; at 7 cases in 7 days
     going without costs almost nothing.
     """
-    gerufen: list[str] = []
+    called: list[str] = []
     monkeypatch.setattr(
         "ha_glue.api.websocket.satellite_handler.spawn_memory_extraction",
-        lambda **kw: gerufen.append("memory"),
+        lambda **kw: called.append("memory"),
     )
     monkeypatch.setattr(
         "ha_glue.api.websocket.satellite_handler.spawn_post_message_hooks",
-        lambda **kw: gerufen.append("post_message"),
+        lambda **kw: called.append("post_message"),
     )
 
-    ergebnis = _spawn_satellite_extraction(
+    result = _spawn_satellite_extraction(
         user_text="Überweise an die Stadtkasse dreihundert",   # cut off
         response_text="Ich musste die Aufnahme … ",
         user_id=1,
@@ -222,13 +222,13 @@ def test_gekappter_durchlauf_extrahiert_NICHT(monkeypatch):
         action_success=True,
         turn_truncated=True,
     )
-    assert ergebnis is None
-    assert gerufen == [], (
-        f"a truncated sentence must extract nothing, called: {gerufen}"
+    assert result is None
+    assert called == [], (
+        f"a truncated sentence must extract nothing, called: {called}"
     )
 
 
-def test_vollstaendiger_durchlauf_extrahiert_WEITERHIN(monkeypatch):
+def test_a_complete_turn_STILL_extracts(monkeypatch):
     """🛑 Negative control, and the more important half: the limit must not
     switch off normal knowledge formation.
 
@@ -236,21 +236,21 @@ def test_vollstaendiger_durchlauf_extrahiert_WEITERHIN(monkeypatch):
     extraction no longer runs at all -- and the house would remember nothing
     any more.
     """
-    gerufen: list[str] = []
+    called: list[str] = []
 
     class _Spawn:
         owns_post_message = False
 
     monkeypatch.setattr(
         "ha_glue.api.websocket.satellite_handler.spawn_memory_extraction",
-        lambda **kw: (gerufen.append("memory"), _Spawn())[1],
+        lambda **kw: (called.append("memory"), _Spawn())[1],
     )
     monkeypatch.setattr(
         "ha_glue.api.websocket.satellite_handler.spawn_post_message_hooks",
-        lambda **kw: gerufen.append("post_message"),
+        lambda **kw: called.append("post_message"),
     )
 
-    ergebnis = _spawn_satellite_extraction(
+    result = _spawn_satellite_extraction(
         user_text="Stelle den Wecker auf sieben Uhr",
         response_text="Ist gestellt.",
         user_id=1,
@@ -259,11 +259,11 @@ def test_vollstaendiger_durchlauf_extrahiert_WEITERHIN(monkeypatch):
         action_success=True,
         turn_truncated=False,
     )
-    assert ergebnis is not None
-    assert gerufen == ["memory", "post_message"]
+    assert result is not None
+    assert called == ["memory", "post_message"]
 
 
-def test_tote_sitzungsgrenze_ist_weg():
+def test_the_dead_session_limit_is_gone():
     """`max_duration_seconds = 30.0` had no reader anywhere in the backend and
     misled about exactly the mechanism at issue here: it read like a
     30-second session limit against a 60-second recording.

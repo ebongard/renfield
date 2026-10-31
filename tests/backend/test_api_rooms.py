@@ -359,7 +359,7 @@ class TestOutputDeviceEndpoints:
         assert data["tts_eq_profile"] is None, "a profile that was not sent stays untouched"
 
     @pytest.mark.integration
-    async def test_tts_eq_profile_setzen_behalten_und_wieder_ausschalten(
+    async def test_tts_eq_profile_is_set_kept_and_switched_off_again(
         self, async_client: AsyncClient, test_room: Room, db_session: AsyncSession
     ):
         """`null` switches the profile OFF, a missing key leaves it standing."""
@@ -389,7 +389,7 @@ class TestOutputDeviceEndpoints:
         assert [d["tts_eq_profile"] for d in listed.json() if d["id"] == device_id] == [None]
 
     @pytest.mark.integration
-    async def test_unbekanntes_tts_eq_profile_wird_abgelehnt(
+    async def test_an_unknown_tts_eq_profile_is_rejected(
         self, async_client: AsyncClient, test_room: Room
     ):
         response = await async_client.post(

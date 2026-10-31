@@ -780,5 +780,5 @@ def test_every_me_shaped_response_sets_the_consent():
     src = inspect.getsource(auth_routes)
     blocks = re.findall(r"UserResponse\(\n(.*?)\n\s*\)", src, re.S)
     assert len(blocks) >= 3, f"expected >= 3 construction sites, found {len(blocks)}"
-    ohne = [i for i, b in enumerate(blocks) if "voice_second_factor_enabled" not in b]
-    assert not ohne, f"construction sites without the field: {ohne}"
+    missing = [i for i, b in enumerate(blocks) if "voice_second_factor_enabled" not in b]
+    assert not missing, f"construction sites without the field: {missing}"

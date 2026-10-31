@@ -76,7 +76,7 @@ def _sanitize_desc(raw: str | None) -> str:
     return cleaned[:_SIMBA_DESC_MAX].strip()
 
 
-def _bezeichnung(doc) -> str:
+def _upload_description(doc) -> str:
     """Human 'Bezeichnung' for a Simba upload from the folder-ingest review flow.
 
     Source = the document's generated title (Schicht A) → title → filename stem;
@@ -287,7 +287,7 @@ async def list_pending(
     for (p, doc) in rows:
         if not _owns(p, user):
             continue
-        desc = _bezeichnung(doc) if doc is not None else ""
+        desc = _upload_description(doc) if doc is not None else ""
         month, year = await _document_period(db, p.document_id, doc) if doc is not None else (None, None)
         out.append((p, desc, month, year))
     return out
@@ -361,7 +361,7 @@ async def create_proposal_for_document(db, document_id: int, user) -> dict:
     ).scalar_one_or_none()
     # Bezeichnung prefill — a pure function of the document (generated_title →
     # title → filename), the same value list_pending pairs with each row.
-    desc = _bezeichnung(doc)
+    desc = _upload_description(doc)
     # Booking period (Zeitraum) from the document's OWN date — so the review form
     # defaults to the invoice month, not the current month (#1167).
     pmonth, pyear = await _document_period(db, document_id, doc)
@@ -507,7 +507,7 @@ async def confirm(
 
     # User-edited Bezeichnung wins when it survives sanitization; blank OR an
     # all-disallowed value falls back to the derived title (never sends nothing).
-    bezeichnung = _sanitize_desc(description) or _bezeichnung(doc)
+    upload_description = _sanitize_desc(description) or _upload_description(doc)
 
     # Pre-upload duplicate guard: is this document ALREADY in Simba? The portal
     # forbids withdrawal, so surface a likely-existing copy and require an
@@ -515,7 +515,7 @@ async def confirm(
     if not force:
         existing = await _find_in_simba(
             mcp_manager,
-            bezeichnung or Path(doc.filename or "").stem,
+            upload_description or Path(doc.filename or "").stem,
             category=category,
             type_=type_,
         )
@@ -534,8 +534,8 @@ async def confirm(
         return {"success": False, "message": "already_resolved"}
 
     file_entry: dict[str, str] = {"content_base64": content_base64, "filename": doc.filename}
-    if bezeichnung:
-        file_entry["description"] = bezeichnung
+    if upload_description:
+        file_entry["description"] = upload_description
     tool_args: dict = {
         "category": category.strip(),
         "type": type_.strip(),
@@ -670,11 +670,11 @@ def _landed(result) -> bool:
         return False
     inner = _inner(result)
     try:
-        uebertragen = int(inner.get("uebertragen"))
+        transferred = int(inner.get("uebertragen"))
     except (TypeError, ValueError):
         return False
-    fehlgeschlagen = inner.get("fehlgeschlagen") or 0
-    return uebertragen > 0 and not fehlgeschlagen
+    failed = inner.get("fehlgeschlagen") or 0
+    return transferred > 0 and not failed
 
 
 def _failure_reason(result) -> str:

@@ -30,7 +30,7 @@ pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 
 @pytest.fixture
-async def zwei_peers(pg_db_session: AsyncSession) -> dict:
+async def two_peers(pg_db_session: AsyncSession) -> dict:
     """ONE owner, TWO peers -- both with `remote_user_id = 1`.
 
     Exactly the situation the old version failed in: both far sides number
@@ -44,22 +44,22 @@ async def zwei_peers(pg_db_session: AsyncSession) -> dict:
     pg_db_session.add_all([eigner, fremder])
     await pg_db_session.flush()
 
-    nah = PeerUser(
+    near = PeerUser(
         circle_owner_id=eigner.id, remote_pubkey="aa" * 32,
         remote_display_name="naher Peer", remote_user_id=1,
         granted_tier=2, transport_config={},
     )
-    fern = PeerUser(
+    far = PeerUser(
         circle_owner_id=eigner.id, remote_pubkey="bb" * 32,
         remote_display_name="ferner Peer", remote_user_id=1,   # the SAME number
         granted_tier=4, transport_config={},
     )
-    pg_db_session.add_all([nah, fern])
+    pg_db_session.add_all([near, far])
     await pg_db_session.flush()
-    return {"eigner": eigner.id, "fremder": fremder.id, "nah": nah, "fern": fern}
+    return {"eigner": eigner.id, "fremder": fremder.id, "near": near, "far": far}
 
 
-async def _sichtbar(db: AsyncSession, peer: PeerUser, stufen: list[int], eigner: int) -> set[int]:
+async def _visible_tiers(db: AsyncSession, peer: PeerUser, tiers: list[int], eigner: int) -> set[int]:
     """Which of the given tiers does this peer reach?
 
     Queries the REAL filter against a small VALUES table instead of creating a
@@ -68,53 +68,53 @@ async def _sichtbar(db: AsyncSession, peer: PeerUser, stufen: list[int], eigner:
     clause, params = kg_entities_circles_filter(
         0, alias="e", peer=PeerScope(owner_id=peer.circle_owner_id, tier=peer.granted_tier),
     )
-    werte = ", ".join(f"({t}, {eigner})" for t in stufen)
-    sql = text(f"SELECT e.circle_tier FROM (VALUES {werte}) AS e(circle_tier, user_id) WHERE {clause}")
+    values = ", ".join(f"({t}, {eigner})" for t in tiers)
+    sql = text(f"SELECT e.circle_tier FROM (VALUES {values}) AS e(circle_tier, user_id) WHERE {clause}")
     rows = (await db.execute(sql, params)).scalars().all()
     return set(rows)
 
 
-async def test_two_peers_one_owner_keep_their_OWN_tier(pg_db_session, zwei_peers):
+async def test_two_peers_one_owner_keep_their_OWN_tier(pg_db_session, two_peers):
     """🛑 The acceptance criterion. Before this both hit the same membership."""
-    eigner = zwei_peers["eigner"]
-    stufen = [0, 1, 2, 3, 4]
+    eigner = two_peers["eigner"]
+    tiers = [0, 1, 2, 3, 4]
 
-    nah = await _sichtbar(pg_db_session, zwei_peers["nah"], stufen, eigner)
-    fern = await _sichtbar(pg_db_session, zwei_peers["fern"], stufen, eigner)
+    near = await _visible_tiers(pg_db_session, two_peers["near"], tiers, eigner)
+    far = await _visible_tiers(pg_db_session, two_peers["far"], tiers, eigner)
 
     # Tier 2 reaches 2,3,4 -- the ladder runs against intuition.
-    assert nah == {2, 3, 4}, nah
+    assert near == {2, 3, 4}, near
     # Tier 4 reaches only public content.
-    assert fern == {4}, fern
+    assert far == {4}, far
     # And this is the core: the two do NOT see the same thing, although
     # their `remote_user_id` is identical.
-    assert nah != fern
+    assert near != far
 
 
-async def test_a_peer_sees_NOTHING_of_another_owner(pg_db_session, zwei_peers):
+async def test_a_peer_sees_NOTHING_of_another_owner(pg_db_session, two_peers):
     """🛑 The owner binding. Without it the peer would see its tier at EVERY
     owner on the instance -- the repair would become a leak."""
-    fremd = await _sichtbar(
-        pg_db_session, zwei_peers["nah"], [0, 1, 2, 3], zwei_peers["fremder"])
-    assert fremd == set(), fremd
+    foreign = await _visible_tiers(
+        pg_db_session, two_peers["near"], [0, 1, 2, 3], two_peers["fremder"])
+    assert foreign == set(), foreign
 
     # Negative control: at its OWN owner the same peer does see something --
     # so the empty set above comes from the binding, not from the query
     # finding nothing at all.
-    eigen = await _sichtbar(
-        pg_db_session, zwei_peers["nah"], [0, 1, 2, 3], zwei_peers["eigner"])
-    assert eigen == {2, 3}, eigen
+    own = await _visible_tiers(
+        pg_db_session, two_peers["near"], [0, 1, 2, 3], two_peers["eigner"])
+    assert own == {2, 3}, own
 
 
-async def test_public_stays_reachable_for_any_owner(pg_db_session, zwei_peers):
+async def test_public_stays_reachable_for_any_owner(pg_db_session, two_peers):
     """Public is public -- at a foreign owner too. That is the second branch
     of the clause and has to be preserved."""
-    fremd = await _sichtbar(
-        pg_db_session, zwei_peers["nah"], [3, 4], zwei_peers["fremder"])
-    assert fremd == {4}, fremd
+    foreign = await _visible_tiers(
+        pg_db_session, two_peers["near"], [3, 4], two_peers["fremder"])
+    assert foreign == {4}, foreign
 
 
-async def test_pairing_writes_NO_circle_membership_anymore(pg_db_session, zwei_peers):
+async def test_pairing_writes_NO_circle_membership_anymore(pg_db_session, two_peers):
     """🛑 The cause, measured against the database.
 
     Until 2026-10-27 every pairing wrote a `circle_memberships` row with the
@@ -123,16 +123,16 @@ async def test_pairing_writes_NO_circle_membership_anymore(pg_db_session, zwei_p
     """
     n = (await pg_db_session.execute(text(
         "SELECT count(*) FROM circle_memberships WHERE circle_owner_id = :o"
-    ), {"o": zwei_peers["eigner"]})).scalar()
+    ), {"o": two_peers["eigner"]})).scalar()
     assert n == 0, f"{n} membership(s) — the pairing writes into the person table again"
 
 
-async def test_the_tier_survives_a_round_trip_through_the_database(pg_db_session, zwei_peers):
+async def test_the_tier_survives_a_round_trip_through_the_database(pg_db_session, two_peers):
     """The column is `NOT NULL` with a default of 4. A newly created pairing
     without an explicit tier gets the NARROWEST -- fail-closed, not
     generous."""
     ohne = PeerUser(
-        circle_owner_id=zwei_peers["eigner"], remote_pubkey="cc" * 32,
+        circle_owner_id=two_peers["eigner"], remote_pubkey="cc" * 32,
         remote_display_name="ohne Angabe", remote_user_id=5, transport_config={},
     )
     pg_db_session.add(ohne)
@@ -140,5 +140,5 @@ async def test_the_tier_survives_a_round_trip_through_the_database(pg_db_session
     await pg_db_session.refresh(ohne)
     assert ohne.granted_tier == 4, ohne.granted_tier
 
-    sichtbar = await _sichtbar(pg_db_session, ohne, [0, 1, 2, 3, 4], zwei_peers["eigner"])
-    assert sichtbar == {4}, sichtbar
+    visible = await _visible_tiers(pg_db_session, ohne, [0, 1, 2, 3, 4], two_peers["eigner"])
+    assert visible == {4}, visible

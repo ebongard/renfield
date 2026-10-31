@@ -22,25 +22,25 @@ from services.federation_query_responder import PendingScopeError, _peer_scope_f
 pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
 
-def _satz(**over) -> _PendingRequest:
-    grund = dict(
+def _record(**over) -> _PendingRequest:
+    defaults = dict(
         request_id="r1", asker_pubkey="ab" * 32, peer_user_id=7,
         asker_local_user_id=None, max_visible_tier=2,
         query="was weisst du?", initiated_at=0.0,
     )
-    grund.update(over)
-    return _PendingRequest(**grund)
+    defaults.update(over)
+    return _PendingRequest(**defaults)
 
 
 def test_a_fallback_record_yields_the_pairing_scope():
-    scope = _peer_scope_for(_satz(peer_owner_id=1, mapped=False))
+    scope = _peer_scope_for(_record(peer_owner_id=1, mapped=False))
     assert scope is not None
     assert (scope.owner_id, scope.tier) == (1, 2)
 
 
 def test_a_mapped_record_yields_no_peer_scope():
     """Mapped means: runs AS the linked person, with full circle access."""
-    assert _peer_scope_for(_satz(asker_local_user_id=99, mapped=True)) is None
+    assert _peer_scope_for(_record(asker_local_user_id=99, mapped=True)) is None
 
 
 def test_an_OLD_record_is_refused_instead_of_silently_widened():
@@ -50,11 +50,11 @@ def test_an_OLD_record_is_refused_instead_of_silently_widened():
     borrowed foreign id in `asker_local_user_id`. It must NOT pass as a mapped
     record.
     """
-    alt = _satz(asker_local_user_id=42)   # 42 = peer.remote_user_id, as before
-    assert alt.mapped is False, "the default must be on the safe side"
-    assert alt.peer_owner_id is None
+    legacy = _record(asker_local_user_id=42)   # 42 = peer.remote_user_id, as before
+    assert legacy.mapped is False, "the default must be on the safe side"
+    assert legacy.peer_owner_id is None
     with pytest.raises(PendingScopeError):
-        _peer_scope_for(alt)
+        _peer_scope_for(legacy)
 
 
 def test_the_default_of_the_discriminator_is_the_SAFE_side():
@@ -96,17 +96,17 @@ def test_the_responder_no_longer_resolves_a_peer_by_pubkey_ALONE():
 
     from services.federation_query_responder import FederationQueryResponder
 
-    baum = ast.parse(textwrap.dedent(
+    tree = ast.parse(textwrap.dedent(
         inspect.getsource(FederationQueryResponder._lookup_peer)))
-    fn = baum.body[0]
-    rumpf = ast.unparse(ast.Module(
+    fn = tree.body[0]
+    body_src = ast.unparse(ast.Module(
         body=[k for k in fn.body if not (
             isinstance(k, ast.Expr) and isinstance(k.value, ast.Constant)
             and isinstance(k.value.value, str))],
         type_ignores=[]))
-    assert "scalar_one_or_none" not in rumpf, rumpf
+    assert "scalar_one_or_none" not in body_src, body_src
     # Negative control: the body is not empty, so the check measures something.
-    assert "scalars" in rumpf and "revoked_at" in rumpf, rumpf
+    assert "scalars" in body_src and "revoked_at" in body_src, body_src
 
 
 def test_the_pairing_refuses_a_second_owner_for_the_same_instance():
@@ -121,21 +121,21 @@ def test_the_pairing_refuses_a_second_owner_for_the_same_instance():
 
     from services.pairing_service import PairingService
 
-    quelle = textwrap.dedent(inspect.getsource(PairingService._upsert_peer_user))
-    baum = ast.parse(quelle)
-    rumpf = ast.unparse(baum)
-    assert "circle_owner_id != owner_user_id" in rumpf, rumpf
+    source = textwrap.dedent(inspect.getsource(PairingService._upsert_peer_user))
+    tree = ast.parse(source)
+    body_src = ast.unparse(tree)
+    assert "circle_owner_id != owner_user_id" in body_src, body_src
     # Since the review of PR #1421 the VISIBLE subclass -- the uniform 400
     # would have swallowed the reason.
-    assert "AlreadyPairedElsewhere" in rumpf, rumpf
+    assert "AlreadyPairedElsewhere" in body_src, body_src
     # And it sits in `_upsert_peer_user`, so it applies on accept AND on
     # complete -- not just at one of the two steps.
     import services.pairing_service as ps
-    aufrufer = [
+    callers = [
         n for n in ast.walk(ast.parse(inspect.getsource(ps)))
         if isinstance(n, ast.Attribute) and n.attr == "_upsert_peer_user"
     ]
-    assert len(aufrufer) >= 2, f"only {len(aufrufer)} callers found"
+    assert len(callers) >= 2, f"only {len(callers)} callers found"
 
 
 def test_the_already_paired_refusal_is_VISIBLE_not_swallowed():
@@ -164,17 +164,17 @@ def test_the_already_paired_refusal_is_VISIBLE_not_swallowed():
     assert issubclass(AlreadyPairedElsewhere, PairingError), (
         "must stay a subclass, or it escapes the uniform catch entirely")
 
-    baum = ast.parse(inspect.getsource(federation_pairing))
-    for fn in ast.walk(baum):
+    tree = ast.parse(inspect.getsource(federation_pairing))
+    for fn in ast.walk(tree):
         if not isinstance(fn, ast.AsyncFunctionDef):
             continue
-        namen = [
+        names = [
             h.type.id for t in ast.walk(fn) if isinstance(t, ast.Try)
             for h in t.handlers if isinstance(h.type, ast.Name)
         ]
-        if "PairingError" in namen:
-            assert "AlreadyPairedElsewhere" in namen, (
+        if "PairingError" in names:
+            assert "AlreadyPairedElsewhere" in names, (
                 f"{fn.name}: catches PairingError, but not the visible special case")
-            assert namen.index("AlreadyPairedElsewhere") < namen.index("PairingError"), (
+            assert names.index("AlreadyPairedElsewhere") < names.index("PairingError"), (
                 f"{fn.name}: the uniform catch comes BEFORE the special case and "
                 "swallows it")

@@ -81,7 +81,7 @@ def _reasons(sat: Satellite) -> list:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.satellite
-def test_laengenabbruch_feuert_jenseits_der_40s_grenze():
+def test_the_length_cutoff_fires_beyond_the_40s_limit():
     """A 60 s limit > 40 s (the old buffer cap): the cutoff MUST still come."""
     sat = _make_satellite(max_recording_seconds=60.0)
     # 751 chunks = 60.08 s -- the first position genuinely above 60 s.
@@ -93,7 +93,7 @@ def test_laengenabbruch_feuert_jenseits_der_40s_grenze():
 
 
 @pytest.mark.satellite
-def test_laengenabbruch_nicht_vor_dem_limit():
+def test_no_length_cutoff_before_the_limit():
     """Exactly 60.0 s is not above 60 s -- no cutoff yet."""
     sat = _make_satellite(max_recording_seconds=60.0)
     _feed(sat, 750, speech=True)   # 750 * 0.08 = 60.0 s
@@ -103,7 +103,7 @@ def test_laengenabbruch_nicht_vor_dem_limit():
 
 
 @pytest.mark.satellite
-def test_zaehler_laeuft_jenseits_der_alten_grenze_weiter():
+def test_the_counter_keeps_running_beyond_the_old_limit():
     """The turn counter has no upper bound -- it freezes nowhere."""
     sat = _make_satellite(max_recording_seconds=3600.0)
     _feed(sat, OLD_BUFFER_CAP_CHUNKS + 120, speech=True)
@@ -113,7 +113,7 @@ def test_zaehler_laeuft_jenseits_der_alten_grenze_weiter():
 
 
 @pytest.mark.satellite
-def test_kein_gedeckelter_audiopuffer_mehr():
+def test_no_capped_audio_buffer_any_more():
     """The satellite holds no audio back -- it is streamed chunk by chunk.
 
     The removed buffer was the cause of the regression: nobody read it, only
@@ -125,7 +125,7 @@ def test_kein_gedeckelter_audiopuffer_mehr():
 
 
 @pytest.mark.satellite
-def test_kurzes_limit_unterhalb_der_40s_grenze_feuert_weiterhin():
+def test_a_short_limit_below_the_40s_limit_still_fires():
     """The old behaviour (20 s < 40 s) stays unchanged."""
     sat = _make_satellite(max_recording_seconds=20.0)
     _feed(sat, 251, speech=True)   # 251 * 0.08 = 20.08 s
@@ -138,7 +138,7 @@ def test_kurzes_limit_unterhalb_der_40s_grenze_feuert_weiterhin():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.satellite
-def test_stille_innerhalb_der_karenzzeit_beendet_nicht():
+def test_silence_within_the_grace_period_does_not_end_the_turn():
     """Before the grace period runs out, silence does not count."""
     sat = _make_satellite(max_recording_seconds=60.0)
     grace_chunks = int(MIN_LISTENING_S * 1000 / (CHUNK_SECONDS * 1000))
@@ -149,7 +149,7 @@ def test_stille_innerhalb_der_karenzzeit_beendet_nicht():
 
 
 @pytest.mark.satellite
-def test_stille_nach_der_karenzzeit_beendet_den_zug():
+def test_silence_after_the_grace_period_ends_the_turn():
     sat = _make_satellite(max_recording_seconds=60.0)
     grace_chunks = int(MIN_LISTENING_S * 1000 / (CHUNK_SECONDS * 1000))
     silence_needed = int(SILENCE_MS / (CHUNK_SECONDS * 1000))
@@ -161,7 +161,7 @@ def test_stille_nach_der_karenzzeit_beendet_den_zug():
 
 
 @pytest.mark.satellite
-def test_sprache_setzt_den_stillezaehler_zurueck():
+def test_speech_resets_the_silence_counter():
     """A pause in mid-sentence must not end the turn."""
     sat = _make_satellite(max_recording_seconds=60.0)
     grace_chunks = int(MIN_LISTENING_S * 1000 / (CHUNK_SECONDS * 1000))
@@ -180,7 +180,7 @@ def test_sprache_setzt_den_stillezaehler_zurueck():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.satellite
-def test_zaehler_wird_an_jeder_ruecksetzstelle_genullt():
+def test_the_counter_is_zeroed_at_every_reset_site():
     """Wherever ``_silence_chunks`` is zeroed, ``_recorded_chunks`` MUST go too.
 
     A new turn that inherits the previous one's counter would be cut off
@@ -250,7 +250,7 @@ def _end_turn_like_production(sat: Satellite) -> None:
 
 
 @pytest.mark.satellite
-async def test_neuer_weckwort_zug_beginnt_bei_null():
+async def test_a_new_wakeword_turn_starts_at_zero():
     """After a 60 s turn the next one must not end on the first chunk."""
     sat = _make_satellite(max_recording_seconds=60.0)
     _feed(sat, 751, speech=True)
@@ -281,7 +281,7 @@ async def test_neuer_weckwort_zug_beginnt_bei_null():
 
 
 @pytest.mark.satellite
-def test_server_befohlener_zug_beginnt_bei_null():
+def test_a_server_commanded_turn_starts_at_zero():
     """``state: listening`` from the server starts a turn like the wake word does."""
     sat = _make_satellite(max_recording_seconds=60.0)
     _feed(sat, 751, speech=True)

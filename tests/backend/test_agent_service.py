@@ -1902,7 +1902,7 @@ class TestIsEmptyResult:
         assert _is_empty_result({"success": True}) is True
 
     @pytest.mark.unit
-    def test_kein_ergebnis(self):
+    def test_the_german_no_result_message(self):
         assert _is_empty_result({"message": "Kein Ergebnis"}) is True
 
     @pytest.mark.unit
@@ -2918,17 +2918,17 @@ class TestAStartedScanIsNotAFailure:
         import ast
         import pathlib
 
-        quelle = (pathlib.Path(__file__).resolve().parents[2]
+        source_path = (pathlib.Path(__file__).resolve().parents[2]
                   / "src" / "backend" / "api" / "websocket" / "chat_handler.py")
-        baum = ast.parse(quelle.read_text(encoding="utf-8"))
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
 
-        aufrufe = [
-            n for n in ast.walk(baum)
+        call_sites = [
+            n for n in ast.walk(tree)
             if isinstance(n, ast.Call)
             and getattr(n.func, "id", None) == "_failed_agent_actions"
         ]
-        assert len(aufrufe) == 2, f"{len(aufrufe)} evaluation sites — test or code is drifting"
-        for a in aufrufe:
+        assert len(call_sites) == 2, f"{len(call_sites)} evaluation sites — test or code is drifting"
+        for a in call_sites:
             assert len(a.args) == 2, (
                 "an evaluation site does not pass the abort set — "
                 "there `the last attempt counts` still applies")

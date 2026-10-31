@@ -783,16 +783,16 @@ class TestResolveCluster:
         owner = await _make_user(pg_db_session, "clu_repoint")
         a = await _entity(pg_db_session, owner, "Jutta", tier=2, mention=1, emb=_unit(6))
         b = await _entity(pg_db_session, owner, "Jutta", tier=2, mention=9, emb=_unit(6))
-        privat = await _entity(pg_db_session, owner, "Jutta", tier=0, mention=4, emb=_unit(6))
+        private_entity = await _entity(pg_db_session, owner, "Jutta", tier=0, mention=4, emb=_unit(6))
         await self._proposal(pg_db_session, owner, a, b)
         # hangs off a, which is folded LATER, not off the survivor
         px = await self._proposal(
-            pg_db_session, owner, privat, a, reason=KG_MERGE_REASON_CROSS_TIER
+            pg_db_session, owner, private_entity, a, reason=KG_MERGE_REASON_CROSS_TIER
         )
         rec = _recon(pg_db_session, monkeypatch)
 
         res = await rec.resolve_cluster(
-            user_id=owner.id, entity_ids=[a.id, b.id, privat.id],
+            user_id=owner.id, entity_ids=[a.id, b.id, private_entity.id],
             survivor_id=b.id, decision="merge", resolved_by=owner.id,
         )
 
@@ -802,7 +802,7 @@ class TestResolveCluster:
         )).scalar_one()
         assert moved.status == KG_MERGE_PROPOSAL_PENDING
         assert moved.winner_entity_id == b.id       # now points at the survivor
-        assert moved.loser_entity_id == privat.id
+        assert moved.loser_entity_id == private_entity.id
 
     async def test_a_pair_between_two_folded_entities_is_closed(
         self, pg_db_session, monkeypatch

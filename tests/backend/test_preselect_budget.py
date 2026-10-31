@@ -40,7 +40,7 @@ pytestmark = pytest.mark.unit
 
 #: The measured edge. +589 brings back four load-bearing endings and holds
 #: BOTH collections; +829 (one step more) added 0 points; +2640 cost 7.
-GEMESSENE_KANTE = 589
+MEASURED_EDGE = 589
 
 
 def test_the_budget_sum_stays_at_the_MEASURED_edge():
@@ -54,10 +54,10 @@ def test_the_budget_sum_stays_at_the_MEASURED_edge():
     to rise, a new measurement belongs with it (`bin/measure-preselect.py`
     against BOTH case collections), not merely a larger number here.
     """
-    summe = sum(b - _PRESELECT_DESC_CHARS for b in _PRESELECT_DESC_BUDGET.values())
-    assert summe <= GEMESSENE_KANTE, (
-        f"budgets add up to +{summe} characters, measured and proven is "
-        f"+{GEMESSENE_KANTE}. At +2640 the peer collection fell to 85 % and a "
+    total = sum(b - _PRESELECT_DESC_CHARS for b in _PRESELECT_DESC_BUDGET.values())
+    assert total <= MEASURED_EDGE, (
+        f"budgets add up to +{total} characters, measured and proven is "
+        f"+{MEASURED_EDGE}. At +2640 the peer collection fell to 85 % and a "
         "local search turned into a federated query. Measure first, then raise.")
 
 
@@ -83,8 +83,8 @@ def test_a_tool_WITHOUT_a_budget_still_gets_the_default():
     it lifted by accident, 2640 characters would stand in the prompt again."""
     w = MagicMock()
     w.description, w.hint = "y" * 2000, ""
-    zeile = preselect_tool_line("internal.gibt_es_nicht", w)
-    assert len(zeile) == len("- internal.gibt_es_nicht: ") + _PRESELECT_DESC_CHARS
+    line = preselect_tool_line("internal.gibt_es_nicht", w)
+    assert len(line) == len("- internal.gibt_es_nicht: ") + _PRESELECT_DESC_CHARS
 
 
 def test_the_hint_is_STILL_exempt():
@@ -93,9 +93,9 @@ def test_the_hint_is_STILL_exempt():
     hint carries 1760 characters."""
     w = MagicMock()
     w.description, w.hint = "z" * 1000, "H" * 900
-    zeile = preselect_tool_line("mcp.scanner.scan_document", w)
-    assert "H" * 900 in zeile
-    assert zeile.count("z") == _PRESELECT_DESC_CHARS
+    line = preselect_tool_line("mcp.scanner.scan_document", w)
+    assert "H" * 900 in line
+    assert line.count("z") == _PRESELECT_DESC_CHARS
 
 
 class TestTheBudgetedToolsAreActuallyComplete:
@@ -113,12 +113,12 @@ class TestTheBudgetedToolsAreActuallyComplete:
     def test_every_budgeted_tool_exists(self, registry):
         """A budget for a renamed or removed tool is dead weight and hides
         the fact that the real text is being capped again."""
-        fehlen = [n for n in _PRESELECT_DESC_BUDGET if n not in registry._tools]
-        assert not fehlen, f"budget without a tool: {fehlen}"
+        missing = [n for n in _PRESELECT_DESC_BUDGET if n not in registry._tools]
+        assert not missing, f"budget without a tool: {missing}"
 
     def test_no_budgeted_tool_is_truncated(self, registry):
         """The purpose of the mapping: these four are to stand COMPLETE."""
-        zu_kurz = []
+        too_short = []
         for name, budget in _PRESELECT_DESC_BUDGET.items():
             w = registry._tools.get(name)
             if w is None:
@@ -128,8 +128,8 @@ class TestTheBudgetedToolsAreActuallyComplete:
             if h and d.endswith(h):
                 d = d[: len(d) - len(h)].rstrip()
             if len(d) > budget:
-                zu_kurz.append((name, len(d), budget))
-        assert not zu_kurz, (
+                too_short.append((name, len(d), budget))
+        assert not too_short, (
             "budget smaller than the text — it keeps being truncated, only "
-            f"no longer visibly: {zu_kurz}. Shorten the text or (after a "
-            "measurement) raise the budget and `GEMESSENE_KANTE` together.")
+            f"no longer visibly: {too_short}. Shorten the text or (after a "
+            "measurement) raise the budget and `MEASURED_EDGE` together.")

@@ -35,7 +35,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.backend]
 _REQUIREMENTS = Path(__file__).resolve().parents[2] / "src" / "backend" / "requirements.txt"
 
 
-def _zeilen() -> list[str]:
+def _lines() -> list[str]:
     """The requirement lines without comments and blank lines."""
     return [
         z.split("#", 1)[0].strip()
@@ -44,12 +44,12 @@ def _zeilen() -> list[str]:
     ]
 
 
-def _eintrag(paket: str) -> str:
-    """The line that declares `paket` -- extras included."""
-    muster = re.compile(rf"^{re.escape(paket)}(\[[^\]]*\])?\s*[<>=!~]", re.I)
-    treffer = [z for z in _zeilen() if muster.match(z)]
-    assert len(treffer) == 1, f"{paket}: expected exactly one line, found {treffer}"
-    return treffer[0]
+def _entry(package: str) -> str:
+    """The line that declares `package` -- extras included."""
+    pattern = re.compile(rf"^{re.escape(package)}(\[[^\]]*\])?\s*[<>=!~]", re.I)
+    matches = [z for z in _lines() if pattern.match(z)]
+    assert len(matches) == 1, f"{package}: expected exactly one line, found {matches}"
+    return matches[0]
 
 
 def test_sqlalchemy_declares_the_asyncio_extra():
@@ -59,9 +59,9 @@ def test_sqlalchemy_declares_the_asyncio_extra():
 
     The extra is what the error message itself recommends.
     """
-    zeile = _eintrag("sqlalchemy")
-    assert "[asyncio]" in zeile.lower(), (
-        f"sqlalchemy declared without the [asyncio] extra: {zeile!r}. "
+    line = _entry("sqlalchemy")
+    assert "[asyncio]" in line.lower(), (
+        f"sqlalchemy declared without the [asyncio] extra: {line!r}. "
         "The async path needs greenlet; without the extra it only comes along by chance."
     )
 
@@ -74,9 +74,9 @@ def test_sqlalchemy_is_bounded_above():
     the dependency semantics changed. The jump to 2.1 is a step of its own,
     checked -- not a side effect of somebody having built on a different day.
     """
-    zeile = _eintrag("sqlalchemy")
-    assert re.search(r"<\s*\d", zeile), (
-        f"sqlalchemy without an upper bound: {zeile!r}. Any build can then jump across a "
+    line = _entry("sqlalchemy")
+    assert re.search(r"<\s*\d", line), (
+        f"sqlalchemy without an upper bound: {line!r}. Any build can then jump across a "
         "version boundary without anybody having decided it."
     )
 

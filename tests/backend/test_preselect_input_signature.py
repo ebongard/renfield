@@ -29,7 +29,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
 #: Exactly as `_preselect_tools` assembles it: one line per tool, with the
 #: name, the trimmed description and the untruncated hint.
-LISTE = "\n".join([
+TOOL_LIST = "\n".join([
     "- mcp.scanner.scan_document: Startet einen NEUEN Scan. „scanne nach <X>“ "
     "bedeutet beim PAPIERSCANNER IMMER, dass <X> das ZIEL ist.",
     "- mcp.paperless.search_documents: Search archived documents by text.",
@@ -47,18 +47,18 @@ def _prompt(lang: str, tool_list: str, message: str = "scanne nach xidra") -> st
     """
     from services.prompt_manager import prompt_manager
 
-    fertig = prompt_manager.get(
+    rendered = prompt_manager.get(
         "agent", "tool_preselect_prompt", lang=lang,
         message=message, tool_list=tool_list,
     )
-    assert fertig, f"no `tool_preselect_prompt` template for lang={lang!r}"
-    return fertig
+    assert rendered, f"no `tool_preselect_prompt` template for lang={lang!r}"
+    return rendered
 
 
 def test_the_same_input_gives_the_same_signature():
     """Otherwise a comparison between two turns would be worthless."""
-    assert preselect_input_signature(_prompt("de", LISTE)) == \
-        preselect_input_signature(_prompt("de", str(LISTE)))
+    assert preselect_input_signature(_prompt("de", TOOL_LIST)) == \
+        preselect_input_signature(_prompt("de", str(TOOL_LIST)))
 
 
 def test_a_changed_DESCRIPTION_changes_the_signature():
@@ -69,13 +69,13 @@ def test_a_changed_DESCRIPTION_changes_the_signature():
     patch, say, as happened on 2026-10-26 -- rearranged the prompt and left the
     signature untouched.
     """
-    geaendert = LISTE.replace("das ZIEL ist", "ein Suchbegriff ist")
-    assert geaendert != LISTE, "the test is meant to really change the hint text"
+    changed = TOOL_LIST.replace("das ZIEL ist", "ein Suchbegriff ist")
+    assert changed != TOOL_LIST, "the test is meant to really change the hint text"
     # The same names, different text:
-    assert [z.split(":")[0] for z in geaendert.splitlines()] == \
-           [z.split(":")[0] for z in LISTE.splitlines()]
-    assert preselect_input_signature(_prompt("de", geaendert)) != \
-        preselect_input_signature(_prompt("de", LISTE)), (
+    assert [z.split(":")[0] for z in changed.splitlines()] == \
+           [z.split(":")[0] for z in TOOL_LIST.splitlines()]
+    assert preselect_input_signature(_prompt("de", changed)) != \
+        preselect_input_signature(_prompt("de", TOOL_LIST)), (
         "the signature ignores the description text — then a changed "
         "hint stays invisible although it rearranges the prompt")
 
@@ -92,10 +92,10 @@ def test_a_MESSAGE_that_differs_only_after_60_characters_changes_the_signature()
 
     Found in the review of #1413, before it was merged.
     """
-    vorsilbe = "scanne bitte die Seiten aus dem Einzug ein und lege sie dann ab"
-    assert len(vorsilbe) > 60, "the prefix must exceed 60 characters"
-    a = _prompt("de", LISTE, message=f"{vorsilbe} in der Instanz xidra")
-    b = _prompt("de", LISTE, message=f"{vorsilbe} in der Instanz haushalt")
+    prefix = "scanne bitte die Seiten aus dem Einzug ein und lege sie dann ab"
+    assert len(prefix) > 60, "the prefix must exceed 60 characters"
+    a = _prompt("de", TOOL_LIST, message=f"{prefix} in der Instanz xidra")
+    b = _prompt("de", TOOL_LIST, message=f"{prefix} in der Instanz haushalt")
     assert preselect_input_signature(a) != preselect_input_signature(b), (
         "the signature ignores the message — then it claims equality "
         "across two different prompts, and because of `message[:60]` "
@@ -106,8 +106,8 @@ def test_a_different_LANGUAGE_changes_the_signature():
     """`tool_preselect_prompt` exists in de AND en -- two different
     templates. A signature that passes over that asserts equality across two
     different prompts."""
-    assert preselect_input_signature(_prompt("en", LISTE)) != \
-        preselect_input_signature(_prompt("de", LISTE)), (
+    assert preselect_input_signature(_prompt("en", TOOL_LIST)) != \
+        preselect_input_signature(_prompt("de", TOOL_LIST)), (
         "the signature ignores the language")
 
 
@@ -119,12 +119,12 @@ def test_a_different_ORDER_changes_the_signature():
     A signature that captures only the SET would not have seen exactly the case
     it was built for.
     """
-    zeilen = LISTE.splitlines()
-    gedreht = "\n".join(reversed(zeilen))
-    assert sorted(gedreht.splitlines()) == sorted(zeilen), \
+    lines = TOOL_LIST.splitlines()
+    reordered = "\n".join(reversed(lines))
+    assert sorted(reordered.splitlines()) == sorted(lines), \
         "the test is meant to change only the order"
-    assert preselect_input_signature(_prompt("de", gedreht)) != \
-        preselect_input_signature(_prompt("de", LISTE)), (
+    assert preselect_input_signature(_prompt("de", reordered)) != \
+        preselect_input_signature(_prompt("de", TOOL_LIST)), (
         "the signature ignores the order — then a re-registration "
         "stays invisible, and exactly that was under suspicion on "
         "2026-10-26")
@@ -132,11 +132,11 @@ def test_a_different_ORDER_changes_the_signature():
 
 def test_an_added_or_removed_tool_changes_the_signature():
     """A server that has dropped out or been added has to show up."""
-    zeilen = LISTE.splitlines()
-    assert preselect_input_signature(_prompt("de", "\n".join(zeilen[:-1]))) != \
-        preselect_input_signature(_prompt("de", LISTE))
-    assert preselect_input_signature(_prompt("de", LISTE + "\n- mcp.email.send: Send mail.")) != \
-        preselect_input_signature(_prompt("de", LISTE))
+    lines = TOOL_LIST.splitlines()
+    assert preselect_input_signature(_prompt("de", "\n".join(lines[:-1]))) != \
+        preselect_input_signature(_prompt("de", TOOL_LIST))
+    assert preselect_input_signature(_prompt("de", TOOL_LIST + "\n- mcp.email.send: Send mail.")) != \
+        preselect_input_signature(_prompt("de", TOOL_LIST))
 
 
 def test_the_signature_fits_into_a_log_line():
@@ -147,7 +147,7 @@ def test_the_signature_fits_into_a_log_line():
     current choice without saying anything about fitness. What is checked is
     what the line needs.
     """
-    sig = preselect_input_signature(_prompt("de", LISTE))
+    sig = preselect_input_signature(_prompt("de", TOOL_LIST))
     assert sig.isalnum(), f"not readable as a word: {sig!r}"
     assert 6 <= len(sig) <= 16, f"unusable for a log line: {sig!r}"
 

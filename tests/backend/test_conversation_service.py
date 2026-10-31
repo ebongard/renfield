@@ -659,14 +659,14 @@ class TestLatestMessageId:
         service = ConversationService(db_session)
         sid = "frische-1"
         await service.save_message(sid, "user", "scanne nach Haushalt")
-        erste = await service.latest_message_id(sid)
-        assert erste is not None
+        first_id = await service.latest_message_id(sid)
+        assert first_id is not None
 
         # The turn itself writes its answer ...
         await service.save_message(sid, "assistant", "Scan gestartet",
                                    metadata={"action_success": True})
         zweite = await service.latest_message_id(sid)
-        assert zweite > erste
+        assert zweite > first_id
 
         # ... and AFTER that an asynchronous producer writes the completion
         # notice. That is exactly the write the mark has to make visible.
@@ -674,8 +674,8 @@ class TestLatestMessageId:
             sid, "assistant", "Der Scan ist am Papierstau gescheitert.",
             metadata={"scanner_job": {"job_id": "x", "status": "failed"},
                       "action_success": False})
-        dritte = await service.latest_message_id(sid)
-        assert dritte > zweite, (
+        third_id = await service.latest_message_id(sid)
+        assert third_id > zweite, (
             "a foreign write does not raise the mark — a live "
             "session could then never notice it")
 
@@ -692,9 +692,9 @@ class TestLatestMessageId:
             metadata={"scanner_job": {"job_id": "x", "status": "failed"},
                       "action_success": False})
 
-        verlauf = await service.load_context(sid, max_messages=10)
-        gescheitert = [m for m in verlauf
+        history = await service.load_context(sid, max_messages=10)
+        gescheitert = [m for m in history
                        if (m.get("metadata") or {}).get("action_success") is False]
         assert len(gescheitert) == 1, (
-            f"exactly one message must be marked as failed: {verlauf}")
+            f"exactly one message must be marked as failed: {history}")
         assert "Papierstau" in gescheitert[0]["content"]

@@ -62,7 +62,7 @@ def _exhaust_second(limiter: WSRateLimiter, key: str) -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_burst_ok_ueberspringt_nur_das_sekundenlimit():
+def test_burst_ok_skips_only_the_per_second_limit():
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
     _exhaust_second(limiter, SAT)
 
@@ -70,7 +70,7 @@ def test_burst_ok_ueberspringt_nur_das_sekundenlimit():
 
 
 @pytest.mark.unit
-def test_burst_ok_bleibt_am_minutenbudget_haengen():
+def test_burst_ok_still_stops_at_the_minute_budget():
     """The burst is capped -- a flood still does not get through."""
     limiter = WSRateLimiter(per_second=3, per_minute=5, enabled=True)
     for _ in range(5):
@@ -82,7 +82,7 @@ def test_burst_ok_bleibt_am_minutenbudget_haengen():
 
 
 @pytest.mark.unit
-def test_burst_frames_zaehlen_gegen_das_budget_aller_frames():
+def test_burst_frames_count_against_the_budget_of_all_frames():
     """A burst that is let through is no free pass for the rest."""
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
     _exhaust_second(limiter, SAT)
@@ -101,7 +101,7 @@ def test_burst_frames_zaehlen_gegen_das_budget_aller_frames():
     (_text("audio_end", reason="silence"), "audio_end"),
     (_binary(), "audio"),
 ])
-def test_frames_eines_eigenen_laufenden_zuges_werden_erkannt(raw, expected):
+def test_frames_of_its_own_running_turn_are_recognised(raw, expected):
     assert _live_session_frame(raw, SAT, _manager()) == expected
 
 
@@ -119,13 +119,13 @@ def test_frames_eines_eigenen_laufenden_zuges_werden_erkannt(raw, expected):
     {"type": "websocket.receive", "text": "[1, 2]"},
     {"type": "websocket.receive", "text": None},
 ])
-def test_alles_andere_ist_kein_zug_frame(raw):
+def test_everything_else_is_not_a_turn_frame(raw):
     assert _live_session_frame(raw, SAT, _manager()) is None
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("raw", [_text("audio"), _text("audio_end"), _binary()])
-def test_fremde_sitzung_zaehlt_nicht(raw):
+def test_a_foreign_session_does_not_count(raw):
     """A satellite must not buy itself out with somebody else's session."""
     assert _live_session_frame(raw, OTHER, _manager()) is None
 
@@ -136,7 +136,7 @@ def test_fremde_sitzung_zaehlt_nicht(raw):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("raw", [_text("audio", chunk="QUJD"), _binary()])
-def test_audio_schwall_eines_laufenden_zuges_kommt_durch(raw):
+def test_the_audio_burst_of_a_running_turn_gets_through(raw):
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
     _exhaust_second(limiter, SAT)
 
@@ -144,7 +144,7 @@ def test_audio_schwall_eines_laufenden_zuges_kommt_durch(raw):
 
 
 @pytest.mark.unit
-def test_audio_end_kommt_selbst_bei_erschoepftem_minutenbudget_durch():
+def test_audio_end_gets_through_even_with_an_exhausted_minute_budget():
     """A discarded audio_end strands the session -- it is never negotiable."""
     limiter = WSRateLimiter(per_second=100, per_minute=3, enabled=True)
     for _ in range(3):
@@ -155,7 +155,7 @@ def test_audio_end_kommt_selbst_bei_erschoepftem_minutenbudget_durch():
 
 
 @pytest.mark.unit
-def test_audio_jenseits_des_minutenbudgets_wird_abgewiesen():
+def test_audio_beyond_the_minute_budget_is_rejected():
     limiter = WSRateLimiter(per_second=100, per_minute=3, enabled=True)
     for _ in range(3):
         assert limiter.check(SAT)[0]
@@ -166,7 +166,7 @@ def test_audio_jenseits_des_minutenbudgets_wird_abgewiesen():
 
 
 @pytest.mark.unit
-def test_anderer_frame_im_schwall_bleibt_abgewiesen():
+def test_another_frame_in_the_burst_stays_rejected():
     """Heartbeat/BLE in the same burst: rejected, with the original reason."""
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
     _exhaust_second(limiter, SAT)
@@ -177,7 +177,7 @@ def test_anderer_frame_im_schwall_bleibt_abgewiesen():
 
 
 @pytest.mark.unit
-def test_unregistrierte_verbindung_wird_nie_klassifiziert():
+def test_an_unregistered_connection_is_never_classified():
     """No satellite_id, no second look -- the frame is not even parsed."""
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
     _exhaust_second(limiter, "10.0.0.9")
@@ -192,7 +192,7 @@ def test_unregistrierte_verbindung_wird_nie_klassifiziert():
 
 
 @pytest.mark.unit
-def test_erlaubter_frame_wird_nicht_klassifiziert():
+def test_an_allowed_frame_is_not_classified():
     """The normal path parses nothing twice."""
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
 
@@ -209,7 +209,7 @@ def test_erlaubter_frame_wird_nicht_klassifiziert():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_zweiter_blick_hat_ein_eigenes_budget():
+def test_the_second_look_has_its_own_budget():
     """Rejected frames must not be parsed without limit."""
     limiter = WSRateLimiter(per_second=1, per_minute=3, enabled=True)
     assert limiter.check(SAT)[0]
@@ -231,7 +231,7 @@ def test_zweiter_blick_hat_ein_eigenes_budget():
 
 
 @pytest.mark.unit
-def test_budget_des_zweiten_blicks_belastet_das_frame_budget_nicht():
+def test_the_second_look_budget_does_not_charge_the_frame_budget():
     limiter = WSRateLimiter(per_second=1, per_minute=100, enabled=True)
     assert limiter.check(SAT)[0]
     _rate_verdict(_text("heartbeat"), SAT, SAT, limiter, _manager())
@@ -241,7 +241,7 @@ def test_budget_des_zweiten_blicks_belastet_das_frame_budget_nicht():
 
 
 @pytest.mark.unit
-def test_durchgelassener_frame_zaehlt_nicht_als_verstoss():
+def test_a_frame_let_through_does_not_count_as_a_violation():
     """Otherwise the log reports "exceeded" for accepted frames and uses up
     the three-warning allowance that real violations need."""
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
@@ -256,7 +256,7 @@ def test_durchgelassener_frame_zaehlt_nicht_als_verstoss():
 
 
 @pytest.mark.unit
-def test_endgueltige_ablehnung_zaehlt_genau_einmal():
+def test_a_final_rejection_counts_exactly_once():
     limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
     for _ in range(3):
         assert limiter.check(SAT, record_violation=False)[0]
@@ -267,7 +267,7 @@ def test_endgueltige_ablehnung_zaehlt_genau_einmal():
 
 
 @pytest.mark.unit
-def test_sitzung_in_verarbeitung_gilt_weiter_als_laufend():
+def test_a_session_in_processing_still_counts_as_running():
     """"Live" means: the session exists. A late audio_end (or a straggler
     chunk) of a session in PROCESSING is treated no differently -- the session
     is only deleted at the end of the turn."""
@@ -276,7 +276,7 @@ def test_sitzung_in_verarbeitung_gilt_weiter_als_laufend():
 
 
 @pytest.mark.unit
-def test_empfangsschleife_nutzt_das_urteil_und_nie_den_limiter_direkt():
+def test_the_receive_loop_uses_the_verdict_and_never_the_limiter_directly():
     """Wiring: there is no test that drives the real WebSocket loop. Anyone
     who calls ``rate_limiter.check`` directly there again undoes the fix."""
     tree = ast.parse(inspect.getsource(satellite_handler))

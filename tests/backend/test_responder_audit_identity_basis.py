@@ -123,9 +123,9 @@ def test_both_columns_exist_on_the_model():
     is the only place that creates them."""
     from models.database import FederationQueryLog
 
-    spalten = {c.name: c for c in FederationQueryLog.__table__.columns}
-    assert spalten["direction"].nullable is False
-    assert spalten["identity_basis"].nullable is True, (
+    table_columns = {c.name: c for c in FederationQueryLog.__table__.columns}
+    assert table_columns["direction"].nullable is False
+    assert table_columns["identity_basis"].nullable is True, (
         "nullable, because legacy rows and asker rows do NOT know it")
 
 
@@ -377,18 +377,18 @@ class TestTheCancellationBranchIsACTUALLYWired:
         responder = fqr.FederationQueryResponder(db=AsyncMock())
         monkeypatch.setattr(responder, "_emit_progress", AsyncMock())
 
-        losgelaufen = asyncio.Event()
+        started = asyncio.Event()
 
-        async def haengender_abruf(session, pending):
-            losgelaufen.set()
+        async def hanging_retrieve(session, pending):
+            started.set()
             await asyncio.sleep(3600)   # until cancelled
 
-        monkeypatch.setattr(responder, "_retrieve", haengender_abruf)
+        monkeypatch.setattr(responder, "_retrieve", hanging_retrieve)
         # The background run's own session must not touch a database.
         monkeypatch.setattr(fqr, "AsyncSessionLocal", lambda: AsyncMock())
 
         task = asyncio.create_task(responder._run_query(p.request_id))
-        await losgelaufen.wait()
+        await started.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -418,16 +418,16 @@ class TestTheCancellationBranchIsACTUALLYWired:
         monkeypatch.setattr(responder, "_emit_progress", AsyncMock())
         monkeypatch.setattr(responder, "_retrieve", AsyncMock(return_value=[1, 2, 3]))
 
-        in_synthese = asyncio.Event()
+        in_synthesis = asyncio.Event()
 
-        async def haengende_synthese(frage, treffer):
-            in_synthese.set()
+        async def hanging_synthesis(question, matches):
+            in_synthesis.set()
             await asyncio.sleep(3600)
 
-        monkeypatch.setattr(responder, "_synthesize", haengende_synthese)
+        monkeypatch.setattr(responder, "_synthesize", hanging_synthesis)
 
         task = asyncio.create_task(responder._run_query(p.request_id))
-        await in_synthese.wait()
+        await in_synthesis.wait()
         assert p.retrieved_count == 3, (
             "by the time synthesis runs it must be established that a read "
             "happened")

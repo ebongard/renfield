@@ -178,7 +178,7 @@ def test_scanner_timeouts_follow_which_tools_still_work_inside_the_call():
     assert _server_call_timeout(state, "retry_pending_scans") >= 300
 
 
-def test_scanner_wird_mit_einem_GERAETEFREIEN_werkzeug_gesondet():
+def test_the_scanner_is_probed_with_a_DEVICE_FREE_tool():
     """🛑 The probe must NOT touch the device -- and must not fire on the
     normal case.
 

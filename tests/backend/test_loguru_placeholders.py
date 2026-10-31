@@ -38,7 +38,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
-_LOG_METHODEN = {"debug", "info", "warning", "error", "exception",
+_LOG_METHODS = {"debug", "info", "warning", "error", "exception",
                  "critical", "trace", "success"}
 
 #: The printf grammar: `%(name)s`, `%-10s`, `%5d`, `%.3f`, `%05.2f`.
@@ -58,7 +58,7 @@ _TOKEN = re.compile(
     r"%%|%(?:\([^)]*\))?[-+#0]*\d*(?:\.\d+)?[hlL]?[sdifrgeExXoucab]")
 
 
-def _hat_platzhalter(text: str) -> bool:
+def _has_placeholder(text: str) -> bool:
     """Does the text carry a real printf placeholder (not just `%%`)?"""
     return any(m.group(0) != "%%" for m in _TOKEN.finditer(text))
 
@@ -69,52 +69,52 @@ _LOGURU_IMPORT = re.compile(r"^\s*from\s+loguru\s+import\s+logger(?:\s+as\s+(\w+
                             re.MULTILINE)
 
 
-def _loguru_namen(quelle: str) -> set[str]:
+def _loguru_names(source: str) -> set[str]:
     """Under which names is loguru reachable in this file?"""
-    return {m.group(1) or "logger" for m in _LOGURU_IMPORT.finditer(quelle)}
+    return {m.group(1) or "logger" for m in _LOGURU_IMPORT.finditer(source)}
 
 
-def _logaufrufe(quelle: str, namen: set[str]):
+def _log_calls(source: str, names: set[str]):
     """Every `<name>.<method>(...)` -- including through `.opt(...)`/`.bind(...)`."""
     try:
-        baum = ast.parse(quelle)
+        tree = ast.parse(source)
     except SyntaxError:
         return
-    for knoten in ast.walk(baum):
-        if not (isinstance(knoten, ast.Call)
-                and isinstance(knoten.func, ast.Attribute)
-                and knoten.func.attr in _LOG_METHODEN):
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _LOG_METHODS):
             continue
         # The root of the attribute chain: `logger`, `logger.opt(...)`, `logger.bind(...)`
-        wurzel = knoten.func.value
-        while isinstance(wurzel, ast.Call):
-            wurzel = wurzel.func
-        while isinstance(wurzel, ast.Attribute):
-            wurzel = wurzel.value
-        if isinstance(wurzel, ast.Name) and wurzel.id in namen:
-            yield knoten
+        root = node.func.value
+        while isinstance(root, ast.Call):
+            root = root.func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id in names:
+            yield node
 
 
-def _verlierende_aufrufe(wurzel: Path) -> tuple[list[str], int]:
-    treffer: list[str] = []
-    geprueft = 0
-    for datei in sorted(wurzel.rglob("*.py")):
-        quelle = datei.read_text(encoding="utf-8")
-        namen = _loguru_namen(quelle)
-        if not namen:
+def _losing_calls(root: Path) -> tuple[list[str], int]:
+    hits: list[str] = []
+    checked = 0
+    for source_file in sorted(root.rglob("*.py")):
+        source = source_file.read_text(encoding="utf-8")
+        names = _loguru_names(source)
+        if not names:
             continue
-        geprueft += 1
-        for knoten in _logaufrufe(quelle, namen):
-            if len(knoten.args) < 2:
+        checked += 1
+        for node in _log_calls(source, names):
+            if len(node.args) < 2:
                 continue            # with no arguments there is nothing to lose
-            erstes = knoten.args[0]
-            if (isinstance(erstes, ast.Constant) and isinstance(erstes.value, str)
-                    and _hat_platzhalter(erstes.value)):
-                treffer.append(f"{datei}:{knoten.lineno} — {erstes.value[:60]!r}")
-    return treffer, geprueft
+            first = node.args[0]
+            if (isinstance(first, ast.Constant) and isinstance(first.value, str)
+                    and _has_placeholder(first.value)):
+                hits.append(f"{source_file}:{node.lineno} — {first.value[:60]!r}")
+    return hits, checked
 
 
-def _wurzel() -> Path:
+def _backend_root() -> Path:
     w = Path(__file__).resolve().parents[2] / "src" / "backend"
     # 🛑 Without this assertion the test would be SILENTLY GREEN on a wrong
     # root: `rglob` on a missing directory yields nothing, without an error.
@@ -125,12 +125,12 @@ def _wurzel() -> Path:
 def test_no_log_line_loses_its_arguments():
     """🛑 loguru substitutes `{}`, not `%s`. Whoever passes arguments has to
     use curly braces -- otherwise they vanish without a trace."""
-    verlierend, geprueft = _verlierende_aufrufe(_wurzel())
+    losing, checked = _losing_calls(_backend_root())
     # That anything was checked at all is part of the assertion.
-    assert geprueft > 50, f"only {geprueft} files with loguru seen — does the test check anything at all?"
-    assert not verlierend, (
+    assert checked > 50, f"only {checked} files with loguru seen — does the test check anything at all?"
+    assert not losing, (
         "these log calls silently lose their arguments (loguru substitutes "
-        "`{}`, not `%s`):\n  " + "\n  ".join(verlierend))
+        "`{}`, not `%s`):\n  " + "\n  ".join(losing))
 
 
 def test_every_loguru_literal_is_formattable():
@@ -141,25 +141,25 @@ def test_every_loguru_literal_is_formattable():
     not catch it. With `%s` that was impossible. A log line that takes its
     caller down with it is worse than one that says nothing.
     """
-    kaputt = []
-    for datei in sorted(_wurzel().rglob("*.py")):
-        quelle = datei.read_text(encoding="utf-8")
-        namen = _loguru_namen(quelle)
-        if not namen:
+    broken = []
+    for source_file in sorted(_backend_root().rglob("*.py")):
+        source = source_file.read_text(encoding="utf-8")
+        names = _loguru_names(source)
+        if not names:
             continue
-        for knoten in _logaufrufe(quelle, namen):
-            if not knoten.args:
+        for node in _log_calls(source, names):
+            if not node.args:
                 continue
-            erstes = knoten.args[0]
-            if not (isinstance(erstes, ast.Constant) and isinstance(erstes.value, str)):
+            first = node.args[0]
+            if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
                 continue
             try:
-                list(string.Formatter().parse(erstes.value))
+                list(string.Formatter().parse(first.value))
             except ValueError as exc:
-                kaputt.append(f"{datei}:{knoten.lineno} — {exc}")
-    assert not kaputt, (
+                broken.append(f"{source_file}:{node.lineno} — {exc}")
+    assert not broken, (
         "these log lines raise when formatted and take the caller down:"
-        "\n  " + "\n  ".join(kaputt))
+        "\n  " + "\n  ".join(broken))
 
 
 def test_the_checker_sees_the_whole_printf_grammar():
@@ -173,35 +173,35 @@ def test_the_checker_sees_the_whole_printf_grammar():
     """
     import tempfile
 
-    faelle = ["%s", "%r", "%d", "%.3f", "%5d", "%-10s", "%(name)s", "%05.2f", "%x"]
+    cases = ["%s", "%r", "%d", "%.3f", "%5d", "%-10s", "%(name)s", "%05.2f", "%x"]
     with tempfile.TemporaryDirectory() as d:
-        wurzel = Path(d)
-        for i, form in enumerate(faelle):
-            (wurzel / f"f{i}.py").write_text(
+        root = Path(d)
+        for i, form in enumerate(cases):
+            (root / f"f{i}.py").write_text(
                 "from loguru import logger\n"
                 f'logger.info("verliert {form}", 1)\n', encoding="utf-8")
         # The alias -- the first version filtered on the exact import line.
-        (wurzel / "alias.py").write_text(
+        (root / "alias.py").write_text(
             "from loguru import logger as _mig\n"
             '_mig.warning("auch hier %s", 1)\n', encoding="utf-8")
         # Through `.opt(...)`.
-        (wurzel / "opt.py").write_text(
+        (root / "opt.py").write_text(
             "from loguru import logger\n"
             'logger.opt(depth=1).info("und hier %d", 1)\n', encoding="utf-8")
         # And four that must NOT count. This very control uncovered the
         # last two on its first run: `%%` was read as a placeholder, because
         # the regex grabbed at the second percent sign and understood `% f` as
         # the space flag plus a conversion.
-        (wurzel / "harmlos.py").write_text(
+        (root / "harmlos.py").write_text(
             "from loguru import logger\n"
             'logger.info("klammern {} ", 1)\n'
             'logger.info("ohne Argumente %s")\n'
             'logger.info("echtes Prozent 50%% fertig", 1)\n'
             'logger.info("Prosa: 80% der Seiten fertig", 1)\n', encoding="utf-8")
 
-        treffer, geprueft = _verlierende_aufrufe(wurzel)
+        hits, checked = _losing_calls(root)
 
-    assert geprueft == len(faelle) + 3, geprueft
-    assert len(treffer) == len(faelle) + 2, (
-        f"expected {len(faelle) + 2} hits (every printf form, alias, opt), "
-        f"found {len(treffer)}:\n  " + "\n  ".join(treffer))
+    assert checked == len(cases) + 3, checked
+    assert len(hits) == len(cases) + 2, (
+        f"expected {len(cases) + 2} hits (every printf form, alias, opt), "
+        f"found {len(hits)}:\n  " + "\n  ".join(hits))

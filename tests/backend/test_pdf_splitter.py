@@ -80,9 +80,9 @@ def _db(parent_facts=()):
     ingest time, where the parent has no facts yet)."""
     db = MagicMock()
     db.commit = AsyncMock()
-    ergebnis = MagicMock()
-    ergebnis.all = MagicMock(return_value=list(parent_facts))
-    db.execute = AsyncMock(return_value=ergebnis)
+    query_result = MagicMock()
+    query_result.all = MagicMock(return_value=list(parent_facts))
+    db.execute = AsyncMock(return_value=query_result)
     db.get = AsyncMock(return_value=None)
     db.add = MagicMock()
     return db
@@ -203,16 +203,16 @@ async def test_the_parents_facts_are_purged_through_the_service(monkeypatch):
             IngestResult(IngestStatus.INGESTED, document_id=102),
         ],
     )
-    gepurgt = []
-    reihenfolge = []
+    purged = []
+    order = []
 
     class _Purge:
         @staticmethod
         async def purge(session, *, atom_id, reason):
-            if parent.status == DOC_STATUS_SPLIT_ARCHIVED and "archiviert" not in reihenfolge:
-                reihenfolge.append("archiviert")
-            reihenfolge.append(atom_id)
-            gepurgt.append((atom_id, reason))
+            if parent.status == DOC_STATUS_SPLIT_ARCHIVED and "archiviert" not in order:
+                order.append("archiviert")
+            order.append(atom_id)
+            purged.append((atom_id, reason))
             return 0
 
     import services.atom_purge_service as aps
@@ -220,14 +220,14 @@ async def test_the_parents_facts_are_purged_through_the_service(monkeypatch):
 
     await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
 
-    assert [a for a, _ in gepurgt] == ["atom-a", "atom-b"]
+    assert [a for a, _ in purged] == ["atom-a", "atom-b"]
     # The reason belongs in the audit trail, not into nothing.
-    assert all(r == "pdf_split_parent_archived" for _, r in gepurgt)
+    assert all(r == "pdf_split_parent_archived" for _, r in purged)
     # 🛑 AFTER the archive commit. `AtomPurgeService.purge` commits itself,
     # once per atom -- with the call before it, the first purge committed the
     # chunk deletion while the parent was not yet archived. The guard against
     # that: at the first purge the status MUST already stand.
-    assert reihenfolge == ["archiviert", "atom-a", "atom-b"], reihenfolge
+    assert order == ["archiviert", "atom-a", "atom-b"], order
 
 
 async def test_a_parent_without_facts_purges_nothing(monkeypatch):
@@ -243,12 +243,12 @@ async def test_a_parent_without_facts_purges_nothing(monkeypatch):
             IngestResult(IngestStatus.INGESTED, document_id=102),
         ],
     )
-    gepurgt = []
+    purged = []
 
     class _Purge:
         @staticmethod
         async def purge(session, *, atom_id, reason):
-            gepurgt.append(atom_id)
+            purged.append(atom_id)
             return 0
 
     import services.atom_purge_service as aps
@@ -256,7 +256,7 @@ async def test_a_parent_without_facts_purges_nothing(monkeypatch):
 
     await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
 
-    assert gepurgt == []
+    assert purged == []
 
 
 async def test_a_failing_purge_never_stops_the_split(monkeypatch):
@@ -993,8 +993,8 @@ async def test_the_resplit_flag_travels_in_the_slow_lane_payload(monkeypatch):
 
     await ps._route_to_slow_lane(db, doc, "vlm", None, resplit=True)
 
-    nutzlast = queue.enqueue.await_args.args[0]
-    assert nutzlast.get("resplit") is True, nutzlast
+    payload = queue.enqueue.await_args.args[0]
+    assert payload.get("resplit") is True, payload
 
     # Counter-check: without a re-trigger the payload stays byte-identical --
     # an existing test pins it down, and older stream entries do not know the

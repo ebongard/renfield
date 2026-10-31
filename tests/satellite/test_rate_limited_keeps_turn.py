@@ -23,7 +23,7 @@ def _client() -> WebSocketClient:
 
 
 @pytest.mark.satellite
-async def test_rate_limited_erreicht_den_fehler_callback_nicht():
+async def test_rate_limited_does_not_reach_the_error_callback():
     client = _client()
     errors = []
     client.on_error(errors.append)
@@ -34,7 +34,7 @@ async def test_rate_limited_erreicht_den_fehler_callback_nicht():
 
 
 @pytest.mark.satellite
-async def test_rate_limited_setzt_den_zug_des_satelliten_nicht_zurueck():
+async def test_rate_limited_does_not_reset_the_satellite_turn():
     """Through the REAL wiring: Client -> Satellite._on_error / _on_rate_limited.
 
     On the old code the client calls ``on_error``, and ``Satellite._on_error``
@@ -67,7 +67,7 @@ async def test_rate_limited_setzt_den_zug_des_satelliten_nicht_zurueck():
 
 
 @pytest.mark.satellite
-async def test_echter_fehler_setzt_den_zug_weiterhin_zurueck():
+async def test_a_real_error_still_resets_the_turn():
     """Counter-check on the wiring above -- otherwise the test would prove nothing."""
     from unittest.mock import MagicMock
 
@@ -91,7 +91,7 @@ async def test_echter_fehler_setzt_den_zug_weiterhin_zurueck():
 
 
 @pytest.mark.satellite
-async def test_rate_limited_blockiert_die_empfangsschleife_nicht():
+async def test_rate_limited_does_not_block_the_receive_loop():
     client = _client()
 
     started = time.monotonic()
@@ -105,7 +105,7 @@ async def test_rate_limited_blockiert_die_empfangsschleife_nicht():
 
 @pytest.mark.satellite
 @pytest.mark.parametrize("code", ["BUFFER_FULL", "SESSION_ERROR", "UNAUTHORIZED", "UNKNOWN"])
-async def test_andere_fehler_erreichen_den_callback_weiterhin(code):
+async def test_other_errors_still_reach_the_callback(code):
     """Only RATE_LIMITED is exempt -- real session errors still reset."""
     client = _client()
     errors = []

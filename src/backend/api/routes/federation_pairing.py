@@ -75,13 +75,13 @@ async def _refuse_unresolvable(endpoints: list[dict]) -> None:
     import socket
     from urllib.parse import urlparse
 
-    for eintrag in endpoints:
-        roh = str(eintrag.get("url", "")).strip()
-        host = urlparse(roh).hostname
+    for entry in endpoints:
+        raw = str(entry.get("url", "")).strip()
+        host = urlparse(raw).hostname
         if not host:
             raise HTTPException(
                 status_code=400,
-                detail=f"Die angegebene URL hat keinen Hostnamen: {roh!r}")
+                detail=f"Die angegebene URL hat keinen Hostnamen: {raw!r}")
         try:
             await asyncio.to_thread(socket.getaddrinfo, host, None)
         except OSError:

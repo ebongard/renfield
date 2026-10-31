@@ -313,7 +313,7 @@ class TestSoundProfile:
         ({"dlna_renderer_name": "HiFi"}, "_play_on_dlna_renderer"),
         ({"ha_entity_id": "media_player.hifi"}, "_play_on_ha_media_player"),
     ])
-    async def test_profil_wird_vor_der_wiedergabe_angewendet(self, service, target, method):
+    async def test_the_profile_is_applied_before_playback(self, service, target, method):
         player = AsyncMock(return_value=True)
         setattr(service, method, player)
         original = self._wav()
@@ -325,7 +325,7 @@ class TestSoundProfile:
         assert len(played) == len(original)
 
     @pytest.mark.asyncio
-    async def test_ohne_profil_geht_das_original_durch(self, service):
+    async def test_without_a_profile_the_original_goes_through(self, service):
         service._play_on_dlna_renderer = AsyncMock(return_value=True)
         original = self._wav()
 
@@ -334,7 +334,7 @@ class TestSoundProfile:
         assert service._play_on_dlna_renderer.call_args.kwargs["audio_bytes"] is original
 
     @pytest.mark.asyncio
-    async def test_renfield_geraete_bleiben_unbearbeitet(self, service):
+    async def test_renfield_devices_stay_unprocessed(self, service):
         """Satellite/browser: the voice is tuned for their small speaker."""
         service._play_on_renfield_device = AsyncMock(return_value=True)
         original = self._wav()
@@ -346,7 +346,7 @@ class TestSoundProfile:
         assert service._play_on_renfield_device.call_args.kwargs["audio_bytes"] is original
 
     @pytest.mark.asyncio
-    async def test_kaputtes_audio_wird_trotzdem_gespielt(self, service):
+    async def test_broken_audio_is_played_anyway(self, service):
         service._play_on_dlna_renderer = AsyncMock(return_value=True)
 
         ok = await service.play_audio(

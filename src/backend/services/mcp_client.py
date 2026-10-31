@@ -3486,41 +3486,41 @@ def log_hint_arrival(state: "MCPServerState") -> None:
 
     ONLY names and lengths are logged, never the hint text.
     """
-    konfiguriert = dict(state.config.tool_hints or {})
-    entdeckt = {t.original_name for t in state.all_discovered_tools}
-    angehaengt = [t for t in state.all_discovered_tools if t.hint]
-    angeboten = [t for t in (state.tools or []) if t.hint]
-    ohne_werkzeug = sorted(set(konfiguriert) - entdeckt)
-    gefiltert = len(angehaengt) - len(angeboten)
+    configured_hints = dict(state.config.tool_hints or {})
+    discovered_names = {t.original_name for t in state.all_discovered_tools}
+    attached = [t for t in state.all_discovered_tools if t.hint]
+    offered = [t for t in (state.tools or []) if t.hint]
+    unmatched_keys = sorted(set(configured_hints) - discovered_names)
+    filtered_out = len(attached) - len(offered)
 
     # 🛑 Log only on CHANGE. The content changes only when somebody edits the
     # YAML, but discovery runs every ~60 s per server
     # (`mcp_refresh_interval`, and `refresh_tools` does not read the
     # per-server value). Without this it would be ~60 lines per hour per
     # server, and a permanently mismatched key would be continuous fire.
-    zustand = (len(konfiguriert), len(angehaengt), len(angeboten),
-               tuple(ohne_werkzeug))
-    if getattr(state, "_hint_arrival_state", None) == zustand:
+    arrival_state = (len(configured_hints), len(attached), len(offered),
+               tuple(unmatched_keys))
+    if getattr(state, "_hint_arrival_state", None) == arrival_state:
         return
-    state._hint_arrival_state = zustand
+    state._hint_arrival_state = arrival_state
 
-    if ohne_werkzeug or gefiltert or (konfiguriert and not angehaengt):
+    if unmatched_keys or filtered_out or (configured_hints and not attached):
         # Each of these cases means: the operator's steering text does not
         # reach the model, or does not reach it in full.
         logger.warning(
             "MCP '{}': {} hint(s) configured, {} attached, {} offered"
             "{}{}",
-            state.config.name, len(konfiguriert), len(angehaengt),
-            len(angeboten),
-            f"; {len(ohne_werkzeug)} key(s) match no discovered tool: "
-            f"{ohne_werkzeug}" if ohne_werkzeug else "",
-            f"; {gefiltert} hinted tool(s) filtered out of the offered set"
-            if gefiltert else "",
+            state.config.name, len(configured_hints), len(attached),
+            len(offered),
+            f"; {len(unmatched_keys)} key(s) match no discovered tool: "
+            f"{unmatched_keys}" if unmatched_keys else "",
+            f"; {filtered_out} hinted tool(s) filtered out of the offered set"
+            if filtered_out else "",
         )
     else:
         logger.info(
             "MCP '{}': {} hint(s) configured, {} attached, {} offered "
             "({} chars total)",
-            state.config.name, len(konfiguriert), len(angehaengt),
-            len(angeboten), sum(len(t.hint) for t in angeboten),
+            state.config.name, len(configured_hints), len(attached),
+            len(offered), sum(len(t.hint) for t in offered),
         )

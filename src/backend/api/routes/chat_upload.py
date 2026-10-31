@@ -610,9 +610,9 @@ async def forward_to_simba(
         except (TypeError, ValueError):
             return None
 
-    uebertragen = _int(inner.get("uebertragen"))
-    fehlgeschlagen = _int(inner.get("fehlgeschlagen"))
-    if not (uebertragen and uebertragen > 0 and not (fehlgeschlagen or 0)):
+    transferred = _int(inner.get("uebertragen"))
+    failed = _int(inner.get("fehlgeschlagen"))
+    if not (transferred and transferred > 0 and not (failed or 0)):
         res0 = (inner.get("ergebnisse") or [{}])
         res0 = res0[0] if res0 else {}
         errs = inner.get("fehler") or []
