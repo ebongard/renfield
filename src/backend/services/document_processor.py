@@ -1088,9 +1088,9 @@ class DocumentProcessor:
             # VLM re-OCR fallback: OCR still garbled (rotated / poor scan) → let the
             # vision model transcribe the page(s). No-op unless enabled + still low
             # quality; only used when it scores strictly better.
-            vlm_text = await self._vlm_ocr_fallback(file_path, text)
-            if vlm_text:
-                text = vlm_text
+            vlm = await self._vlm_ocr_fallback(file_path, text)
+            if vlm is not None:
+                text = vlm.text
 
             return text[:max_chars] if text else None
 

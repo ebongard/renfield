@@ -682,6 +682,33 @@ async def test_vlm_fallback_replaces_garbled_ocr_with_better_text(monkeypatch):
 
 @_pytest.mark.unit
 @_pytest.mark.asyncio
+async def test_extract_text_only_returns_the_vlm_text(monkeypatch, tmp_path):
+    """extract_text_only (Paperless audit re-OCR, chat upload) is the second
+    caller of the fallback. It must use the transcription's TEXT: slicing the
+    VlmTranscription object raised, and the except turned an accepted VLM
+    recovery into None (no text at all)."""
+    from types import SimpleNamespace
+
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
+    monkeypatch.setattr(settings, "rag_force_ocr", False)
+    monkeypatch.setattr(settings, "rag_ocr_auto_detect", False)
+    pdf = tmp_path / "scan.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    dp = DocumentProcessor()
+    dp._ensure_initialized = lambda: None
+    dp._convert_document = lambda fp: SimpleNamespace(
+        document=SimpleNamespace(export_to_text=lambda: _VLM_GARBLE)
+    )
+    _stub_pages(dp, ["img"])
+    dp._ollama_service = _FakeVision(_VLM_CLEAN)
+
+    assert await dp.extract_text_only(str(pdf)) == _VLM_CLEAN
+
+
+@_pytest.mark.unit
+@_pytest.mark.asyncio
 async def test_vlm_fallback_keeps_ocr_when_vlm_not_better(monkeypatch):
     """If the VLM output isn't strictly better, keep the OCR text (no regression)."""
     from utils.config import settings
