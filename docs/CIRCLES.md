@@ -41,6 +41,62 @@ Die Vier-Zweig-Logik wird einmal zentral formuliert in `services/circle_sql.py` 
 
 🛑 **Seit 2026-10-27 (F-ID-3) gibt es im peer-bezogenen Zweig gar keine `asker_id` mehr.** Hier stand bis dahin: die föderierte `asker_id` sei `PeerUser.remote_user_id`, ein FK-gebundener lokaler `users.id`, der „im Single-User-Haushalt strukturell = Owner-ID" sei — und die bei der Paarung gesetzte `CircleMembership`-Zeile sei kollisionssicher. Beides stimmte nicht mehr: der Haushalt ist seit dem **2026-09-23** auth-on mit sieben Konten, und die Mitgliedschaft war die Kollision, nicht ihre Abwehr. Am 2026-10-27 brach genau das die erste echte Paarung — auf x-idra am Fremdschlüssel (500), im Haushalt still auf die falsche Person. Die Stufe steht jetzt als `peer_users.granted_tier` an der Paarung, und der Filter nennt den Peer, statt sich eine lokale Kennung zu leihen.
 
+### System KBs are per owner (chat uploads, meetings)
+
+The filter makes the KB a document is filed into decide who reads it: the OWNER branch reads `kb.owner_id`
+(atom-owner fallback `d.atom_id → atoms.owner_user_id`), and the TIER-REACH branch keys on
+`circle_memberships.circle_owner_id = kb.owner_id`. Until this change `chat_upload._get_or_create_default_kb`
+("Chat Uploads", `CHAT_UPLOAD_DEFAULT_KB_NAME`) and `meeting_pipeline._resolve_meetings_kb` ("Meetings") took the
+OLDEST KB of that name regardless of owner — and the circles backfill (migration `pc20260420_circles_v1_schema`,
+`household_backfill.backfill_kb_owner`) had given the once-ownerless system KBs to the admin. So the admin read every
+user's chat uploads (whose atom owner was derived from the KB owner, i.e. also the admin) and every meeting
+transcript, and a household-tier meeting was shared with the ADMIN's circle instead of its owner's.
+
+Now both resolve by **(name, owner)** via `ingest_common.get_or_create_owned_kb`, the same as the ingest inboxes:
+the uploader / meeting owner gets their own KB. No identity (auth off) → the shared ownerless KB of that name, never
+somebody's. An ownerless shared KB is **not** a fix for the auth-on case: the membership branch never matches a NULL
+`kb.owner_id` (a household-tier meeting would reach nobody but its owner), chat uploads' atom owner would fall back to
+the first user (the uploader would lose their own upload), and the per-KB hash dedupe
+(`uq_documents_file_hash_kb`) would link a second user's upload of the same file to the first user's document.
+Proof on real Postgres: `tests/backend/test_system_kb_per_owner_pg.py`.
+
+**Consequence on deploy (no data migration — data changes on prod are the owner's).** On an instance where the
+existing "Chat Uploads" / "Meetings" KB is owned (by the admin), every OTHER user's first upload / meeting after the
+deploy creates their own KB of that name. The old KB keeps all its documents, stays readable by its owner (the admin)
+exactly as before, and the admin's own new uploads keep landing in it. Documents already in it stay exposed to its
+owner until the owner moves or re-owns them.
+
+Pre-deploy check — read-only, counts only:
+
+```sql
+-- KBs and documents per system-KB name, ownerless vs owned
+SELECT kb.name,
+       (kb.owner_id IS NULL)  AS ownerless,
+       COUNT(DISTINCT kb.id)  AS kbs,
+       COUNT(d.id)            AS documents
+FROM knowledge_bases kb
+LEFT JOIN documents d ON d.knowledge_base_id = kb.id
+WHERE kb.name IN ('Chat Uploads', 'Meetings')
+GROUP BY kb.name, (kb.owner_id IS NULL)
+ORDER BY kb.name, ownerless;
+
+-- Exposure: documents in an OWNED system KB that belong to another user
+-- (uploader via chat_uploads → conversations, meeting owner via meetings)
+SELECT kb.name, COUNT(DISTINCT d.id) AS documents_of_other_users
+FROM knowledge_bases kb
+JOIN documents d          ON d.knowledge_base_id = kb.id
+LEFT JOIN chat_uploads cu ON cu.document_id = d.id
+LEFT JOIN conversations c ON c.session_id = cu.session_id
+LEFT JOIN meetings m      ON m.transcript_document_id = d.id
+WHERE kb.name IN ('Chat Uploads', 'Meetings')
+  AND kb.owner_id IS NOT NULL
+  AND COALESCE(m.owner_user_id, c.user_id) IS NOT NULL
+  AND COALESCE(m.owner_user_id, c.user_id) <> kb.owner_id
+GROUP BY kb.name;
+```
+
+If `CHAT_UPLOAD_DEFAULT_KB_NAME` is overridden on an instance, use that name instead of `'Chat Uploads'`.
+
 ---
 
 ## Atoms — der polymorphe Identitätsträger
