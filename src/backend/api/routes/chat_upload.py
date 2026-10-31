@@ -30,6 +30,7 @@ from services.auth_service import get_optional_user, require_permission
 from services.circle_sql import conversations_circles_filter
 from services.database import AsyncSessionLocal, get_db
 from services.document_processor import DocumentProcessor
+from services.ingest_common import get_or_create_owned_kb
 from utils.config import settings
 
 from .chat_upload_schemas import (
@@ -225,6 +226,7 @@ async def _extract_and_finalize(
     if settings.chat_upload_auto_index:
         await _auto_index_to_kb(
             upload_id, file_path, safe_name, file_hash, session_id=session_id,
+            user_id=user_id,
         )
 
 
@@ -782,30 +784,25 @@ async def cleanup_old_uploads(
 # ============================================================================
 
 
-async def _get_or_create_default_kb(db: AsyncSession) -> KnowledgeBase:
-    """Get or create the default KB for auto-indexed chat uploads.
+async def _get_or_create_default_kb(
+    db: AsyncSession, owner_user_id: int | None
+) -> KnowledgeBase:
+    """Get or create the uploader's own KB for auto-indexed chat uploads.
 
-    KB names are unique per OWNER, not globally, so a user may own a KB of the
-    same name: take the oldest — the row this lookup always returned while names
-    were globally unique — instead of raising MultipleResultsFound."""
-    result = await db.execute(
-        select(KnowledgeBase)
-        .where(KnowledgeBase.name == settings.chat_upload_default_kb_name)
-        .order_by(KnowledgeBase.id)
-        .limit(1)
-    )
-    kb = result.scalars().first()
-    if kb:
-        return kb
-
-    kb = KnowledgeBase(
-        name=settings.chat_upload_default_kb_name,
+    The circle filter grants the KB OWNER every document in the KB, so one
+    shared "Chat Uploads" KB with an owner (the circles backfill gave the old
+    ownerless one to the admin) let that owner read every user's uploads. The
+    lookup is by (name, owner) instead: each uploader gets their own KB, the
+    document's atom owner (derived from the KB owner) is the uploader, tier
+    reach runs through the uploader's circles, and the per-KB hash dedupe
+    never links one user's upload to another user's document. No identity
+    (auth off) → the shared ownerless KB of that name, never somebody's."""
+    return await get_or_create_owned_kb(
+        db,
+        settings.chat_upload_default_kb_name,
+        owner_user_id,
         description="Automatically indexed documents from chat uploads",
     )
-    db.add(kb)
-    await db.commit()
-    await db.refresh(kb)
-    return kb
 
 
 async def _auto_index_to_kb(
@@ -814,8 +811,9 @@ async def _auto_index_to_kb(
     filename: str,
     file_hash: str | None,
     session_id: str | None = None,
+    user_id: int | None = None,
 ) -> None:
-    """Background task: auto-index a chat upload into the default KB via
+    """Background task: auto-index a chat upload into the uploader's KB via
     the document-worker pod (#388).
 
     This used to call ``rag.ingest_document`` inline in the backend pod,
@@ -861,7 +859,7 @@ async def _auto_index_to_kb(
 
         # Step 1 — Document row + enqueue, within a short-lived session.
         async with AsyncSessionLocal() as db:
-            kb = await _get_or_create_default_kb(db)
+            kb = await _get_or_create_default_kb(db, user_id)
             kb_id = kb.id
 
             # Re-upload of the same file into the same KB: the unique

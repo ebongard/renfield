@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from models.database import MEETING_TRANSCRIPT_SOURCE, KnowledgeBase, Meeting
 from services.database import AsyncSessionLocal
+from services.ingest_common import get_or_create_owned_kb
 from services.voice_server_client import transcribe_meeting
 from utils.config import settings
 
@@ -132,27 +133,18 @@ def render_transcript_markdown(meeting: Meeting, segments: list[dict]) -> str:
     return body
 
 
-async def _resolve_meetings_kb(db) -> KnowledgeBase:
-    """Get-or-create the dedicated Meetings KB.
+async def _resolve_meetings_kb(db, owner_user_id: int | None) -> KnowledgeBase:
+    """Get-or-create the meeting owner's own Meetings KB.
 
-    KB names are unique per OWNER, not globally, so a user may own a KB of the
-    same name: take the oldest — the row this lookup always returned while names
-    were globally unique — instead of raising MultipleResultsFound."""
-    kb = (
-        await db.execute(
-            select(KnowledgeBase)
-            .where(KnowledgeBase.name == _MEETINGS_KB_NAME)
-            .order_by(KnowledgeBase.id)
-            .limit(1)
-        )
-    ).scalars().first()
-    if kb:
-        return kb
-    kb = KnowledgeBase(name=_MEETINGS_KB_NAME, description="Meeting transcripts (§2)")
-    db.add(kb)
-    await db.commit()
-    await db.refresh(kb)
-    return kb
+    The circle filter grants the KB OWNER every document in the KB, and its
+    tier-reach branch runs through the KB owner's circles. One shared
+    "Meetings" KB owned by the admin (the circles backfill) therefore showed
+    the admin every transcript and shared a household-tier meeting with the
+    admin's circle instead of the meeting owner's. Lookup by (name, owner);
+    no owner → the shared ownerless KB of that name, never somebody's."""
+    return await get_or_create_owned_kb(
+        db, _MEETINGS_KB_NAME, owner_user_id, description="Meeting transcripts (§2)"
+    )
 
 
 async def _ingest_transcript(db, meeting: Meeting, markdown: str) -> int | None:
@@ -163,7 +155,7 @@ async def _ingest_transcript(db, meeting: Meeting, markdown: str) -> int | None:
     instead — see re-attribution in the routes, NOT a second ingest_document."""
     from services.folder_ingest import IngestMeta, ingest_document
 
-    kb = await _resolve_meetings_kb(db)
+    kb = await _resolve_meetings_kb(db, meeting.owner_user_id)
     meta = IngestMeta.from_dict({"filename": f"meeting-{meeting.id}.md"})
     result = await ingest_document(
         markdown.encode("utf-8"),
