@@ -198,6 +198,35 @@ class TestRadioFavoritesThroughTheDispatch:
         )).scalars().all()
         assert left == [bob.id], "alice removed bob's favorite"
 
+    async def test_an_unidentified_turn_is_refused_while_auth_is_on(
+        self, db_session, two_users, ha_glue_dispatch, own_session_to_test_db
+    ):
+        """No owner → no shared NULL bucket: save, list and remove all refuse."""
+        from ha_glue.models.database import RadioFavorite
+
+        for intent, params in (
+            ("internal.save_radio_favorite", {"station_id": "s3", "station_name": "Drei"}),
+            ("internal.list_radio_favorites", {}),
+            ("internal.remove_radio_favorite", {"station_id": "s3"}),
+        ):
+            result = await _radio(intent, None, **params)
+            assert result["success"] is False, (intent, result)
+            assert result["action_taken"] is False, (intent, result)
+
+        rows = (await db_session.execute(select(RadioFavorite.id))).scalars().all()
+        assert rows == [], "an unidentified turn wrote a favorite"
+
+    async def test_auth_off_keeps_the_single_shared_list(
+        self, db_session, two_users, ha_glue_dispatch, own_session_to_test_db,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        saved = await _radio("internal.save_radio_favorite", None,
+                             station_id="s4", station_name="Vier")
+        assert saved["success"] is True, saved
+        listed = await _radio("internal.list_radio_favorites", None)
+        assert [f["station_id"] for f in listed["data"]["favorites"]] == ["s4"]
+
 
 # ----------------------------------------------------- the executor (AST) ----
 def _function_body(fn) -> ast.FunctionDef:
@@ -284,6 +313,24 @@ class TestExecutorInjectsTheAsker:
                 for kw in call.keywords)
             for call in hook_calls
         )
+
+    @pytest.mark.unit
+    def test_every_execute_tool_hook_call_carries_the_asker(self):
+        """Not only the executor: every `run_hooks("execute_tool", …)` in the
+        backend passes `user_id=` (the chat handler's media-transport shortcut
+        once passed none, so Media Follow Me never knew the caller)."""
+        calls, missing = 0, []
+        for path in BACKEND.rglob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text())):
+                if (isinstance(node, ast.Call)
+                        and getattr(node.func, "id", None) == "run_hooks"
+                        and node.args and isinstance(node.args[0], ast.Constant)
+                        and node.args[0].value == "execute_tool"):
+                    calls += 1
+                    if not any(kw.arg == "user_id" for kw in node.keywords):
+                        missing.append(f"{path.relative_to(BACKEND)}:{node.lineno}")
+        assert calls >= 3, f"scan found only {calls} hook call(s)"
+        assert missing == [], f"execute_tool without user_id=: {missing}"
 
     @pytest.mark.unit
     def test_identity_keys_are_stripped_from_internal_params(self):

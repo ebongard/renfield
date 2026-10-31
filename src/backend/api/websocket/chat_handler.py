@@ -1593,6 +1593,8 @@ async def websocket_endpoint(
                             "execute_tool",
                             intent="internal.media_control",
                             parameters={"action": action_name, "room_name": room},
+                            user_permissions=user_permissions,
+                            user_id=user_id,
                         )
                         result = hook_results[0] if hook_results else {
                             "success": False,

@@ -38,6 +38,24 @@ class InternalToolService:
         # unidentified turn (and every internal, non-agent construction).
         self._caller_user_id = caller_user_id
 
+    def _refuse_unidentified_favorites(self) -> dict | None:
+        """Radio favorites are per user. With auth on, an unidentified turn
+        (device token, unrecognised voice) has no owner to file them under; the
+        owner-less NULL bucket would be shared by every such turn (list, save
+        AND remove). Refuse instead. Auth off keeps the single shared list."""
+        from utils.config import settings
+
+        if settings.auth_enabled and self._caller_user_id is None:
+            return {
+                "success": False,
+                "action_taken": False,
+                "message": (
+                    "Radio-Favoriten sind persönlich — ohne erkannten Benutzer "
+                    "kann ich sie nicht speichern, anzeigen oder entfernen."
+                ),
+            }
+        return None
+
     TOOLS: dict[str, dict] = {
         "internal.resolve_room_player": {
             "description": "Find the media_player entity for a room by name",
@@ -3083,6 +3101,8 @@ class InternalToolService:
         station_image = (params.get("station_image") or "").strip() or None
         genre = (params.get("genre") or "").strip() or None
         user_id = self._caller_user_id  # server-injected, never from params
+        if (refusal := self._refuse_unidentified_favorites()) is not None:
+            return refusal
 
         if not station_id:
             return {
@@ -3146,6 +3166,8 @@ class InternalToolService:
     async def _list_radio_favorites(self, params: dict) -> dict:
         """List the current user's radio station favorites."""
         user_id = self._caller_user_id  # server-injected, never from params
+        if (refusal := self._refuse_unidentified_favorites()) is not None:
+            return refusal
 
         try:
             from sqlalchemy import select as sa_select
@@ -3200,6 +3222,8 @@ class InternalToolService:
         """Remove a radio station from user's favorites."""
         station_id = (params.get("station_id") or "").strip()
         user_id = self._caller_user_id  # server-injected, never from params
+        if (refusal := self._refuse_unidentified_favorites()) is not None:
+            return refusal
 
         if not station_id:
             return {
