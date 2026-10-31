@@ -1103,6 +1103,13 @@ class Settings(BaseSettings):
     # Whole-file auto-split gate: every proposed piece must reach this
     # confidence or the file goes to owner review instead.
     pdf_split_auto_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    # Blank pages (empty duplex back sides) are detected deterministically
+    # (near-empty text layer AND no ink on the rendered page) and folded into
+    # the PRECEDING document after the boundary call — a blank page never
+    # starts a document and never becomes one. A blank-only piece's confidence
+    # is dropped with it, so it can no longer hold a batch under the auto
+    # threshold. Off = byte-identical pre-fold behaviour.
+    pdf_split_blank_fold_enabled: bool = False
     # Slow-lane worker: cap on TRANSIENT retries (LLM host down etc.) before
     # the fail-safe hand-back to single-document ingest (mirrors
     # meeting_worker_max_transient_retries — never a permanently failed doc).
