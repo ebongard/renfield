@@ -243,3 +243,49 @@ async def test_meetings_kb_takes_the_oldest_of_a_repeated_name(db_session, make_
     assert (await meeting_pipeline._resolve_meetings_kb(db_session)).id == system.id
     count = (await db_session.execute(select(func.count()).select_from(KnowledgeBase))).scalar()
     assert count == 2
+
+
+# --- manual KB creation (POST /api/knowledge/bases) ------------------------
+
+async def _create_via_route(db, user, name):
+    from api.routes import knowledge as route
+    from api.routes.knowledge_schemas import KnowledgeBaseCreate
+    from services.rag_service import RAGService
+
+    return await route.create_knowledge_base(
+        KnowledgeBaseCreate(name=name), rag=RAGService(db), user=user, db=db
+    )
+
+
+async def test_creating_a_kb_twice_leaves_no_ownerless_orphan(
+    db_session, make_user, monkeypatch
+):
+    # The owner is part of the one INSERT. Committing the row ownerless first
+    # and setting the owner afterwards made the second attempt commit an
+    # ownerless "Projekte" (no ownerless one existed yet) and only then fail
+    # on the owner's own KB of that name -- the 400 left the orphan behind.
+    from fastapi import HTTPException
+
+    from api.routes import knowledge as route
+
+    monkeypatch.setattr(route.settings, "auth_enabled", False)
+    alice = await make_user(7, username="alice")
+    first = await _create_via_route(db_session, alice, "Projekte")
+    assert first.owner_id == 7
+    with pytest.raises(HTTPException) as exc:
+        await _create_via_route(db_session, alice, "Projekte")
+    assert exc.value.status_code == 400
+    await db_session.rollback()
+    assert [kb.owner_id for kb in await _kbs(db_session, "Projekte")] == [7]
+
+
+async def test_a_user_may_name_a_kb_like_the_shared_ownerless_one(
+    db_session, make_user, monkeypatch
+):
+    from api.routes import knowledge as route
+
+    monkeypatch.setattr(route.settings, "auth_enabled", False)
+    alice = await make_user(7, username="alice")
+    shared = await _shared(db_session)
+    mine = await _create_via_route(db_session, alice, "Eingang")
+    assert mine.id != shared.id and mine.owner_id == 7

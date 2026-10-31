@@ -1064,14 +1064,12 @@ async def create_knowledge_base(
             raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
 
     try:
-        kb = await rag.create_knowledge_base(data.name, data.description)
-
-        # Set owner if authenticated
-        if user:
-            kb.owner_id = user.id
-        kb.is_public = data.is_public
-        await db.commit()
-        await db.refresh(kb)
+        kb = await rag.create_knowledge_base(
+            data.name,
+            data.description,
+            owner_id=user.id if user else None,
+            is_public=data.is_public,
+        )
 
         return KnowledgeBaseResponse(
             id=kb.id,
