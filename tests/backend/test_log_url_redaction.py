@@ -76,8 +76,30 @@ def test_redacts_every_credential_param(url):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("url", [
+    # Starlette percent-decodes query NAMES, so each of these authenticates as
+    # `token` and must not slip past a literal name match.
+    f"/ws?%74oken={SECRET}", f"/ws?to%6Ben={SECRET}", f"/ws?%54%4F%4B%45%4E={SECRET}",
+    f"/ws?a=1&%74oken={SECRET}",
+    # Duplicate parameter: every occurrence, not just the first.
+    f"/ws?token=decoy&token={SECRET}", f"/ws?token={SECRET}&token=decoy",
+])
+def test_encoded_or_repeated_names_cannot_bypass(url):
+    assert SECRET not in redact_url_secrets(url)
+
+
+@pytest.mark.unit
+def test_starlette_reads_the_encoded_name_as_token():
+    """Negative control for the test above: the bypass is real on the server side."""
+    from starlette.datastructures import QueryParams
+
+    assert QueryParams(f"%74oken={SECRET}").get("token") == SECRET
+
+
+@pytest.mark.unit
 def test_leaves_other_params_alone():
-    assert redact_url_secrets("/api/x?tokens_used=5&page=2") == "/api/x?tokens_used=5&page=2"
+    for url in ("/api/x?tokens_used=5&page=2", "/api/x?monkey=1&keyboard=de", "/x?%74okens=3"):
+        assert redact_url_secrets(url) == url
 
 
 @pytest.mark.unit

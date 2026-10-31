@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
+from urllib.parse import unquote_plus
 
 #: Nobody needs more than this to place an error, and the longer the message
 #: the likelier it carries something along.
@@ -52,10 +53,12 @@ SECRET_QUERY_PARAMS = (
 
 REDACTED = "[REDACTED]"
 
-_SECRET_PARAM_RE = re.compile(
-    r"([?&](?:" + "|".join(SECRET_QUERY_PARAMS) + r")=)[^&\s\"'#]*",
-    re.IGNORECASE,
-)
+_SECRET_NAMES = frozenset(SECRET_QUERY_PARAMS)
+
+# Every `?name=value` / `&name=value` pair. The NAME is matched loosely and
+# decoded before the lookup: Starlette's query parser percent-decodes names, so
+# `?%74oken=<JWT>` authenticates exactly like `?token=` and must be redacted too.
+_QUERY_PAIR_RE = re.compile(r"([?&])([^=&\s\"'#?]+)=([^&\s\"'#]*)")
 
 #: The loggers uvicorn writes request URLs to.
 UVICORN_URL_LOGGERS = ("uvicorn.access", "uvicorn.error")
@@ -63,7 +66,14 @@ UVICORN_URL_LOGGERS = ("uvicorn.access", "uvicorn.error")
 
 def redact_url_secrets(text: str) -> str:
     """Replace the value of every credential query parameter in `text`."""
-    return _SECRET_PARAM_RE.sub(r"\1" + REDACTED, text)
+    return _QUERY_PAIR_RE.sub(_redact_pair, text)
+
+
+def _redact_pair(m: re.Match[str]) -> str:
+    sep, name, _value = m.groups()
+    if unquote_plus(name).strip().lower() in _SECRET_NAMES:
+        return f"{sep}{name}={REDACTED}"
+    return m.group(0)
 
 
 def _redact_arg(arg: object) -> object:
