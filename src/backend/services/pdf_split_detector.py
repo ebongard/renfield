@@ -75,6 +75,20 @@ _PAPER_MIN_LEVEL = 128
 _INK_DELTA = 70
 _BLANK_INK_FRACTION = 0.0005
 
+# Blank-page fold (``pdf_split_blank_fold_enabled``). A page is a blank
+# candidate only when its text layer holds at most _BLANK_MAX_TEXT_CHARS
+# non-whitespace characters — OCR of an empty duplex back side yields nothing
+# or a few noise glyphs, a signature line or a one-line note yields more. The
+# candidate is then rendered and must ALSO pass the ink floor above
+# (_histogram_is_blank); a page that cannot be rendered is NOT blank. Text
+# alone is never enough: a photo, a drawing or a handwritten signature has no
+# text layer and must not be folded away. Mirrors the scanner-side audit
+# (≤ ~30 chars AND near-white AND an ink floor). Rendered at the scale the ink
+# thresholds were measured at (_RENDER_SCALE): a coarser render greys out thin
+# strokes.
+_BLANK_MAX_TEXT_CHARS = 30
+_RENDER_SCALE = 2.0
+
 
 @dataclass(frozen=True)
 class PageSignal:
@@ -86,14 +100,22 @@ class PageSignal:
     text: str
     quality_ok: bool
     via_vlm: bool = False
+    # Confirmed blank (text layer near-empty AND no ink). Only ever set while
+    # ``pdf_split_blank_fold_enabled`` is on.
+    blank: bool = False
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "page": self.page,
             "snippet": self.text,
             "quality_ok": self.quality_ok,
             "via_vlm": self.via_vlm,
         }
+        if self.blank:
+            # Only when set: with the fold off the persisted payload stays
+            # byte-identical.
+            out["blank"] = True
+        return out
 
 
 @dataclass(frozen=True)
@@ -174,11 +196,36 @@ def _snippet(text: str) -> str:
     )
 
 
-def _signals_from_page_texts(pages: list[str]) -> list[PageSignal]:
+def _visible_chars(text: str) -> int:
+    return sum(1 for c in text or "" if not c.isspace())
+
+
+def _signals_from_page_texts(
+    pages: list[str], file_path: str | None = None
+) -> list[PageSignal]:
     from services.document_processor import DocumentProcessor
+
+    blank_pages: set[int] = set()
+    if settings.pdf_split_blank_fold_enabled and file_path:
+        candidates = [
+            i + 1 for i, raw in enumerate(pages)
+            if _visible_chars(raw) <= _BLANK_MAX_TEXT_CHARS
+        ]
+        if candidates:
+            blank_pages = _rendered_blank_pages(file_path, candidates)
 
     signals: list[PageSignal] = []
     for i, raw in enumerate(pages):
+        if i + 1 in blank_pages:
+            # A confirmed blank page is evidence, not an unreadable page: it
+            # needs no VLM transcription and does not count towards the
+            # slow-lane garbage fraction.
+            signals.append(
+                PageSignal(
+                    page=i + 1, text=_PLACEHOLDER_BLANK, quality_ok=True, blank=True
+                )
+            )
+            continue
         usable, _reason = DocumentProcessor.assess_text_layer_quality(
             raw, page_count=1
         )
@@ -251,13 +298,13 @@ def extract_page_signals(file_path: str) -> list[PageSignal]:
             if pages and pages[-1].strip() == "":
                 pages = pages[:-1]
             if len(pages) == page_count:
-                return _signals_from_page_texts(pages)
+                return _signals_from_page_texts(pages, file_path)
             logger.info(
                 f"pdf-split: poppler page segmentation ({len(pages)}) disagrees "
                 f"with page count ({page_count}) for {file_path} — falling back "
                 f"to pypdfium textpages"
             )
-        return _signals_from_page_texts(_pypdfium_page_texts(file_path))
+        return _signals_from_page_texts(_pypdfium_page_texts(file_path), file_path)
     except Exception as e:
         logger.warning(f"pdf-split: page-signal extraction failed for {file_path}: {e}")
         return []
@@ -436,6 +483,65 @@ def validate_boundaries(
     return pieces
 
 
+def fold_blank_pages(
+    pieces: list[SplitPiece], blank_pages: set[int]
+) -> list[SplitPiece]:
+    """Fold blank pages into the document BEFORE them (pure).
+
+    A blank page cannot start a document:
+    * a piece made only of blank pages is merged into the PRECEDING piece --
+      or, when it leads the file, into the FOLLOWING one (a blank first page
+      attaches to the document after it);
+    * blank pages at the HEAD of a later piece move to the preceding piece.
+
+    Confidence: the surviving pieces keep exactly the confidence the model
+    gave them -- a fold neither lowers nor raises it. A blank-only piece's own
+    confidence is DROPPED with the piece (it rated a non-document), so it can
+    no longer hold the whole batch under ``pdf_split_auto_threshold``. Title
+    and doc_type are those of the real piece.
+
+    The input must be contiguous; the output is contiguous over the same range
+    and keeps every page. Fewer than two survivors = the caller's single
+    verdict. Page count plays no role, only the per-page blank evidence."""
+    if not blank_pages or not pieces:
+        return list(pieces)
+
+    def all_blank(p: SplitPiece) -> bool:
+        return all(n in blank_pages for n in range(p.start_page, p.end_page + 1))
+
+    out: list[SplitPiece] = []
+    head: int | None = None  # start page of leading blank-only pieces
+    for p in pieces:
+        if all_blank(p):
+            if out:
+                out[-1] = replace(out[-1], end_page=p.end_page)
+            elif head is None:
+                head = p.start_page
+            continue
+        if out:
+            # Leading blank pages of this piece belong to the preceding one.
+            # (The piece is not all-blank, so the loop stops on a real page.)
+            start = p.start_page
+            while start in blank_pages:
+                start += 1
+            if start != p.start_page:
+                out[-1] = replace(out[-1], end_page=start - 1)
+                p = replace(p, start_page=start)
+        elif head is not None:
+            p = replace(p, start_page=head)
+            head = None
+        out.append(p)
+    if not out:
+        # Every page blank: one document over the whole range.
+        return [replace(pieces[0], end_page=pieces[-1].end_page)]
+    if out != pieces:
+        logger.info(
+            f"pdf-split: blank-page fold {len(pieces)} -> {len(out)} piece(s) "
+            f"({len(blank_pages)} blank page(s))"
+        )
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Stage 3 — boundary LLM call(s) with window batching
 # ---------------------------------------------------------------------------
@@ -547,6 +653,12 @@ async def detect_boundaries(
         # the boundary call could only ever return "single" — skip the LLM
         # round-trip. (This is NOT a page-count gate on multi-doc candidates.)
         return single_verdict(signals)
+    fold = settings.pdf_split_blank_fold_enabled
+    blank_pages = {s.page for s in signals if s.blank} if fold else set()
+    if fold and len(signals) - len(blank_pages) <= 1:
+        # Analytic, like the one-page case: with at most one non-blank page the
+        # fold can only ever leave one document -- skip the LLM round-trip.
+        return single_verdict(signals)
     last_page = signals[-1].page
 
     try:
@@ -605,6 +717,13 @@ async def detect_boundaries(
                 "single-document verdict"
             )
             return single_verdict(signals)
+        if fold:
+            # After the window merge, before the verdict: the review proposal
+            # and the persisted plan both carry the folded pieces, so a
+            # replayed plan is exactly what was judged.
+            pieces = fold_blank_pages(pieces, blank_pages)
+            if len(pieces) < 2:
+                return single_verdict(signals)
         return SplitVerdict(kind=VERDICT_MULTI, pieces=pieces, page_signals=signals)
     except SplitTransientError:
         raise
@@ -637,7 +756,7 @@ def _render_page_b64(file_path: str, page_number: int) -> str | None:
         try:
             if page_number < 1 or page_number > len(pdf):
                 return None
-            pil = pdf[page_number - 1].render(scale=2.0).to_pil()
+            pil = pdf[page_number - 1].render(scale=_RENDER_SCALE).to_pil()
             buf = io.BytesIO()
             pil.save(buf, format="PNG")
             return base64.b64encode(buf.getvalue()).decode()
@@ -667,6 +786,42 @@ def _page_is_blank(image_b64: str) -> bool:
     except Exception as e:
         logger.warning(f"pdf-split: blank-page check failed: {e}")
         return False
+    return _histogram_is_blank(histogram)
+
+
+def _rendered_blank_pages(file_path: str, pages: list[int]) -> set[int]:
+    """The subset of ``pages`` (1-based) whose rendered image carries no ink.
+    Blocking (runs inside ``extract_page_signals``' executor). Any render
+    failure leaves that page out — an unverifiable page is never blank."""
+    out: set[int] = set()
+    try:
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(file_path)
+    except Exception as e:
+        logger.warning(f"pdf-split: blank-page render failed for {file_path}: {e}")
+        return out
+    try:
+        for page in pages:
+            if page < 1 or page > len(pdf):
+                continue
+            try:
+                pil = pdf[page - 1].render(scale=_RENDER_SCALE).to_pil()
+                histogram = pil.convert("L").histogram()
+            except Exception as e:
+                logger.warning(
+                    f"pdf-split: blank-page render of page {page} failed: {e}"
+                )
+                continue
+            if _histogram_is_blank(histogram):
+                out.add(page)
+    finally:
+        pdf.close()
+    return out
+
+
+def _histogram_is_blank(histogram: list[int]) -> bool:
+    """Ink floor over a greyscale histogram (see the _INK_DELTA comment)."""
     total = sum(histogram)
     if total == 0:
         return False
@@ -750,6 +905,10 @@ async def vlm_fill_signals(
             text=resolved_text,
             quality_ok=True,
             via_vlm=True,
+            blank=(
+                resolved_text == _PLACEHOLDER_BLANK
+                and settings.pdf_split_blank_fold_enabled
+            ),
         )
         resolved += 1
     return VlmFillResult(out, resolved, transcribed, failed)

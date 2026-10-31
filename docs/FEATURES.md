@@ -542,6 +542,11 @@ geschützt (flag-unabhängiger Worker-Guard, Reindex-409, Dedup als DUPLICATE).
   Seite wird per Vision-Modell transkribiert (bewusst ohne Seiten-Cap,
   zeitlich begrenzt pro Aufruf), dann entscheidet dieselbe Boundary-Logik;
   Fail-Safe ist immer die Verarbeitung als EIN Dokument.
+- **Leere Seiten** (`PDF_SPLIT_BLANK_FOLD_ENABLED`, dark): eine leere
+  Rückseite (≤ 30 Zeichen Textebene UND keine Tinte im Seitenbild) beginnt nie
+  ein Dokument und wird nie eines — sie fällt dem vorangehenden Dokument zu,
+  eine leere erste Seite dem folgenden. Ein rein leeres Teilstück entfällt samt
+  seiner Konfidenz und hält den Stapel nicht mehr unter dem Gate.
 - **Crash-sicher:** der Split-Plan wird VOR der Ausführung persistiert
   (`pdf_split_proposals`, approved) und bei Redelivery verbatim wiederholt
   (nie erneut das nichtdeterministische LLM); Resume-Keys = deterministische
