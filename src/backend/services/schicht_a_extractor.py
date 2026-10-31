@@ -870,6 +870,20 @@ async def schicht_a_post_document_ingest_hook(
                     )
                 )).scalars().all()
 
+                # A RE-extraction whose LLM step failed (outage / timeout) holds only
+                # the deterministic subset. Replacing the prior set with it would
+                # silently downgrade the document's facts for good, and the title
+                # and document date derived below with them. Keep the prior set,
+                # title and date; the next successful reindex refreshes them. A
+                # FIRST extraction has nothing to keep and stores the subset.
+                if result.error and old_atom_ids:
+                    logger.warning(
+                        f"Schicht A: doc {document_id} re-extraction incomplete; "
+                        f"kept the existing {len(old_atom_ids)} fact(s), title and "
+                        f"document date"
+                    )
+                    return
+
                 # Carry-over snapshot: a per-fact tier OVERRIDE (e.g. a public issuer
                 # on a private document) is bound to the current fact row, but a
                 # re-extraction recreates the fact set from scratch — without this it
