@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import Conversation, Message
 from services.conversation_service import ConversationService
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Debounce: track last handoff time per speaker to avoid rapid-fire copies
 _last_handoff: dict[int, float] = {}
@@ -146,7 +147,7 @@ async def try_handoff_context(
         return True
 
     except Exception as e:
-        logger.warning(f"Conversation handoff failed: {e}")
+        logger.warning(f"Conversation handoff failed: {error_text_without_content(e)}")
         await db.rollback()
         return False
 
@@ -218,4 +219,4 @@ async def on_presence_enter_room(**kwargs) -> None:
                 # Surface the "continued in {room}" chip in the user's new room.
                 await emit_continued_handoff_frame(kwargs.get("room_name"))
     except Exception as e:
-        logger.warning(f"Handoff hook failed: {e}")
+        logger.warning(f"Handoff hook failed: {error_text_without_content(e)}")

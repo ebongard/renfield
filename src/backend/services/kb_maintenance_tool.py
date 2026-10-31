@@ -52,6 +52,7 @@ from models.permissions import Permission, has_permission
 from services.database import AsyncSessionLocal
 from services.document_processing_history import ProcessingTrigger
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 REINDEX_DEFAULT_CAP = 200
 REINDEX_MAX_CAP = 500
@@ -574,7 +575,7 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
             },
         }
     except Exception as e:
-        logger.error(f"Error in ingest_status: {e}")
+        logger.error(f"Error in ingest_status: {error_text_without_content(e)}")
         return {
             "success": False,
             "message": f"Status-Abfrage fehlgeschlagen: {e!s}",
@@ -766,7 +767,7 @@ async def reindex_documents(
             },
         }
     except Exception as e:
-        logger.error(f"Error in reindex_documents: {e}")
+        logger.error(f"Error in reindex_documents: {error_text_without_content(e)}")
         return {
             "success": False,
             "message": f"Neu-Indexieren fehlgeschlagen: {e!s}",
@@ -877,7 +878,7 @@ async def list_chunkless_documents(params: dict, user_id: int | None = None) -> 
             },
         }
     except Exception as e:
-        logger.error(f"Error in list_chunkless_documents: {e}")
+        logger.error(f"Error in list_chunkless_documents: {error_text_without_content(e)}")
         return {
             "success": False,
             "message": f"Auflisten fehlgeschlagen: {e!s}",
@@ -1086,7 +1087,7 @@ async def list_unfiled_documents(
             },
         }
     except Exception as e:
-        logger.error(f"Error in list_unfiled_documents: {e}")
+        logger.error(f"Error in list_unfiled_documents: {error_text_without_content(e)}")
         return {
             "success": False,
             "message": f"Abfrage fehlgeschlagen: {e!s}",
@@ -1230,7 +1231,7 @@ async def refile_to_paperless(
             "data": {"targeted": len(rows), "queued": queued, "truncated": len(rows) == cap},
         }
     except Exception as e:
-        logger.error(f"Error in refile_to_paperless: {e}")
+        logger.error(f"Error in refile_to_paperless: {error_text_without_content(e)}")
         return {
             "success": False,
             "message": f"Erneutes Ablegen fehlgeschlagen: {e!s}",

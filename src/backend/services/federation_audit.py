@@ -31,6 +31,7 @@ from sqlalchemy import delete, select
 
 from models.database import FederationQueryLog
 from services.database import AsyncSessionLocal
+from utils.log_safety import error_text_without_content
 
 # Per-column truncation caps. Chosen to keep a single audit row well
 # under 4 KB on disk (Postgres TOAST threshold, though TEXT isn't
@@ -181,7 +182,7 @@ async def prune_old_audit_rows(
                 )
             return deleted
     except Exception as e:
-        logger.warning(f"Federation audit retention prune failed: {e}")
+        logger.warning(f"Federation audit retention prune failed: {error_text_without_content(e)}")
         return 0
 
 

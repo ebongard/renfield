@@ -35,6 +35,8 @@ from typing import Any
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 # Redis channel every emitter publishes to; the per-pod subscriber consumes it.
 USER_EVENTS_CHANNEL = "renfield:events:user"
 
@@ -135,7 +137,7 @@ async def resolve_document_owner(db: Any, document: Any) -> int | None:
             await db.execute(select(Atom.owner_user_id).where(Atom.atom_id == atom_id))
         ).scalar_one_or_none()
     except Exception as exc:
-        logger.debug(f"user-events: owner lookup failed for atom {atom_id}: {exc}")
+        logger.debug(f"user-events: owner lookup failed for atom {atom_id}: {error_text_without_content(exc)}")
         return None
 
 

@@ -32,6 +32,7 @@ from services.kg_validity_sql import live_conditions
 from services.merge_guard import is_already_merged
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
+from utils.log_safety import error_text_without_content
 
 # =============================================================================
 # Generic meta-descriptions (the magnet-hub root cause)
@@ -1999,7 +2000,7 @@ async def kg_retrieve_context_hook(
             svc = KnowledgeGraphService(db)
             return await svc.get_relevant_context(query, user_id, user_role, lang)
     except Exception as e:
-        logger.warning(f"KG retrieve_context hook failed: {e}")
+        logger.warning(f"KG retrieve_context hook failed: {error_text_without_content(e)}")
         return None
 
 

@@ -8,6 +8,7 @@ from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Create the async engine
 engine = create_async_engine(
@@ -70,7 +71,7 @@ def _release_leaked_advisory_locks_on_checkin(dbapi_connection, connection_recor
         cursor.execute("SELECT pg_advisory_unlock_all();")
     except Exception as e:
         # Worst case is the original leak symptom comes back, visible in logs.
-        logger.warning(f"checkin: pg_advisory_unlock_all failed (swallowed): {type(e).__name__}: {e}")
+        logger.warning(f"checkin: pg_advisory_unlock_all failed (swallowed): {type(e).__name__}: {error_text_without_content(e)}")
     finally:
         if cursor is not None:
             try:
@@ -242,7 +243,7 @@ async def init_db():
         await _run_alembic_upgrade_head()
         logger.info("✅ Schema ueber `alembic upgrade head` hergestellt")
     except Exception as e:
-        logger.error(f"❌ Failed to initialise the database: {e}")
+        logger.error(f"❌ Failed to initialise the database: {error_text_without_content(e)}")
         raise
 
 async def get_db():

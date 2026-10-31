@@ -48,6 +48,7 @@ from utils.llm_client import (
     get_classification_chat_kwargs,
     get_default_client,
 )
+from utils.log_safety import error_text_without_content
 
 # Obligations that are ALWAYS human-confirmed regardless of what the LLM says
 # about legal_gate (golden set: statutory remedy => mandatory review). Now that
@@ -737,7 +738,7 @@ async def _reindex_lock(bind: Any, document_id: int | None):
                 except Exception as e:
                     logger.warning(
                         f"Schicht A: advisory unlock failed for doc {document_id} "
-                        f"({e!r}); checkin backstop will release it"
+                        f"({error_text_without_content(e)}); checkin backstop will release it"
                     )
     finally:
         await lock_conn.close()
@@ -999,4 +1000,4 @@ async def schicht_a_post_document_ingest_hook(
             except Exception as e:
                 logger.warning(f"Schicht A: document_date derivation failed for doc {document_id}: {e}")
     except Exception as e:
-        logger.warning(f"Schicht A post_document_ingest hook failed: {e}")
+        logger.warning(f"Schicht A post_document_ingest hook failed: {error_text_without_content(e)}")

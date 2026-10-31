@@ -28,6 +28,7 @@ from models.database import (
     SystemSetting,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 
 class NotificationService:
@@ -169,7 +170,7 @@ class NotificationService:
                 )
                 return True
         except Exception as e:
-            logger.debug(f"Semantic dedup check skipped (pgvector not available): {e}")
+            logger.debug(f"Semantic dedup check skipped (pgvector not available): {error_text_without_content(e)}")
 
         return False
 
@@ -192,7 +193,7 @@ class NotificationService:
                         notification.embedding = embedding
                         await db_session.commit()
             except Exception as e:
-                logger.warning(f"⚠️ Failed to store embedding for notification #{notification_id}: {e}")
+                logger.warning(f"⚠️ Failed to store embedding for notification #{notification_id}: {error_text_without_content(e)}")
 
         task = asyncio.create_task(_store())
         self._background_tasks.add(task)
@@ -397,7 +398,7 @@ class NotificationService:
                     )
                     return True
             except Exception as e:
-                logger.debug(f"Semantic suppression check skipped: {e}")
+                logger.debug(f"Semantic suppression check skipped: {error_text_without_content(e)}")
 
         return False
 

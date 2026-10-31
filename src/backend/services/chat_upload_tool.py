@@ -33,6 +33,7 @@ from pathlib import Path
 from loguru import logger
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Cold-start window for the LLM-metadata confirm flow: the first N archives
 # require an explicit confirm; after that the system trusts itself and archives
@@ -411,7 +412,7 @@ async def forward_attachment_to_paperless(
             },
         }
     except Exception as e:
-        logger.error(f"forward_attachment_to_paperless error: {e}")
+        logger.error(f"forward_attachment_to_paperless error: {error_text_without_content(e)}")
         return {
             "success": False,
             "message": f"Forward to Paperless failed: {e!s}",

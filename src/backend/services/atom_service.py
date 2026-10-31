@@ -58,6 +58,7 @@ from models.database import (
 )
 from services.atom_types import Atom
 from services.circle_resolver import CircleResolver, atom_from_orm
+from utils.log_safety import error_text_without_content
 
 # Source table → discriminator atom_type → row id column map.
 # Used by update_tier to dispatch the denormalized circle_tier write.
@@ -473,7 +474,7 @@ class AtomService:
         except Exception as e:
             logger.warning(
                 f"AtomService.soft_delete: source table {atom_orm.source_table} "
-                f"may lack is_active column or row missing: {e}"
+                f"may lack is_active column or row missing: {error_text_without_content(e)}"
             )
             await self.db.rollback()
 

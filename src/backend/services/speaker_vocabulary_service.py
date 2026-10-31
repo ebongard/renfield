@@ -55,6 +55,7 @@ from models.database import (
 # the symbol from monkeypatching and force tests to know about
 # `services.database` internals.
 from services.database import AsyncSessionLocal
+from utils.log_safety import error_text_without_content
 
 # Tokenization config
 _MIN_TOKEN_LENGTH = 3
@@ -144,7 +145,7 @@ async def capture_transcript(
             session.add(row)
             await session.commit()
     except Exception as e:
-        logger.debug(f"speaker_vocabulary_service.capture_transcript failed: {e}")
+        logger.debug(f"speaker_vocabulary_service.capture_transcript failed: {error_text_without_content(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +216,7 @@ async def rebuild_vocabulary(*, db_session) -> dict[str, int]:
         except Exception as e:
             await db_session.rollback()
             logger.warning(
-                f"speaker_vocabulary rebuild failed for user_id={user_id} lang={language}: {e}"
+                f"speaker_vocabulary rebuild failed for user_id={user_id} lang={language}: {error_text_without_content(e)}"
             )
 
     return {
@@ -275,7 +276,7 @@ async def vocab_initial_prompt_handler(
         prompt = f"{head}{labels['frequent']}: {', '.join(terms)}."
         return prompt[:220].rstrip()
     except Exception as e:
-        logger.debug(f"vocab_initial_prompt_handler failed: {e}")
+        logger.debug(f"vocab_initial_prompt_handler failed: {error_text_without_content(e)}")
         return None
 
 

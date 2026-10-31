@@ -41,6 +41,7 @@ from models.database import (
 )
 from services.database import AsyncSessionLocal
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Stable Simba taxonomy (mirrors the MCP's KNOWN_CATEGORIES) — used for the
 # ingest-time classification so the worker needs no simba MCP client.
@@ -127,7 +128,7 @@ async def _document_period(db, document_id: int, doc=None) -> tuple[int | None, 
         if got is not None:
             return got.month, got.year
     except Exception as e:
-        logger.debug(f"simba period: date derivation failed for doc {document_id}: {e}")
+        logger.debug(f"simba period: date derivation failed for doc {document_id}: {error_text_without_content(e)}")
     return None, None
 
 
@@ -311,7 +312,7 @@ async def _classify_document(db, document_id: int) -> tuple[str | None, str | No
 
         return await classify_simba(text, KNOWN_SIMBA_TAXONOMY, lang="de")
     except Exception as e:
-        logger.warning(f"simba-ingest: classify failed for existing doc {document_id}: {e}")
+        logger.warning(f"simba-ingest: classify failed for existing doc {document_id}: {error_text_without_content(e)}")
         return None, None
 
 
