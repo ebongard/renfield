@@ -103,8 +103,11 @@ async def ingest_file(parameters: dict, *, mcp_manager, user_id: int | None = No
     from services.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
-        kb = await resolve_target_kb(db)
+        # The document belongs to the ASKER, so it goes into the asker's own
+        # inbox — never into the configured target user's KB, whose owner would
+        # otherwise reach it through the KB-owner branch of the circle filter.
         owner = user_id if user_id is not None else await resolve_owner_user_id(db)
+        kb = await resolve_target_kb(db, owner_user_id=owner)
         result = await ingest_document(
             file_bytes,
             meta,

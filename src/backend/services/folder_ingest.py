@@ -56,6 +56,8 @@ _PAPERLESS_SETTLED = (PAPERLESS_STATE_DONE, PAPERLESS_STATE_FAILED)
 from services.ingest_common import (
     generate_ingest_token,
     get_ingest_token,
+    get_or_create_owned_kb,
+    owned_kb_filter,
     resolve_user_id,
     verify_ingest_token,
 )
@@ -440,44 +442,45 @@ async def resolve_folder_ingest_client(db: AsyncSession, token: str):
 
 # ---------------------------------------------------------------------------
 # Target KB + owner resolution (shared by the push route and the
-# internal.ingest_file agent tool). Both file into the single configured
-# (folder_ingest_kb_name, folder_ingest_target_user) destination.
+# internal.ingest_file agent tool). Both file into the inbox called
+# folder_ingest_kb_name (or the credential's kb_name) OF THE DOCUMENT'S OWNER.
 # ---------------------------------------------------------------------------
 
-async def resolve_target_kb(db: AsyncSession, kb_name: str | None = None) -> KnowledgeBase:
-    """Get-or-create the target KB. Mirrors the chat-upload default-KB pattern
-    so a fresh install just works.
+async def resolve_target_kb(
+    db: AsyncSession,
+    kb_name: str | None = None,
+    *,
+    owner_user_id: int | None,
+) -> KnowledgeBase:
+    """Get-or-create the target inbox of ``owner_user_id``. Mirrors the
+    chat-upload default-KB pattern so a fresh install just works.
 
     ``kb_name`` comes from the authenticated CLIENT's credential row when it has
     one (Phase 4 sphere routing); None falls back to the global configuration,
     which is what every client did before per-integration credentials existed.
+
+    ``owner_user_id`` MUST be the owner the document is filed under: the KB is
+    looked up by (name, owner) and created for exactly that owner, so the KB
+    owner never differs from the document's atom owner (one inbox per person).
+    None → the shared ownerless KB of that name.
     """
     target_name = (kb_name or "").strip() or settings.folder_ingest_kb_name
-    kb = (
-        await db.execute(
-            select(KnowledgeBase).where(KnowledgeBase.name == target_name)
-        )
-    ).scalar_one_or_none()
-    if kb:
-        return kb
-    kb = KnowledgeBase(
-        name=target_name,
+    return await get_or_create_owned_kb(
+        db, target_name, owner_user_id,
         description="Auto-ingested documents from watched folders",
     )
-    db.add(kb)
-    await db.commit()
-    await db.refresh(kb)
-    return kb
 
 
 async def target_kb_exists(db: AsyncSession) -> bool:
-    """Whether the configured folder-ingest target KB already exists. SELECT
-    only — unlike :func:`resolve_target_kb` it does NOT create the KB, so the
-    health handshake can report provisioning state without a side effect."""
+    """Whether the inbox the global configuration files into — the configured
+    KB name of the configured target user — already exists. SELECT only —
+    unlike :func:`resolve_target_kb` it does NOT create the KB, so the health
+    handshake can report provisioning state without a side effect."""
+    owner = await resolve_owner_user_id(db)
     kb_id = (
         await db.execute(
             select(KnowledgeBase.id).where(
-                KnowledgeBase.name == settings.folder_ingest_kb_name
+                owned_kb_filter(settings.folder_ingest_kb_name, owner)
             )
         )
     ).scalar_one_or_none()

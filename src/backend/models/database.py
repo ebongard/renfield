@@ -339,9 +339,20 @@ class SpeakerVocabulary(Base):
 class KnowledgeBase(Base):
     """A grouping of documents for RAG"""
     __tablename__ = "knowledge_bases"
+    # A name is unique PER OWNER (one ingest inbox per person), and NULLS NOT
+    # DISTINCT so two ownerless KBs of one name cannot exist either. Migration
+    # pc20261031_kb_name_per_owner replaced the global UNIQUE(name).
+    __table_args__ = (
+        Index(
+            "uq_knowledge_bases_name_owner",
+            "name", "owner_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False, unique=True)
+    name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
 
