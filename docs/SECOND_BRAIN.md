@@ -197,7 +197,10 @@ history, the tooling and the frontend wiring.
 - `services/schicht_a_extractor.generate_document_title(facts)` synthesizes a short human title (issuer + type + date,
   inferring the doc type from context) via one LLM call. It is stored in `documents.generated_title` (migration
   `pc20260611`).
-- The Schicht A ingest hook sets it best-effort after the facts commit.
+- The Schicht A ingest hook sets it best-effort after the facts commit. No facts means no title AND no document
+  date; the hook then logs `Schicht A: doc N produced no facts (error=…)` (counts only) and there is NO automatic
+  retry — the document stays untitled until it is re-extracted (reindex). Until 2026-10-31 that exit was silent
+  (xidra doc 669 could not be traced).
 - `GET /api/knowledge/documents` returns `display_name = generated_title → title → filename`; the `/wissen/dokumente`
   (+ `/knowledge`) list renders it.
 - Existing documents are titled by `bin/backfill_document_titles.py` (`--dry-run` / `--commit`; works off stored
