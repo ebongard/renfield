@@ -9,6 +9,8 @@ import gc
 import re
 import shutil
 import subprocess
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,23 @@ import aiofiles
 from loguru import logger
 
 from utils.config import settings
+
+
+@dataclass(frozen=True)
+class VlmTranscription:
+    """An accepted VLM re-OCR result, kept PAGE BY PAGE.
+
+    ``pages`` holds ``(page_number, text)`` with 1-based page numbers, in reading
+    order; a blank page (the VLM answered with nothing) is simply absent. The
+    page boundaries are what lets the replacement chunks carry ``page_number``
+    like Docling's — a flat string would lose the page provenance of every
+    citation drawn from a VLM-replaced document."""
+
+    pages: tuple[tuple[int, str], ...]
+
+    @property
+    def text(self) -> str:
+        return "\n\n".join(t for _, t in self.pages)
 
 
 class DocumentProcessor:
@@ -493,14 +512,14 @@ class DocumentProcessor:
             # fire regardless of the survivor score.
             _final_total = len(chunks) + dropped
             _final_drop_rate = (dropped / _final_total) if _final_total else 0.0
-            _vlm_text = await self._vlm_ocr_fallback(
+            _vlm = await self._vlm_ocr_fallback(
                 file_path, _ocr_text, drop_rate=_final_drop_rate
             )
-            if _vlm_text:
+            if _vlm is not None:
                 from utils.content_quality import is_low_quality_text
 
                 _vlm_chunks = [
-                    c for c in self._simple_chunk(_vlm_text)
+                    c for c in self._chunk_vlm_pages(_vlm)
                     if not is_low_quality_text(c.get("text", ""))
                 ]
                 if _vlm_chunks:
@@ -511,7 +530,7 @@ class DocumentProcessor:
                     chunks = _vlm_chunks
                     dropped = 0
                     ocr_engine = "vlm_fallback"
-                    docling_text = _vlm_text
+                    docling_text = _vlm.text
 
             field_text = docling_text
             if text_layer and tl_usable:
@@ -540,41 +559,62 @@ class DocumentProcessor:
                 "error": str(e)
             }
 
-    def _render_pages_b64(self, file_path: str, max_pages: int) -> list[str]:
-        """Render the first ``max_pages`` pages to base64 PNGs for the VLM fallback.
+    _IMAGE_EXTS = ("png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp")
 
-        PDFs via pypdfium2 (Docling's own renderer — no extra dep); image files via
-        PIL directly. Returns ``[]`` on any failure or unsupported type (the caller
-        then keeps the OCR text). Runs in a thread — pdfium is blocking."""
-        import base64
-        import io
-
+    def _page_count(self, file_path: str) -> int | None:
+        """Number of pages the VLM fallback would have to read: the PDF page count,
+        1 for an image file, None when unknown (unsupported type / unreadable).
+        Runs in a thread — pdfium is blocking."""
         ext = Path(file_path).suffix.lower().lstrip(".")
-        out: list[str] = []
         try:
             if ext == "pdf":
                 import pypdfium2 as pdfium
 
                 pdf = pdfium.PdfDocument(file_path)
                 try:
-                    for i in range(min(len(pdf), max_pages)):
-                        pil = pdf[i].render(scale=2.0).to_pil()
-                        buf = io.BytesIO()
-                        pil.save(buf, format="PNG")
-                        out.append(base64.b64encode(buf.getvalue()).decode())
+                    return len(pdf)
                 finally:
                     pdf.close()
-            elif ext in ("png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"):
+            if ext in self._IMAGE_EXTS:
+                return 1
+        except Exception as e:
+            logger.warning(f"VLM re-OCR: page count failed for {file_path}: {e}")
+        return None
+
+    def _render_page_b64(self, file_path: str, page_index: int) -> str | None:
+        """Render ONE page (0-based) to a base64 PNG for the VLM fallback.
+
+        One page at a time, so a long document never holds every rendered page
+        in memory at once. PDFs via pypdfium2 (Docling's own renderer — no extra
+        dep); image files via PIL directly. Returns None on any failure. Runs in
+        a thread — pdfium is blocking."""
+        import base64
+        import io
+
+        ext = Path(file_path).suffix.lower().lstrip(".")
+        try:
+            buf = io.BytesIO()
+            if ext == "pdf":
+                import pypdfium2 as pdfium
+
+                pdf = pdfium.PdfDocument(file_path)
+                try:
+                    pdf[page_index].render(scale=2.0).to_pil().save(buf, format="PNG")
+                finally:
+                    pdf.close()
+            elif ext in self._IMAGE_EXTS and page_index == 0:
                 from PIL import Image
 
                 with Image.open(file_path) as im:
-                    buf = io.BytesIO()
                     im.convert("RGB").save(buf, format="PNG")
-                    out.append(base64.b64encode(buf.getvalue()).decode())
+            else:
+                return None
+            return base64.b64encode(buf.getvalue()).decode()
         except Exception as e:
-            logger.warning(f"VLM re-OCR: page render failed for {file_path}: {e}")
-            return []
-        return out
+            logger.warning(
+                f"VLM re-OCR: render of page {page_index + 1} failed for {file_path}: {e}"
+            )
+            return None
 
     @staticmethod
     def _token_overlap(survivor_text: str, candidate_text: str) -> float:
@@ -594,12 +634,19 @@ class DocumentProcessor:
 
     async def _vlm_ocr_fallback(
         self, file_path: str, ocr_text: str, drop_rate: float | None = None
-    ) -> str | None:
+    ) -> VlmTranscription | None:
         """Vision-model re-OCR when the OCR text is bad (rotated / poor scan).
 
         Both Tesseract and EasyOCR fail on the same bad pixels; a vision model reads
-        such pages and is robust to orientation. Returns better VLM text, or None
-        (keep OCR). Gated + best-effort.
+        such pages and is robust to orientation. Returns the better VLM transcription
+        page by page, or None (keep OCR). Gated + best-effort.
+
+        All-or-nothing over the pages: an accepted transcription REPLACES every
+        chunk of the document, so it must cover every page. A document longer than
+        ``ocr_vlm_fallback_max_pages`` is therefore not re-read at all (WARNING),
+        and a page whose VLM call fails (outage, open breaker) discards the whole
+        transcription — either way the OCR text, poor but complete, is kept. A
+        partial transcription would silently delete the pages it did not reach.
 
         Trigger + acceptance are decided by TWO signals, because OCR garble comes in
         two flavours: (1) internal-punctuation garble ('Bez:-ihl') the cheap
@@ -651,36 +698,66 @@ class DocumentProcessor:
                 )
                 return None
 
-            loop = asyncio.get_event_loop()
-            images = await loop.run_in_executor(
-                None, self._render_pages_b64, file_path, settings.ocr_vlm_fallback_max_pages
+            name = Path(file_path).name
+            trigger_ctx = (
+                f"ocr_bad={ocr_bad}, coverage_bad={coverage_bad}, drop_rate="
+                + (f"{drop_rate:.0%}" if drop_rate is not None else "n/a")
             )
-            # Observability: the two branches below used to return None SILENTLY, so a
+            loop = asyncio.get_event_loop()
+            page_count = await loop.run_in_executor(None, self._page_count, file_path)
+            # Observability: the branches below used to return None SILENTLY, so a
             # low-coverage doc that reached the VLM but recovered nothing was
-            # indistinguishable in the logs from one that never triggered. That masks the
-            # real failure mode (page render fails → the VLM never sees the image) exactly
-            # for the hard garbled scans one wants to diagnose. Log the trigger context
-            # (drop_rate + which trigger) and the reason — filename only, no doc content.
-            if not images:
+            # indistinguishable in the logs from one that never triggered. Log the
+            # trigger context and the reason — filename and counts only, no content.
+            if not page_count:
                 logger.info(
-                    f"VLM re-OCR SKIPPED for {Path(file_path).name}: no page images "
-                    f"rendered (ocr_bad={ocr_bad}, coverage_bad={coverage_bad}, drop_rate="
-                    + (f"{drop_rate:.0%}" if drop_rate is not None else "n/a")
-                    + ") — cannot re-transcribe, keeping OCR text"
+                    f"VLM re-OCR SKIPPED for {name}: no page images rendered "
+                    f"(page count unknown, {trigger_ctx}) — cannot re-transcribe, "
+                    f"keeping OCR text"
+                )
+                return None
+            max_pages = settings.ocr_vlm_fallback_max_pages
+            if page_count > max_pages:
+                logger.warning(
+                    f"VLM re-OCR SKIPPED for {name}: {page_count} pages exceed "
+                    f"OCR_VLM_FALLBACK_MAX_PAGES={max_pages} ({trigger_ctx}) — "
+                    f"keeping the complete OCR text rather than a transcription "
+                    f"that would drop pages {max_pages + 1}..{page_count}; raise "
+                    f"the cap and reindex to recover this document"
                 )
                 return None
 
-            parts: list[str] = []
-            for img in images:
+            started = time.monotonic()
+            pages: list[tuple[int, str]] = []
+            rendered = 0
+            for idx in range(page_count):
+                img = await loop.run_in_executor(None, self._render_page_b64, file_path, idx)
+                if img is None:
+                    logger.info(
+                        f"VLM re-OCR SKIPPED for {name}: no page images rendered "
+                        f"for page {idx + 1}/{page_count} ({trigger_ctx}) — "
+                        f"keeping OCR text"
+                    )
+                    return None
+                rendered += 1
                 t = await svc.extract_text_from_image(img)
-                if t:
-                    parts.append(t)
-            vlm_text = "\n\n".join(parts).strip()
+                if t is None:
+                    # None = no answer (outage / breaker); "" = a blank page.
+                    logger.warning(
+                        f"VLM re-OCR ABORTED for {name}: the vision call failed on "
+                        f"page {idx + 1}/{page_count} — keeping OCR text rather "
+                        f"than a transcription missing that page"
+                    )
+                    return None
+                if t.strip():
+                    pages.append((idx + 1, t.strip()))
+            transcription = VlmTranscription(pages=tuple(pages))
+            vlm_text = transcription.text
+            elapsed = time.monotonic() - started
             if not vlm_text:
                 logger.info(
-                    f"VLM re-OCR produced EMPTY text for {Path(file_path).name} "
-                    f"({len(images)} page(s) rendered, ocr_bad={ocr_bad}, "
-                    f"coverage_bad={coverage_bad}) — keeping OCR text"
+                    f"VLM re-OCR produced EMPTY text for {name} "
+                    f"({rendered} page(s) rendered, {trigger_ctx}) — keeping OCR text"
                 )
                 return None
 
@@ -717,15 +794,16 @@ class DocumentProcessor:
             if accept:
                 logger.info(
                     f"VLM re-OCR: using vision transcription for "
-                    f"{Path(file_path).name} ({len(images)} page(s), "
-                    f"score {old_score}→{new_score}"
+                    f"{name} ({page_count} page(s), {len(pages)} with text, "
+                    f"{elapsed:.1f}s, score {old_score}→{new_score}"
                     + (f", coverage-recovered {len(ocr_text or '')}→{len(vlm_text)} chars"
                        if coverage_accept else "")
                     + ")"
                 )
-                return vlm_text
+                return transcription
             logger.info(
-                f"VLM re-OCR for {Path(file_path).name} not better — keeping OCR text"
+                f"VLM re-OCR for {name} not better ({page_count} page(s), "
+                f"{elapsed:.1f}s) — keeping OCR text"
             )
             return None
         except Exception as e:
@@ -893,8 +971,22 @@ class DocumentProcessor:
             pass
         return None
 
-    def _simple_chunk(self, text: str) -> list[dict[str, Any]]:
-        """Fallback: simple character-based text splitting"""
+    def _chunk_vlm_pages(self, transcription: VlmTranscription) -> list[dict[str, Any]]:
+        """Chunk a VLM transcription page by page, so every chunk carries the
+        ``page_number`` it came from (chunks never span a page boundary, as with
+        Docling). ``chunk_index`` runs on across pages."""
+        chunks: list[dict[str, Any]] = []
+        for page_number, page_text in transcription.pages:
+            for c in self._simple_chunk(page_text, page_number=page_number):
+                c["chunk_index"] = len(chunks)
+                chunks.append(c)
+        return chunks
+
+    def _simple_chunk(
+        self, text: str, page_number: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Fallback: simple character-based text splitting. ``page_number`` is
+        stamped on every chunk when the caller knows the page (VLM fallback)."""
         chunks = []
         chunk_size = settings.rag_chunk_size * 4  # ~4 chars per token
         overlap = settings.rag_chunk_overlap * 4
@@ -922,7 +1014,7 @@ class DocumentProcessor:
                     "metadata": {
                         "headings": [],
                         "chunk_type": "paragraph",
-                        "page_number": None,
+                        "page_number": page_number,
                     }
                 })
                 idx += 1

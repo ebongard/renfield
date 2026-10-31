@@ -216,3 +216,64 @@ async def test_concurrent_hooks_leave_exactly_one_fact_set(pg_async_engine, _pat
                                             field_text="txt"),
     )
     assert await _count_facts(pg_async_engine, did) == 2
+
+
+# ============================================================================
+# A document that ends with NO facts says so (xidra doc 669, 2026-10-27)
+# ============================================================================
+# No facts means no generated title and no document date. That exit returned
+# silently, and extract()'s own failure line named no document, so a factless
+# document could not be traced back to its cause from the logs.
+
+
+def _warnings(mock_logger) -> str:
+    return " ".join(str(c.args[0]) for c in mock_logger.warning.call_args_list)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_hook_names_the_document_when_extraction_yields_no_facts(
+    pg_async_engine, _patch_extractor, _wire_session, monkeypatch
+):
+    from unittest.mock import patch
+
+    from services import schicht_a_extractor as mod
+
+    monkeypatch.setattr(mod.SchichtAExtractor, "extract", AsyncMock(
+        return_value=SchichtAResult(facts=[], error="llm_extraction_failed")
+    ))
+    uid, did = await _seed_user_and_doc(pg_async_engine)
+
+    with patch("services.schicht_a_extractor.logger") as mock_logger:
+        await schicht_a_post_document_ingest_hook([], document_id=did, user_id=uid,
+                                                  field_text="some field text")
+
+    assert await _count_facts(pg_async_engine, did) == 0
+    msg = _warnings(mock_logger)
+    assert f"doc {did} produced no facts" in msg
+    assert "llm_extraction_failed" in msg
+    assert "some field text" not in msg  # counts only, never the content
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_hook_names_the_document_on_a_partial_extraction(
+    pg_async_engine, _patch_extractor, _wire_session, monkeypatch
+):
+    """LLM failed but the deterministic layer found facts: they are stored, and
+    the failure is still attributed to the document."""
+    from unittest.mock import patch
+
+    from services import schicht_a_extractor as mod
+
+    partial = _two_facts()
+    partial.error = "llm_extraction_failed"
+    monkeypatch.setattr(mod.SchichtAExtractor, "extract", AsyncMock(return_value=partial))
+    uid, did = await _seed_user_and_doc(pg_async_engine)
+
+    with patch("services.schicht_a_extractor.logger") as mock_logger:
+        await schicht_a_post_document_ingest_hook([], document_id=did, user_id=uid,
+                                                  field_text="some field text")
+
+    assert await _count_facts(pg_async_engine, did) == 2
+    assert f"extraction for doc {did} failed (llm_extraction_failed)" in _warnings(mock_logger)
