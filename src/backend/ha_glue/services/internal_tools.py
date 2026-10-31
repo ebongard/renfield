@@ -30,6 +30,14 @@ from loguru import logger
 class InternalToolService:
     """Provider-agnostic internal tools for the Agent Loop."""
 
+    def __init__(self, *, caller_user_id: int | None = None) -> None:
+        # The authenticated user of the turn, set by the dispatcher
+        # (`ha_glue_execute_tool`) from the auth context. Handlers that need an
+        # identity (radio favorites, the Media Follow Me session owner) read it
+        # HERE, never from `params`: those are LLM-built. None = auth-off or an
+        # unidentified turn (and every internal, non-agent construction).
+        self._caller_user_id = caller_user_id
+
     TOOLS: dict[str, dict] = {
         "internal.resolve_room_player": {
             "description": "Find the media_player entity for a room by name",
@@ -1138,18 +1146,16 @@ class InternalToolService:
             rid = await self._get_room_id(room_name)
             if rid is None:
                 return
-            # Session owner: in practice always the presence-resolved occupant of
-            # the playback room. `params` never carries a user_id today (the
-            # dispatcher passes it as a kwarg, not in params, and the LLM tool
-            # schema has no user_id arg), so the `or` first operand is currently
-            # inert — kept only for a future authenticated-caller path. Without
-            # the presence fallback, AUTH-disabled playback has user_id=None → no
+            # Session owner: the authenticated caller of the turn (injected by
+            # the dispatcher, never read from the LLM-built `params`), else the
+            # presence-resolved occupant of the playback room. Without the
+            # presence fallback, AUTH-disabled playback has no owner → no
             # session registered → leaving never stops the music, even though
             # presence_leave_room fires with that same presence-resolved user.
             # Caveat: presence is BLE-cadence (~30-60s), so "play then walk away
             # immediately" may register no session if the scan hasn't yet placed
             # the user in the room; >1 occupants → None (no follow, by design).
-            user_id = params.get("user_id") or self._presence_room_user(rid)
+            user_id = self._caller_user_id or self._presence_room_user(rid)
             if not user_id:
                 return
 
@@ -3042,7 +3048,6 @@ class InternalToolService:
                     "room_name": room_name,
                     "media_type": "music",
                     "force": str(force).lower(),
-                    "user_id": params.get("user_id"),
                 }
                 if station_name:
                     play_params["title"] = station_name
@@ -3077,7 +3082,7 @@ class InternalToolService:
         station_name = (params.get("station_name") or "").strip()
         station_image = (params.get("station_image") or "").strip() or None
         genre = (params.get("genre") or "").strip() or None
-        user_id = params.get("user_id")
+        user_id = self._caller_user_id  # server-injected, never from params
 
         if not station_id:
             return {
@@ -3140,7 +3145,7 @@ class InternalToolService:
 
     async def _list_radio_favorites(self, params: dict) -> dict:
         """List the current user's radio station favorites."""
-        user_id = params.get("user_id")
+        user_id = self._caller_user_id  # server-injected, never from params
 
         try:
             from sqlalchemy import select as sa_select
@@ -3194,7 +3199,7 @@ class InternalToolService:
     async def _remove_radio_favorite(self, params: dict) -> dict:
         """Remove a radio station from user's favorites."""
         station_id = (params.get("station_id") or "").strip()
-        user_id = params.get("user_id")
+        user_id = self._caller_user_id  # server-injected, never from params
 
         if not station_id:
             return {

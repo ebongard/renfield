@@ -19,6 +19,12 @@ def internal_tools():
     return InternalToolService()
 
 
+@pytest.fixture
+def caller_tools():
+    """The service as the dispatcher builds it for an authenticated caller (id 1)."""
+    return InternalToolService(caller_user_id=1)
+
+
 @pytest.fixture(autouse=True)
 def _stub_room_id_db():
     """Stub ``_get_room_id`` so tests never open a real DB connection.
@@ -3304,7 +3310,7 @@ class TestSaveRadioFavorite:
     """Test internal.save_radio_favorite tool."""
 
     @pytest.mark.unit
-    async def test_save_favorite_success(self, internal_tools):
+    async def test_save_favorite_success(self, caller_tools):
         """Save new favorite station to DB."""
         with _patch_db_deps() as ctx:
             # Mock: no existing favorite found
@@ -3314,11 +3320,10 @@ class TestSaveRadioFavorite:
             ctx.db.commit = AsyncMock()
             ctx.db.add = MagicMock()
 
-            result = await internal_tools._save_radio_favorite({
+            result = await caller_tools._save_radio_favorite({
                 "station_id": "s12345",
                 "station_name": "BBC Radio 1",
                 "genre": "Pop",
-                "user_id": 1,
             })
 
         assert result["success"] is True
@@ -3328,7 +3333,7 @@ class TestSaveRadioFavorite:
         ctx.db.commit.assert_called_once()
 
     @pytest.mark.unit
-    async def test_save_favorite_already_exists(self, internal_tools):
+    async def test_save_favorite_already_exists(self, caller_tools):
         """Saving same station twice is idempotent (no error)."""
         with _patch_db_deps() as ctx:
             existing = MagicMock()
@@ -3337,10 +3342,9 @@ class TestSaveRadioFavorite:
             mock_result.scalar_one_or_none.return_value = existing
             ctx.db.execute = AsyncMock(return_value=mock_result)
 
-            result = await internal_tools._save_radio_favorite({
+            result = await caller_tools._save_radio_favorite({
                 "station_id": "s12345",
                 "station_name": "BBC Radio 1",
-                "user_id": 1,
             })
 
         assert result["success"] is True
@@ -3348,18 +3352,18 @@ class TestSaveRadioFavorite:
         assert "already" in result["message"]
 
     @pytest.mark.unit
-    async def test_save_favorite_missing_station_id(self, internal_tools):
+    async def test_save_favorite_missing_station_id(self, caller_tools):
         """Missing station_id returns error."""
-        result = await internal_tools._save_radio_favorite({
+        result = await caller_tools._save_radio_favorite({
             "station_name": "BBC Radio 1",
         })
         assert result["success"] is False
         assert "station_id" in result["message"]
 
     @pytest.mark.unit
-    async def test_save_favorite_missing_station_name(self, internal_tools):
+    async def test_save_favorite_missing_station_name(self, caller_tools):
         """Missing station_name returns error."""
-        result = await internal_tools._save_radio_favorite({
+        result = await caller_tools._save_radio_favorite({
             "station_id": "s12345",
         })
         assert result["success"] is False
@@ -3370,7 +3374,7 @@ class TestListRadioFavorites:
     """Test internal.list_radio_favorites tool."""
 
     @pytest.mark.unit
-    async def test_list_favorites_with_results(self, internal_tools):
+    async def test_list_favorites_with_results(self, caller_tools):
         """Returns user's saved stations."""
         with _patch_db_deps() as ctx:
             fav1 = MagicMock()
@@ -3391,7 +3395,7 @@ class TestListRadioFavorites:
             mock_result.scalars.return_value = mock_scalars
             ctx.db.execute = AsyncMock(return_value=mock_result)
 
-            result = await internal_tools._list_radio_favorites({"user_id": 1})
+            result = await caller_tools._list_radio_favorites({})
 
         assert result["success"] is True
         assert len(result["data"]["favorites"]) == 2
@@ -3399,7 +3403,7 @@ class TestListRadioFavorites:
         assert result["data"]["favorites"][1]["genre"] == "Jazz"
 
     @pytest.mark.unit
-    async def test_list_favorites_empty(self, internal_tools):
+    async def test_list_favorites_empty(self, caller_tools):
         """No favorites returns empty list with empty_result flag."""
         with _patch_db_deps() as ctx:
             mock_result = MagicMock()
@@ -3408,7 +3412,7 @@ class TestListRadioFavorites:
             mock_result.scalars.return_value = mock_scalars
             ctx.db.execute = AsyncMock(return_value=mock_result)
 
-            result = await internal_tools._list_radio_favorites({"user_id": 1})
+            result = await caller_tools._list_radio_favorites({})
 
         assert result["success"] is True
         assert result.get("empty_result") is True
@@ -3419,7 +3423,7 @@ class TestRemoveRadioFavorite:
     """Test internal.remove_radio_favorite tool."""
 
     @pytest.mark.unit
-    async def test_remove_favorite_success(self, internal_tools):
+    async def test_remove_favorite_success(self, caller_tools):
         """Remove existing favorite."""
         with _patch_db_deps() as ctx:
             mock_result = MagicMock()
@@ -3427,16 +3431,15 @@ class TestRemoveRadioFavorite:
             ctx.db.execute = AsyncMock(return_value=mock_result)
             ctx.db.commit = AsyncMock()
 
-            result = await internal_tools._remove_radio_favorite({
+            result = await caller_tools._remove_radio_favorite({
                 "station_id": "s12345",
-                "user_id": 1,
             })
 
         assert result["success"] is True
         assert result["action_taken"] is True
 
     @pytest.mark.unit
-    async def test_remove_favorite_not_found(self, internal_tools):
+    async def test_remove_favorite_not_found(self, caller_tools):
         """Removing non-existent station returns error."""
         with _patch_db_deps() as ctx:
             mock_result = MagicMock()
@@ -3444,20 +3447,17 @@ class TestRemoveRadioFavorite:
             ctx.db.execute = AsyncMock(return_value=mock_result)
             ctx.db.commit = AsyncMock()
 
-            result = await internal_tools._remove_radio_favorite({
+            result = await caller_tools._remove_radio_favorite({
                 "station_id": "s99999",
-                "user_id": 1,
             })
 
         assert result["success"] is False
         assert "not found" in result["message"]
 
     @pytest.mark.unit
-    async def test_remove_favorite_missing_station_id(self, internal_tools):
+    async def test_remove_favorite_missing_station_id(self, caller_tools):
         """Missing station_id returns error."""
-        result = await internal_tools._remove_radio_favorite({
-            "user_id": 1,
-        })
+        result = await caller_tools._remove_radio_favorite({})
         assert result["success"] is False
         assert "station_id" in result["message"]
 
@@ -4264,21 +4264,30 @@ class TestRegisterMediaFollowPresenceFallback:
     async def test_falls_back_to_presence_room_user(self, internal_tools, monkeypatch):
         captured: dict = {}
         self._wire(internal_tools, monkeypatch, presence_user=7, captured=captured)
-        await internal_tools._register_media_follow({"user_id": None}, "Arbeitszimmer", "radio")
+        await internal_tools._register_media_follow({}, "Arbeitszimmer", "radio")
         assert captured.get("user_id") == 7
         assert captured.get("room_id") == 2
         assert captured.get("room_name") == "Arbeitszimmer"
 
     @pytest.mark.unit
-    async def test_chat_user_id_wins_over_presence(self, internal_tools, monkeypatch):
+    async def test_chat_user_id_wins_over_presence(self, monkeypatch):
         captured: dict = {}
-        self._wire(internal_tools, monkeypatch, presence_user=99, captured=captured)
-        await internal_tools._register_media_follow({"user_id": 5}, "Arbeitszimmer", "radio")
+        tools = InternalToolService(caller_user_id=5)
+        self._wire(tools, monkeypatch, presence_user=99, captured=captured)
+        await tools._register_media_follow({}, "Arbeitszimmer", "radio")
         assert captured.get("user_id") == 5  # authenticated caller wins
+
+    @pytest.mark.unit
+    async def test_user_id_in_params_is_not_an_identity(self, internal_tools, monkeypatch):
+        """An LLM-supplied user_id must not own the session: presence decides."""
+        captured: dict = {}
+        self._wire(internal_tools, monkeypatch, presence_user=7, captured=captured)
+        await internal_tools._register_media_follow({"user_id": 5}, "Arbeitszimmer", "radio")
+        assert captured.get("user_id") == 7
 
     @pytest.mark.unit
     async def test_skips_when_no_user_resolvable(self, internal_tools, monkeypatch):
         captured: dict = {}
         self._wire(internal_tools, monkeypatch, presence_user=None, captured=captured)
-        await internal_tools._register_media_follow({"user_id": None}, "Arbeitszimmer", "radio")
+        await internal_tools._register_media_follow({}, "Arbeitszimmer", "radio")
         assert captured == {}  # nothing registered (empty/ambiguous room)
