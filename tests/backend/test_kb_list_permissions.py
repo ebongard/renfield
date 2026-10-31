@@ -191,6 +191,7 @@ BOTTOM_RUNGS = {
     and any(perm in implied for implied in PERMISSION_HIERARCHY.values())
     and perm.name.endswith("_NONE")
 }
+BOTTOM_RUNG_VALUES = {Permission[name].value: name for name in BOTTOM_RUNGS}
 
 
 def _bottom_rung_checks(tree: ast.AST) -> list[tuple[int, str]]:
@@ -202,7 +203,11 @@ def _bottom_rung_checks(tree: ast.AST) -> list[tuple[int, str]]:
         name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
         if name not in PERMISSION_CHECKS:
             continue
-        for arg in ast.walk(ast.Module(body=[ast.Expr(a) for a in node.args[1:]], type_ignores=[])):
+        # The required permission: every positional after the first, plus
+        # any keyword (``required=...``) — and both spellings, the enum
+        # member and its string value.
+        required = node.args[1:] + [kw.value for kw in node.keywords]
+        for arg in ast.walk(ast.Module(body=[ast.Expr(a) for a in required], type_ignores=[])):
             if (
                 isinstance(arg, ast.Attribute)
                 and arg.attr in BOTTOM_RUNGS
@@ -210,6 +215,8 @@ def _bottom_rung_checks(tree: ast.AST) -> list[tuple[int, str]]:
                 and arg.value.id == "Permission"
             ):
                 hits.append((node.lineno, arg.attr))
+            elif isinstance(arg, ast.Constant) and arg.value in BOTTOM_RUNG_VALUES:
+                hits.append((node.lineno, BOTTOM_RUNG_VALUES[arg.value]))
     return hits
 
 
@@ -224,6 +231,17 @@ def test_detector_catches_a_bottom_rung_check():
     tree = ast.parse("if has_permission(perms, Permission.KB_NONE):\n    pass\n")
     assert _bottom_rung_checks(tree) == [(1, "KB_NONE")]
     assert _bottom_rung_checks(ast.parse('"""has_permission(p, Permission.KB_NONE)"""')) == []
+    # The other spellings of the same check: keyword argument, string value,
+    # and a bottom rung inside a has_any_permission list.
+    assert _bottom_rung_checks(ast.parse("has_permission(p, required=Permission.HA_NONE)")) == [
+        (1, "HA_NONE")
+    ]
+    assert _bottom_rung_checks(ast.parse('has_permission(p, "cam.none")')) == [(1, "CAM_NONE")]
+    assert _bottom_rung_checks(
+        ast.parse("has_any_permission(p, [Permission.KB_OWN, Permission.KB_NONE])")
+    ) == [(1, "KB_NONE")]
+    # A rung above the bottom is not flagged.
+    assert _bottom_rung_checks(ast.parse("has_permission(p, Permission.KB_OWN)")) == []
 
 
 @pytest.mark.unit
