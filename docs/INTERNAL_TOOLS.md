@@ -320,7 +320,10 @@ the authenticated values on as keyword arguments. ha_glue's tools get the caller
 Follow Me session owner read `self._caller_user_id`. Until 2026-10-31 `knowledge_search` was dispatched WITHOUT
 `user_id` and read it from the params instead (a stale comment claimed FastMCP injected it): with auth on the agent's
 search ran as nobody and reached the public tier only, so a user's own documents were never found. The radio
-favorites read it from the params too, i.e. were stored owner-less. Guarded by `tests/backend/test_internal_tool_identity.py`
+favorites read it from the params too, i.e. were stored owner-less. With auth on, an UNIDENTIFIED turn (device token,
+unrecognised voice) is refused by the three favorite tools rather than sharing the owner-less bucket; auth off keeps
+the single shared list. Every `run_hooks("execute_tool", …)` call carries `user_id=` (the chat handler's
+media-transport shortcut once passed none). Guarded by `tests/backend/test_internal_tool_identity.py`
 (dispatch on real Postgres + an AST check of the executor body and of every handler module).
 
 The render/weather tools' `data["artifacts"]` is collected by `chat_handler._collect_tool_artifacts` from
