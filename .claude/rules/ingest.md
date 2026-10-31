@@ -40,6 +40,13 @@ Long form: `docs/FOLDER_INGEST.md`, `docs/EMAIL_INGEST.md`.
   `documents.document_date`; patches ONLY where Paperless `created` still equals `added`; paced below the MCP's
   60/min, capped, resumable via `--after-pid`; prints counts/ids only).
 
+## One inbox per person
+- The KB owner reaches EVERY document in the KB (`circle_sql` owner branch), and all clients default to `Eingang`.
+  So ingest resolves its KB by (name, owner) via `ingest_common.get_or_create_owned_kb` and creates it for exactly
+  the document's owner — never file into a KB owned by someone else. `internal.ingest_file`: the ASKER's inbox.
+- `knowledge_bases` is unique on (name, owner_id) NULLS NOT DISTINCT (`pc20261031_kb_name_per_owner`): a name can
+  repeat, so a by-name lookup with `scalar_one_or_none()` now raises — scope it by owner or take the oldest row.
+
 ## Email sphere routing is SERVER-authoritative
 - The backend maps `mailbox_id` → owner/tier/kb. Never accept owner, tier or KB from the push payload — a leaked push
   token must not be able to escalate tier.

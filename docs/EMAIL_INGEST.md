@@ -144,6 +144,10 @@ See `docs/design/mcp-self-detection.md`.
 - **Owner / tier.** Resolved server-side per mailbox (see above). With
   `AUTH_ENABLED=false` (single-user) the circle filter short-circuits, so tier/owner
   are inert — but are still recorded correctly for when auth is enabled.
+- **KB = the mailbox owner's inbox.** The `kb` name is resolved per owner, (name,
+  owner): two mailboxes of different owners that both say `Eingang` get two KBs; an
+  ownerless mailbox uses the shared ownerless KB of that name. See
+  `docs/FOLDER_INGEST.md` → One inbox per person.
 - **Paperless filing (async, Design Z).** Identical to folder-ingest: the push stamps
   `paperless_state='pending'` and the shared async `paperless_reconciler` files it out
   of band via `services/folder_ingest_paperless.py` (non-blocking upload, consume-verdict

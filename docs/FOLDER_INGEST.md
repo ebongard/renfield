@@ -49,7 +49,7 @@ MCP pushes over REST the instant it detects a settled new file.
 
    ```bash
    FOLDER_INGEST_ENABLED=true
-   FOLDER_INGEST_KB_NAME=Eingang          # target KB (auto-created)
+   FOLDER_INGEST_KB_NAME=Eingang          # target inbox name (auto-created per owner)
    FOLDER_INGEST_TARGET_USER=             # owner of auto-filed docs (empty → admin/first user)
    FOLDER_INGEST_DEFAULT_TIER=0           # circle tier at create (0=self … 4=public)
    FOLDER_INGEST_TO_PAPERLESS=true
@@ -157,6 +157,20 @@ the role descriptions in `config/agent_roles.yaml`.
   state (e.g. a stamp commit lost to a crash) so the reconciler still picks it up.
 - **Owner / tier.** Auto-filed documents are owned by `FOLDER_INGEST_TARGET_USER` at
   `FOLDER_INGEST_DEFAULT_TIER` (default 0 = self/private), regardless of the KB.
+- **One inbox per person.** The circle filter grants the KB owner access to EVERY
+  document in the KB (`circle_sql` owner branch on `kb.owner_id`), and every client
+  defaults to the same name `Eingang`. So the target KB is resolved by **(name, owner)**
+  and created for exactly the document's owner (`ingest_common.get_or_create_owned_kb`):
+  credential owner → `FOLDER_INGEST_TARGET_USER`; `internal.ingest_file` → the ASKER
+  (the document is theirs, so it must not land in the target user's KB). No resolvable
+  owner → the shared ownerless KB of that name. Invariant: an ingest path never files
+  into a KB whose owner differs from the document's owner. A pre-existing shared
+  `Eingang` is left as it is (not moved, not re-owned); new documents go to the
+  per-owner inbox. Schema: `knowledge_bases` is unique on `(name, owner_id) NULLS NOT
+  DISTINCT` (migration `pc20261031_kb_name_per_owner`, replaced the global
+  `UNIQUE(name)`; its downgrade refuses while a name is shared). By-name lookups of
+  system KBs (`Chat Uploads`, Meetings) take the OLDEST row of that name. The health
+  `kb_resolved` reports whether the configured target user's inbox exists.
 - **Paperless filing (async, Design Z).** The push stamps `paperless_state='pending'`
   and returns; `services/paperless_reconciler.py` (periodic, `run_at_boot`, bounded
   `PAPERLESS_RECONCILER_CONCURRENCY`) files pending+completed docs via the Paperless
