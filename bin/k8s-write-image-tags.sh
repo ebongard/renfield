@@ -48,7 +48,7 @@ done
 
 [[ -z "$DIR" ]] && { echo "ERROR: --dir required" >&2; exit 2; }
 [[ -d "$DIR" ]] || { echo "ERROR: no such directory: $DIR" >&2; exit 2; }
-[[ -z "$BACKEND_TAG$FRONTEND_TAG" ]] && { echo "  (nichts zu schreiben: weder --backend-tag noch --frontend-tag)"; exit 0; }
+[[ -z "$BACKEND_TAG$FRONTEND_TAG" ]] && { echo "  (nothing to write: neither --backend-tag nor --frontend-tag)"; exit 0; }
 
 # A tag must not carry characters that take the replacement or the YAML apart.
 for t in "$BACKEND_TAG" "$FRONTEND_TAG"; do
@@ -102,18 +102,18 @@ done < <(find "$DIR" -maxdepth 1 -name '*.yaml' -print0 | sort -z)
 # operator needs both halves: which manifests are already correct and which
 # have to be brought along by hand.
 if [[ ${#changed[@]} -eq 0 && ${#fehlgeschlagen[@]} -eq 0 ]]; then
-  echo "  Bildmarken schon auf dem Live-Stand — nichts zu tun."
+  echo "  Image tags already at the live state — nothing to do."
   exit 0
 fi
 
 if [[ ${#changed[@]} -gt 0 ]]; then
-  if [[ $DRY_RUN == 1 ]]; then was='[dry-run] wuerde schreiben:'; else was='geschrieben:'; fi
-  printf '  %s %d Manifest(e) in %s:\n' "$was" "${#changed[@]}" "$DIR"
+  if [[ $DRY_RUN == 1 ]]; then was='[dry-run] would write:'; else was='written:'; fi
+  printf '  %s %d manifest(s) in %s:\n' "$was" "${#changed[@]}" "$DIR"
   for f in "${changed[@]}"; do printf '    %s\n' "$f"; done
 fi
 
 if [[ ${#fehlgeschlagen[@]} -gt 0 ]]; then
-  printf 'ERROR: %d Manifest(e) NICHT geschrieben — von Hand nachziehen:\n' \
+  printf 'ERROR: %d manifest(s) NOT written — update them by hand:\n' \
     "${#fehlgeschlagen[@]}" >&2
   for f in "${fehlgeschlagen[@]}"; do printf '    %s\n' "$f" >&2; done
   exit 1
@@ -124,6 +124,6 @@ fi
 repo_root="$(cd "$DIR" && git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -n "$repo_root" ]]; then
   echo
-  echo "  🛑 NICHT committet — das bleibt Ihre Entscheidung:"
+  echo "  🛑 NOT committed — that remains your decision:"
   echo "     cd $repo_root && git add -u k8s/ && git commit -m 'chore(k8s): Bildmarken auf den Live-Stand'"
 fi

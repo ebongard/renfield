@@ -64,7 +64,7 @@ class DocumentProcessor:
                 "(CLI+deu/eng traineddata or the tesserocr binding are missing) -- falling back to EasyOcr"
             )
 
-        logger.info("Initialisiere force_full_page_ocr-Converter (Engine: EasyOcr de+en)")
+        logger.info("Initialising force_full_page_ocr converter (engine: EasyOcr de+en)")
         return EasyOcrOptions(lang=["de", "en"], force_full_page_ocr=True, bitmap_area_threshold=0.0)
 
     def _build_tesseract_ocr_options(self):
@@ -83,7 +83,7 @@ class DocumentProcessor:
             try:
                 from docling.datamodel.pipeline_options import TesseractCliOcrOptions
                 opts = TesseractCliOcrOptions(lang=["deu", "eng"], force_full_page_ocr=True)
-                logger.info("Initialisiere force_full_page_ocr-Converter (Engine: Tesseract-CLI deu+eng)")
+                logger.info("Initialising force_full_page_ocr converter (engine: Tesseract-CLI deu+eng)")
                 return opts
             except Exception:
                 pass
@@ -93,7 +93,7 @@ class DocumentProcessor:
             try:
                 from docling.datamodel.pipeline_options import TesseractOcrOptions
                 opts = TesseractOcrOptions(lang=["deu", "eng"], force_full_page_ocr=True)
-                logger.info("Initialisiere force_full_page_ocr-Converter (Engine: tesserocr deu+eng)")
+                logger.info("Initialising force_full_page_ocr converter (engine: tesserocr deu+eng)")
                 return opts
             except Exception:
                 pass
@@ -128,7 +128,7 @@ class DocumentProcessor:
             )
             from docling.document_converter import DocumentConverter, PdfFormatOption
 
-            logger.info("Initialisiere Docling DocumentConverter (Standard)...")
+            logger.info("Initialising Docling DocumentConverter (default)...")
             self._converter = DocumentConverter()
 
             ocr_pipeline_options = PdfPipelineOptions()
@@ -140,7 +140,7 @@ class DocumentProcessor:
                 }
             )
 
-            logger.info("Initialisiere Docling HybridChunker...")
+            logger.info("Initialising Docling HybridChunker...")
             self._chunker = HybridChunker(
                 tokenizer="sentence-transformers/all-MiniLM-L6-v2",
                 max_tokens=settings.rag_chunk_size,
@@ -148,7 +148,7 @@ class DocumentProcessor:
             )
 
             self._initialized = True
-            logger.info("Docling erfolgreich initialisiert")
+            logger.info("Docling initialised successfully")
 
         except ImportError as e:
             logger.error(f"Docling is not installed: {e}")
@@ -157,7 +157,7 @@ class DocumentProcessor:
                 "Run 'pip install docling docling-core'."
             ) from e
         except Exception as e:
-            logger.error(f"Fehler beim Initialisieren von Docling: {e}")
+            logger.error(f"Error initialising Docling: {e}")
             raise
 
     _VOWELS = set("aeiouäöüAEIOUÄÖÜ")
@@ -275,7 +275,7 @@ class DocumentProcessor:
                     "error": f"file not found: {file_path}"
                 }
 
-            logger.info(f"Verarbeite Dokument: {path.name}")
+            logger.info(f"Processing document: {path.name}")
 
             # Decide whether force_full_page_ocr should be used
             use_ocr = force_ocr or settings.rag_force_ocr
@@ -291,7 +291,7 @@ class DocumentProcessor:
             loop = asyncio.get_event_loop()
 
             if use_ocr:
-                logger.info(f"OCR erzwungen für: {path.name}")
+                logger.info(f"OCR forced for: {path.name}")
                 result = await loop.run_in_executor(
                     None, self._convert_document_ocr, file_path
                 )
@@ -319,7 +319,7 @@ class DocumentProcessor:
                 # Quick check: look at the first chunk's text for spacing
                 sample_text = doc.export_to_text() if hasattr(doc, 'export_to_text') else ""
                 if self._is_text_garbled(sample_text):
-                    logger.info(f"Re-konvertiere mit force_full_page_ocr: {path.name}")
+                    logger.info(f"Re-converting with force_full_page_ocr: {path.name}")
                     ocr_result = await loop.run_in_executor(
                         None, self._convert_document_ocr, file_path
                     )
@@ -330,7 +330,7 @@ class DocumentProcessor:
 
             # Extract the metadata
             metadata = self._extract_metadata(doc, file_path)
-            logger.info(f"Metadaten extrahiert: {metadata.get('title', path.name)}")
+            logger.info(f"Metadata extracted: {metadata.get('title', path.name)}")
 
             # Create the chunks
             chunk_result = await loop.run_in_executor(
@@ -422,7 +422,7 @@ class DocumentProcessor:
                     logger.info(
                         f"Per-chunk quality trigger ({dropped}/{total_emitted} = "
                         f"{drop_rate:.0%} > {settings.rag_chunk_quality_drop_threshold:.0%}) "
-                        f"— re-konvertiere {path.name} mit force_full_page_ocr"
+                        f"— re-converting {path.name} with force_full_page_ocr"
                     )
                     ocr_result = await loop.run_in_executor(
                         None, self._convert_document_ocr, file_path
@@ -464,7 +464,7 @@ class DocumentProcessor:
                         }
 
             logger.info(
-                f"Dokument verarbeitet: {len(chunks)} Chunks erstellt "
+                f"Document processed: {len(chunks)} chunks created "
                 + (f"({dropped} dropped as low-quality)" if dropped else "")
             )
 
@@ -532,7 +532,7 @@ class DocumentProcessor:
             }
 
         except Exception as e:
-            logger.error(f"Fehler beim Verarbeiten von {file_path}: {e}")
+            logger.error(f"Error processing {file_path}: {e}")
             return {
                 "metadata": {},
                 "chunks": [],
@@ -737,7 +737,7 @@ class DocumentProcessor:
         try:
             return self._converter.convert(file_path)
         except Exception as e:
-            logger.error(f"Konvertierungsfehler: {e}")
+            logger.error(f"Conversion error: {e}")
             return None
 
     def _convert_document_ocr(self, file_path: str):
@@ -750,7 +750,7 @@ class DocumentProcessor:
         try:
             return self._ocr_converter.convert(file_path)
         except Exception as e:
-            logger.error(f"OCR-Konvertierungsfehler: {e}")
+            logger.error(f"OCR conversion error: {e}")
             return None
 
     @staticmethod
@@ -793,7 +793,7 @@ class DocumentProcessor:
                 metadata["page_count"] = doc.page_count
 
         except Exception as e:
-            logger.warning(f"Fehler beim Extrahieren von Metadaten: {e}")
+            logger.warning(f"Error extracting metadata: {e}")
 
         return metadata
 
@@ -840,7 +840,7 @@ class DocumentProcessor:
                 })
 
         except Exception as e:
-            logger.error(f"Fehler beim Chunking: {e}")
+            logger.error(f"Error during chunking: {e}")
             # Fallback: simple text splitting (also gated).
             if hasattr(doc, 'export_to_text'):
                 text = doc.export_to_text()
@@ -988,7 +988,7 @@ class DocumentProcessor:
                 and ext == "pdf"
                 and self._is_text_garbled(text)
             ):
-                logger.info(f"extract_text_only: re-konvertiere mit force_full_page_ocr: {path.name}")
+                logger.info(f"extract_text_only: re-converting with force_full_page_ocr: {path.name}")
                 ocr_result = await loop.run_in_executor(None, self._convert_document_ocr, file_path)
                 if ocr_result is not None and hasattr(ocr_result.document, 'export_to_text'):
                     text = ocr_result.document.export_to_text() or text
@@ -1003,7 +1003,7 @@ class DocumentProcessor:
             return text[:max_chars] if text else None
 
         except Exception as e:
-            logger.error(f"extract_text_only Fehler für {file_path}: {e}")
+            logger.error(f"extract_text_only error for {file_path}: {e}")
             return None
 
     def get_supported_formats(self) -> list[str]:

@@ -51,7 +51,7 @@ def _prompt(lang: str, tool_list: str, message: str = "scanne nach xidra") -> st
         "agent", "tool_preselect_prompt", lang=lang,
         message=message, tool_list=tool_list,
     )
-    assert fertig, f"keine `tool_preselect_prompt`-Vorlage fuer lang={lang!r}"
+    assert fertig, f"no `tool_preselect_prompt` template for lang={lang!r}"
     return fertig
 
 
@@ -70,14 +70,14 @@ def test_a_changed_DESCRIPTION_changes_the_signature():
     signature untouched.
     """
     geaendert = LISTE.replace("das ZIEL ist", "ein Suchbegriff ist")
-    assert geaendert != LISTE, "der Test soll den Hinweistext wirklich ändern"
+    assert geaendert != LISTE, "the test is meant to really change the hint text"
     # The same names, different text:
     assert [z.split(":")[0] for z in geaendert.splitlines()] == \
            [z.split(":")[0] for z in LISTE.splitlines()]
     assert preselect_input_signature(_prompt("de", geaendert)) != \
         preselect_input_signature(_prompt("de", LISTE)), (
-        "die Signatur ignoriert den Beschreibungstext — dann bleibt ein "
-        "geaenderter Hinweis unsichtbar, obwohl er den Prompt umstellt")
+        "the signature ignores the description text — then a changed "
+        "hint stays invisible although it rearranges the prompt")
 
 
 def test_a_MESSAGE_that_differs_only_after_60_characters_changes_the_signature():
@@ -93,13 +93,13 @@ def test_a_MESSAGE_that_differs_only_after_60_characters_changes_the_signature()
     Found in the review of #1413, before it was merged.
     """
     vorsilbe = "scanne bitte die Seiten aus dem Einzug ein und lege sie dann ab"
-    assert len(vorsilbe) > 60, "die Vorsilbe muss die 60 Zeichen ueberschreiten"
+    assert len(vorsilbe) > 60, "the prefix must exceed 60 characters"
     a = _prompt("de", LISTE, message=f"{vorsilbe} in der Instanz xidra")
     b = _prompt("de", LISTE, message=f"{vorsilbe} in der Instanz haushalt")
     assert preselect_input_signature(a) != preselect_input_signature(b), (
-        "die Signatur ignoriert die Nachricht — dann behauptet sie Gleichheit "
-        "ueber zwei verschiedene Prompts, und die Zeile zeigt wegen "
-        "`message[:60]` denselben Anfang")
+        "the signature ignores the message — then it claims equality "
+        "across two different prompts, and because of `message[:60]` "
+        "the line shows the same beginning")
 
 
 def test_a_different_LANGUAGE_changes_the_signature():
@@ -108,7 +108,7 @@ def test_a_different_LANGUAGE_changes_the_signature():
     different prompts."""
     assert preselect_input_signature(_prompt("en", LISTE)) != \
         preselect_input_signature(_prompt("de", LISTE)), (
-        "die Signatur ignoriert die Sprache")
+        "the signature ignores the language")
 
 
 def test_a_different_ORDER_changes_the_signature():
@@ -122,12 +122,12 @@ def test_a_different_ORDER_changes_the_signature():
     zeilen = LISTE.splitlines()
     gedreht = "\n".join(reversed(zeilen))
     assert sorted(gedreht.splitlines()) == sorted(zeilen), \
-        "der Test soll nur die Reihenfolge ändern"
+        "the test is meant to change only the order"
     assert preselect_input_signature(_prompt("de", gedreht)) != \
         preselect_input_signature(_prompt("de", LISTE)), (
-        "die Signatur ignoriert die Reihenfolge — dann bleibt eine "
-        "Neuregistrierung unsichtbar, und genau die stand am 2026-10-26 im "
-        "Verdacht")
+        "the signature ignores the order — then a re-registration "
+        "stays invisible, and exactly that was under suspicion on "
+        "2026-10-26")
 
 
 def test_an_added_or_removed_tool_changes_the_signature():
@@ -148,8 +148,8 @@ def test_the_signature_fits_into_a_log_line():
     what the line needs.
     """
     sig = preselect_input_signature(_prompt("de", LISTE))
-    assert sig.isalnum(), f"nicht als Wort lesbar: {sig!r}"
-    assert 6 <= len(sig) <= 16, f"fuer eine Protokollzeile unbrauchbar: {sig!r}"
+    assert sig.isalnum(), f"not readable as a word: {sig!r}"
+    assert 6 <= len(sig) <= 16, f"unusable for a log line: {sig!r}"
 
 
 def test_an_empty_list_does_not_raise():

@@ -51,7 +51,7 @@ def test_an_OLD_record_is_refused_instead_of_silently_widened():
     record.
     """
     alt = _satz(asker_local_user_id=42)   # 42 = peer.remote_user_id, as before
-    assert alt.mapped is False, "der Vorgabewert muss auf der sicheren Seite liegen"
+    assert alt.mapped is False, "the default must be on the safe side"
     assert alt.peer_owner_id is None
     with pytest.raises(PendingScopeError):
         _peer_scope_for(alt)
@@ -135,7 +135,7 @@ def test_the_pairing_refuses_a_second_owner_for_the_same_instance():
         n for n in ast.walk(ast.parse(inspect.getsource(ps)))
         if isinstance(n, ast.Attribute) and n.attr == "_upsert_peer_user"
     ]
-    assert len(aufrufer) >= 2, f"nur {len(aufrufer)} Aufrufer gefunden"
+    assert len(aufrufer) >= 2, f"only {len(aufrufer)} callers found"
 
 
 def test_the_already_paired_refusal_is_VISIBLE_not_swallowed():
@@ -162,7 +162,7 @@ def test_the_already_paired_refusal_is_VISIBLE_not_swallowed():
     from services.pairing_service import AlreadyPairedElsewhere, PairingError
 
     assert issubclass(AlreadyPairedElsewhere, PairingError), (
-        "muss eine Unterklasse bleiben, sonst entkommt sie dem uniformen Fang ganz")
+        "must stay a subclass, or it escapes the uniform catch entirely")
 
     baum = ast.parse(inspect.getsource(federation_pairing))
     for fn in ast.walk(baum):
@@ -174,7 +174,7 @@ def test_the_already_paired_refusal_is_VISIBLE_not_swallowed():
         ]
         if "PairingError" in namen:
             assert "AlreadyPairedElsewhere" in namen, (
-                f"{fn.name}: faengt PairingError, aber nicht den sichtbaren Sonderfall")
+                f"{fn.name}: catches PairingError, but not the visible special case")
             assert namen.index("AlreadyPairedElsewhere") < namen.index("PairingError"), (
-                f"{fn.name}: der uniforme Fang steht VOR dem Sonderfall und "
-                "verschluckt ihn")
+                f"{fn.name}: the uniform catch comes BEFORE the special case and "
+                "swallows it")

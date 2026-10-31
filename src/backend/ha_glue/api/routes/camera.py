@@ -38,7 +38,7 @@ async def get_camera_events(
         )
         return {"events": events}
     except Exception as e:
-        logger.error(f"❌ Camera Events Fehler: {e}")
+        logger.error(f"❌ Camera events error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -55,7 +55,7 @@ async def list_cameras(
         cameras = await frigate.get_cameras()
         return {"cameras": cameras}
     except Exception as e:
-        logger.error(f"❌ Camera List Fehler: {e}")
+        logger.error(f"❌ Camera list error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -83,7 +83,7 @@ async def get_snapshot(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Snapshot Fehler: {e}")
+        logger.error(f"❌ Snapshot error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -101,5 +101,5 @@ async def get_latest_by_label(
         events = await frigate.get_latest_events_by_type(label)
         return {"events": events}
     except Exception as e:
-        logger.error(f"❌ Latest Events Fehler: {e}")
+        logger.error(f"❌ Latest events error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

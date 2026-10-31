@@ -556,7 +556,7 @@ class TestQueryACTUALLYCallsIt:
             "concurrent operations are not permitted")
         lines = await self._run(monkeypatch)
         summary = [m for _, m in lines if "sources delivered" in m]
-        assert summary, f"keine Zusammenfassung: {lines}"
+        assert summary, f"no summary: {lines}"
         assert "7/8 sources delivered" in summary[0], summary[0]
         assert "1 crashed" in summary[0]
         assert any(s == "WARNING" for s, m in lines if "sources delivered" in m)

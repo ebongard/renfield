@@ -118,7 +118,7 @@ class WhisperService:
         if self.model is None:
             try:
                 logger.info(
-                    f"📥 Lade Whisper Modell '{self.model_size}' "
+                    f"📥 Loading Whisper model '{self.model_size}' "
                     f"(device={self.device}, compute_type={self.compute_type})..."
                 )
 
@@ -128,9 +128,9 @@ class WhisperService:
                     compute_type=self.compute_type,
                 )
 
-                logger.info("✅ Whisper Modell geladen")
+                logger.info("✅ Whisper model loaded")
             except Exception as e:
-                logger.error(f"❌ Fehler beim Laden des Whisper Modells: {e}")
+                logger.error(f"❌ Error loading the Whisper model: {e}")
                 raise
 
     def _run_transcription(self, transcribe_path: str, language: str, initial_prompt: str | None = None) -> str:
@@ -206,10 +206,10 @@ class WhisperService:
 
             text = await self._transcribe_async(transcribe_path, transcribe_language, initial_prompt)
 
-            logger.info(f"✅ Transkription erfolgreich ({transcribe_language}): {len(text)} Zeichen")
+            logger.info(f"✅ Transcription successful ({transcribe_language}): {len(text)} chars")
             return text
         except Exception as e:
-            logger.error(f"❌ Transkriptions-Fehler: {e}")
+            logger.error(f"❌ Transcription error: {e}")
             return ""
         finally:
             # Cleanup preprocessed temp file
@@ -425,7 +425,7 @@ class WhisperService:
                 text = await self._transcribe_async(transcribe_path, transcribe_language, initial_prompt)
                 embedding = None
 
-            logger.info(f"✅ Transkription erfolgreich ({transcribe_language}): {len(text)} Zeichen")
+            logger.info(f"✅ Transcription successful ({transcribe_language}): {len(text)} chars")
 
             # Bail out if speaker recog disabled or unavailable.
             if not do_speaker_recog:
@@ -567,7 +567,7 @@ class WhisperService:
             return {"text": text, **speaker_info}
 
         except Exception as e:
-            logger.error(f"❌ Transkriptions-Fehler: {error_text_without_content(e)}")
+            logger.error(f"❌ Transcription error: {error_text_without_content(e)}")
             return {"text": "", "speaker_id": None, "speaker_name": None, "speaker_alias": None, "speaker_confidence": 0.0, "is_new_speaker": False}
 
         finally:

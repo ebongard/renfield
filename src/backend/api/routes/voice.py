@@ -58,14 +58,14 @@ async def speech_to_text(
             language = None
 
         effective_language = language or settings.default_language
-        logger.info(f"🎤 STT-Anfrage erhalten: {audio.filename}, Content-Type: {audio.content_type}, Language: {effective_language}")
+        logger.info(f"🎤 STT request received: {audio.filename}, Content-Type: {audio.content_type}, Language: {effective_language}")
 
         # Read the audio bytes
         audio_bytes = await audio.read()
-        logger.info(f"📊 Audio-Größe: {len(audio_bytes)} bytes")
+        logger.info(f"📊 Audio size: {len(audio_bytes)} bytes")
 
         # Transcribe with speaker recognition (when enabled)
-        logger.info("🔄 Starte Transkription...")
+        logger.info("🔄 Starting transcription...")
 
         # B-3: per-request STT bias prompt. The /stt endpoint has the
         # authenticated user (via Depends) but no room_context — we pass
@@ -103,7 +103,7 @@ async def speech_to_text(
             speaker_confidence = result.get("speaker_confidence", 0.0)
 
             if speaker_name:
-                logger.info(f"🎤 Sprecher erkannt: {speaker_name} (@{speaker_alias}) - Konfidenz: {speaker_confidence:.2f}")
+                logger.info(f"🎤 Speaker recognised: {speaker_name} (@{speaker_alias}) - confidence: {speaker_confidence:.2f}")
             else:
                 logger.info("🎤 Speaker not recognised (unknown or below threshold)")
         else:
@@ -120,10 +120,10 @@ async def speech_to_text(
             speaker_confidence = 0.0
 
         if not text:
-            logger.error("❌ Transkription ergab leeren Text")
+            logger.error("❌ Transcription produced empty text")
             raise HTTPException(status_code=400, detail="Transkription fehlgeschlagen")
 
-        logger.info(f"✅ Transkription erfolgreich: '{text[:100]}'")
+        logger.info(f"✅ Transcription succeeded: '{text[:100]}'")
 
         return {
             "text": text,
@@ -134,7 +134,7 @@ async def speech_to_text(
             "speaker_confidence": speaker_confidence
         }
     except Exception as e:
-        logger.error(f"❌ STT Fehler: {e}")
+        logger.error(f"❌ STT error: {e}")
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
@@ -172,7 +172,7 @@ async def text_to_speech(request: Request, tts_request: TTSRequest, _user=Depend
             }
         )
     except Exception as e:
-        logger.error(f"❌ TTS Fehler: {e}")
+        logger.error(f"❌ TTS error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.api_route("/tts-cache/{audio_id}", methods=["GET", "HEAD"])
@@ -305,7 +305,7 @@ async def voice_chat(
             speaker_confidence = result.get("speaker_confidence", 0.0)
 
             if speaker_name:
-                logger.info(f"🎤 Voice-Chat von: {speaker_name} (@{speaker_alias})")
+                logger.info(f"🎤 Voice chat from: {speaker_name} (@{speaker_alias})")
         else:
             user_text = await whisper_service.transcribe_bytes(
                 audio_bytes,
@@ -340,7 +340,7 @@ async def voice_chat(
             "speaker_confidence": speaker_confidence
         }
     except Exception as e:
-        logger.error(f"❌ Voice Chat Fehler: {e}")
+        logger.error(f"❌ Voice chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

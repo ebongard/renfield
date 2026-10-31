@@ -175,9 +175,9 @@ def _validate(args: argparse.Namespace) -> MemberList:
 async def _run(args: argparse.Namespace) -> int:
     members = _validate(args)
     only = [c.strip() for c in args.only.split(",")] if args.only else None
-    mode = "PROBELAUF (keine Schreibvorgänge)" if args.dry_run else "SCHREIBLAUF"
+    mode = "DRY RUN (no writes)" if args.dry_run else "WRITE RUN"
     if args.revert:
-        mode += " · RÜCKWEG"
+        mode += " · REVERT"
     logger.info("%s | admin=%s family=%s guests=%s device=%s",
                 mode, members.admin_id, members.family, members.guests,
                 members.device_account_id)
@@ -187,18 +187,18 @@ async def _run(args: argparse.Namespace) -> int:
     if args.revert:
         if not args.log:
             logger.error(
-                "--revert ohne --log. Der Rückweg darf nicht raten, was der "
-                "Schreiblauf getan hat: er würde sonst handgesetzte Stufen "
-                "senken und Mitgliedschaften löschen, die jemand selbst angelegt "
-                "hat. Gib das Protokoll des Schreiblaufs an."
+                "--revert without --log. The revert must not guess what the "
+                "write run did: otherwise it would lower hand-set tiers "
+                "and delete memberships that someone created themselves. "
+                "Pass the log of the write run."
             )
             return 2
         log_path = Path(args.log)
         if not log_path.is_file():
-            logger.error("Protokoll nicht gefunden: %s", log_path)
+            logger.error("Log not found: %s", log_path)
             return 2
         log = RunLog.from_json(json.loads(log_path.read_text()))
-        logger.info("Protokoll gelesen: %d kg-Atome, %d Mitgliedschaften",
+        logger.info("Log read: %d kg atoms, %d memberships",
                     len(log.kg_atom_ids), len(log.membership_pairs))
     elif args.commit:
         log_path = Path(
@@ -223,18 +223,18 @@ async def _run(args: argparse.Namespace) -> int:
             # what a revert has to undo, and that is when the log matters most.
             if log_path is not None and args.commit:
                 log_path.write_text(json.dumps(log.to_json(), indent=2))
-                logger.info("Protokoll geschrieben: %s", log_path)
+                logger.info("Log written: %s", log_path)
 
     for r in results:
         logger.info("  %s", r.line())
     total = sum(r.changed for r in results)
-    logger.info("%s — %d Änderung(en) %s", mode, total,
-                "vorgesehen" if args.dry_run else "geschrieben")
+    logger.info("%s — %d change(s) %s", mode, total,
+                "planned" if args.dry_run else "written")
     if args.dry_run:
         logger.info(
-            "Dieselben Zahlen müssen im Schreiblauf herauskommen (§11 Abnahme). "
-            "Weichen sie ab, hat sich der Bestand zwischen den Läufen verändert — "
-            "nicht weitermachen, neu prüfen."
+            "The write run must produce the same numbers (§11 acceptance). "
+            "If they differ, the data changed between the runs — "
+            "do not continue, check again."
         )
     return 0
 

@@ -136,7 +136,7 @@ class RAGRetrieval:
         try:
             query_embedding = await self.get_embedding(query)
         except Exception as e:
-            logger.warning(f"Embedding fehlgeschlagen, Fallback auf BM25-only: {e}")
+            logger.warning(f"Embedding failed, falling back to BM25-only: {e}")
             query_embedding = None
 
         if query_embedding is None:
@@ -482,9 +482,9 @@ class RAGRetrieval:
                 # and downgrade only this chunk.
                 if len(q_emb) != len(c_emb):
                     logger.warning(
-                        f"Reranking: Einbettungslaengen weichen ab "
-                        f"(Anfrage {len(q_emb)}, Brocken {len(c_emb)}) — dieser "
-                        f"Brocken wird abgewertet, die Neuordnung laeuft weiter"
+                        f"Reranking: embedding lengths differ "
+                        f"(query {len(q_emb)}, chunk {len(c_emb)}) — this "
+                        f"chunk is scored down, the reranking continues"
                     )
                     return (0.0, r)
                 dot = sum(a * b for a, b in zip(q_emb, c_emb, strict=True))
@@ -504,7 +504,7 @@ class RAGRetrieval:
             return reranked
 
         except Exception as e:
-            logger.warning(f"Reranking fehlgeschlagen, verwende Original-Reihenfolge: {e}")
+            logger.warning(f"Reranking failed, using the original order: {e}")
             return results[:rerank_top_k]
 
     # ==========================================================================

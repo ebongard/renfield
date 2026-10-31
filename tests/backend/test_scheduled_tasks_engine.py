@@ -837,7 +837,7 @@ class TestSatelliteFleetGate:
         monkeypatch.setattr(wd, "check_satellite_fleet", _check)
         out = await builtins._satellite_fleet_watchdog_handler(self._app(), {})
         assert "skipped" in out
-        assert not called, "ohne Satellitenmerkmal darf der Waechter nicht laufen"
+        assert not called, "without the satellite flag the watchdog must not run"
 
     async def test_gate_on_calls_the_watchdog(self, monkeypatch):
         from services import satellite_fleet_watchdog as wd
@@ -854,4 +854,4 @@ class TestSatelliteFleetGate:
         monkeypatch.setattr(wd, "check_satellite_fleet", _check)
         out = await builtins._satellite_fleet_watchdog_handler(self._app(), {})
         assert called == [1]
-        assert out == "offline: Kueche", "das Ergebnis muss unveraendert durchgereicht werden"
+        assert out == "offline: Kueche", "the result must be passed through unchanged"

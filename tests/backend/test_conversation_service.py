@@ -676,8 +676,8 @@ class TestLatestMessageId:
                       "action_success": False})
         dritte = await service.latest_message_id(sid)
         assert dritte > zweite, (
-            "ein fremder Schreibvorgang hebt die Marke nicht — eine lebende "
-            "Sitzung koennte ihn damit nie bemerken")
+            "a foreign write does not raise the mark — a live "
+            "session could then never notice it")
 
     async def test_the_loaded_history_carries_the_marker(self, db_session: AsyncSession):
         """And after the reload the history carries `action_success: False`,
@@ -696,5 +696,5 @@ class TestLatestMessageId:
         gescheitert = [m for m in verlauf
                        if (m.get("metadata") or {}).get("action_success") is False]
         assert len(gescheitert) == 1, (
-            f"genau eine Nachricht muss als gescheitert markiert sein: {verlauf}")
+            f"exactly one message must be marked as failed: {verlauf}")
         assert "Papierstau" in gescheitert[0]["content"]

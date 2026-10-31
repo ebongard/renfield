@@ -71,8 +71,8 @@ def test_the_hint_survives_uncut():
     )
     zeile = _zeilen([tool])[0]
     assert HINWEIS in zeile, (
-        "der Hinweis fehlt oder ist beschnitten — dann entscheidet die "
-        f"Vorauswahl ohne ihn:\n{zeile}")
+        "the hint is missing or truncated — then the preselection "
+        f"decides without it:\n{zeile}")
     # And the German wording it concretely failed on:
     assert "scanne die Seiten nach <Ziel>" in zeile
 
@@ -94,8 +94,8 @@ def test_the_generic_description_is_still_clipped():
     tool = ToolDefinition(name="mcp.a.b", description=f"{lang} {HINWEIS}", hint=HINWEIS)
     zeile = _zeilen([tool])[0]
     assert "ENDE_DER_BESCHREIBUNG" not in zeile, (
-        "die generische Beschreibung wurde nicht beschnitten")
-    assert HINWEIS in zeile, "der Hinweis muss trotzdem vollstaendig dastehen"
+        "the generic description was not clipped")
+    assert HINWEIS in zeile, "the hint must still stand there in full"
 
 
 def test_a_tool_without_a_hint_is_unchanged():
@@ -129,8 +129,8 @@ def test_the_hint_is_not_duplicated():
     # "Startet einen NEUEN Scan." lies entirely within the 80 characters and
     # does duplicate.
     assert zeile.count("Startet einen NEUEN Scan.") == 1, (
-        f"der Hinweis steht doppelt in der Zeile:\n{zeile}")
-    assert kurz in zeile, "die kurze Beschreibung darf nicht verloren gehen"
+        f"the hint stands twice in the line:\n{zeile}")
+    assert kurz in zeile, "the short description must not get lost"
 
 
 def test_the_hint_survives_the_whole_chain():
@@ -153,10 +153,10 @@ def test_the_hint_survives_the_whole_chain():
 
     # Station 1: discovery
     info = MCPManager._tool_info_from_mcp(cfg, rohes)
-    assert info.hint == HINWEIS, "Station 1 verliert den Hinweis"
+    assert info.hint == HINWEIS, "station 1 loses the hint"
     assert info.description.endswith(HINWEIS), (
-        "die Beschreibung muss den Hinweis weiter hinten tragen — darauf baut "
-        "das Abziehen in `preselect_tool_line`")
+        "the description must carry the hint at its end — the subtraction in "
+        "`preselect_tool_line` relies on that")
 
     # Station 2: the agent's registry
     r = AgentToolRegistry.__new__(AgentToolRegistry)
@@ -164,7 +164,7 @@ def test_the_hint_survives_the_whole_chain():
     mgr = SimpleNamespace(get_all_tools=lambda: [info])
     AgentToolRegistry._register_mcp_tools(r, mgr)
     tool = r._tools["mcp.scanner.scan_document"]
-    assert tool.hint == HINWEIS, "Station 2 verliert den Hinweis"
+    assert tool.hint == HINWEIS, "station 2 loses the hint"
 
     # And the line that results from it carries it untruncated.
     assert HINWEIS in preselect_tool_line(tool.name, tool)
@@ -187,12 +187,12 @@ def test_a_hint_with_stray_whitespace_is_not_duplicated():
                           description=info.description, hint=info.hint)
     zeile = preselect_tool_line(tool.name, tool)
     assert zeile.count("Startet einen NEUEN Scan.") == 1, (
-        f"der Hinweis steht doppelt in der Zeile:\n{zeile}")
+        f"the hint stands twice in the line:\n{zeile}")
 
 
 def test_a_tool_without_a_hint_has_an_empty_field():
     assert ToolDefinition(name="x", description="y").hint == "", (
-        "ohne Hinweis muss das Feld leer sein, nicht None")
+        "without a hint the field must be empty, not None")
 
 
 def test_the_real_config_still_rules_out_the_search_reading():
@@ -210,15 +210,15 @@ def test_the_real_config_still_rules_out_the_search_reading():
     """
     hinweis = _scan_document_hinweis()
 
-    assert hinweis, "`scan_document` hat keinen Hinweis mehr — die Vorauswahl entscheidet dann blind"
+    assert hinweis, "`scan_document` no longer has a hint — the preselection then decides blind"
     # The ambiguity has to be DENIED, not just the target named.
     assert "Suchbegriff" in hinweis, (
-        "der Hinweis schliesst die Lesart 'Suchbegriff' nicht mehr aus — das "
-        "war der Fehlgriff vom 2026-10-26")
-    assert "ZIEL" in hinweis, "der Hinweis sagt nicht mehr, dass <X> das Ziel ist"
+        "the hint no longer rules out the reading 'Suchbegriff' — that "
+        "was the wrong grab of 2026-10-26")
+    assert "ZIEL" in hinweis, "the hint no longer says that <X> is the target"
     # And the wording it concretely failed on has to appear.
     assert "scanne nach" in hinweis, (
-        "der Hinweis nennt die zweideutige Formulierung selbst nicht mehr")
+        "the hint no longer names the ambiguous wording itself")
 
 
 def test_the_hint_does_not_claim_the_bluetooth_scan():
@@ -238,13 +238,13 @@ def test_the_hint_does_not_claim_the_bluetooth_scan():
     """
     hinweis = _scan_document_hinweis()
     assert "bluetooth_scan" in hinweis, (
-        "der Hinweis grenzt die Funksuche nicht ab — „scanne nach "
-        "Bluetooth-Geraeten\" landet dann beim Papierscanner")
+        "the hint does not fence off the radio search — „scanne nach "
+        "Bluetooth-Geraeten\" then lands at the paper scanner")
     # 🛑 Do not check for "PAPIER": that also matches INSIDE
     # "PAPIERSCANNER", so the delimiting sentence could fall away and the test
     # would stay green. Check the restriction itself.
     assert "gilt nur für PAPIER" in hinweis, (
-        "der Hinweis schraenkt seine Regel nicht mehr auf Papier ein")
+        "the hint no longer restricts its rule to paper")
 
 
 def test_the_hint_keeps_the_way_back_from_a_display_name():
@@ -262,11 +262,11 @@ def test_the_hint_keeps_the_way_back_from_a_display_name():
     # sentence could fall away and the test would stay green. Check the
     # instruction that actually performs the mapping.
     assert "`target=household`" in hinweis, (
-        "der Hinweis vollzieht die Abbildung Anzeigebezeichnung -> Kennung "
-        "nicht mehr an einem Beispiel")
+        "the hint no longer walks through the mapping display name -> id "
+        "on an example")
     assert "Haushalt" in hinweis, (
-        "der Hinweis nennt die deutsche Anzeigebezeichnung nicht mehr, an der "
-        "es scheitert")
+        "the hint no longer names the German display name it "
+        "fails on")
 
 
 def test_the_hint_promises_no_error_channel_that_is_walled_off():
@@ -295,13 +295,13 @@ def test_the_hint_promises_no_error_channel_that_is_walled_off():
     """
     hinweis = _scan_document_hinweis()
     assert "known:" not in hinweis, (
-        "der Hinweis verspricht die `known: [...]`-Liste — die kann den Agenten "
-        "auf diesem Weg nie erreichen")
+        "the hint promises the `known: [...]` list — that can never reach the "
+        "agent on this path")
     # Emphasis through capitals is a device used in these hints ("NICHT
     # raten"), so compare independently of it.
     klein = hinweis.lower()
     assert "nicht raten" in klein or "nie raten" in klein, (
-        "der Hinweis sagt nicht, was bei unsicherem Ziel zu tun ist")
+        "the hint does not say what to do when the target is uncertain")
 
 
 def test_the_pending_scans_hint_does_not_claim_the_general_question():
@@ -328,7 +328,7 @@ def test_the_pending_scans_hint_does_not_claim_the_general_question():
     scanner = next(e for e in eintraege if e["name"] == "scanner")
     hinweis = (scanner.get("tool_hints") or {}).get("list_pending_scans", "")
 
-    assert hinweis, "`list_pending_scans` hat keinen Hinweis mehr"
+    assert hinweis, "`list_pending_scans` no longer has a hint"
     assert "ingest_status" in hinweis or "list_unfiled_documents" in hinweis, (
-        "der Hinweis grenzt die allgemeine Frage „was ist offen\" nicht gegen "
-        "die Nachbarn ab")
+        "the hint does not fence off the general question „was ist offen\" against "
+        "the neighbours")

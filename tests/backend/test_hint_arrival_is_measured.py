@@ -71,10 +71,10 @@ def test_a_key_that_matches_no_tool_is_a_WARNING(protokoll):
         [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("scanner_status")],
     ))
     warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
-    assert warnungen, f"kein WARNING: {protokoll}"
+    assert warnungen, f"no WARNING: {protokoll}"
     assert "tippfehler_tool" in warnungen[0], (
-        "die Warnung nennt den Schluessel nicht, der ins Leere greift — dann "
-        f"ist sie nicht handlungsfaehig:\n{warnungen[0]}")
+        "the warning does not name the key that matches nothing — then "
+        f"it is not actionable:\n{warnungen[0]}")
 
 
 def test_hints_configured_but_NONE_attached_is_a_WARNING(protokoll):
@@ -84,7 +84,7 @@ def test_hints_configured_but_NONE_attached_is_a_WARNING(protokoll):
         [_Werkzeug("scan_document"), _Werkzeug("scanner_status")],
     ))
     warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
-    assert warnungen, f"kein WARNING: {protokoll}"
+    assert warnungen, f"no WARNING: {protokoll}"
     assert "0 attached" in warnungen[0], warnungen[0]
 
 
@@ -103,8 +103,8 @@ def test_a_hinted_tool_filtered_OUT_of_the_offered_set_is_a_WARNING(protokoll):
     ))
     warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
     assert warnungen, (
-        f"ein behinweistes Werkzeug wurde herausgefiltert und das galt als "
-        f"gesund: {protokoll}")
+        f"a hinted tool was filtered out and that counted as "
+        f"healthy: {protokoll}")
     assert "filtered out" in warnungen[0], warnungen[0]
 
 
@@ -117,7 +117,7 @@ def test_the_healthy_case_is_INFO_with_counts(protokoll):
         [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("route_scan", "y" * 791)],
     ))
     infos = [m for stufe, m in protokoll if stufe == "INFO"]
-    assert infos, f"keine INFO-Zeile: {protokoll}"
+    assert infos, f"no INFO line: {protokoll}"
     assert "2 hint(s) configured, 2 attached, 2 offered" in infos[0], infos[0]
     assert str(1426 + 791) in infos[0], infos[0]
     assert not [m for stufe, m in protokoll if stufe == "WARNING"]
@@ -134,10 +134,10 @@ def test_a_server_WITHOUT_hints_still_says_so(protokoll):
     """
     log_hint_arrival(_zustand({}, [_Werkzeug("irgendwas")]))
     assert protokoll, (
-        "ein Server ohne Hinweise schweigt — dann ist Abwesenheit wieder eine "
-        "Diagnose, und drei verschiedene Lagen sehen gleich aus")
+        "a server without hints stays silent — then absence is a diagnosis "
+        "again, and three different situations look the same")
     stufe, nachricht = protokoll[0]
-    assert stufe == "INFO", f"das ist kein Problem, also kein WARNING: {nachricht}"
+    assert stufe == "INFO", f"this is not a problem, so no WARNING: {nachricht}"
     assert "0 hint(s) configured" in nachricht, nachricht
 
 
@@ -152,16 +152,16 @@ def test_the_line_appears_only_ON_CHANGE(protokoll):
     log_hint_arrival(z)
     log_hint_arrival(z)
     assert len(protokoll) == 1, (
-        f"drei Durchlaeufe, {len(protokoll)} Zeilen — ein unveraenderter "
-        "Zustand darf nur einmal protokollieren")
+        f"three passes, {len(protokoll)} lines — an unchanged "
+        "state may log only once")
 
     # If something changes, it has to appear again.
     z.all_discovered_tools = [_Werkzeug("scan_document")]
     z.tools = list(z.all_discovered_tools)
     log_hint_arrival(z)
     assert len(protokoll) == 2, (
-        "der Hinweis ist weggefallen und das Protokoll schweigt — dann nuetzt "
-        "die Drosselung nichts")
+        "the hint dropped out and the log stays silent — then "
+        "the throttling is useless")
 
 
 def test_the_hint_TEXT_never_reaches_the_log(protokoll):
@@ -177,7 +177,7 @@ def test_the_hint_TEXT_never_reaches_the_log(protokoll):
     assert [s for s, _ in protokoll].count("WARNING") == 1, protokoll
     for _, nachricht in protokoll:
         assert geheim not in nachricht, (
-            f"der Hinweistext steht im Protokoll:\n{nachricht}")
+            f"the hint text is in the log:\n{nachricht}")
 
 
 def test_the_discovery_path_actually_calls_it(protokoll):
@@ -205,8 +205,8 @@ def test_the_discovery_path_actually_calls_it(protokoll):
 
     warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
     assert warnungen, (
-        "der Entdeckungspfad protokolliert nichts ueber die Hinweise — dann "
-        f"bleibt ihr Ausbleiben wieder unsichtbar: {protokoll}")
+        "the discovery path logs nothing about the hints — then "
+        f"their absence stays invisible again: {protokoll}")
     assert "gibtesnicht" in warnungen[0], warnungen[0]
     assert state.all_discovered_tools[0].hint == "H" * 50
 
@@ -224,5 +224,5 @@ def test_the_two_discovery_entry_points_reach_the_install():
     for name in ("_connect_server", "refresh_tools"):
         quelle = inspect.getsource(getattr(MCPManager, name))
         assert "_install_discovered_tools" in quelle, (
-            f"`{name}` geht nicht mehr ueber `_install_discovered_tools` — "
-            "dann entfaellt die Hinweis-Zaehlung auf diesem Weg")
+            f"`{name}` no longer goes through `_install_discovered_tools` — "
+            "then the hint count is lost on this path")

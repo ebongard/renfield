@@ -39,22 +39,22 @@ async def test_media_player_intent():
             intent = await ollama.extract_intent(message)
 
             if intent:
-                print("✅ Intent erkannt:")
+                print("✅ Intent recognized:")
                 print(f"   Type: {intent.get('type')}")
                 print(f"   Action: {intent.get('action')}")
                 print(f"   Entity ID: {intent.get('entity_id')}")
                 print(f"   Value: {intent.get('value')}")
                 print(f"   Confidence: {intent.get('confidence', 'N/A')}")
             else:
-                print("❌ Kein Intent erkannt (None returned)")
+                print("❌ No intent recognized (None returned)")
 
         except Exception as e:
-            print(f"❌ Fehler: {e}")
+            print(f"❌ Error: {e}")
             import traceback
             traceback.print_exc()
 
     print("\n" + "=" * 60)
-    print("✅ Tests abgeschlossen")
+    print("✅ Tests finished")
 
 if __name__ == "__main__":
     asyncio.run(test_media_player_intent())

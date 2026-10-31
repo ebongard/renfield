@@ -93,8 +93,8 @@ class TestTheCapCannotEatTheBoundary:
     def test_the_description_stays_under_the_cap(self, name):
         d = _build_query_brain_tool(_peer(name)).description
         assert len(d) <= _PRESELECT_DESC_CHARS, (
-            f"{len(d)} Zeichen bei einem {len(name)}-Zeichen-Namen — die Kappung "
-            "schneidet den Scanner-Satz ab")
+            f"{len(d)} characters for a {len(name)}-character name — the cap "
+            "cuts off the scanner sentence")
 
     @pytest.mark.parametrize("name", ["evdb", "x" * 200, "Ü" * 300])
     def test_the_boundary_survives_the_line_build(self, name):

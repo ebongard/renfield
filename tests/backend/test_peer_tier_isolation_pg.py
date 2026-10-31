@@ -124,7 +124,7 @@ async def test_pairing_writes_NO_circle_membership_anymore(pg_db_session, zwei_p
     n = (await pg_db_session.execute(text(
         "SELECT count(*) FROM circle_memberships WHERE circle_owner_id = :o"
     ), {"o": zwei_peers["eigner"]})).scalar()
-    assert n == 0, f"{n} Mitgliedschaft(en) — die Paarung schreibt wieder in die Personentabelle"
+    assert n == 0, f"{n} membership(s) — the pairing writes into the person table again"
 
 
 async def test_the_tier_survives_a_round_trip_through_the_database(pg_db_session, zwei_peers):

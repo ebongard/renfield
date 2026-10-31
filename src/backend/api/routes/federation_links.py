@@ -201,7 +201,7 @@ async def revoke_my_link(
     from services.federation_query_responder import purge_requests_for_pubkey
     discarded = await purge_requests_for_pubkey(peer.remote_pubkey)
     logger.info(
-        f"🔗 Verknuepfung {link_id} widerrufen; {discarded} laufende Anfrage(n) verworfen"
+        f"🔗 Link {link_id} revoked; {discarded} pending request(s) discarded"
     )
 
 

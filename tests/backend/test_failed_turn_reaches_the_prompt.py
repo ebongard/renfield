@@ -43,7 +43,7 @@ def _verlaufszeile(prompt: str, suchtext: str) -> str:
     nothing. That exact mistake was in the first version of this test.
     """
     treffer = [z for z in prompt.splitlines() if suchtext in z and "beschreiben" not in z]
-    assert treffer, f"keine Verlaufszeile mit {suchtext!r} im Prompt"
+    assert treffer, f"no history line with {suchtext!r} in the prompt"
     return treffer[0]
 
 
@@ -93,12 +93,12 @@ async def test_the_failed_scan_is_marked_in_the_built_prompt(db_session: AsyncSe
 
     stau = _verlaufszeile(prompt, "Papierstau")
     assert MARKE in stau, (
-        f"der Stale-Error-Marker fehlt an der Stau-Zeile — der Agent kann den "
-        f"gescheiterten Scan nicht von der Gegenwart unterscheiden: {stau}")
+        f"the stale-error marker is missing on the jam line — the agent cannot "
+        f"tell the failed scan apart from the present: {stau}")
     # And it sits ONLY there, not on the successful promise before it.
     zusage = _verlaufszeile(prompt, "wurde gestartet")
     assert MARKE not in zusage, (
-        f"die erfolgreiche Zusage wurde fälschlich markiert: {zusage}")
+        f"the successful promise was wrongly marked: {zusage}")
 
 
 async def test_the_template_keeps_its_hint_about_the_marker(db_session: AsyncSession):
@@ -121,11 +121,11 @@ async def test_the_template_keeps_its_hint_about_the_marker(db_session: AsyncSes
     # The line that EXPLAINS the marker -- not the one that carries it.
     hinweis = [z for z in prompt.splitlines() if MARKE in z and "beschreiben" in z]
     assert hinweis, (
-        "der Prompt trägt den Marker, aber keine Zeile erklärt, dass er "
-        "HISTORISCH ist — dann antwortet das Modell aus dem alten Fehlschlag")
+        "the prompt carries the marker, but no line explains that it is "
+        "HISTORICAL — then the model answers out of the old failure")
     unten = hinweis[0].lower()
     assert any(w in unten for w in ("neu aus", "erneut", "nochmal", "wiederhol")), (
-        f"der Hinweis fordert keine Neuausführung: {hinweis[0]}")
+        f"the hint does not call for a re-run: {hinweis[0]}")
 
 
 async def test_without_the_metadata_there_is_no_marker(db_session: AsyncSession):
@@ -148,8 +148,8 @@ async def test_without_the_metadata_there_is_no_marker(db_session: AsyncSession)
     )
     stau = _verlaufszeile(prompt, "Papierstau")
     assert MARKE not in stau, (
-        f"ohne `action_success: False` darf die Verlaufszeile keinen Marker "
-        f"tragen — sonst beweist der Test oben nichts: {stau}")
+        f"without `action_success: False` the history line must not carry a "
+        f"marker — otherwise the test above proves nothing: {stau}")
 
 
 # ---------------------------------------------------------------------------
@@ -200,19 +200,19 @@ async def test_a_repeat_after_a_completed_action_is_steered_to_rerun(db_session:
     # against the running system. The history built above is not decoration:
     # it reproduces exactly the situation in which it went wrong.
     assert "an einem GERAET ist eine NEUE Bitte" in prompt, (
-        "der Hinweis fehlt — dann antwortet das Modell aus dem alten Lauf")
+        "the hint is missing — then the model answers out of the old run")
     # And it has to call for execution, not merely describe.
     hinweis = next(z for z in prompt.splitlines() if "an einem GERAET" in z)
     assert "fuehre das Tool aus" in hinweis, hinweis
     assert "schon erledigt" in hinweis, (
-        "der Hinweis muss die falsche Antwort ausdrücklich verbieten")
+        "the hint must explicitly forbid the wrong answer")
     # 🛑 And the counter-rule has to stand in the prompt WITH it. Without it
     # the same sentence would send an email twice -- found in the review of
     # #1410: `send_email` is an active tool, and `broadcast_announcement` warns
     # itself, "Do NOT retry ... it would re-announce".
     assert "FRAGE ZURUECK" in prompt, (
-        "die Gegenregel fuer alles, was etwas HINAUSGIBT, fehlt — der Hinweis "
-        "allein kann einen nicht zurueckholbaren Versand wiederholen")
+        "the counter-rule for everything that SENDS something out is missing — the "
+        "hint alone can repeat a send that cannot be recalled")
 
 
 def test_the_repeat_hint_exists_in_both_languages():
@@ -240,16 +240,16 @@ def test_the_repeat_hint_exists_in_both_languages():
         ("en", en, "at a DEVICE is a NEW request",
          "run the tool", "already done"),
     ):
-        assert marke in v, f"der {name}-Vorlage fehlt der Hinweis"
+        assert marke in v, f"the {name} template lacks the hint"
         zeile = next(z for z in v.splitlines() if marke in z)
-        assert tun in zeile, f"{name}: der Hinweis fordert keine Ausfuehrung: {zeile}"
-        assert verbot in zeile, f"{name}: das falsche Verhalten ist nicht verboten"
+        assert tun in zeile, f"{name}: the hint does not call for execution: {zeile}"
+        assert verbot in zeile, f"{name}: the wrong behaviour is not forbidden"
 
     # And the counter-rule for everything that SENDS something out --
     # without it the hint could send an email twice (found in the review of
     # #1410).
-    assert "FRAGE ZURUECK" in de, "der de-Vorlage fehlt die Gegenregel"
-    assert "ASK BACK" in en, "der en-Vorlage fehlt die Gegenregel"
+    assert "FRAGE ZURUECK" in de, "the de template lacks the counter-rule"
+    assert "ASK BACK" in en, "the en template lacks the counter-rule"
     # And the OLD marker has to keep carrying both; the rule explicitly
     # requires that the halves are never changed one-sidedly.
     for name, v in (("de", de), ("en", en)):

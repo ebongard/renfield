@@ -128,7 +128,7 @@ class TestBaselineStamp:
 
         root = Path(_database_module.__file__).resolve().parents[1]
         path = root / "alembic" / "versions" / "pc20260926_schema_baseline.py"
-        assert path.exists(), f"Basis-Migration fehlt: {path}"
+        assert path.exists(), f"baseline migration missing: {path}"
         spec = importlib.util.spec_from_file_location("baseline_under_test", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -139,9 +139,9 @@ class TestBaselineStamp:
 
         mod = self._baseline_module()
         assert mod.down_revision == PRE_BASELINE_REVISION, (
-            "Der Stempel zeigt nicht auf die Vorgaengerrevision der Basis — eine "
-            "frische Datenbank wuerde die Basis ueberspringen und das Roh-SQL "
-            "nie bekommen."
+            "The stamp does not point at the baseline's parent revision — a "
+            "fresh database would skip the baseline and never get the "
+            "raw SQL."
         )
 
     def test_the_baseline_is_the_head(self):

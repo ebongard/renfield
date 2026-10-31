@@ -115,7 +115,7 @@ async def check_vector_index_thresholds() -> str | None:
                     text(f"EXPLAIN (FORMAT JSON) {probe}")
                 )).scalar_one()
             except Exception as exc:  # pragma: no cover - a planner error is not an outage
-                logger.debug(f"Vektorindex-Probe fuer {table} fehlgeschlagen: {error_text_without_content(exc)}")
+                logger.debug(f"Vector index probe for {table} failed: {error_text_without_content(exc)}")
                 continue
 
             plans = json.loads(raw) if isinstance(raw, str) else raw
@@ -125,12 +125,12 @@ async def check_vector_index_thresholds() -> str | None:
 
             due.append(f"{table}={n}")
             logger.warning(
-                f"🔎 Vektorindex faellig: der Planer wuerde fuer {table} jetzt "
-                f"{index_name} nehmen, wenn die Abfrage auf halfvec({dim}) casten "
-                f"wuerde ({n} eingebettete Zeilen). Heute castet sie bewusst nicht, "
-                f"weil der Index bei kleinerer Tabelle NICHT gewaehlt wurde und die "
-                f"Umwandlung dann jede Zeile umsonst kostet. Jetzt gegenmessen "
-                f"(EXPLAIN ANALYZE mit und ohne Cast) und den Cast in "
-                f"{', '.join(sites)} setzen."
+                f"🔎 Vector index due: the planner would now use {index_name} "
+                f"for {table} if the query cast to halfvec({dim}) "
+                f"({n} embedded rows). Today it deliberately does not cast, "
+                f"because with a smaller table the index was NOT chosen and the "
+                f"conversion then costs every row for nothing. Measure now "
+                f"(EXPLAIN ANALYZE with and without the cast) and set the cast in "
+                f"{', '.join(sites)}."
             )
     return f"Cast faellig fuer: {', '.join(due)}" if due else None

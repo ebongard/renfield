@@ -769,8 +769,8 @@ def test_eine_UNPASSENDE_kennung_verliert_die_meldung_NICHT():
         "", None, 12345, {"a": 1},
     ):
         msg = sj.render_completion_message("unrouted", "", {"stage_id": boese}, "de")
-        assert "nichts wurde abgelegt" in msg, f"Meldung verloren bei {boese!r}"
-        assert "\n" not in msg, f"roher Zeilenumbruch in der Nachricht bei {boese!r}"
+        assert "nichts wurde abgelegt" in msg, f"message lost for {boese!r}"
+        assert "\n" not in msg, f"raw line break in the message for {boese!r}"
         assert "ignoriere" not in msg
         assert "<script>" not in msg
         assert "passwd" not in msg
@@ -798,7 +798,7 @@ async def test_ein_KNOPF_scan_bekommt_eine_ENDGUELTIGE_409_mit_merkmal(client):
                                  headers={"Authorization": "Bearer ok"})
     assert resp.status_code == 409
     detail = resp.json()["detail"]
-    assert isinstance(detail, dict), "ohne Wörterbuch kann der Scanner nichts auswerten"
+    assert isinstance(detail, dict), "without a dict the scanner cannot evaluate anything"
     assert detail["reason"] == "no_recipient_for_caller"
 
 
@@ -818,8 +818,8 @@ async def test_ein_CHAT_scan_bleibt_wiederholbar(client):
         assert resp.status_code == 409, caller
         detail = resp.json()["detail"]
         assert not isinstance(detail, dict) or detail.get("reason") != "no_recipient_for_caller", (
-            f"caller={caller!r} darf KEIN Endgültigkeits-Merkmal bekommen — "
-            "sonst gibt der Scanner auf, bevor der Eintrag entstehen konnte")
+            f"caller={caller!r} must NOT get a finality marker — "
+            "otherwise the scanner gives up before the entry could be created")
 
 
 async def test_route_answers_a_delivery_in_progress_retryably(client):
@@ -1001,8 +1001,8 @@ async def test_the_turn_is_marked_by_the_outcome(conversation, monkeypatch, stat
     conversation.save_message.assert_called_once()
     metadata = conversation.save_message.call_args.kwargs["metadata"]
     assert metadata["action_success"] is erwartet, (
-        f"Zustand {status!r} muss action_success={erwartet} tragen — sonst liest "
-        "der Agent den alten Zustand als den gegenwaertigen")
+        f"state {status!r} must carry action_success={erwartet} — otherwise "
+        "the agent reads the old state as the current one")
     # The job id must not get lost in the process.
     assert metadata["scanner_job"]["status"] == status
 

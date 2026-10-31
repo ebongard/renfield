@@ -20,7 +20,7 @@ NC='\033[0m'
 
 # Check that we are inside a git repository
 if [ ! -d .git ]; then
-    echo -e "${YELLOW}Initialisiere Git Repository...${NC}"
+    echo -e "${YELLOW}Initialising Git repository...${NC}"
     git init
     git remote add origin https://github.com/ebongard/renfield.git
 fi
@@ -31,17 +31,17 @@ git status
 echo ""
 
 # Add every file
-echo -e "${YELLOW}Füge Dateien hinzu...${NC}"
+echo -e "${YELLOW}Adding files...${NC}"
 git add .
 
 # Show what was added
 echo ""
-echo -e "${BLUE}Dateien die committed werden:${NC}"
+echo -e "${BLUE}Files to be committed:${NC}"
 git diff --cached --name-only
 echo ""
 
 # Create the commit
-read -p "Commit Message (Enter für default): " commit_msg
+read -p "Commit message (Enter for default): " commit_msg
 if [ -z "$commit_msg" ]; then
     commit_msg="Initial commit: Complete Renfield AI Assistant system
 
@@ -53,23 +53,23 @@ if [ -z "$commit_msg" ]; then
 fi
 
 echo ""
-echo -e "${YELLOW}Erstelle Commit...${NC}"
+echo -e "${YELLOW}Creating commit...${NC}"
 git commit -m "$commit_msg"
 
 # Set the branch
 echo ""
-echo -e "${YELLOW}Setze Main Branch...${NC}"
+echo -e "${YELLOW}Setting main branch...${NC}"
 git branch -M main
 
 # Push
 echo ""
-echo -e "${YELLOW}Pushe zu GitHub...${NC}"
+echo -e "${YELLOW}Pushing to GitHub...${NC}"
 echo "Repository: https://github.com/ebongard/renfield"
 echo ""
 
 # Check whether the remote already exists
 if git remote | grep -q origin; then
-    echo "Remote 'origin' existiert bereits"
+    echo "Remote 'origin' already exists"
 else
     git remote add origin https://github.com/ebongard/renfield.git
 fi
@@ -79,7 +79,7 @@ git push -u origin main
 
 echo ""
 echo -e "${GREEN}================================${NC}"
-echo -e "${GREEN}✓ Deployment erfolgreich!${NC}"
+echo -e "${GREEN}✓ Deployment successful!${NC}"
 echo -e "${GREEN}================================${NC}"
 echo ""
 echo "🌐 Repository: https://github.com/ebongard/renfield"

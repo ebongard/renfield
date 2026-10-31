@@ -54,8 +54,8 @@ def test_the_field_SURVIVES_the_response_model(monkeypatch):
     kwargs = _doc_to_response_kwargs(_doc(paperless_document_id=42, paperless_state="done"))
     antwort = DocumentResponse(**kwargs)
     assert antwort.paperless_url == "http://paperless.local:8000/documents/42/details", (
-        "das Feld hat das Response-Modell nicht ueberlebt — genau der stille "
-        "Fehlschlag, gegen den dieser Test steht")
+        "the field did not survive the response model — exactly the silent "
+        "failure this test guards against")
     assert antwort.in_paperless is True
 
 
@@ -93,5 +93,5 @@ def test_NEGATIVE_CONTROL_the_model_really_drops_unknown_keys():
         "gibtesnicht": "wert",
     })
     assert not hasattr(antwort, "gibtesnicht"), (
-        "Pydantic reicht unbekannte Schluessel durch — dann ist die Begruendung "
-        "fuer das deklarierte Feld hinfaellig und C1 muss neu bewertet werden")
+        "Pydantic passes unknown keys through — then the reason for the "
+        "declared field no longer holds and C1 has to be re-assessed")

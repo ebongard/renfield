@@ -211,11 +211,11 @@ def test_scanner_wird_mit_einem_GERAETEFREIEN_werkzeug_gesondet():
 
     probe = scanner.get("health_probe")
     assert probe, (
-        "der Scanner braucht eine Funktionssonde — ohne sie bleibt ein toter "
-        "blauer Knopf unbemerkt, gemessen: neun Tage am 2026-10-21")
+        "the scanner needs a functional probe — without it a dead blue "
+        "button goes unnoticed, measured: nine days on 2026-10-21")
     assert probe["tool"] == "watcher_health", (
-        f"gesondet werden muss das gerätefreie `watcher_health`, nicht "
+        f"the probe must target the device-free `watcher_health`, not "
         f"{probe['tool']!r}")
     assert probe["tool"] != "scanner_status", (
-        "`scanner_status` fasst das Gerät an und meldet einen ausgeschalteten "
-        "Scanner als Fehler — eine Probe darauf schlägt am Normalfall an")
+        "`scanner_status` touches the device and reports a switched-off "
+        "scanner as an error — a probe on it fires in the normal case")

@@ -79,8 +79,8 @@ class TestWatchedSet:
     def test_every_watched_table_names_the_files_to_change(self):
         # A warning without an instruction is half useless: whoever reads it
         # has to know WHERE the cast belongs.
-        assert _WATCHED, "nichts beobachtet — der Ausloeser waere wirkungslos"
+        assert _WATCHED, "nothing watched — the trigger would have no effect"
         for table, sites in _WATCHED.items():
-            assert sites, f"{table} nennt keine Datei"
+            assert sites, f"{table} names no file"
             for s in sites:
                 assert s.startswith("services/") and s.endswith(".py"), s

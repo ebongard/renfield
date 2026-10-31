@@ -64,7 +64,7 @@ class HomeAssistantClient:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"❌ Fehler beim Abrufen der States: {e}")
+            logger.error(f"❌ Failed to fetch the states: {e}")
             return []
 
     async def get_state(self, entity_id: str) -> dict | None:
@@ -75,7 +75,7 @@ class HomeAssistantClient:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"❌ Fehler beim Abrufen des States für {entity_id}: {e}")
+            logger.error(f"❌ Failed to fetch the state for {entity_id}: {e}")
             return None
 
     async def call_service(
@@ -99,10 +99,10 @@ class HomeAssistantClient:
                 timeout=timeout or ha_glue_settings.ha_timeout
             )
             response.raise_for_status()
-            logger.info(f"✅ Service {domain}.{service} für {entity_id} aufgerufen")
+            logger.info(f"✅ Service {domain}.{service} called for {entity_id}")
             return True
         except Exception as e:
-            logger.error(f"❌ Fehler beim Aufrufen von {domain}.{service}: {e}")
+            logger.error(f"❌ Failed to call {domain}.{service}: {e}")
             return False
 
     async def turn_on(self, entity_id: str) -> bool:
@@ -206,12 +206,12 @@ class HomeAssistantClient:
                     logger.debug(f"🗂️  Using cached keywords ({len(self._keywords_cache)} items)")
                     return self._keywords_cache
 
-        logger.info("🔄 Lade Keywords aus Home Assistant...")
+        logger.info("🔄 Loading keywords from Home Assistant...")
 
         try:
             states = await self.get_states()
             if not states:
-                logger.warning("⚠️  Keine States von Home Assistant erhalten")
+                logger.warning("⚠️  No states received from Home Assistant")
                 return self._get_fallback_keywords()
 
             keywords = set()
@@ -267,13 +267,13 @@ class HomeAssistantClient:
             self._keywords_cache = keywords
             self._keywords_last_updated = datetime.now()
 
-            logger.info(f"✅ {len(keywords)} Keywords aus {len(states)} Entities extrahiert")
-            logger.debug(f"Beispiel-Keywords: {list(keywords)[:20]}")
+            logger.info(f"✅ {len(keywords)} keywords extracted from {len(states)} entities")
+            logger.debug(f"Sample keywords: {list(keywords)[:20]}")
 
             return keywords
 
         except Exception as e:
-            logger.error(f"❌ Fehler beim Laden der Keywords: {e}")
+            logger.error(f"❌ Failed to load the keywords: {e}")
             return self._get_fallback_keywords()
 
     def _get_fallback_keywords(self) -> set:
@@ -303,7 +303,7 @@ class HomeAssistantClient:
         try:
             states = await self.get_states()
             if not states:
-                logger.warning("⚠️  Keine States von Home Assistant erhalten")
+                logger.warning("⚠️  No states received from Home Assistant")
                 return []
 
             entity_map = []
@@ -333,7 +333,7 @@ class HomeAssistantClient:
                         "state": state.get("state", "unknown")
                     })
 
-            logger.info(f"✅ {len(entity_map)} relevante Entities für Intent Recognition geladen")
+            logger.info(f"✅ {len(entity_map)} relevant entities loaded for intent recognition")
 
             # Update class-level cache
             cls._entity_map_cache = entity_map
@@ -342,7 +342,7 @@ class HomeAssistantClient:
             return entity_map
 
         except Exception as e:
-            logger.error(f"❌ Fehler beim Erstellen der Entity Map: {e}")
+            logger.error(f"❌ Failed to build the entity map: {e}")
             return []
 
     def _extract_room(self, entity_id: str, friendly_name: str) -> str | None:

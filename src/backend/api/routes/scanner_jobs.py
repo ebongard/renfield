@@ -165,8 +165,8 @@ async def scan_job_event(
         # completion notice would go to -- a button press names no recipient
         # (#1390).
         logger.info(
-            f"scanner: Knopf-Scan {event.job_id} ({event.status}) ohne "
-            f"Meldeadresse — Dokument ist abgelegt, Meldung entfällt"
+            f"scanner: button scan {event.job_id} ({event.status}) without a "
+            f"report address — document is filed, no report is sent"
         )
         raise HTTPException(
             status_code=409,

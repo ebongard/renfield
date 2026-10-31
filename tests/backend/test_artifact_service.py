@@ -59,9 +59,9 @@ def test_every_allowed_kind_has_a_validator():
     from services.artifact_service import _VALIDATORS
 
     assert set(ALLOWED_KINDS) == set(_VALIDATORS), (
-        f"Erlaubnisliste und Validatoren weichen ab: "
-        f"nur erlaubt {sorted(set(ALLOWED_KINDS) - set(_VALIDATORS))}, "
-        f"nur Validator {sorted(set(_VALIDATORS) - set(ALLOWED_KINDS))}")
+        f"allow-list and validators differ: "
+        f"allowed only {sorted(set(ALLOWED_KINDS) - set(_VALIDATORS))}, "
+        f"validator only {sorted(set(_VALIDATORS) - set(ALLOWED_KINDS))}")
 
 
 # --- weather widget (Gen-UI kind) ------------------------------------------

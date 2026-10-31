@@ -16,38 +16,38 @@ docker-compose ps
 echo ""
 
 # Frontend Logs
-echo "📱 Frontend Logs (letzte 50 Zeilen):"
+echo "📱 Frontend logs (last 50 lines):"
 echo "-----------------------------------"
 docker-compose logs --tail=50 frontend
 echo ""
 
 # Backend Logs
-echo "🔧 Backend Logs (letzte 30 Zeilen):"
+echo "🔧 Backend logs (last 30 lines):"
 echo "-----------------------------------"
 docker-compose logs --tail=30 backend
 echo ""
 
 # Ollama Logs
-echo "🤖 Ollama Logs (letzte 20 Zeilen):"
+echo "🤖 Ollama logs (last 20 lines):"
 echo "-----------------------------------"
 docker-compose logs --tail=20 ollama
 echo ""
 
 # Check the network
-echo "🌐 Netzwerk-Ports:"
+echo "🌐 Network ports:"
 echo "-----------------------------------"
 docker-compose ps | grep -E "PORTS|frontend|backend"
 echo ""
 
 # In Frontend Container reinschauen
-echo "📂 Frontend Container Inhalt:"
+echo "📂 Frontend container contents:"
 echo "-----------------------------------"
-docker-compose exec -T frontend ls -la /app 2>/dev/null || echo "Frontend Container nicht erreichbar"
+docker-compose exec -T frontend ls -la /app 2>/dev/null || echo "Frontend container not reachable"
 echo ""
 
-echo "✅ Debug-Info komplett"
+echo "✅ Debug info complete"
 echo ""
-echo "💡 Tipps:"
-echo "  - Frontend neu bauen: docker-compose build frontend"
-echo "  - Frontend neu starten: docker-compose restart frontend"
-echo "  - Alle neu starten: docker-compose restart"
+echo "💡 Tips:"
+echo "  - Rebuild the frontend: docker-compose build frontend"
+echo "  - Restart the frontend: docker-compose restart frontend"
+echo "  - Restart everything: docker-compose restart"

@@ -48,7 +48,7 @@ def _eintrag(paket: str) -> str:
     """The line that declares `paket` -- extras included."""
     muster = re.compile(rf"^{re.escape(paket)}(\[[^\]]*\])?\s*[<>=!~]", re.I)
     treffer = [z for z in _zeilen() if muster.match(z)]
-    assert len(treffer) == 1, f"{paket}: erwartet genau eine Zeile, gefunden {treffer}"
+    assert len(treffer) == 1, f"{paket}: expected exactly one line, found {treffer}"
     return treffer[0]
 
 
@@ -61,8 +61,8 @@ def test_sqlalchemy_declares_the_asyncio_extra():
     """
     zeile = _eintrag("sqlalchemy")
     assert "[asyncio]" in zeile.lower(), (
-        f"sqlalchemy ohne [asyncio]-Extra deklariert: {zeile!r}. "
-        "Der async-Pfad braucht greenlet; ohne den Extra kommt es nur zufällig mit."
+        f"sqlalchemy declared without the [asyncio] extra: {zeile!r}. "
+        "The async path needs greenlet; without the extra it only comes along by chance."
     )
 
 
@@ -76,8 +76,8 @@ def test_sqlalchemy_is_bounded_above():
     """
     zeile = _eintrag("sqlalchemy")
     assert re.search(r"<\s*\d", zeile), (
-        f"sqlalchemy ohne Obergrenze: {zeile!r}. Jeder Bau kann damit über eine "
-        "Versionsgrenze springen, ohne dass es jemand entschieden hat."
+        f"sqlalchemy without an upper bound: {zeile!r}. Any build can then jump across a "
+        "version boundary without anybody having decided it."
     )
 
 
@@ -90,7 +90,7 @@ def test_the_async_imports_the_code_actually_uses_are_declared():
         Path(__file__).resolve().parents[2] / "src" / "backend" / "services" / "database.py"
     ).read_text()
     assert "from sqlalchemy.ext.asyncio import" in quelle, (
-        "services/database.py importiert `sqlalchemy.ext.asyncio` nicht mehr — "
-        "die Begründung für den [asyncio]-Extra ist damit zu prüfen."
+        "services/database.py no longer imports `sqlalchemy.ext.asyncio` — "
+        "the reason for the [asyncio] extra needs to be re-checked."
     )
     assert "async_sessionmaker" in quelle

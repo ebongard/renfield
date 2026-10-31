@@ -192,7 +192,7 @@ async def _warn_about_tables_no_migration_created() -> None:
                 len(missing), ", ".join(missing[:10]),
             )
     except Exception as exc:  # pragma: no cover - a warning must never disrupt
-        logger.debug("Tabellenabgleich uebersprungen: {}", exc)
+        logger.debug("Table reconciliation skipped: {}", exc)
 
 
 async def init_db():
@@ -235,13 +235,13 @@ async def init_db():
             # better ONE loud line at startup than `UndefinedTable` at some
             # point in the middle of operation.
             await _warn_about_tables_no_migration_created()
-            logger.info("Datenbank vorhanden — keine Initialisierung noetig")
+            logger.info("Database present — no initialisation needed")
             return
 
         logger.info("Empty database detected -- schema via the baseline migration")
         await _stamp_pre_baseline()
         await _run_alembic_upgrade_head()
-        logger.info("✅ Schema ueber `alembic upgrade head` hergestellt")
+        logger.info("✅ Schema created via `alembic upgrade head`")
     except Exception as e:
         logger.error(f"❌ Failed to initialise the database: {error_text_without_content(e)}")
         raise

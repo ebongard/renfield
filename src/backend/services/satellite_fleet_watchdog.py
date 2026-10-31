@@ -136,7 +136,7 @@ async def check_satellite_fleet(
         # NO judgement. The registry is empty after a restart until everyone
         # has reported back -- reporting here would mean reporting every
         # rollout as a total outage.
-        logger.debug("Flottenwache: Karenz nach dem Start, kein Urteil")
+        logger.debug("Fleet watchdog: grace period after start, no verdict")
         return None
 
     if manager is None:
@@ -148,7 +148,7 @@ async def check_satellite_fleet(
         from utils.config import settings as _platform_settings
 
         if not _platform_settings.features.get("satellites"):
-            logger.debug("Flottenwache: Satellitenmerkmal aus, kein Urteil")
+            logger.debug("Fleet watchdog: satellite feature off, no verdict")
             return None
 
         from ha_glue.services.satellite_manager import get_satellite_manager
@@ -173,7 +173,7 @@ async def check_satellite_fleet(
         if changed:
             # A return is its own piece of good news -- and the marker MUST be
             # cleared, otherwise the next outage would stay silent.
-            logger.info("🛰 Flottenwache: alle Satelliten wieder verbunden")
+            logger.info("🛰 Fleet watchdog: all satellites connected again")
             await _try_notify(
                 notify, title="Alle Satelliten wieder verbunden",
                 message="Es fehlt kein Satellit mehr.",
@@ -227,4 +227,4 @@ async def _try_notify(notify, *, title: str, message: str, dedup_key: str) -> No
                      event_type="satellite_health",
                      source="satellite_fleet_watchdog")
     except Exception as exc:  # pragma: no cover - a report must never disturb
-        logger.warning(f"Flottenwache: Benachrichtigung fehlgeschlagen: {exc}")
+        logger.warning(f"Fleet watchdog: notification failed: {exc}")

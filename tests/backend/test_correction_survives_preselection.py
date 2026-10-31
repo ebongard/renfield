@@ -74,8 +74,8 @@ async def test_without_a_correction_the_model_decides(gestellter_pfad):
     )
     assert set(gewaehlt) == set(OHNE_SCANNER)
     assert "mcp.scanner.scan_document" not in gewaehlt, (
-        "der Aufbau dieses Tests stimmt nicht — das Modell soll den Scanner "
-        "gerade NICHT liefern")
+        "this test's setup is wrong — the model is supposed NOT to deliver "
+        "the scanner here")
 
 
 @pytest.mark.asyncio
@@ -99,14 +99,14 @@ async def test_a_correction_puts_the_WHOLE_SERVER_back(gestellter_pfad):
         corrected_intent="mcp.scanner.scanner_status",
     )
     assert "mcp.scanner.scan_document" in gewaehlt, (
-        "die Korrektur bleibt wirkungslos — der Nutzer waehlte den SERVER "
-        "Scanner, und das Werkzeug, das er braucht, fehlt weiter")
+        "the correction has no effect — the user chose the SERVER "
+        "Scanner, and the tool they need is still missing")
     for name in ALLE:
         if name.startswith("mcp.scanner."):
-            assert name in gewaehlt, f"{name} fehlt — nicht der ganze Server"
+            assert name in gewaehlt, f"{name} is missing — not the whole server"
     # And it does not throw the model's choice away:
     assert set(OHNE_SCANNER) <= set(gewaehlt), (
-        "die Korrektur darf die uebrigen Werkzeuge nicht verdraengen")
+        "the correction must not push out the other tools")
 
 
 def test_an_internal_tool_pins_only_itself():
@@ -137,7 +137,7 @@ async def test_an_unknown_correction_is_ignored(gestellter_pfad):
         corrected_intent="mcp.nichts.gibtesnicht",
     )
     assert set(gewaehlt) == set(OHNE_SCANNER)
-    assert all(n in ALLE for n in gewaehlt), "ein unbekanntes Werkzeug kam herein"
+    assert all(n in ALLE for n in gewaehlt), "an unknown tool got in"
     # 🛑 And the proof that this test EXERCISES the pinning at all: an
     # unknown server is otherwise indistinguishable from pinning that does not
     # run. A mutation that switched the pinning off entirely left this test
@@ -145,7 +145,7 @@ async def test_an_unknown_correction_is_ignored(gestellter_pfad):
     registry = dict.fromkeys(ALLE, object())
     assert _tools_pinned_by_correction("mcp.nichts.gibtesnicht", registry) == []
     assert _tools_pinned_by_correction("mcp.scanner.egal", registry), (
-        "die Praefix-Suche laeuft nicht — dann prueft der Fall oben nichts")
+        "the prefix search does not run — then the case above checks nothing")
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_pinning_is_idempotent(monkeypatch):
     for name in scanner | set(OHNE_SCANNER):
         assert gewaehlt[name] is svc.tool_registry._tools[name] or \
             gewaehlt[name].name == name, (
-            f"{name} zeigt nicht mehr auf seine Definition")
+            f"{name} no longer points at its definition")
 
 
 @pytest.mark.asyncio
@@ -208,7 +208,7 @@ async def test_the_pin_runs_BEFORE_the_zero_tools_bailout(monkeypatch):
         corrected_intent="mcp.scanner.scanner_status",
     )
     assert gewaehlt is not None, (
-        "die Vorauswahl fiel auf ALLE Werkzeuge zurueck, obwohl die Korrektur "
-        "eine gueltige Menge haette liefern koennen — die Festnagelung laeuft "
-        "zu spaet")
+        "the preselection fell back to ALL tools although the correction "
+        "could have delivered a valid set — the pinning runs "
+        "too late")
     assert set(gewaehlt) == {n for n in ALLE if n.startswith("mcp.scanner.")}

@@ -87,7 +87,7 @@ def test_laengenabbruch_feuert_jenseits_der_40s_grenze():
     # 751 chunks = 60.08 s -- the first position genuinely above 60 s.
     _feed(sat, 751, speech=True)
 
-    assert 751 > OLD_BUFFER_CAP_CHUNKS, "der Test MUSS jenseits der alten Grenze liegen"
+    assert 751 > OLD_BUFFER_CAP_CHUNKS, "the test MUST lie beyond the old limit"
     assert sat._recorded_chunks == 751
     assert "timeout" in _reasons(sat)
 
@@ -232,10 +232,10 @@ def test_zaehler_wird_an_jeder_ruecksetzstelle_genullt():
 
     # Without this lower bound the test would pass empty after a rename.
     assert len(checked) >= 4, (
-        f"Erwartet: __init__, Weckwort, Reset, Trennung, Server-Zustand — gefunden: {checked}"
+        f"expected: __init__, wake word, reset, disconnect, server state — found: {checked}"
     )
     assert offenders == [], (
-        f"Diese Methoden nullen _silence_chunks, aber nicht _recorded_chunks: {offenders}"
+        f"these methods zero _silence_chunks but not _recorded_chunks: {offenders}"
     )
 
 

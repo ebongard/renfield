@@ -204,26 +204,26 @@ def _spawn_satellite_extraction(
     """
     if user_id is None:
         logger.debug(
-            "📝 Satellite-Extraktion übersprungen: Sprecher nicht erkannt "
+            "📝 Satellite extraction skipped: speaker not recognised "
             f"(session={session_id})"
         )
         return None
     if is_device_account:
         logger.debug(
-            "📝 Satellite-Extraktion übersprungen: Gerätekonto sammelt keine "
-            f"Erinnerungen (session={session_id})"
+            "📝 Satellite extraction skipped: the device account collects no "
+            f"memories (session={session_id})"
         )
         return None
     if not session_id:
         logger.debug(
-            "📝 Satellite-Extraktion übersprungen: Turn nicht persistiert "
+            "📝 Satellite extraction skipped: turn not persisted "
             f"(user_id={user_id})"
         )
         return None
     if turn_truncated:
         logger.info(
-            "📝 Satellite-Extraktion übersprungen: Äußerung bei der Höchstdauer "
-            f"gekappt, ein halber Satz wird kein Wissen (session={session_id})"
+            "📝 Satellite extraction skipped: utterance cut off at the maximum "
+            f"duration, half a sentence does not become knowledge (session={session_id})"
         )
         return None
     try:
@@ -247,7 +247,7 @@ def _spawn_satellite_extraction(
             )
         return spawn
     except Exception as e:
-        logger.warning(f"⚠️ Satellite-Extraktion konnte nicht gestartet werden: {e}")
+        logger.warning(f"⚠️ Could not start the satellite extraction: {e}")
         return None
 
 
@@ -340,8 +340,8 @@ async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) ->
     if manager.is_connected(satellite_id):
         return False
     logger.warning(
-        f"🔌 Heartbeat von nicht-registriertem Satelliten {satellite_id} "
-        "— Verbindung wird geschlossen, damit er sich neu anmeldet"
+        f"🔌 Heartbeat from unregistered satellite {satellite_id} "
+        "— closing the connection so that it registers again"
     )
     try:
         await websocket.close(code=1001, reason="re-register required")
@@ -372,8 +372,8 @@ def _warn_once_on_unknown_grants(grants: list[str]) -> None:
     ]
     if unknown:
         logger.warning(
-            f"⚠️ SATELLITE_ANONYMOUS_PERMISSIONS nennt unbekannte Rechte {unknown} — "
-            f"sie greifen nie und wirken wie eine stille Verweigerung"
+            f"⚠️ SATELLITE_ANONYMOUS_PERMISSIONS names unknown permissions {unknown} — "
+            f"they never apply and act like a silent denial"
         )
 
 
@@ -418,7 +418,7 @@ def _warn_once_about_device_account(reason: str) -> None:
     _device_account_warned = True
     logger.warning(
         f"⚠️ SATELLITE_DEVICE_ACCOUNT={settings.satellite_device_account!r}: {reason} — "
-        f"unerkannte Stimmen werden bis zur Korrektur abgelehnt"
+        f"unrecognised voices are rejected until this is corrected"
     )
 
 
@@ -457,7 +457,7 @@ async def _load_device_account() -> tuple[int, list[str]] | None:
             _device_account_warned = False
             return usr.id, usr.get_permissions()
     except Exception as e:
-        logger.warning(f"⚠️ Gerätekonto konnte nicht geladen werden: {e}")
+        logger.warning(f"⚠️ Could not load the device account: {e}")
         return None
 
 
@@ -1057,9 +1057,9 @@ async def satellite_websocket(
                             speaker_confidence = result.get("speaker_confidence", 0.0)
 
                             if speaker_name:
-                                logger.info(f"🎤 Satellite Sprecher erkannt: {speaker_name} (@{speaker_alias}) - Konfidenz: {speaker_confidence:.2f}")
+                                logger.info(f"🎤 Satellite speaker recognised: {speaker_name} (@{speaker_alias}) - confidence: {speaker_confidence:.2f}")
                             else:
-                                logger.info("🎤 Satellite Sprecher nicht erkannt")
+                                logger.info("🎤 Satellite speaker not recognised")
                     else:
                         async with AsyncSessionLocal() as db_session:
                             initial_prompt = await prompt_builder.build(
@@ -1232,14 +1232,14 @@ async def satellite_websocket(
                         sat_is_device_account = anon.is_device_account
                         if sat_is_device_account:
                             logger.info(
-                                f"🔐 Satelliten-Zug als Gerätekonto "
+                                f"🔐 Satellite turn as device account "
                                 f"(user_id={sat_user_id}, "
-                                f"{len(sat_user_permissions or [])} Rechte)"
+                                f"{len(sat_user_permissions or [])} permissions)"
                             )
                         elif sat_user_permissions is not None:
                             logger.info(
-                                f"🔐 Anonymer Satelliten-Zug mit "
-                                f"{len(sat_user_permissions)} Rechten"
+                                f"🔐 Anonymous satellite turn with "
+                                f"{len(sat_user_permissions)} permissions"
                             )
 
                     # Who owns the ROOM history (§8.1): the device account, or
@@ -1298,7 +1298,7 @@ async def satellite_websocket(
                     )
                     for intent_candidate in ranked_intents:
                         intent_name = intent_candidate.get("intent", "general.conversation")
-                        logger.info(f"🎯 Satellite versucht Intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
+                        logger.info(f"🎯 Satellite trying intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
 
                         if intent_name == "general.conversation":
                             intent = intent_candidate
@@ -1331,11 +1331,11 @@ async def satellite_websocket(
                         if candidate_result.get("permission_denied"):
                             intent = intent_candidate
                             action_result = candidate_result
-                            logger.info(f"🔒 Intent {intent_name} abgelehnt (Berechtigung)")
+                            logger.info(f"🔒 Intent {intent_name} denied (permission)")
                             await satellite_manager.send_action_result(session_id, intent, False)
                             break
 
-                        logger.info(f"⏭️ Intent {intent_name} leer, versuche nächsten...")
+                        logger.info(f"⏭️ Intent {intent_name} empty, trying the next one...")
                     origin_room_id.reset(_origin_room_token)
 
                     # Fallback to conversation if no intent worked
@@ -1389,8 +1389,8 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     if _cut_notice:
                         response_text = _cut_notice + response_text
                         logger.warning(
-                            f"✂️ Äußerung bei der Höchstdauer gekappt "
-                            f"(session {session_id}) — Hinweis vorangestellt"
+                            f"✂️ Utterance cut off at the maximum duration "
+                            f"(session {session_id}) — notice prepended"
                         )
 
                     logger.info(f"💬 Response: '{response_text[:100]}...'")

@@ -58,10 +58,10 @@ class TaskQueue:
             await self.redis_client.lpush(self.queue_name, json.dumps(task_data))
             await self.redis_client.set(task_id, json.dumps(task_data))
 
-            logger.info(f"Task {task_id} eingefuegt")
+            logger.info(f"Task {task_id} enqueued")
             return task_id
         except Exception as e:
-            logger.error(f"Enqueue Fehler: {e}")
+            logger.error(f"Enqueue error: {e}")
             raise
 
     async def dequeue(self) -> dict | None:
@@ -72,7 +72,7 @@ class TaskQueue:
                 return json.loads(task_json)
             return None
         except Exception as e:
-            logger.error(f"Dequeue Fehler: {e}")
+            logger.error(f"Dequeue error: {e}")
             return None
 
     async def get_task_status(self, task_id: str) -> dict | None:
@@ -83,7 +83,7 @@ class TaskQueue:
                 return json.loads(task_json)
             return None
         except Exception as e:
-            logger.error(f"Get Status Fehler: {e}")
+            logger.error(f"Get status error: {e}")
             return None
 
     async def update_task_status(self, task_id: str, status: str, result: dict | None = None):
@@ -95,9 +95,9 @@ class TaskQueue:
                 if result:
                     task["result"] = result
                 await self.redis_client.set(task_id, json.dumps(task))
-                logger.info(f"Task {task_id} Status: {status}")
+                logger.info(f"Task {task_id} status: {status}")
         except Exception as e:
-            logger.error(f"Update Status Fehler: {e}")
+            logger.error(f"Update status error: {e}")
 
     async def queue_length(self) -> int:
         """Number of tasks in the queue."""

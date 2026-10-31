@@ -422,7 +422,7 @@ class TestFullHandshakeRoundtrip:
         # asked `hasattr(svc_alice, ...)` and thereby measured that the test
         # had set the attribute on itself.
         assert not hasattr(PairingService, "_upsert_circle_membership"), (
-            "Der Mitgliedschafts-Schreiber ist zurueck — das ist der Fehler von F-ID-3")
+            "The membership writer is back — that is the F-ID-3 bug")
         # bob grants alice 2 (accept), alice grants bob 3 (complete) -- the
         # values are set above in the round trip, not guessed.
         for svc, erwartet in ((svc_alice, 3), (svc_bob, 2)):
@@ -579,10 +579,10 @@ class TestPeerRegistryResync:
             )
 
         for name in ("accept_pair_offer", "complete_pair_handshake", "revoke_peer"):
-            assert ruft.get(name) is True, f"{name} synchronisiert die Registry nicht"
+            assert ruft.get(name) is True, f"{name} does not synchronize the registry"
 
         # Negative control: the check is not trivially true. `/pair/offer`
         # does not create a pairing yet and must NOT synchronize.
         assert ruft.get("create_pair_offer") is False, (
-            "create_pair_offer sollte nicht synchronisieren — die Pruefung "
-            "trifft offenbar jede Route und beweist nichts")
+            "create_pair_offer should not synchronize — the check apparently "
+            "hits every route and proves nothing")

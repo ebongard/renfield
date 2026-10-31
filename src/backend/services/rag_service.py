@@ -160,10 +160,10 @@ class RAGService(AtomOwnerResolverMixin):
             # ollama>=0.4.0 uses Pydantic models with .embedding attribute
             return response.embedding
         except TimeoutError:
-            logger.error(f"Embedding-Timeout nach {settings.rag_embedding_timeout}s")
+            logger.error(f"Embedding timeout after {settings.rag_embedding_timeout}s")
             raise
         except Exception as e:
-            logger.error(f"Fehler beim Generieren des Embeddings: {e}")
+            logger.error(f"Error generating the embedding: {e}")
             raise
 
     # ==========================================================================
@@ -207,7 +207,7 @@ class RAGService(AtomOwnerResolverMixin):
             prefix = response.response.strip()
             return prefix if prefix else None
         except Exception as e:
-            logger.warning(f"Context-Prefix-Generierung fehlgeschlagen: {e}")
+            logger.warning(f"Context prefix generation failed: {e}")
             return None
 
     async def _contextualize_chunks(self, chunks: list[dict], doc_summary: str) -> list[dict]:
@@ -320,7 +320,7 @@ class RAGService(AtomOwnerResolverMixin):
             await atom_svc.finalize_source_id(atom_id, doc.id)
             await self.db.commit()
         logger.info(
-            f"Dokument erstellt: ID={doc.id}, Datei={actual_filename}, "
+            f"Document created: ID={doc.id}, file={actual_filename}, "
             f"status=pending, atom_id={atom_id}, tier={kb_default_tier}"
         )
         return doc
@@ -426,7 +426,7 @@ class RAGService(AtomOwnerResolverMixin):
                         doc.error_message = result.get("error", "Unbekannter Fehler")
                         await self.db.commit()
                         logger.error(
-                            f"Dokumentverarbeitung fehlgeschlagen: {doc.error_message}"
+                            f"Document processing failed: {doc.error_message}"
                         )
                         # Docling soft-failure: trip the context manager into
                         # close_failure so the history row is marked failed too,
@@ -583,7 +583,7 @@ class RAGService(AtomOwnerResolverMixin):
                         _task.add_done_callback(_background_tasks.discard)
 
                     logger.info(
-                        f"Dokument indexiert: ID={doc.id}, Chunks={chunk_count}"
+                        f"Document indexed: ID={doc.id}, chunks={chunk_count}"
                     )
 
                 except _ProcessorFailed:
@@ -594,7 +594,7 @@ class RAGService(AtomOwnerResolverMixin):
                     doc.status = DOC_STATUS_FAILED
                     doc.error_message = str(e)
                     await self.db.commit()
-                    logger.error(f"Fehler beim Indexieren: {e}")
+                    logger.error(f"Error while indexing: {e}")
                     raise
         except _ProcessorFailed:
             # Legacy contract preserved: handled Docling failure → return None.
@@ -673,7 +673,7 @@ class RAGService(AtomOwnerResolverMixin):
                 try:
                     embedding = await self.get_embedding(embed_text)
                 except Exception as e:
-                    logger.warning(f"Embedding-Fehler für Chunk {chunk_data['chunk_index']}: {e}")
+                    logger.warning(f"Embedding error for chunk {chunk_data['chunk_index']}: {e}")
                     return None
             return DocumentChunk(
                 document_id=doc_id,
@@ -802,7 +802,7 @@ class RAGService(AtomOwnerResolverMixin):
                 try:
                     embedding = await self.get_embedding(embed_text)
                 except Exception as e:
-                    logger.warning(f"Embedding-Fehler für Child-Chunk {chunk_data['chunk_index']}: {e}")
+                    logger.warning(f"Embedding error for child chunk {chunk_data['chunk_index']}: {e}")
                     return None
             return DocumentChunk(
                 document_id=doc_id,
@@ -980,9 +980,9 @@ class RAGService(AtomOwnerResolverMixin):
         try:
             if doc.file_path and os.path.exists(doc.file_path):
                 os.remove(doc.file_path)
-                logger.info(f"Datei gelöscht: {doc.file_path}")
+                logger.info(f"File deleted: {doc.file_path}")
         except Exception as e:
-            logger.warning(f"Konnte Datei nicht löschen: {e}")
+            logger.warning(f"Could not delete file: {e}")
 
         # Delete the foreign-key references in chat_uploads
         await self.db.execute(
@@ -1014,7 +1014,7 @@ class RAGService(AtomOwnerResolverMixin):
         result = await self.db.execute(stmt)
         await self.db.commit()
 
-        logger.info(f"Dokument gelöscht: ID={document_id}")
+        logger.info(f"Document deleted: ID={document_id}")
         deleted = result.rowcount > 0
         if deleted:
             try:
@@ -1042,7 +1042,7 @@ class RAGService(AtomOwnerResolverMixin):
         self.db.add(kb)
         await self.db.commit()
         await self.db.refresh(kb)
-        logger.info(f"Knowledge Base erstellt: ID={kb.id}, Name={name}")
+        logger.info(f"Knowledge base created: ID={kb.id}, name={name}")
         return kb
 
     async def list_knowledge_bases(self) -> list[KnowledgeBase]:
@@ -1122,7 +1122,7 @@ class RAGService(AtomOwnerResolverMixin):
         if moved > 0:
             await self.db.commit()
             logger.info(
-                f"📦 {moved} Dokument(e) nach KB '{target_kb.name}' (ID={target_kb_id}) verschoben"
+                f"📦 {moved} document(s) moved to KB '{target_kb.name}' (ID={target_kb_id})"
             )
 
         return moved
@@ -1139,14 +1139,14 @@ class RAGService(AtomOwnerResolverMixin):
                 if doc.file_path and os.path.exists(doc.file_path):
                     os.remove(doc.file_path)
             except Exception as e:
-                logger.warning(f"Konnte Datei nicht löschen: {e}")
+                logger.warning(f"Could not delete file: {e}")
 
         # Delete from the database (documents + chunks go via cascade)
         stmt = delete(KnowledgeBase).where(KnowledgeBase.id == kb_id)
         result = await self.db.execute(stmt)
         await self.db.commit()
 
-        logger.info(f"Knowledge Base gelöscht: ID={kb_id}")
+        logger.info(f"Knowledge base deleted: ID={kb_id}")
         return result.rowcount > 0
 
     # ==========================================================================
@@ -1298,18 +1298,18 @@ class RAGService(AtomOwnerResolverMixin):
             FROM document_chunks dc
             WHERE dc.document_id = :doc_id
             AND dc.embedding IS NOT NULL
-            -- KEIN halfvec-Cast, und das ist GEMESSEN, nicht vermutet. Der Cast
-            -- lohnt nur, wenn der Planer den HNSW-Index daraufhin auch waehlt.
-            -- Haushalt 2026-09-25, 2 122 Zeilen: mit Cast 101 ms (Seq Scan, die
-            -- Umwandlung kostet je Zeile), ohne Cast 16 ms. Erzwungen war der
-            -- Indexscan noch langsamer. Zum Vergleich kg_entities bei 4 813 Zeilen:
-            -- 4,6 ms MIT Cast gegen 34 ms ohne — dort waehlt der Planer den Index
-            -- und gewinnt siebenfach. Die Schwelle liegt also dazwischen.
-            -- AUSLOESER: die Aufgabe `vector_index_threshold` fragt taeglich den
-            -- PLANER, ob er den Index bei GECASTETER Form naehme, und meldet erst
-            -- dann. NICHT die Zeilenzahl: die sagt es nicht vorher (xidra nutzt den
-            -- Index auf kg_entities schon bei 1 953 Zeilen, auf document_chunks bei
-            -- 3 165 nicht). Auf die Meldung hin gegenmessen, nicht annehmen.
+            -- NO halfvec cast, and that is MEASURED, not assumed. The cast
+            -- only pays off if the planner then also picks the HNSW index.
+            -- Household 2026-09-25, 2 122 rows: with cast 101 ms (seq scan, the
+            -- conversion costs per row), without cast 16 ms. Forced, the
+            -- index scan was slower still. For comparison kg_entities at 4 813 rows:
+            -- 4.6 ms WITH cast versus 34 ms without — there the planner picks the
+            -- index and wins sevenfold. So the threshold lies in between.
+            -- TRIGGER: the task `vector_index_threshold` asks the PLANNER daily
+            -- whether it would take the index for the CAST form, and only reports
+            -- then. NOT the row count: it does not predict it (xidra uses the
+            -- index on kg_entities already at 1 953 rows, on document_chunks at
+            -- 3 165 not). On the report, measure again, do not assume.
             ORDER BY dc.embedding <=> CAST(:embedding AS vector)
             LIMIT :limit
         """)

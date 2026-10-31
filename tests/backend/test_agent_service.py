@@ -2927,8 +2927,8 @@ class TestAStartedScanIsNotAFailure:
             if isinstance(n, ast.Call)
             and getattr(n.func, "id", None) == "_failed_agent_actions"
         ]
-        assert len(aufrufe) == 2, f"{len(aufrufe)} Auswertungsstellen — Test oder Code driftet"
+        assert len(aufrufe) == 2, f"{len(aufrufe)} evaluation sites — test or code is drifting"
         for a in aufrufe:
             assert len(a.args) == 2, (
-                "eine Auswertungsstelle uebergibt die Abbruch-Menge nicht — "
-                "dort gilt dann weiter `letzter Versuch zaehlt`")
+                "an evaluation site does not pass the abort set — "
+                "there `the last attempt counts` still applies")

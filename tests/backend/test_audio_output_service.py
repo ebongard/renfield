@@ -321,7 +321,7 @@ class TestSoundProfile:
         await service.play_audio(original, _make_output_device(tts_eq_profile="hifi_speech", **target), "sess-1")
 
         played = player.call_args.kwargs["audio_bytes"]
-        assert played != original, "die entzerrte Datei geht an das Geraet, nicht das Original"
+        assert played != original, "the equalized file goes to the device, not the original"
         assert len(played) == len(original)
 
     @pytest.mark.asyncio

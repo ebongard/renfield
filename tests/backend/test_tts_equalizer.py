@@ -81,7 +81,7 @@ def test_frequenzgang_des_shelfs_ist_festgenagelt():
     gains_db = 20 * np.log10(np.abs(h))
 
     assert gains_db == pytest.approx([0.0, 3.5, 6.7, 7.0], abs=0.3)
-    assert np.all(np.abs(np.roots(a)) < 1), "stabil: alle Pole im Einheitskreis"
+    assert np.all(np.abs(np.roots(a)) < 1), "stable: all poles inside the unit circle"
 
 
 @pytest.mark.unit
@@ -148,7 +148,7 @@ def test_stereo_wird_kanalweise_gefiltert():
     params, after = _read(apply_profile(_wav(interleaved, channels=2), "hifi_speech"))
 
     assert params.nchannels == 2
-    assert np.abs(after[1::2]).max() <= 1, "der stille Kanal bleibt still — kein Uebersprechen"
+    assert np.abs(after[1::2]).max() <= 1, "the silent channel stays silent — no crosstalk"
     assert np.abs(after[0::2]).max() > 1000
 
 

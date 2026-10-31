@@ -102,11 +102,11 @@ async def list_armed() -> int:
             .order_by(User.username)
         )).all()
     if not rows:
-        print("Kein Konto hat die Stimme als zweiten Faktor eingeschaltet.")
+        print("No account has the voice enabled as a second factor.")
         return 0
-    print(f"{len(rows)} Konto/Konten mit scharfem zweiten Faktor:")
+    print(f"{len(rows)} account(s) with an armed second factor:")
     for uid, username, speaker_id in rows:
-        profil = f"Profil {speaker_id}" if speaker_id else "OHNE Profil (Huerde ruht)"
+        profil = f"profile {speaker_id}" if speaker_id else "NO profile (hurdle at rest)"
         print(f"  id={uid:<5} {username:<24} {profil}")
     return 0
 
@@ -118,10 +118,10 @@ async def switch_off(username: str, dry_run: bool) -> int:
         )).scalar_one_or_none()
 
         if user is None:
-            print(f"Kein Konto mit dem Benutzernamen '{username}'.", file=sys.stderr)
+            print(f"No account with the username '{username}'.", file=sys.stderr)
             return 1
         if not user.voice_second_factor_enabled:
-            print(f"'{username}' (id={user.id}): der Faktor ist bereits aus — nichts zu tun.")
+            print(f"'{username}' (id={user.id}): the factor is already off — nothing to do.")
             return 0
 
         if dry_run:
@@ -133,10 +133,10 @@ async def switch_off(username: str, dry_run: bool) -> int:
         await db.commit()
 
     print(f"'{username}' (id={user.id}): voice_second_factor_enabled True -> False")
-    print("WARNUNG: das war der Notausgang. Der normale Weg ist")
-    print("  Verwaltung -> Benutzer -> Schild-Schaltflaeche.")
-    print("Die Einwilligung ist damit zurueckgenommen; die Person kann sie dort")
-    print("jederzeit selbst wieder erteilen.")
+    print("WARNING: that was the emergency exit. The normal way is")
+    print("  Verwaltung -> Benutzer -> shield button.")
+    print("The consent is thereby withdrawn; the person can grant it again there")
+    print("themselves at any time.")
     return 0
 
 
@@ -155,7 +155,7 @@ def main() -> int:
     if args.list:
         return asyncio.run(list_armed())
     if not (args.username and args.off):
-        ap.error("entweder --list, oder --username NAME --off")
+        ap.error("either --list, or --username NAME --off")
     return asyncio.run(switch_off(args.username, args.dry_run))
 
 

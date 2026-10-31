@@ -74,7 +74,7 @@ class NotificationService:
             ))
 
         await self.db.commit()
-        logger.info("🔑 Neuen Webhook-Token generiert")
+        logger.info("🔑 New webhook token generated")
         return token
 
     async def verify_webhook_token(self, token: str) -> bool:
@@ -628,7 +628,7 @@ class NotificationService:
         await self.db.commit()
         await self.db.refresh(notification)
 
-        logger.info(f"📨 Notification #{notification.id} erstellt: {title} (urgency={urgency})")
+        logger.info(f"📨 Notification #{notification.id} created: {title} (urgency={urgency})")
 
         # Resolve target user's room via hook — domain-specific consumers
         # (e.g. ha_glue's BLE presence service) can respond with the user's
@@ -890,5 +890,5 @@ class NotificationService:
         await self.db.commit()
         count = result.rowcount
         if count:
-            logger.info(f"🗑️ {count} abgelaufene Notifications gelöscht")
+            logger.info(f"🗑️ {count} expired notifications deleted")
         return count

@@ -130,7 +130,7 @@ async def ha_deliver_notification(
                     delivered_ids.append(device.device_id)
                 except Exception as e:
                     logger.warning(f"⚠️ Notification delivery failed for {device.device_id}: {e}")
-        logger.info(f"📤 Notification #{notification.id} an {len(delivered_ids)} Geräte gesendet")
+        logger.info(f"📤 Notification #{notification.id} sent to {len(delivered_ids)} devices")
     else:
         logger.info(
             f"WS broadcast suppressed for #{notification.id} (privacy={notification.privacy})"
@@ -185,7 +185,7 @@ async def _deliver_notification_tts(notification: Any) -> bool:
                         session_id=f"notification-{notification.id}",
                     )
                     if success:
-                        logger.info(f"🔊 TTS für Notification #{notification.id} abgespielt")
+                        logger.info(f"🔊 TTS played for notification #{notification.id}")
                         return True
 
         # Fallback: send TTS to all speakers in the target room (or all rooms)
@@ -208,7 +208,7 @@ async def _deliver_notification_tts(notification: Any) -> bool:
                         "audio": audio_b64,
                         "is_final": True,
                     })
-                    logger.info(f"🔊 TTS an {device.device_id} gesendet")
+                    logger.info(f"🔊 TTS sent to {device.device_id}")
                     return True
                 except Exception as e:
                     logger.warning(f"⚠️ TTS delivery to {device.device_id} failed: {e}")

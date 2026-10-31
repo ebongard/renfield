@@ -109,7 +109,7 @@ def aufgabe_finden(prompt: str) -> str:
     treffer = re.search(r'^Aufgabe: "(.*)"$', prompt, re.M) or \
               re.search(r'^Task: "(.*)"$', prompt, re.M)
     if not treffer:
-        sys.exit("Keine `Aufgabe:`/`Task:`-Zeile gefunden — --original-task angeben.")
+        sys.exit("No `Aufgabe:`/`Task:` line found — pass --original-task.")
     return treffer.group(1)
 
 
@@ -212,7 +212,7 @@ def main() -> int:
     fassungen: dict[str, str] = {}
     for eintrag in a.variant:
         if "=" not in eintrag:
-            sys.exit(f"--variant braucht LABEL=PFAD, bekam {eintrag!r}")
+            sys.exit(f"--variant needs LABEL=PATH, got {eintrag!r}")
         label, pfad = eintrag.split("=", 1)
         with open(pfad) as datei:
             fassungen[label] = datei.read()
@@ -227,8 +227,8 @@ def main() -> int:
         if fall.get("expect") not in erlaubt:
             # 🛑 Without this check a typo counts silently as "kein-treffer"
             # and inverts the case's verdict.
-            sys.exit(f"Fall {nr} ({fall.get('task')!r}): expect="
-                     f"{fall.get('expect')!r}, erlaubt sind {sorted(erlaubt)}.")
+            sys.exit(f"Case {nr} ({fall.get('task')!r}): expect="
+                     f"{fall.get('expect')!r}, allowed are {sorted(erlaubt)}.")
     original = a.original_task or aufgabe_finden(next(iter(fassungen.values())))
 
     # 🛑 Every version has to carry the task BEFORE 100+ calls run.
@@ -236,9 +236,9 @@ def main() -> int:
         try:
             aufgabe_einsetzen(text, original, original)
         except ValueError as e:
-            sys.exit(f"Fassung {label!r}: {e}")
+            sys.exit(f"Version {label!r}: {e}")
 
-    print(f"  Aufgabe in den Dateien: {original!r}")
+    print(f"  Task in the files: {original!r}")
     for label, text in fassungen.items():
         sig = signatur(text)
         marke = ""
@@ -247,12 +247,12 @@ def main() -> int:
             # log; a variant is by definition a different prompt. Hence a
             # warning, not an abort -- unless it matches NOWHERE, in which case
             # the wrong file was measured.
-            marke = "  <= deckt sich mit dem Protokoll" if sig == a.verify_signature else ""
-        print(f"    {label:12s} {len(text):6d} Zeichen, Signatur {sig}{marke}")
+            marke = "  <= matches the log" if sig == a.verify_signature else ""
+        print(f"    {label:12s} {len(text):6d} chars, signature {sig}{marke}")
     if a.verify_signature and not any(
             signatur(t) == a.verify_signature for t in fassungen.values()):
-        sys.exit(f"\n  ABBRUCH: keine Datei hat die Signatur {a.verify_signature}. "
-                 "Die Bank misst dann nicht den Produktionsprompt.")
+        sys.exit(f"\n  ABORT: no file has the signature {a.verify_signature}. "
+                 "The bench would then not measure the production prompt.")
     print()
 
     auftraege = [(label, f["task"], f["expect"], i)
@@ -268,7 +268,7 @@ def main() -> int:
             werkzeuge = frage(a.url, a.model, prompt, a.timeout, a.typed)
         except Exception as e:
             fehler += 1
-            print(f"  FEHLER {label}/{aufgabe!r}: {e}", file=sys.stderr)
+            print(f"  ERROR {label}/{aufgabe!r}: {e}", file=sys.stderr)
             continue
         getroffen = any(a.tool in str(w) for w in werkzeuge)
         laeufe[(label, aufgabe)] += 1
@@ -278,11 +278,11 @@ def main() -> int:
             print(f"  … {n}/{len(auftraege)}", flush=True)
 
     labels = list(fassungen)
-    kopf = "  " + "Aufgabe".ljust(38) + "soll".ljust(7) + \
+    kopf = "  " + "Task".ljust(38) + "expect".ljust(7) + \
            "".join(lbl.rjust(9) for lbl in labels)
     print("\n" + kopf)
     for f in faelle:
-        zeile = f"  {f['task']:38s}{'JA' if f['expect'] == 'treffer' else 'NEIN':7s}"
+        zeile = f"  {f['task']:38s}{'YES' if f['expect'] == 'treffer' else 'NO':7s}"
         for lbl in labels:
             zeile += f"{treffer[(lbl, f['task'])]}/{laeufe[(lbl, f['task'])]}".rjust(9)
         print(zeile)
@@ -291,9 +291,9 @@ def main() -> int:
         richtig = sum(v for (x, _), v in treffer.items() if x == lbl)
         gesamt = sum(v for (x, _), v in laeufe.items() if x == lbl)
         quote = 100 * richtig / max(gesamt, 1)
-        print(f"  {lbl}: {richtig}/{gesamt} richtig ({quote:.0f} %)")
+        print(f"  {lbl}: {richtig}/{gesamt} correct ({quote:.0f} %)")
     if fehler:
-        print(f"\n  🛑 {fehler} Aufruf(e) fehlgeschlagen — die Quoten sind unvollstaendig.")
+        print(f"\n  🛑 {fehler} call(s) failed — the rates are incomplete.")
     return 1 if fehler else 0
 
 

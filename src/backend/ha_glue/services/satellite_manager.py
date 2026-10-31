@@ -989,8 +989,8 @@ class SatelliteManager:
         # single rollback.
         if sat.update_status in (UpdateStatus.COMPLETED, UpdateStatus.FAILED):
             logger.debug(
-                f"Späte update_progress von {satellite_id} verworfen "
-                f"(Stufe: {stage}) — Lauf bereits {sat.update_status.value}"
+                f"Late update_progress from {satellite_id} discarded "
+                f"(stage: {stage}) — run already {sat.update_status.value}"
             )
             return
 
@@ -1190,11 +1190,11 @@ class SatelliteManager:
                 sess = self.sessions[session_id]
                 buffered = len(sess.audio_chunks) + len(sess.opus_packets)
                 logger.warning(
-                    f"⏰ Aufnahme-Zeitgrenze erreicht: {session_id} nach "
-                    f"{self.session_timeout:.0f}s — {buffered} gepufferte "
-                    f"Audioblöcke werden VERWORFEN. Liegt die Gerätegrenze "
-                    f"(vad.max_recording_seconds) über diesem Wert, gewinnt "
-                    f"hier das Backend und die Aufnahme geht verloren."
+                    f"⏰ Recording time limit reached: {session_id} after "
+                    f"{self.session_timeout:.0f}s — {buffered} buffered "
+                    f"audio chunks are DISCARDED. If the device limit "
+                    f"(vad.max_recording_seconds) is above this value, the "
+                    f"backend wins here and the recording is lost."
                 )
                 await self._end_session_internal(session_id, reason="timeout")
 
@@ -1213,7 +1213,7 @@ class SatelliteManager:
                 or owner.current_session_id != sid
             ]
             for session_id in orphaned:
-                logger.warning(f"🧹 Verwaiste Sitzung aufgeräumt: {session_id}")
+                logger.warning(f"🧹 Orphaned session cleaned up: {session_id}")
                 await self._end_session_internal(session_id, reason="orphaned")
 
             # 2. Heartbeat eviction, with two exemptions for devices that are
@@ -1272,9 +1272,9 @@ class SatelliteManager:
                     and now - sat.update_started_at > update_timeout
                 ):
                     logger.warning(
-                        f"⏰ Update ohne Endzustand: {sat_id} "
-                        f"(Stufe: {sat.update_stage or 'unbekannt'}, "
-                        f"{update_timeout:.0f}s ohne Abschluss)"
+                        f"⏰ Update without a final state: {sat_id} "
+                        f"(stage: {sat.update_stage or 'unknown'}, "
+                        f"{update_timeout:.0f}s without completion)"
                     )
                     # Go through the single writer rather than touching the
                     # four fields by hand: it owns the start-mark bookkeeping,

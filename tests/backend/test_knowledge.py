@@ -34,7 +34,7 @@ class TestKnowledgeBaseModel:
             columns = await conn.run_sync(check_columns)
 
         assert 'owner_id' in columns, \
-            f"Spalte 'owner_id' fehlt in knowledge_bases. Vorhandene Spalten: {columns}"
+            f"Column 'owner_id' missing in knowledge_bases. Existing columns: {columns}"
 
     @pytest.mark.database
     async def test_knowledge_base_has_is_public_column(self, async_engine):
@@ -48,7 +48,7 @@ class TestKnowledgeBaseModel:
             columns = await conn.run_sync(check_columns)
 
         assert 'is_public' in columns, \
-            f"Spalte 'is_public' fehlt in knowledge_bases. Vorhandene Spalten: {columns}"
+            f"Column 'is_public' missing in knowledge_bases. Existing columns: {columns}"
 
     @pytest.mark.database
     async def test_knowledge_base_schema_complete(self, async_engine):
@@ -364,7 +364,7 @@ class TestConversationModel:
             columns = await conn.run_sync(check_columns)
 
         assert 'user_id' in columns, \
-            f"Spalte 'user_id' fehlt in conversations. Vorhandene Spalten: {columns}"
+            f"Column 'user_id' missing in conversations. Existing columns: {columns}"
 
 
 # ============================================================================
