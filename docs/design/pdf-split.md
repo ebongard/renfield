@@ -141,6 +141,49 @@ ingest — with two deliberate exceptions (`services/pdf_split_errors.py`):
   (parent marked failed; the entry-point re-push → REINGEST is the deliberate
   retry).
 
+### Blank pages fold into the preceding document (`PDF_SPLIT_BLANK_FOLD_ENABLED`, dark)
+
+Measured 2026-10-31 (last 30 scan batches, both instances): 24-33 % of the
+pages are blank duplex back sides. The model made them one-page documents of
+their own at low confidence, which held 8 of 30 batches in `split_review` (in
+4 of them the lowest segment IS a blank page, e.g. xidra 668: 2-2, 10-10,
+12-12, 16-16 at 0.50); at high confidence a blank page was filed as a document
+(household 509 -> child 511). The prompt already forbids it; the model does
+not comply (same finding as #1368).
+
+* **Detection** (`extract_page_signals`): a page with at most
+  `_BLANK_MAX_TEXT_CHARS` = 30 visible text-layer characters is a candidate and
+  is rendered (scale 2.0, the scale the ink floor was calibrated at); it is
+  blank only if the render also passes the ink floor of `_page_is_blank`. Text
+  alone never decides — a photo, a drawing or a handwritten signature has no
+  text layer. A page that cannot be rendered is not blank. A confirmed blank
+  page becomes `[leere Seite]` with `quality_ok`, so it no longer costs a VLM
+  call nor counts towards the slow-lane garbage fraction (a blank FIRST page no
+  longer forces the VLM lane). In the slow lane, VLM-confirmed blanks are
+  marked the same way. The flag `blank: true` is written into `page_signals`
+  only when set.
+* **Seam: after the window merge, before the verdict** (`fold_blank_pages` in
+  `detect_boundaries`). Not before the LLM: hiding pages would change the
+  numbering the model answers in and push gaps into `absorb_gaps`, whose 2-page
+  cap exists for a different reason. Not in `validate_boundaries`: it runs per
+  window and the last piece of a window is re-decided by the next one. After
+  the merge the piece list is final, so the review proposal and the persisted
+  (replayed) plan both carry the folded pieces — the plan is exactly what was
+  judged, and a human approval stays strict.
+* **Rules:** a blank-only piece merges into the PRECEDING piece; at the head of
+  the file into the FOLLOWING one. Blank pages heading a later piece move to
+  the preceding piece. Every page is kept, coverage stays contiguous. Fewer
+  than two pieces left = single verdict; at most one non-blank page = single
+  verdict without an LLM call (analytic, like the one-page case).
+* **Confidence:** the real pieces keep exactly the model's value — a fold
+  neither lowers nor raises it. A blank-only piece's confidence is DROPPED with
+  the piece (it rated a non-document), so it can no longer hold the batch
+  under the threshold.
+* **Flag off:** no render, no `blank` key, pieces unchanged (byte-identical).
+* Batches already parked in `split_review` are NOT re-evaluated. Releasing them
+  is the owner's action (approve with corrected ranges, or a resplit after the
+  flag is on — a resplit always proposes, never executes).
+
 ### Confidence gate — whole-file
 
 Auto-split iff ≥2 pieces AND `min(confidence) >= PDF_SPLIT_AUTO_THRESHOLD`
@@ -254,6 +297,7 @@ table yet) are owned entirely by `Base.metadata.create_all`.
 | `PDF_SPLIT_WINDOW_CHARS` | `24000` | Char budget per boundary-LLM window (context batching, NOT a document-size assumption) |
 | `PDF_SPLIT_VLM_PAGE_TIMEOUT_S` | `45` | Per-call time bound for VLM page transcription (PR3) |
 | `PDF_SPLIT_AUTO_THRESHOLD` | `0.85` | Whole-file auto-split confidence gate |
+| `PDF_SPLIT_BLANK_FOLD_ENABLED` | `false` | Fold blank pages into the preceding document (dark) |
 
 Deliberately **no page-count settings** of any kind.
 

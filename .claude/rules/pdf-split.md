@@ -48,6 +48,12 @@ document-worker **pre-stage before Docling**, so ALL batch entry points are cove
   Handeingabe verbirgt den Fehler dessen, der sie gemacht hat. Ein fehlender Kopf und jede Ueberlappung bleiben
   auch mit Reparatur ein Grund zum Verwerfen. Jede Reparatur wird protokolliert.
 
+- 🛑 **Eine leere Seite beginnt kein Dokument** (`PDF_SPLIT_BLANK_FOLD_ENABLED`, dark). Leer = ≤ 30 Zeichen
+  Textebene **UND** keine Tinte im gerenderten Bild — Text allein entscheidet nie (Foto, Unterschrift), nicht
+  renderbar = nicht leer. Gefaltet wird in `detect_boundaries` NACH dem Fenster-Merge, VOR dem Urteil — so tragen
+  Vorschlag und persistierter Plan dieselben Stücke. Rein leeres Stück → zum vorangehenden (am Dateianfang zum
+  folgenden); seine Konfidenz entfällt mit ihm, die echten Stücke behalten ihre unverändert.
+
 - 🛑 **Ein WIEDERANSTOSS legt vor, er führt nie aus** (#1372). `trigger: "resplit"` im document-worker läuft VOR der
   Idempotenz-Sperre (`initial ingest already completed`) und fährt nur die Erkennung — die Einlieferung wird nicht
   wiederholt, sonst zweite Paperless-Ablage und doppelte KG-Extraktion. `act_on_verdict(force_review=True)` macht
