@@ -22,9 +22,13 @@ renfield-mcp-paperless wrapped its list into `{"summary", "results"}`. So:
 - Extraction runs on the COMPACTED result: a compaction rule must keep every field
   an extraction rule reads.
 - A compaction rule that reduces a non-empty payload to nothing falls back to the
-  uncompacted (already truncated) payload with a WARNING
+  uncompacted payload with a WARNING
   `MCP compaction rule for <tool> kept nothing …`. That line in the backend log
-  means the rule no longer matches its tool.
+  means the rule no longer matches its tool. "Truncated" holds for the prompt:
+  the MCP client cuts `message`, the agent loop cuts message and data to
+  `AGENT_RESPONSE_TRUNCATION`.
+- The MCP client's `_truncation` note (it cut the largest array to its size
+  limit) is kept by every rule, so a cut list never reads as the whole answer.
 
 ## What does NOT live here
 
