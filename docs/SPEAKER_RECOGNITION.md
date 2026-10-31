@@ -208,7 +208,7 @@ Stimme mehrfach nicht sicher gematcht wurde). Zum Aufräumen:
 
 ### Satellite-Erkennung
 ```
-🎤 Satellite Sprecher erkannt: Max Mustermann (@max) - Konfidenz: 0.78
+🎤 Satellite speaker recognised: Max Mustermann (@max) - confidence: 0.78
 ```
 
 ## Performance
