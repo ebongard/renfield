@@ -281,3 +281,101 @@ async def test_vlm_confirmed_blank_page_is_marked_blank(monkeypatch, fold_on):
     )
 
     assert result.signals[0].blank is True
+
+
+class TestFoldInkFloor:
+    """The fold's own ink floor (_FOLD_BLANK_INK_FRACTION), measured on an A4
+    page rendered the way production renders it (595x842 pt at scale 2.0 =
+    1190x1684 px). Small content is NOT blank; a white page is."""
+
+    @staticmethod
+    def _a4_pdf(tmp_path, draw):
+        from PIL import Image, ImageDraw
+
+        im = Image.new("RGB", (1190, 1684), "white")
+        if draw:
+            draw(ImageDraw.Draw(im))
+        path = tmp_path / "a4.pdf"
+        # 144 dpi -> a 595x842 pt page, so the scale-2.0 render is 1:1.
+        im.save(path, "PDF", resolution=144.0)
+        return str(path)
+
+    @staticmethod
+    def _font(size):
+        from PIL import ImageFont
+
+        return ImageFont.load_default(size=size)
+
+    @staticmethod
+    def _initials(d):
+        d.line([(600, 800), (640, 760), (680, 820), (720, 770)], fill="black", width=2)
+
+    @staticmethod
+    def _checkmark(d):
+        d.line([(600, 800), (620, 830), (680, 760)], fill="black", width=4)
+
+    @staticmethod
+    def _short_signature(d):
+        d.line([(600, 800), (650, 760), (700, 820), (750, 770), (800, 810), (900, 790)],
+               fill="black", width=2)
+
+    @staticmethod
+    def _short_line(d):
+        d.line([(600, 800), (720, 800)], fill="black", width=2)
+
+    def _anlage(self, d):
+        d.text((200, 200), "Anlage 3", fill="black", font=self._font(24))
+
+    @pytest.mark.parametrize(
+        "mark", ["_initials", "_checkmark", "_short_signature", "_short_line", "_anlage"]
+    )
+    def test_small_content_is_not_blank(self, tmp_path, fold_on, mark):
+        path = self._a4_pdf(tmp_path, getattr(self, mark))
+
+        signals = det._signals_from_page_texts([""], path)
+
+        assert signals[0].blank is False
+
+    def test_white_page_is_blank(self, tmp_path, fold_on):
+        path = self._a4_pdf(tmp_path, None)
+
+        signals = det._signals_from_page_texts([""], path)
+
+        assert signals[0].blank is True
+
+    def test_negative_control_the_slow_lane_floor_would_call_initials_blank(self, tmp_path):
+        # Proves the stricter floor is what keeps the initials page: under the
+        # slow lane's floor (which backs a VLM "empty") the same render is blank.
+        import pypdfium2 as pdfium
+
+        path = self._a4_pdf(tmp_path, self._initials)
+        pdf = pdfium.PdfDocument(path)
+        try:
+            histogram = pdf[0].render(scale=det._RENDER_SCALE).to_pil().convert("L").histogram()
+        finally:
+            pdf.close()
+
+        assert det._histogram_is_blank(histogram) is True
+        assert det._histogram_is_blank(histogram, det._FOLD_BLANK_INK_FRACTION) is False
+
+    def test_a_blank_page_keeps_its_text_layer(self, tmp_path, fold_on):
+        path = self._a4_pdf(tmp_path, None)
+
+        signals = det._signals_from_page_texts(["  - 2 -  "], path)
+
+        assert signals[0].blank is True
+        assert signals[0].text == f"{det._PLACEHOLDER_BLANK} - 2 -"
+        assert signals[0].to_dict()["snippet"] == f"{det._PLACEHOLDER_BLANK} - 2 -"
+
+
+@pytest.mark.asyncio
+async def test_the_boundary_model_sees_the_text_of_a_blank_page(fold_on):
+    blank = PageSignal(
+        page=2, text=f"{det._PLACEHOLDER_BLANK} - 2 -", quality_ok=True, blank=True
+    )
+    client = _client(_payload((1, 2, 0.9), (3, 3, 0.9)))
+
+    await detect_boundaries([_text(1), blank, _text(3)], llm_client=client)
+
+    user_msg = client.chat.call_args.kwargs["messages"][1]["content"]
+    assert f"Seite 2: {det._PLACEHOLDER_BLANK} - 2 -" in user_msg

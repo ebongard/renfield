@@ -79,14 +79,25 @@ _BLANK_INK_FRACTION = 0.0005
 # candidate only when its text layer holds at most _BLANK_MAX_TEXT_CHARS
 # non-whitespace characters — OCR of an empty duplex back side yields nothing
 # or a few noise glyphs, a signature line or a one-line note yields more. The
-# candidate is then rendered and must ALSO pass the ink floor above
-# (_histogram_is_blank); a page that cannot be rendered is NOT blank. Text
+# candidate is then rendered and must ALSO pass an ink floor
+# (_histogram_is_blank with _FOLD_BLANK_INK_FRACTION, below); a page that cannot be rendered is NOT blank. Text
 # alone is never enough: a photo, a drawing or a handwritten signature has no
 # text layer and must not be folded away. Mirrors the scanner-side audit
 # (≤ ~30 chars AND near-white AND an ink floor). Rendered at the scale the ink
 # thresholds were measured at (_RENDER_SCALE): a coarser render greys out thin
 # strokes.
+#
+# The fold uses its OWN, stricter ink floor. _BLANK_INK_FRACTION backs a VLM
+# that already answered "empty"; here the render is the only evidence besides
+# the text layer, and at 0.0005 small content reads as blank. Simulated on an
+# A4 render at scale 2.0 (1190x1684 px): a small checkmark (4 px stroke)
+# 0.00028, initials 0.00021-0.00034, "Anlage 3" in 10-12 pt 0.00022-0.00028,
+# a short signature 0.00033, a 120 px pen line 0.00012 — all above 0.0001.
+# Blank reverse sides measured 0.0000 (2026-09-14). Below the floor stay only
+# marks of ~200 px or fewer (a bare page number, a tiny tick); such a page
+# cannot start a document and moves to the one before it — no page is lost.
 _BLANK_MAX_TEXT_CHARS = 30
+_FOLD_BLANK_INK_FRACTION = 0.0001
 _RENDER_SCALE = 2.0
 
 
@@ -219,10 +230,16 @@ def _signals_from_page_texts(
         if i + 1 in blank_pages:
             # A confirmed blank page is evidence, not an unreadable page: it
             # needs no VLM transcription and does not count towards the
-            # slow-lane garbage fraction.
+            # slow-lane garbage fraction. The marker is added ALONGSIDE the
+            # text layer, never instead of it: the boundary model and the
+            # reviewer still see what the page carries.
+            snippet = _snippet(raw)
             signals.append(
                 PageSignal(
-                    page=i + 1, text=_PLACEHOLDER_BLANK, quality_ok=True, blank=True
+                    page=i + 1,
+                    text=f"{_PLACEHOLDER_BLANK} {snippet}" if snippet else _PLACEHOLDER_BLANK,
+                    quality_ok=True,
+                    blank=True,
                 )
             )
             continue
@@ -813,15 +830,19 @@ def _rendered_blank_pages(file_path: str, pages: list[int]) -> set[int]:
                     f"pdf-split: blank-page render of page {page} failed: {e}"
                 )
                 continue
-            if _histogram_is_blank(histogram):
+            if _histogram_is_blank(histogram, _FOLD_BLANK_INK_FRACTION):
                 out.add(page)
     finally:
         pdf.close()
     return out
 
 
-def _histogram_is_blank(histogram: list[int]) -> bool:
-    """Ink floor over a greyscale histogram (see the _INK_DELTA comment)."""
+def _histogram_is_blank(
+    histogram: list[int], max_ink_fraction: float = _BLANK_INK_FRACTION
+) -> bool:
+    """Ink floor over a greyscale histogram (see the _INK_DELTA comment).
+    ``max_ink_fraction``: the slow lane's floor by default, the fold passes
+    its stricter one."""
     total = sum(histogram)
     if total == 0:
         return False
@@ -829,7 +850,7 @@ def _histogram_is_blank(histogram: list[int]) -> bool:
     # dark has no real paper peak there, so nearly everything reads as ink.
     paper = max(range(_PAPER_MIN_LEVEL, 256), key=histogram.__getitem__)
     ink_level = max(0, paper - _INK_DELTA)
-    return sum(histogram[:ink_level]) / total <= _BLANK_INK_FRACTION
+    return sum(histogram[:ink_level]) / total <= max_ink_fraction
 
 
 async def vlm_fill_signals(
