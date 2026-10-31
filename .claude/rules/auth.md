@@ -69,7 +69,7 @@ Was hier zählt: `/auth/login` gibt für ein Konto mit `users.voice_second_facto
 `services/voice_factor_preconditions`, nie daneben im Login.
 
 ## Tokens never in logs
-Bearer mode carries the JWT as `/ws?token=`; uvicorn logs that URL (access line AND the `WebSocket … [accepted]`
-line, which `--no-access-log` leaves on). `utils/log_safety.install_uvicorn_url_redaction()` (called in `main.py`)
-redacts credential query params on `uvicorn.access` + `uvicorn.error`; frontend nginx logs `$uri`, never `$request`.
-A new credential query param → add it to `SECRET_QUERY_PARAMS`. Never log a URL with its query string yourself.
+Bearer mode carries the (~90 s, ws-scoped) JWT as `/ws?token=`; uvicorn logs that URL (access line AND `WebSocket … [accepted]`,
+which `--no-access-log` leaves on). `utils/log_safety.install_uvicorn_url_redaction()` (in `main.py`) redacts credential
+params (add new ones to `SECRET_QUERY_PARAMS`) on `uvicorn.access` + `uvicorn.error`, names percent-decoded first (`%74oken` authenticates too). Every nginx (frontend,
+`config/nginx*.conf`) logs the path cut off `$request_uri`, never `$request`/`$uri`. Gaps + detail: `docs/SECURITY.md`.
