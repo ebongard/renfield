@@ -486,7 +486,7 @@ class TestKnowledgeSearchFacts:
                  patch("services.knowledge_tool.settings.schicht_a_extraction_enabled", True), \
                  patch("services.document_fact_retrieval.DocumentFactRetrieval",
                        return_value=mock_fact_retrieval, create=True):
-                result = await knowledge_search({"query": "issuer", "user_id": "500"})
+                result = await knowledge_search({"query": "issuer"}, user_id=500)
         finally:
             _teardown_stubs(stubs)
 

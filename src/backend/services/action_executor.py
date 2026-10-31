@@ -7,6 +7,21 @@ conversation) have dedicated handlers here.
 """
 from loguru import logger
 
+# Identity the SERVER supplies to `internal.*` / `knowledge.*` handlers. The
+# parameter dict of those intents is LLM-built; a key from this set inside it
+# is either a hallucination or an attempt to act as someone else, so it is
+# dropped before any handler sees the dict. The authenticated values reach the
+# handlers as keyword arguments instead (see `execute`).
+SERVER_INJECTED_KEYS = frozenset({"user_id", "session_id", "user_permissions"})
+
+
+def strip_server_injected_keys(parameters: dict | None) -> dict:
+    """Return a copy of ``parameters`` without any key only the server may supply."""
+    return {
+        k: v for k, v in (parameters or {}).items()
+        if k not in SERVER_INJECTED_KEYS
+    }
+
 
 class ActionExecutor:
     """Execute intents and return the results"""
@@ -59,6 +74,12 @@ class ActionExecutor:
         logger.info(f"🎯 Executing intent: {intent} (confidence: {confidence:.2f})")
         logger.debug(f"Parameters: {parameters}")
 
+        # Internal handlers take identity from the authenticated turn only. MCP
+        # tools keep their parameters untouched: their schemas belong to the MCP
+        # server, and identity travels there as an `execute_tool` kwarg.
+        if intent.startswith(("internal.", "knowledge.")):
+            parameters = strip_server_injected_keys(parameters)
+
         # Internal intents (no MCP equivalent)
         if intent.startswith("knowledge."):
             return await self._execute_knowledge(intent, parameters, user_id=user_id)
@@ -69,10 +90,12 @@ class ActionExecutor:
                 "action_taken": False
             }
 
-        # Platform-owned internal tool: knowledge base RAG search.
+        # Platform-owned internal tool: knowledge base RAG search. The
+        # authenticated user_id is injected here — never from LLM params — so
+        # the search reaches exactly the asker's circle, own documents included.
         if intent == "internal.knowledge_search":
             from services.knowledge_tool import knowledge_search
-            return await knowledge_search(parameters)
+            return await knowledge_search(parameters, user_id=user_id)
 
         # Platform-owned internal tool: enumerate the asker's own memories
         # (no vector threshold) for broad self-knowledge queries. `user_id` is
