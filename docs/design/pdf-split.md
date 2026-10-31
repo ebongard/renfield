@@ -154,14 +154,29 @@ not comply (same finding as #1368).
 * **Detection** (`extract_page_signals`): a page with at most
   `_BLANK_MAX_TEXT_CHARS` = 30 visible text-layer characters is a candidate and
   is rendered (scale 2.0, the scale the ink floor was calibrated at); it is
-  blank only if the render also passes the ink floor of `_page_is_blank`. Text
-  alone never decides — a photo, a drawing or a handwritten signature has no
-  text layer. A page that cannot be rendered is not blank. A confirmed blank
-  page becomes `[leere Seite]` with `quality_ok`, so it no longer costs a VLM
-  call nor counts towards the slow-lane garbage fraction (a blank FIRST page no
-  longer forces the VLM lane). In the slow lane, VLM-confirmed blanks are
-  marked the same way. The flag `blank: true` is written into `page_signals`
-  only when set.
+  blank only if the render also carries at most `_FOLD_BLANK_INK_FRACTION` =
+  0.0001 ink pixels (same paper-relative ink definition as `_page_is_blank`).
+  Text alone never decides — a photo, a drawing or a handwritten signature has
+  no text layer. A page that cannot be rendered is not blank.
+* **Ink floor of its own.** The slow lane's `_BLANK_INK_FRACTION` = 0.0005
+  backs a VLM that already answered "empty"; as the ONLY render evidence it
+  called small content blank. Simulated on an A4 render at scale 2.0
+  (1190x1684 px): initials 0.00021-0.00034, a checkmark (4 px stroke) 0.00028,
+  "Anlage 3" in 10-12 pt 0.00022-0.00028, a short signature 0.00033, a 120 px
+  pen line 0.00012 — all blank at 0.0005, none at 0.0001. Real blank backs
+  measured 0.0000 (2026-09-14). Below 0.0001 remain only marks of ~200 px (a
+  bare page number at 0.000035, a tiny tick at 0.000069): such a page cannot
+  start a document and moves to the one before it — it is never dropped.
+  `tests/backend/test_pdf_split_blank_fold.py::TestFoldInkFloor` renders these
+  cases; its negative control shows the slow-lane floor calls initials blank.
+* **The text layer stays.** A confirmed blank page's signal is
+  `[leere Seite] <snippet>` (just `[leere Seite]` when the layer is empty),
+  `quality_ok`, so the boundary model and the review UI (`snippet`) still see
+  what the page carries; it no longer costs a VLM call nor counts towards the
+  slow-lane garbage fraction (a blank FIRST page no longer forces the VLM
+  lane). In the slow lane, VLM-confirmed blanks are marked the same way. The
+  flag `blank: true` is written into `page_signals` only when set; the review
+  API (`PageSignalOut`) does not expose it, the snippet's marker does.
 * **Seam: after the window merge, before the verdict** (`fold_blank_pages` in
   `detect_boundaries`). Not before the LLM: hiding pages would change the
   numbering the model answers in and push gaps into `absorb_gaps`, whose 2-page
