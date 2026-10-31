@@ -25,7 +25,10 @@ Full table (every tool, purpose, source, gate): `docs/INTERNAL_TOOLS.md`.
 ## Identity is injected, never taken from LLM params
 - `services/action_executor.py` special-cases these tools because the generic `intent.startswith("internal.")` hook
   path cannot provide `mcp_manager`, `session_id`, the authenticated `user_id` or `user_permissions`.
-- A handler must never read `user_id` / `session_id` / permissions from the tool arguments.
+- A handler must never read `user_id` / `session_id` / permissions from the tool arguments. The executor strips those
+  keys from every `internal.*`/`knowledge.*` parameter dict; ha_glue handlers read `self._caller_user_id` (set by
+  `ha_glue_execute_tool`). 🛑 `knowledge_search` once read `params["user_id"]` and was dispatched without it → with auth on
+  the agent found only public chunks, never the asker's own (fixed 2026-10-31). `test_internal_tool_identity.py` guards it.
 - A new tool that needs one of these must be wired into that special case, or it silently gets none.
 - Widget tools return `data["artifacts"]`; `chat_handler._collect_tool_artifacts` → `_emit_turn_artifacts` validates,
   emits and persists. Typed JSON from the agent via `artifact_service.validate_artifact`, NEVER free-text parsing.
