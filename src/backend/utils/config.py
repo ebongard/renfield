@@ -112,17 +112,6 @@ class Settings(BaseSettings):
     # plain-text PDFs/docx/md. Empty → falls back to ollama_vision_model,
     # then ollama_chat_model. The extractor uses whichever is set.
     paperless_extraction_model: str = ""
-    #: Base URL of the Paperless UI, for links out of Renfield.
-    #:
-    #: 🛑 The same variable the Paperless MCP server already gets -- added here
-    #: as a settings field so the backend can build a link.
-    #: NO new environment variable: `PAPERLESS_API_URL` is set on both
-    #: instances already, in `renfield-env`.
-    #: Empty means: no link. The button then shows the state without a target.
-    #: 🛑 It is a LAN address. The link works inside the home network; from
-    #: outside it goes nowhere. Decided deliberately (2026-10-27) -- if that
-    #: becomes a problem, split the link base from the API URL.
-    paperless_api_url: str = ""
     #: The name of THIS instance as the scan target registry carries it
     #: (`household`, `xidra`). Empty means: unknown.
     #:
@@ -488,10 +477,25 @@ class Settings(BaseSettings):
     # returns fast — we do not wait out a fresh consume here.
     paperless_refile_poll_timeout_s: float = 30.0
     # Paperless REST base URL + token (same values the paperless MCP gets via
-    # mcp_servers.yaml). Used ONLY for the read-only checksum lookup that links a
-    # filed KB doc to its real Paperless document id when the consume task returns
-    # SUCCESS with no related_document (#1166). Env: PAPERLESS_API_URL / _TOKEN.
+    # mcp_servers.yaml). Read by the backend for the read-only checksum lookup
+    # that links a filed KB doc to its real Paperless document id when the
+    # consume task returns SUCCESS with no related_document (#1166), and as the
+    # FALLBACK base of the "open in Paperless" link. Env: PAPERLESS_API_URL / _TOKEN.
+    #
+    # 🛑 Declared ONCE. Until 2026-10-31 a second `paperless_api_url: str = ""`
+    # stood further up; Pydantic silently let this later one win, so the
+    # effective type has always been `str | None`. Every reader uses
+    # `or ""`, so None and "" both mean: not configured.
     paperless_api_url: str | None = None
+    #: Browser-facing base URL of the Paperless UI, for links out of Renfield
+    #: (`api.routes.knowledge.paperless_document_url`). Env: PAPERLESS_PUBLIC_URL.
+    #:
+    #: 🛑 Split from the API URL on purpose: the API URL is what the BACKEND
+    #: reaches (a container name such as `http://paperless:8000` on compose, a
+    #: LAN address in the household) and is often useless in a browser.
+    #: Unset/empty means: fall back to `paperless_api_url` -- the behaviour
+    #: before the split, byte-identical. Both empty means: no link.
+    paperless_public_url: str | None = None
     paperless_api_token: str | None = None
     mcp_max_response_size: int = Field(default=131072, ge=1024, le=524288)  # 128KB max response — accommodates list_correspondents on real corpora (~70KB at ~900 entries) without truncating mid-payload
     # MCP exponential-backoff for reconnect / transient failures

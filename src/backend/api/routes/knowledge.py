@@ -612,13 +612,19 @@ def paperless_document_url(paperless_document_id: int | None) -> str | None:
     `/documents/batch`, `/documents/{id}`, `/upload` and `/reindex`. A URL
     assembled in several places drifts apart.
 
+    The base is `PAPERLESS_PUBLIC_URL` (what a browser reaches), falling back
+    to `PAPERLESS_API_URL` (what the backend reaches) when it is unset.
+
     None when the id is missing (the document is not filed yet, or it was a
     duplicate) or no base URL is configured. The trailing
     slash is stripped so no `//documents/` is produced.
     """
     if not isinstance(paperless_document_id, int) or isinstance(paperless_document_id, bool):
         return None
-    base = (settings.paperless_api_url or "").rstrip("/")
+    base = (
+        (settings.paperless_public_url or "").strip()
+        or (settings.paperless_api_url or "").strip()
+    ).rstrip("/")
     if not base:
         return None
     return f"{base}/documents/{paperless_document_id}/details"
