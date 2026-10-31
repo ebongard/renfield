@@ -207,6 +207,21 @@ def has_permission(user_permissions: list[str], required: "Permission | str") ->
     return False
 
 
+def holds_no_rung_above(user_permissions: list[str], bottom: Permission) -> bool:
+    """
+    True when the user holds no rung ABOVE ``bottom`` in its ladder.
+
+    The bottom rung of a ladder (``kb.none``, ``ha.none``, ``cam.none``) is
+    implied by every rung above it, so ``has_permission(perms, KB_NONE)``
+    matches EVERY user with any KB rung — it cannot serve as a deny gate.
+    This helper is the deny gate: it is True for a user whose only rung is
+    the bottom one AND for a user holding no rung of that ladder at all
+    (fail-closed — a role without any KB rung has no KB access).
+    """
+    rungs_above = [perm for perm, implied in PERMISSION_HIERARCHY.items() if bottom in implied]
+    return not any(has_permission(user_permissions, perm) for perm in rungs_above)
+
+
 def has_mcp_permission(user_permissions: list[str], required: str) -> bool:
     """
     Check if a user has the required MCP permission.

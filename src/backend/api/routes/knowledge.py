@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import DOC_SPLIT_OWNED_STATUSES, Document, KnowledgeBase, User
 from models.database import Atom as AtomModel
-from models.permissions import Permission, has_permission
+from models.permissions import Permission, has_permission, holds_no_rung_above
 from services.atom_service import AtomService
 from services.auth_service import get_optional_user
 from services.database import get_db
@@ -1103,9 +1103,9 @@ async def list_knowledge_bases(
     List knowledge bases, filtered by the user's permissions.
 
     - kb.all: all KBs
-    - kb.shared: own + public + shared
-    - kb.own: own ones only
-    - kb.none: none
+    - kb.shared: own + public + explicitly shared
+    - kb.own: own + explicitly shared
+    - kb.none (or no KB rung at all): none
     """
     # Get all KBs first
     all_bases = await rag.list_knowledge_bases()
@@ -1117,8 +1117,9 @@ async def list_knowledge_bases(
         # kb.all = see everything
         if has_permission(user_perms, Permission.KB_ALL):
             accessible_bases = all_bases
-        # kb.none = nothing
-        elif has_permission(user_perms, Permission.KB_NONE):
+        # kb.none (or no KB rung at all) = nothing. Not `has_permission(KB_NONE)`:
+        # every higher rung implies kb.none, so that matched every user.
+        elif holds_no_rung_above(user_perms, Permission.KB_NONE):
             return []
         else:
             from services.kb_shares_service import list_user_shared_kb_ids
@@ -1273,7 +1274,7 @@ async def search_knowledge(
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
         user_perms = user.get_permissions()
-        if has_permission(user_perms, Permission.KB_NONE) and not has_permission(user_perms, Permission.KB_OWN):
+        if holds_no_rung_above(user_perms, Permission.KB_NONE):
             raise HTTPException(status_code=403, detail="No knowledge base access")
         if request.knowledge_base_id:
             result = await db.execute(
@@ -1332,7 +1333,7 @@ async def search_knowledge_get(
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
         user_perms = user.get_permissions()
-        if has_permission(user_perms, Permission.KB_NONE) and not has_permission(user_perms, Permission.KB_OWN):
+        if holds_no_rung_above(user_perms, Permission.KB_NONE):
             raise HTTPException(status_code=403, detail="No knowledge base access")
         if knowledge_base_id:
             result = await db.execute(

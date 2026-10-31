@@ -398,6 +398,7 @@ class TestKnowledgeBaseAPI:
         from unittest.mock import AsyncMock, MagicMock
 
         from api.routes import knowledge as route_mod
+        from models.permissions import Permission
         from services import kb_shares_service
 
         call_counter = {"n": 0}
@@ -434,7 +435,12 @@ class TestKnowledgeBaseAPI:
 
         monkeypatch.setattr(route_mod.settings, "auth_enabled", True)
 
-        fake_user = SimpleNamespace(id=42, get_permissions=lambda: set())
+        # A real kb.shared user (the Familie rung) under the REAL
+        # has_permission — no patched permission check that could hide a
+        # deny gate matching everyone (the kb.none early return once did).
+        fake_user = SimpleNamespace(
+            id=42, get_permissions=lambda: [Permission.KB_SHARED.value]
+        )
 
         fake_rag = MagicMock()
         fake_rag.list_knowledge_bases = AsyncMock(return_value=fake_kbs)
@@ -443,16 +449,6 @@ class TestKnowledgeBaseAPI:
         empty_owners = MagicMock()
         empty_owners.all = lambda: []
         fake_db.execute = AsyncMock(return_value=empty_owners)
-
-        from models import permissions as perms_mod
-
-        def grant_all(user_perms, perm):
-            # Reject KB_ALL so the code reaches the batched grant lookup;
-            # reject KB_NONE so it doesn't early-return empty. Anything else
-            # (KB_SHARED, KB_OWN) — allow.
-            return perm not in (perms_mod.Permission.KB_ALL, perms_mod.Permission.KB_NONE)
-
-        monkeypatch.setattr(route_mod, "has_permission", grant_all)
 
         result = await route_mod.list_knowledge_bases(
             rag=fake_rag, user=fake_user, db=fake_db
