@@ -512,9 +512,14 @@ async def ha_glue_execute_tool(
     intent: str,
     parameters: dict,
     user_permissions: list[str] | None = None,
+    user_id: int | None = None,
     **_: Any,
 ) -> dict | None:
     """Dispatch `internal.*` intents to the ha_glue InternalToolService.
+
+    ``user_id`` is the authenticated caller that `ActionExecutor` passes to
+    the hook. It is handed to the service at construction, so no handler
+    ever reads identity from the LLM-built ``parameters``.
 
     Fires on `execute_tool`. Returns a result dict if the intent is
     ha_glue-owned, or None to let other handlers / the default dispatch
@@ -557,7 +562,7 @@ async def ha_glue_execute_tool(
 
     from ha_glue.services.internal_tools import InternalToolService
 
-    service = InternalToolService()
+    service = InternalToolService(caller_user_id=user_id)
     return await service.execute(intent, parameters)
 
 

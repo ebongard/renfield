@@ -153,11 +153,18 @@ async def _visible_document_meta(
     }
 
 
-async def knowledge_search(params: dict) -> dict:
+async def knowledge_search(params: dict, *, user_id: int | None = None) -> dict:
     """Search the local knowledge base (RAG) by semantic similarity.
 
     Pure platform operation — hits `services.rag_service.RAGService`
     with a fresh DB session. No ha_glue dependencies.
+
+    ``user_id`` is the authenticated asker, injected by the dispatcher
+    (`ActionExecutor.execute`) from the turn's auth context; it pins the
+    search to that user's circle reach. It is deliberately NOT read from
+    ``params``: those are LLM-built, and a model that named a user id there
+    would search as that user. ``None`` = auth-off (circle filter bypassed)
+    or an unidentified turn (public tier only while auth is on).
     """
     query = (params.get("query") or "").strip()
     if not query:
@@ -178,17 +185,9 @@ async def knowledge_search(params: dict) -> dict:
         from services.database import AsyncSessionLocal
         from services.rag_service import RAGService
 
-        # FastMCP injects `user_id` into the params dict from the auth context;
-        # passing it through pins the RAG search to that user's circle reach.
-        user_id_raw = params.get("user_id")
-        try:
-            user_id_int = int(user_id_raw) if user_id_raw is not None else None
-        except (TypeError, ValueError):
-            user_id_int = None
-
         async with AsyncSessionLocal() as db:
             rag = RAGService(db)
-            results = await rag.search(query=query, top_k=top_k, user_id=user_id_int)
+            results = await rag.search(query=query, top_k=top_k, user_id=user_id)
 
             # Schicht A document facts — precise extracted values (Steuernummer,
             # IBAN, issuer, obligation Fristen) that the chunk path can't answer
@@ -205,7 +204,7 @@ async def knowledge_search(params: dict) -> dict:
             facts: list[dict] = []
             doc_meta: dict[Any, dict] = {}
             if settings.schicht_a_extraction_enabled:
-                facts, doc_meta = await _retrieve_facts(db, query, user_id_int)
+                facts, doc_meta = await _retrieve_facts(db, query, user_id)
 
         context_parts: list[str] = []
         # Structured per-document provenance for the chat "source chips" UI.
