@@ -356,7 +356,7 @@ class TestOutputDeviceEndpoints:
         assert data["priority"] == 5
         assert data["allow_interruption"] is True
         assert data["tts_volume"] == 0.8
-        assert data["tts_eq_profile"] is None, "ein nicht gesendetes Profil bleibt unberuehrt"
+        assert data["tts_eq_profile"] is None, "a profile that was not sent stays untouched"
 
     @pytest.mark.integration
     async def test_tts_eq_profile_setzen_behalten_und_wieder_ausschalten(

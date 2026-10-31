@@ -91,19 +91,19 @@ def test_the_call_sites_are_found_at_all():
     """
     stellen = _aufrufstellen()
     assert len(stellen) >= 4, (
-        f"nur {len(stellen)} Einstiegsstellen gefunden — die Suche "
-        f"greift nicht mehr, und dann prueft der Test unten nichts: {stellen}")
+        f"only {len(stellen)} entry points found — the search no longer "
+        f"takes hold, and then the test below checks nothing: {stellen}")
     dateien = {d for d, _, _ in stellen}
     assert any("chat_handler" in d for d in dateien), (
-        f"die Stelle im chat_handler fehlt: {sorted(dateien)}")
+        f"the site in the chat_handler is missing: {sorted(dateien)}")
     # 🛑 And the orchestrator site, where the correction was missing first.
     assert any("orchestrator" in d for d in dateien), (
-        f"die Orchestrator-Stelle fehlt: {sorted(dateien)}")
+        f"the orchestrator site is missing: {sorted(dateien)}")
     # Exactly two sites in the chat_handler: `agent.run` and `run_orchestrated`.
     im_handler = [z for d, z, _ in stellen if "chat_handler" in d]
     assert len(im_handler) == 2, (
-        f"erwartet: agent.run UND run_orchestrated im chat_handler, "
-        f"gefunden: {im_handler}")
+        f"expected: agent.run AND run_orchestrated in the chat_handler, "
+        f"found: {im_handler}")
 
 
 def test_every_agent_entry_point_forwards_the_correction():
@@ -116,6 +116,6 @@ def test_every_agent_entry_point_forwards_the_correction():
         and datei not in _AUSNAHMEN
     ]
     assert not fehlend, (
-        "eine Aufrufstelle des Agenten reicht `corrected_intent` nicht weiter "
-        "— dort bleibt eine Nutzerkorrektur still wirkungslos:\n  "
+        "an agent call site does not forward `corrected_intent` "
+        "— a user correction silently has no effect there:\n  "
         + "\n  ".join(fehlend))

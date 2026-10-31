@@ -269,13 +269,13 @@ async def _purge_parent_facts(db: AsyncSession, parent_id: int) -> int:
             # fails) must not hold up the split -- the children are materialised
             # by this point.
             logger.warning(
-                f"pdf-split: Faktenatom {atom_id} von doc {parent_id} nicht "
-                f"abgeräumt: {exc!r}"
+                f"pdf-split: fact atom {atom_id} of doc {parent_id} not "
+                f"cleared: {exc!r}"
             )
     if geloescht:
         logger.info(
-            f"pdf-split: {geloescht} Elternfakt(en) von doc {parent_id} "
-            f"abgeräumt — der archivierte Stapel beschreibt kein Dokument mehr"
+            f"pdf-split: {geloescht} parent fact(s) of doc {parent_id} "
+            f"cleared — the archived batch no longer describes a document"
         )
     return geloescht
 

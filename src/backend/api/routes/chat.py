@@ -106,7 +106,7 @@ async def send_message(
 ):
     """Send a message and receive an answer."""
     try:
-        logger.info(f"📨 Neue Nachricht: '{chat_request.message[:100]}'")
+        logger.info(f"📨 New message: '{chat_request.message[:100]}'")
 
         # Prompt injection check
         injection_result = detect_injection(chat_request.message)
@@ -219,7 +219,7 @@ async def send_message(
         if settings.agent_enabled:
             from services.complexity_detector import ComplexityDetector
             if await ComplexityDetector.needs_agent_with_feedback(chat_request.message):
-                logger.info(f"🤖 Agent Loop (REST) aktiviert für: '{chat_request.message[:80]}...'")
+                logger.info(f"🤖 Agent loop (REST) enabled for: '{chat_request.message[:80]}...'")
 
                 from services.action_executor import ActionExecutor
                 from services.agent_service import AgentService
@@ -274,7 +274,7 @@ async def send_message(
                 )
 
         # === Ranked Intent Path with Fallback Chain ===
-        logger.info("🔍 Extrahiere Ranked Intents...")
+        logger.info("🔍 Extracting ranked intents...")
         ranked_intents = await ollama.extract_ranked_intents(chat_request.message)
 
         from services.action_executor import ActionExecutor
@@ -283,7 +283,7 @@ async def send_message(
 
         for intent_candidate in ranked_intents:
             intent_name = intent_candidate.get("intent", "general.conversation")
-            logger.info(f"🎯 Versuche Intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
+            logger.info(f"🎯 Trying intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
 
             if intent_name == "general.conversation":
                 intent = intent_candidate
@@ -301,14 +301,14 @@ async def send_message(
                 intent = intent_candidate
                 action_result = candidate_result
                 intent_used = intent_candidate
-                logger.info(f"✅ Intent {intent_name} erfolgreich: {candidate_result.get('message', '')[:80]}")
+                logger.info(f"✅ Intent {intent_name} succeeded: {candidate_result.get('message', '')[:80]}")
                 break
 
-            logger.info(f"⏭️ Intent {intent_name} lieferte kein Ergebnis, versuche nächsten...")
+            logger.info(f"⏭️ Intent {intent_name} returned no result, trying the next one...")
 
         # If no ranked intent worked, fall back to conversation
         if not intent_used:
-            logger.info("💬 Alle Intents fehlgeschlagen, Fallback zu Konversation")
+            logger.info("💬 All intents failed, falling back to conversation")
             intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
 
         # Generate the answer
@@ -355,7 +355,7 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
 
         await db.commit()
 
-        logger.info(f"✅ Antwort generiert: '{response_text[:100]}'")
+        logger.info(f"✅ Response generated: '{response_text[:100]}'")
 
         return ChatResponse(
             message=response_text,
@@ -363,7 +363,7 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
             intent=intent
         )
     except Exception as e:
-        logger.error(f"❌ Chat Fehler: {e}")
+        logger.error(f"❌ Chat error: {e}")
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
@@ -683,7 +683,7 @@ async def set_active_leaf(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Fehler beim Setzen des aktiven Branch: {e}")
+        logger.error(f"❌ Failed to set the active branch: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -723,7 +723,7 @@ async def delete_branch(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Fehler beim Löschen des Branch: {e}")
+        logger.error(f"❌ Failed to delete the branch: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -798,7 +798,7 @@ async def cleanup_old_conversations(
 
         await db.commit()
 
-        logger.info(f"🧹 Gelöscht: {deleted_count} Konversationen älter als {days} Tage")
+        logger.info(f"🧹 Deleted: {deleted_count} conversations older than {days} days")
 
         return {
             "success": True,
@@ -806,6 +806,6 @@ async def cleanup_old_conversations(
             "cutoff_days": days
         }
     except Exception as e:
-        logger.error(f"❌ Fehler beim Cleanup: {e}")
+        logger.error(f"❌ Cleanup failed: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

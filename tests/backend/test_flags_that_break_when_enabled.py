@@ -58,7 +58,7 @@ class TestVoiceAuthCallShape:
         q = np.array([1.0, 0.0, 0.0], dtype=np.float32)
         known = [(7, "Anna", np.array([1.0, 0.0, 0.0], dtype=np.float32))]
         out = svc.identify_speaker(q, known)
-        assert isinstance(out, tuple), "die Route las ein dict — das gab es nie"
+        assert isinstance(out, tuple), "the route read a dict — that never existed"
         assert out[0] == 7 and out[1] == "Anna"
 
     def test_the_route_does_not_call_the_enrolling_resolver(self):
@@ -75,7 +75,7 @@ class TestVoiceAuthCallShape:
 
         body = _function_body(auth.voice_authenticate)
         assert "resolve_speaker_from_embedding" not in body, (
-            "die Sprachanmeldung darf nur LESEN, nicht einschreiben"
+            "the voice login may only READ, not enrol"
         )
         # `build_known_speaker_centroids` stood here until the rework into an
         # additional factor. Since 2026-09-27 the route verifies 1:1 against
@@ -123,7 +123,7 @@ class TestVoiceAuthCallShape:
         assert "voice_path_blocker" in voice_src
         # And no longer by hand alongside it:
         assert "settings.voice_auth_enabled" not in login_src, (
-            "die Anmeldeseite prueft wieder selbst — genau so ist der Fehler entstanden"
+            "the login side checks by itself again — exactly how the bug came about"
         )
 
 
@@ -148,7 +148,7 @@ class TestOneCentroidCalculation:
         gating, controlled, quality_active = sr.known_speaker_flags()
         assert gating is False
         assert controlled is True
-        assert quality_active is True, "controlled allein muss die Normalisierung einschalten"
+        assert quality_active is True, "controlled alone must switch normalisation on"
 
         monkeypatch.setattr("utils.config.settings.speaker_controlled_enrollment_enabled", False)
         assert sr.known_speaker_flags()[2] is False
@@ -160,7 +160,7 @@ class TestOneCentroidCalculation:
 
         src = inspect.getsource(speakers.get_speaker_embeddings_averaged)
         assert "build_known_speaker_centroids" in src
-        assert "np.linalg.norm" not in src, "keine zweite Kopie der Rechnung"
+        assert "np.linalg.norm" not in src, "no second copy of the computation"
 
     def test_controlled_mode_compares_only_against_enrolled_profiles(self):
         from services.speaker_resolver import build_known_speaker_centroids
@@ -190,7 +190,7 @@ class TestOneCentroidCalculation:
             [sp], controlled=True, quality_active=False
         )
         assert MAX_EMBEDDINGS_PER_SPEAKER == 10
-        assert known[0][2].tolist() == [1.0], "die zwei aeltesten duerfen nicht mitzaehlen"
+        assert known[0][2].tolist() == [1.0], "the two oldest must not count"
 
     def test_normalisation_stops_a_loud_sample_from_dominating(self):
         # Raw ECAPA norms vary ~250-410; without normalization the loud
@@ -410,7 +410,7 @@ class TestVoiceSecondFactor:
             self._request(), Response(), ticket="t", audio_file=self._upload(), db=db_session)
         assert out.success is False
         assert not out.access_token
-        assert not sent, "bei abgeschalteter Erkennung darf kein Audio den Prozess verlassen"
+        assert not sent, "with recognition switched off no audio may leave the process"
 
     async def test_a_sample_below_the_server_measured_minimum_is_refused(
         self, db_session, monkeypatch
@@ -431,7 +431,7 @@ class TestVoiceSecondFactor:
 
         out = await auth_routes.voice_authenticate(
             self._request(), Response(), ticket="t", audio_file=self._upload(), db=db_session)
-        assert out.success is False, "eine 0,3-s-Probe darf nicht anmelden, auch nicht mit 0.99"
+        assert out.success is False, "a 0.3 s sample must not log in, not even at 0.99"
         assert not out.access_token
 
     async def test_a_voice_server_outage_is_not_counted_as_a_failed_attempt(
@@ -510,14 +510,14 @@ class TestVoiceSecondFactor:
     def _assert_opaque(self, out, resp=None):
         assert out.success is False
         assert out.message == "Voice authentication failed", (
-            "der Text verraet, WELCHE Bedingung fehlschlug"
+            "the text reveals WHICH condition failed"
         )
         for f in self._FORBIDDEN:
-            assert getattr(out, f) is None, f"{f} auf einem Fehlschlag gesetzt"
+            assert getattr(out, f) is None, f"{f} set on a failure"
         # 🛑 And the fields that carried the oracle no longer exist in the model.
         for gone in ("speaker_id", "speaker_name", "confidence", "user_id", "username"):
             assert not hasattr(out, gone), (
-                f"{gone} ist zurueck im Antwortmodell — das war das Orakel"
+                f"{gone} is back in the response model — that was the oracle"
             )
         if resp is not None:
             assert resp.headers.getlist("set-cookie") == []
@@ -556,7 +556,7 @@ class TestVoiceSecondFactor:
         out = await auth_routes.voice_authenticate(
             self._request(), resp, ticket="bogus", audio_file=self._upload(), db=db_session)
         self._assert_opaque(out, resp)
-        assert not extracted, "ohne gueltiges Ticket darf kein Audio an den voice-server gehen"
+        assert not extracted, "without a valid ticket no audio may go to the voice-server"
 
     async def test_a_wrong_voice_is_refused_and_mints_nothing(self, db_session, monkeypatch):
         from fastapi import Response
@@ -679,10 +679,10 @@ class TestTheRouteIsNoLongerAnIdentifier:
         from api.routes import auth
 
         body = _function_body(auth.voice_authenticate)
-        assert "verify_speaker" in body, "1:1-Pruefung fehlt"
-        assert "identify_speaker" not in body, "zurueck auf Argmax ueber alle Profile"
+        assert "verify_speaker" in body, "1:1 check is missing"
+        assert "identify_speaker" not in body, "back to argmax over all profiles"
         assert "build_known_speaker_centroids" not in body, (
-            "die Route baut wieder alle Schwerpunkte — das ist 1:N"
+            "the route builds all centroids again — that is 1:N"
         )
 
     def test_it_requires_a_ticket(self):
@@ -692,7 +692,7 @@ class TestTheRouteIsNoLongerAnIdentifier:
 
         sig = inspect.signature(auth.voice_authenticate)
         assert "ticket" in sig.parameters, (
-            "ohne Ticket waere die Stimme wieder der ERSTE Faktor"
+            "without a ticket the voice would be the FIRST factor again"
         )
 
     def test_the_response_model_carries_no_identity(self):
@@ -700,7 +700,7 @@ class TestTheRouteIsNoLongerAnIdentifier:
 
         for gone in ("speaker_id", "speaker_name", "confidence", "user_id", "username"):
             assert gone not in VoiceAuthResponse.model_fields, (
-                f"{gone} ist zurueck — genau diese Felder waren das Orakel"
+                f"{gone} is back — exactly these fields were the oracle"
             )
 
     def test_login_can_withhold_tokens(self):
@@ -740,9 +740,9 @@ class TestTheMarginGateIsShared:
         q, known = self._two_close_profiles()
 
         mid, best, runner = match_known_speaker(q, known, controlled=True)
-        assert best >= 0.25, "Voraussetzung: beide ueber der Schwelle"
-        assert (best - runner) < 0.1, "Voraussetzung: zu nah beieinander"
-        assert mid is None, "ein Muenzwurf darf NICHT zuordnen"
+        assert best >= 0.25, "precondition: both above the threshold"
+        assert (best - runner) < 0.1, "precondition: too close together"
+        assert mid is None, "a coin toss must NOT assign"
 
     def test_without_controlled_it_is_plain_argmax(self, monkeypatch):
         from services.speaker_resolver import match_known_speaker
@@ -752,7 +752,7 @@ class TestTheMarginGateIsShared:
         q, known = self._two_close_profiles()
 
         mid, _b, _r = match_known_speaker(q, known, controlled=False)
-        assert mid is not None, "ohne kontrollierte Erkennung gilt die Marge nicht"
+        assert mid is not None, "without controlled recognition the margin does not apply"
 
 
 @pytest.mark.database
@@ -914,11 +914,11 @@ class TestLoginWithholdsTokensForSecondFactor:
 
         assert out.second_factor == "voice"
         assert out.second_factor_ticket == "TICKET"
-        assert out.access_token is None, "der erste Faktor hat Token ausgegeben"
+        assert out.access_token is None, "the first factor issued tokens"
         assert out.refresh_token is None
         assert resp.headers.getlist("set-cookie") == [], (
-            "der erste Faktor hat eine Sitzung eingerichtet — dann sperrt die "
-            "Stimme nichts mehr"
+            "the first factor set up a session — then the "
+            "voice no longer locks anything"
         )
 
     async def test_a_normal_account_is_untouched(self, db_session, monkeypatch):
@@ -957,7 +957,7 @@ class TestLoginWithholdsTokensForSecondFactor:
         out = await auth_routes.login(
             self._request(), form_data=self._form(user.username), db=db_session,
             response=Response())
-        assert out.access_token, "ohne Sprachweg muss der Passwortpfad durchlassen"
+        assert out.access_token, "without the voice path the password path must let through"
         assert out.second_factor is None
 
     async def test_no_ticket_means_no_login_at_all(self, db_session, monkeypatch):
@@ -982,7 +982,7 @@ class TestLoginWithholdsTokensForSecondFactor:
                 self._request(), form_data=self._form(user.username),
                 db=db_session, response=Response())
         assert ei.value.status_code == 503, (
-            "ohne Ticket darf es weder Token noch eine stille Umgehung geben"
+            "without a ticket there must be neither a token nor a silent bypass"
         )
 
 
@@ -1012,10 +1012,10 @@ class TestLoginWithholdsTokensForSecondFactor:
             self._request(), form_data=self._form(user.username), db=db_session,
             response=Response())
 
-        assert out.access_token, "ohne einloesbaren Faktor darf das Passwort wieder genuegen"
+        assert out.access_token, "without a redeemable factor the password may suffice again"
         assert out.second_factor is None
         await db_session.refresh(user)
-        assert user.voice_second_factor_enabled is True, "die Einwilligung bleibt stehen"
+        assert user.voice_second_factor_enabled is True, "the consent stays in place"
 
 
 class TestTheRateLimitIsStillDeclared:
@@ -1044,8 +1044,8 @@ class TestTheRateLimitIsStillDeclared:
         # reachable through `__wrapped__`. If it is empty, the decorator is
         # gone.
         assert hasattr(fn, "__wrapped__"), (
-            f"`{route}` traegt keinen Dekorator mehr — die Ratenbegrenzung auf "
-            f"einer unangemeldet erreichbaren Anmelderoute ist weg"
+            f"`{route}` no longer carries a decorator — the rate limit on "
+            f"a login route reachable without authentication is gone"
         )
 
     def test_the_auth_limit_is_stricter_than_the_default(self):
@@ -1060,4 +1060,4 @@ class TestTheRateLimitIsStillDeclared:
 
         assert _per_minute(settings.api_rate_limit_auth) <= _per_minute(
             settings.api_rate_limit_default
-        ), "die Anmeldegrenze ist nicht strenger als die allgemeine"
+        ), "the login limit is not stricter than the general one"

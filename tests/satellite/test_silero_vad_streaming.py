@@ -63,7 +63,7 @@ def test_kontext_ist_das_ende_des_vorherigen_frames():
     vad.get_speech_probability(_ramp(CHUNK))
     first, second = session.calls[0]["input"], session.calls[1]["input"]
 
-    assert np.all(first[0, :64] == 0.0), "erster Frame: Kontext ist Stille"
+    assert np.all(first[0, :64] == 0.0), "first frame: context is silence"
     assert np.array_equal(second[0, :64], first[0, -64:])
 
 
@@ -79,8 +79,8 @@ def test_strom_ist_lueckenlos_ueber_aufrufgrenzen():
     expected = (np.frombuffer(_ramp(2 * CHUNK), dtype=np.int16).astype(np.float32) / 32768.0)[: len(fed)]
 
     assert len(session.calls) == 5            # 2560 samples = 5 full frames
-    assert np.array_equal(fed, expected), "kein Sample verloren, keines erfunden"
-    assert not np.any(fed == 0.0), "keine eingefuegten Null-Samples"
+    assert np.array_equal(fed, expected), "no sample lost, none invented"
+    assert not np.any(fed == 0.0), "no inserted zero samples"
 
 
 @pytest.mark.satellite
@@ -102,7 +102,7 @@ def test_reset_loescht_zustand_kontext_und_rest():
 
     assert np.all(session.calls[0]["state"] == 0.0)
     assert np.all(session.calls[0]["input"][0, :64] == 0.0)
-    assert len(session.calls) == 2, "der Rest des vorherigen Zuges darf nicht mitlaufen"
+    assert len(session.calls) == 2, "the remainder of the previous turn must not run along"
 
 
 @pytest.mark.satellite
@@ -140,7 +140,7 @@ def test_inferenzfehler_faellt_auf_rms_zurueck_statt_sprache_zu_melden():
     silence = np.zeros(CHUNK, dtype=np.int16).tobytes()
     loud = (np.ones(CHUNK) * 8000).astype(np.int16).tobytes()
 
-    assert not detector.is_speech(silence), "Stille bleibt Stille, trotz kaputtem Modell"
+    assert not detector.is_speech(silence), "silence stays silence, despite a broken model"
     assert detector.is_speech(loud)
 
 
@@ -196,5 +196,5 @@ def test_echtes_modell_erkennt_sprache_und_verwirft_stille():
     vad.reset()
     silence = [vad.is_speech(c) for c in _chunks(np.zeros(16000 * 3, dtype=np.int16))]
 
-    assert sum(speech) / len(speech) > 0.8, "vor dem Fix: 0 von 118"
+    assert sum(speech) / len(speech) > 0.8, "before the fix: 0 of 118"
     assert sum(silence) == 0

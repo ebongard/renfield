@@ -275,7 +275,7 @@ class TestACancelledAccessIsStillAnAccess:
         )
 
         p = _pending(mapped=True, asker_local_user_id=107)
-        assert p.retrieved_count is None, "Vorgabe: noch nichts gelesen"
+        assert p.retrieved_count is None, "default: nothing read yet"
         await _record_cancelled_access(p)
 
         assert "keine Daten gelesen" in written.await_args.kwargs[

@@ -168,7 +168,7 @@ class ConversationService:
                 conversation.atom_id = atom_id
         except Exception as e:
             conversation.atom_id = None
-            logger.warning(f"⚠️ Konversation ohne Atom angelegt (id={conversation.id}): {e}")
+            logger.warning(f"⚠️ Conversation created without an atom (id={conversation.id}): {e}")
 
     async def active_path_message_ids(self, conversation: Conversation) -> list[int]:
         """Return the ids of the messages on the conversation's ACTIVE branch,
@@ -475,7 +475,7 @@ class ConversationService:
             conversation = result.scalar_one_or_none()
 
             if not conversation:
-                logger.debug(f"Keine Konversation gefunden für session_id: {session_id}")
+                logger.debug(f"No conversation found for session_id: {session_id}")
                 return []
 
             # Cross-user IDOR guard: REST endpoints already scope by owner; the WS
@@ -540,11 +540,11 @@ class ConversationService:
                     "metadata": msg.message_metadata,
                 })
 
-            logger.info(f"Geladen: {len(context)} Nachrichten für Session {session_id}")
+            logger.info(f"Loaded: {len(context)} messages for session {session_id}")
             return context
 
         except Exception as e:
-            logger.error(f"Fehler beim Laden des Kontexts: {error_text_without_content(e)}")
+            logger.error(f"Error loading the context: {error_text_without_content(e)}")
             return []
 
     async def save_message(
@@ -683,7 +683,7 @@ class ConversationService:
             await self.db.commit()
             await self.db.refresh(message)
 
-            logger.debug(f"Nachricht gespeichert: {role} ({len(content)} Zeichen)")
+            logger.debug(f"Message stored: {role} ({len(content)} chars)")
             return message
 
         except Exception as e:
@@ -1145,7 +1145,7 @@ class ConversationService:
             if conversation:
                 await self.db.delete(conversation)
                 await self.db.commit()
-                logger.info(f"Konversation gelöscht: {session_id}")
+                logger.info(f"Conversation deleted: {session_id}")
                 return True
 
             return False
@@ -1239,7 +1239,7 @@ class ConversationService:
                     "preview": preview_content[:100] if preview_content else "Leere Konversation"
                 })
 
-            logger.info(f"Geladen: {len(summaries)} Konversationen")
+            logger.info(f"Loaded: {len(summaries)} conversations")
             return summaries
 
         except Exception as e:
@@ -1290,7 +1290,7 @@ class ConversationService:
                 })
 
             results = list(conv_groups.values())
-            logger.info(f"Gefunden: {len(results)} Konversationen")
+            logger.info(f"Found: {len(results)} conversations")
             return results
 
         except Exception as e:
@@ -1499,7 +1499,7 @@ class ConversationService:
                 for r in rows
             ]
             logger.info(
-                f"Message-Suche: {len(results)} Treffer "
+                f"Message search: {len(results)} hits "
                 f"(session={session_id or 'all'})"
             )
             return {"results": results, "count": len(results), "has_more": has_more}

@@ -17,7 +17,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Restart the backend
-echo -e "${YELLOW}Starte Backend neu...${NC}"
+echo -e "${YELLOW}Restarting backend...${NC}"
 docker-compose restart backend
 
 # Wait a moment
@@ -26,25 +26,25 @@ sleep 2
 # Check whether the backend is running
 if docker-compose ps | grep -q "renfield-backend.*Up"; then
     echo ""
-    echo -e "${GREEN}✅ Backend erfolgreich neu gestartet!${NC}"
+    echo -e "${GREEN}✅ Backend restarted successfully!${NC}"
     echo ""
-    echo -e "${BLUE}📊 Logs prüfen:${NC}"
+    echo -e "${BLUE}📊 Check the logs:${NC}"
     echo "  docker-compose logs -f backend"
     echo ""
-    echo -e "${BLUE}🧪 Teste jetzt im Chat:${NC}"
+    echo -e "${BLUE}🧪 Now test in the chat:${NC}"
     echo '  "Ist das Licht im Wohnzimmer an?"'
     echo ""
-    echo -e "${BLUE}📋 Erwartete Logs:${NC}"
-    echo "  📨 WebSocket Nachricht..."
-    echo "  🔍 Extrahiere Intent..."
-    echo "  🎯 Intent erkannt: homeassistant.get_state"
-    echo "  ⚡ Führe Aktion aus..."
-    echo "  ✅ Aktion: True"
+    echo -e "${BLUE}📋 Expected logs:${NC}"
+    echo "  📨 WebSocket message..."
+    echo "  🔍 Extracting intent..."
+    echo "  🎯 Intent recognised: homeassistant.get_state"
+    echo "  ⚡ Executing action..."
+    echo "  ✅ Action: True"
     echo ""
 else
     echo ""
-    echo -e "${YELLOW}⚠️  Backend startet noch oder Fehler aufgetreten${NC}"
+    echo -e "${YELLOW}⚠️  Backend is still starting or an error occurred${NC}"
     echo ""
-    echo "Prüfe Logs:"
+    echo "Check the logs:"
     docker-compose logs --tail=20 backend
 fi

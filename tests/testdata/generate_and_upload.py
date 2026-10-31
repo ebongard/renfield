@@ -27,11 +27,11 @@ from uploader import ensure_kb_exists, upload_document
 
 def main():
     print("=" * 70)
-    print("Renfield Testdata Generator — 100 Dokumente")
+    print("Renfield Testdata Generator — 100 documents")
     print("=" * 70)
 
     # 1. Ensure KBs exist
-    print("\n[1/3] Knowledge Bases anlegen/prüfen...")
+    print("\n[1/3] Creating/checking knowledge bases...")
     kb_arbeit = ensure_kb_exists("Arbeit", "Berufliche Dokumente, Verträge, Emails")
     kb_privat = ensure_kb_exists("Privat", "Private Dokumente, Rechnungen, Versicherungen")
     kb_verein = ensure_kb_exists("Vereinsarbeit", "TV Angermund 04 e.V. Vereinsdokumente")
@@ -48,7 +48,7 @@ def main():
     for fname, title, content in VEREIN_DOCS:
         all_docs.append((fname, title, content, kb_verein))
 
-    print(f"\n[2/3] {len(all_docs)} Dokumente generieren und hochladen...")
+    print(f"\n[2/3] Generating and uploading {len(all_docs)} documents...")
     total = len(all_docs)
     ok = 0
     fail = 0
@@ -69,16 +69,16 @@ def main():
 
     # 3. Summary
     print(f"\n{'=' * 70}")
-    print(f"[3/3] Ergebnis: {ok} OK, {fail} FEHLER von {total} Dokumenten")
+    print(f"[3/3] Result: {ok} OK, {fail} ERRORS out of {total} documents")
     print(f"{'=' * 70}")
 
     if fail > 0:
-        print(f"\n{fail} Dokumente fehlgeschlagen. Prüfe die Backend-Logs.")
+        print(f"\n{fail} documents failed. Check the backend logs.")
         return False
 
-    print(f"\nAlle {ok} Dokumente erfolgreich hochgeladen!")
-    print("  Warte auf Embedding-Verarbeitung (kann einige Minuten dauern).")
-    print("  Dann: python3 tests/testdata/verify_search.py")
+    print(f"\nAll {ok} documents uploaded successfully!")
+    print("  Waiting for embedding processing (may take a few minutes).")
+    print("  Then: python3 tests/testdata/verify_search.py")
     return True
 
 

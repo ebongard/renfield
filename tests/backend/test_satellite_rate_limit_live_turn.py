@@ -54,7 +54,7 @@ def _binary(session_id: str = SESSION) -> dict:
 def _exhaust_second(limiter: WSRateLimiter, key: str) -> None:
     for _ in range(limiter.per_second):
         assert limiter.check(key)[0]
-    assert not limiter.check(key)[0], "Vorbedingung: das Sekundenlimit MUSS gerissen sein"
+    assert not limiter.check(key)[0], "precondition: the per-second limit MUST be exceeded"
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +227,7 @@ def test_zweiter_blick_hat_ein_eigenes_budget():
     for _ in range(10):
         assert not _rate_verdict(_text("audio", session_id="unbekannt"), SAT, SAT, limiter, Counting())[0]
 
-    assert len(lookups) == 3, "der zweite Blick ist auf das Minutenbudget gedeckelt"
+    assert len(lookups) == 3, "the second look is capped by the per-minute budget"
 
 
 @pytest.mark.unit

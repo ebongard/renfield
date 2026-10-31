@@ -48,7 +48,7 @@ async def create_task(
         await db.commit()
         await db.refresh(new_task)
 
-        logger.info(f"✅ Task erstellt: {new_task.id} - {new_task.title}")
+        logger.info(f"✅ Task created: {new_task.id} - {new_task.title}")
 
         return {
             "id": new_task.id,
@@ -56,7 +56,7 @@ async def create_task(
             "status": new_task.status
         }
     except Exception as e:
-        logger.error(f"❌ Task Creation Fehler: {e}")
+        logger.error(f"❌ Task creation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/list")
@@ -95,7 +95,7 @@ async def list_tasks(
             ]
         }
     except Exception as e:
-        logger.error(f"❌ Task List Fehler: {e}")
+        logger.error(f"❌ Task list error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{task_id}")
@@ -129,7 +129,7 @@ async def get_task(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Get Task Fehler: {e}")
+        logger.error(f"❌ Get task error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.patch("/{task_id}")
@@ -166,7 +166,7 @@ async def update_task(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Update Task Fehler: {e}")
+        logger.error(f"❌ Update task error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{task_id}")
@@ -188,5 +188,5 @@ async def delete_task(
 
         return {"success": True}
     except Exception as e:
-        logger.error(f"❌ Delete Task Fehler: {e}")
+        logger.error(f"❌ Delete task error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -145,11 +145,11 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             model_names = [m.model for m in models.models]
 
             if self.model not in model_names:
-                logger.info(f"Lade Modell {self.model}...")
+                logger.info(f"Loading model {self.model}...")
                 await self.client.pull(self.model)
-                logger.info(f"Modell {self.model} geladen")
+                logger.info(f"Model {self.model} loaded")
             else:
-                logger.info(f"Modell {self.model} bereits vorhanden")
+                logger.info(f"Model {self.model} already present")
         except AttributeError:
             # Non-Ollama client (OpenAICompatibleClient) has no list/pull
             logger.info(f"Model check skipped (non-Ollama client, model={self.model})")
@@ -196,7 +196,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             return extract_response_content(response) or ""
         except Exception as e:
             await llm_circuit_breaker.record_failure()
-            logger.error(f"Chat Fehler: {e}")
+            logger.error(f"Chat error: {e}")
             return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Entschuldigung, es gab einen Fehler: {e!s}", error=str(e))
 
     async def chat_stream(
@@ -258,7 +258,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             await llm_circuit_breaker.record_success()
         except Exception as e:
             await llm_circuit_breaker.record_failure()
-            logger.error(f"Streaming Fehler: {e}")
+            logger.error(f"Streaming error: {e}")
             yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Fehler: {e!s}", error=str(e))
 
     async def count_people_in_image(self, image_b64: str) -> int | None:
@@ -772,10 +772,10 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             return intent_data
 
         except Exception as e:
-            logger.error(f"❌ Intent Extraction Fehler: {e}")
+            logger.error(f"❌ Intent extraction error: {e}")
             import traceback
             logger.debug(f"Traceback: {traceback.format_exc()}")
-            logger.debug(f"Response war: {response if 'response' in locals() else 'keine response'}")
+            logger.debug(f"Response was: {response if 'response' in locals() else 'no response'}")
             return {
                 "intent": "general.conversation",
                 "parameters": {},
@@ -1067,7 +1067,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             # ollama>=0.4.0 uses Pydantic models
             return response.embedding
         except Exception as e:
-            logger.error(f"Embedding Fehler: {e}")
+            logger.error(f"Embedding error: {e}")
             raise
 
     async def chat_with_rag(
@@ -1116,7 +1116,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             return extract_response_content(response) or ""
 
         except Exception as e:
-            logger.error(f"RAG Chat Fehler: {e}")
+            logger.error(f"RAG chat error: {e}")
             return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Sorry, there was an error: {e!s}", error=str(e))
 
     async def chat_stream_with_rag(
@@ -1179,7 +1179,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     yield chunk.message.content
 
         except Exception as e:
-            logger.error(f"RAG Streaming Fehler: {e}")
+            logger.error(f"RAG streaming error: {e}")
             yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Error: {e!s}", error=str(e))
 
     def _build_rag_system_prompt(self, context: str | None = None, lang: str | None = None, memory_context: str | None = None, document_context: str | None = None, personality_style: str | None = None, personality_prompt: str | None = None, time_context: str | None = None) -> str:
@@ -1270,13 +1270,13 @@ WICHTIG:
             for model in models_to_check:
                 if model in available_names:
                     result[model] = True
-                    logger.info(f"Modell {model} verfuegbar")
+                    logger.info(f"Model {model} available")
                 else:
                     result[model] = False
-                    logger.warning(f"Modell {model} nicht gefunden")
+                    logger.warning(f"Model {model} not found")
 
         except Exception as e:
-            logger.error(f"❌ Fehler beim Prüfen der Modelle: {e}")
+            logger.error(f"❌ Error checking the models: {e}")
             for model in models_to_check:
                 result[model] = False
 

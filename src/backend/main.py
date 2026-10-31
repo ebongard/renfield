@@ -680,7 +680,7 @@ async def debug_intent(
             "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat()
         }
     except Exception as e:
-        logger.error(f"❌ Intent Debug Fehler: {e}")
+        logger.error(f"❌ Intent debug error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -77,7 +77,7 @@ class TestLegacyWsAuthEnabled:
 
         assert s.auth_enabled is auth_on
         assert any("WS_AUTH_ENABLED" in m for m in messages), (
-            "ein gesetzter Altschlüssel muss genau einmal als veraltet gemeldet werden"
+            "a legacy key that is set must be reported as deprecated exactly once"
         )
 
     def test_contradicting_legacy_value_refuses_to_start(self, monkeypatch):

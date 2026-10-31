@@ -516,7 +516,7 @@ async def test_recording_timeout_only_hits_a_listening_session():
 
     await mgr.cleanup_stale()
 
-    assert "sess-1" in mgr.sessions, "ein denkender Zug darf nicht abgeräumt werden"
+    assert "sess-1" in mgr.sessions, "a thinking turn must not be cleared away"
 
 
 @pytest.mark.backend
@@ -607,7 +607,7 @@ def test_websocket_loop_calls_apply_update_progress():
          and n.name == "satellite_websocket"),
         None,
     )
-    assert target is not None, "satellite_websocket nicht gefunden"
+    assert target is not None, "satellite_websocket not found"
     # The call is an attribute (satellite_manager.apply_update_progress),
     # not a free-standing name -- otherwise the test would check nothing.
     called = {
@@ -616,8 +616,8 @@ def test_websocket_loop_calls_apply_update_progress():
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
     }
     assert "apply_update_progress" in called, (
-        "der Fortschrittszweig muss über apply_update_progress laufen — sonst "
-        "greifen weder Endstufen-Erkennung noch die Sperre gegen Rückschritte"
+        "the progress branch must go through apply_update_progress — otherwise "
+        "neither the terminal-stage detection nor the guard against regressions applies"
     )
 
 

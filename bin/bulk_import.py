@@ -38,7 +38,7 @@ from typing import Optional
 try:
     import httpx
 except ImportError:
-    sys.exit("httpx nicht installiert. Bitte: pip install httpx")
+    sys.exit("httpx is not installed. Run: pip install httpx")
 
 # ---------------------------------------------------------------------------
 # Default configuration (can be overridden with --config)
@@ -265,15 +265,15 @@ def print_plan(results: list[ImportResult], kb_map: dict[str, int]) -> None:
     unclassified = [r for r in results if r.kb_name is None]
     classified = [r for r in results if r.kb_name is not None]
 
-    print(f"\n✅ Klassifiziert ({len(classified)} Dateien):\n")
+    print(f"\n✅ Classified ({len(classified)} files):\n")
     for r in classified:
         kb_id = kb_map.get(r.kb_name, "?")
         ocr = " [force_ocr]" if r.force_ocr else ""
         print(f"  {r.path.name:<50}  →  {r.kb_name} (ID={kb_id}){ocr}")
-        print(f"    Grund: {r.classification_reason}")
+        print(f"    Reason: {r.classification_reason}")
 
     if unclassified:
-        print(f"\n⚠️  Nicht klassifiziert ({len(unclassified)} Dateien — werden übersprungen):\n")
+        print(f"\n⚠️  Not classified ({len(unclassified)} files — will be skipped):\n")
         for r in unclassified:
             print(f"  {r.path.name}")
     print()
@@ -299,7 +299,7 @@ def run_import(
         if kb_id is None:
             r.status = "failed"
             r.error = f"KB '{r.kb_name}' nicht gefunden (verfügbar: {list(kb_map)})"
-            print(f"[{i}/{total}] ❌ FEHLER {r.path.name}: {r.error}")
+            print(f"[{i}/{total}] ❌ ERROR {r.path.name}: {r.error}")
             continue
 
         size_mb = r.path.stat().st_size / 1024 / 1024
@@ -313,11 +313,11 @@ def run_import(
                 existing = data.get("detail", {})
                 if isinstance(existing, dict):
                     existing = existing.get("existing_document", {})
-                print(f"⚠️  bereits vorhanden (ID={existing.get('id', '?')})")
+                print(f"⚠️  already present (ID={existing.get('id', '?')})")
             elif data.get("status") == "failed":
                 r.status = "failed"
                 r.error = data.get("error_message", "Unbekannter Fehler")
-                print(f"❌ Verarbeitung fehlgeschlagen: {r.error}")
+                print(f"❌ Processing failed: {r.error}")
             else:
                 r.status = "uploaded"
                 r.document_id = data.get("id")
@@ -340,17 +340,17 @@ def print_summary(results: list[ImportResult]) -> None:
     counts = {s: sum(1 for r in results if r.status == s)
               for s in ("uploaded", "duplicate", "skipped", "failed")}
     print(f"\n{'='*72}")
-    print(f"  ZUSAMMENFASSUNG")
+    print(f"  SUMMARY")
     print(f"{'='*72}")
-    print(f"  ✅ Hochgeladen:       {counts['uploaded']}")
-    print(f"  ⚠️  Bereits vorhanden: {counts['duplicate']}")
-    print(f"  ⏭  Übersprungen:      {counts['skipped']}")
-    print(f"  ❌ Fehlgeschlagen:    {counts['failed']}")
-    print(f"  Gesamt:              {len(results)}")
+    print(f"  ✅ Uploaded:          {counts['uploaded']}")
+    print(f"  ⚠️  Already present:   {counts['duplicate']}")
+    print(f"  ⏭  Skipped:           {counts['skipped']}")
+    print(f"  ❌ Failed:            {counts['failed']}")
+    print(f"  Total:               {len(results)}")
     print()
 
     if counts["failed"] > 0:
-        print("Fehlgeschlagene Dateien:")
+        print("Failed files:")
         for r in results:
             if r.status == "failed":
                 print(f"  {r.path.name}: {r.error}")
@@ -399,7 +399,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if not args.dir.is_dir():
-        sys.exit(f"Verzeichnis nicht gefunden: {args.dir}")
+        sys.exit(f"Directory not found: {args.dir}")
 
     cfg = load_config(args.config)
     verify_ssl = args.verify_ssl
@@ -412,20 +412,20 @@ def main() -> None:
     base_url = resolve_local_hostname(args.base_url)
 
     # Load the KB map from the server
-    print(f"🔗 Verbinde mit {base_url} …")
+    print(f"🔗 Connecting to {base_url} …")
     try:
         kb_map = fetch_kb_map(base_url, args.token, verify_ssl)
     except Exception as e:
-        sys.exit(f"❌ Kann Knowledge Bases nicht laden: {e}")
-    print(f"   Gefundene KBs: {', '.join(f'{n} (ID={i})' for n, i in kb_map.items())}\n")
+        sys.exit(f"❌ Cannot load knowledge bases: {e}")
+    print(f"   KBs found: {', '.join(f'{n} (ID={i})' for n, i in kb_map.items())}\n")
 
     # Read the files in and classify them
     files = scan_directory(args.dir, args.recursive)
     if not files:
-        print("Keine unterstützten Dateien gefunden.")
+        print("No supported files found.")
         return
 
-    print(f"🔍 {len(files)} Dateien gefunden — klassifiziere …\n")
+    print(f"🔍 {len(files)} files found — classifying …\n")
     results: list[ImportResult] = []
     for path in files:
         kb_name, reason = classify(path, cfg)
@@ -447,7 +447,7 @@ def main() -> None:
 
     if not args.no_report:
         report = write_report(results, args.dir)
-        print(f"📄 Bericht gespeichert: {report}")
+        print(f"📄 Report saved: {report}")
 
 
 if __name__ == "__main__":

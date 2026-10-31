@@ -44,7 +44,7 @@ async def get_all_states(
         states = await ha_client.get_states()
         return {"states": states}
     except Exception as e:
-        logger.error(f"❌ Get States Fehler: {e}")
+        logger.error(f"❌ Get states error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -66,7 +66,7 @@ async def get_entity_state(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Get State Fehler: {e}")
+        logger.error(f"❌ Get state error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/turn_on/{entity_id}")
@@ -85,7 +85,7 @@ async def turn_on(
             raise HTTPException(status_code=500, detail="Aktion fehlgeschlagen")
         return {"success": True, "action": "turn_on", "entity_id": entity_id}
     except Exception as e:
-        logger.error(f"❌ Turn On Fehler: {e}")
+        logger.error(f"❌ Turn on error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -105,7 +105,7 @@ async def turn_off(
             raise HTTPException(status_code=500, detail="Aktion fehlgeschlagen")
         return {"success": True, "action": "turn_off", "entity_id": entity_id}
     except Exception as e:
-        logger.error(f"❌ Turn Off Fehler: {e}")
+        logger.error(f"❌ Turn off error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -125,7 +125,7 @@ async def toggle(
             raise HTTPException(status_code=500, detail="Aktion fehlgeschlagen")
         return {"success": True, "action": "toggle", "entity_id": entity_id}
     except Exception as e:
-        logger.error(f"❌ Toggle Fehler: {e}")
+        logger.error(f"❌ Toggle error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -154,7 +154,7 @@ async def set_value(
             "value": request.value
         }
     except Exception as e:
-        logger.error(f"❌ Set Value Fehler: {e}")
+        logger.error(f"❌ Set value error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/service")
@@ -178,7 +178,7 @@ async def call_service(
             raise HTTPException(status_code=500, detail="Service-Aufruf fehlgeschlagen")
         return {"success": True}
     except Exception as e:
-        logger.error(f"❌ Call Service Fehler: {e}")
+        logger.error(f"❌ Call service error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -196,7 +196,7 @@ async def search_entities(
         results = await ha_client.search_entities(query)
         return {"results": results}
     except Exception as e:
-        logger.error(f"❌ Search Fehler: {e}")
+        logger.error(f"❌ Search error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -214,5 +214,5 @@ async def get_entities_by_domain(
         entities = await ha_client.get_entities_by_domain(domain)
         return {"entities": entities}
     except Exception as e:
-        logger.error(f"❌ Get Domain Entities Fehler: {e}")
+        logger.error(f"❌ Get domain entities error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

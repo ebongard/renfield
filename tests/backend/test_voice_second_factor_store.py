@@ -66,7 +66,7 @@ class TestSingleUse:
         assert first.user_id == 42
 
         second = await store.consume_ticket(t, None)
-        assert second is None, "das Ticket war zweimal einlösbar"
+        assert second is None, "the ticket could be redeemed twice"
 
     async def test_it_is_written_with_nx_and_a_ttl(self, redis):
         """`nx` prevents overwriting somebody else's ticket, `ex` limits the
@@ -123,7 +123,7 @@ class TestAddressBinding:
         t = await store.issue_ticket(7, "10.0.0.1")
         assert await store.consume_ticket(t, "10.0.0.2") is None
         assert await store.consume_ticket(t, "10.0.0.1") is None, (
-            "ein Fehlversuch hat das Ticket nicht verbraucht"
+            "a failed attempt did not consume the ticket"
         )
 
 

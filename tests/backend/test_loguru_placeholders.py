@@ -118,7 +118,7 @@ def _wurzel() -> Path:
     w = Path(__file__).resolve().parents[2] / "src" / "backend"
     # 🛑 Without this assertion the test would be SILENTLY GREEN on a wrong
     # root: `rglob` on a missing directory yields nothing, without an error.
-    assert w.is_dir(), f"Wurzel nicht gefunden: {w}"
+    assert w.is_dir(), f"root not found: {w}"
     return w
 
 
@@ -127,10 +127,10 @@ def test_no_log_line_loses_its_arguments():
     use curly braces -- otherwise they vanish without a trace."""
     verlierend, geprueft = _verlierende_aufrufe(_wurzel())
     # That anything was checked at all is part of the assertion.
-    assert geprueft > 50, f"nur {geprueft} Dateien mit loguru gesehen — prueft der Test ueberhaupt?"
+    assert geprueft > 50, f"only {geprueft} files with loguru seen — does the test check anything at all?"
     assert not verlierend, (
-        "diese Logaufrufe verlieren ihre Argumente still (loguru ersetzt "
-        "`{}`, nicht `%s`):\n  " + "\n  ".join(verlierend))
+        "these log calls silently lose their arguments (loguru substitutes "
+        "`{}`, not `%s`):\n  " + "\n  ".join(verlierend))
 
 
 def test_every_loguru_literal_is_formattable():
@@ -158,7 +158,7 @@ def test_every_loguru_literal_is_formattable():
             except ValueError as exc:
                 kaputt.append(f"{datei}:{knoten.lineno} — {exc}")
     assert not kaputt, (
-        "diese Logzeilen werfen beim Formatieren und nehmen den Aufrufer mit:"
+        "these log lines raise when formatted and take the caller down:"
         "\n  " + "\n  ".join(kaputt))
 
 
@@ -203,5 +203,5 @@ def test_the_checker_sees_the_whole_printf_grammar():
 
     assert geprueft == len(faelle) + 3, geprueft
     assert len(treffer) == len(faelle) + 2, (
-        f"erwartet {len(faelle) + 2} Treffer (jede printf-Form, Alias, opt), "
-        f"gefunden {len(treffer)}:\n  " + "\n  ".join(treffer))
+        f"expected {len(faelle) + 2} hits (every printf form, alias, opt), "
+        f"found {len(treffer)}:\n  " + "\n  ".join(treffer))

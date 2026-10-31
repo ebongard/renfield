@@ -156,7 +156,7 @@ class TestPeerScoped:
         """🛑 The core of the fix."""
         clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities", peer=self.PEER)
         assert "circle_memberships" not in clause, (
-            "Die Peer-Stufe darf nicht mehr aus einer Mitgliedschaft kommen:\n" + clause)
+            "The peer tier must no longer come from a membership:\n" + clause)
         assert "e.circle_tier = :asker_id_pub" in clause
         assert ":asker_id_peer_tier <= e.circle_tier" in clause
 
@@ -201,7 +201,7 @@ class TestPeerScoped:
             assert set(params) == {"asker_id_pub", "asker_id_peer_owner", "asker_id_peer_tier"}
             # Every binding handed out has to occur in the text (bindparams-safe).
             for key in params:
-                assert f":{key}" in clause, f"{key} ausgegeben, aber nicht im Text"
+                assert f":{key}" in clause, f"{key} handed out, but not in the text"
             assert params["asker_id_peer_owner"] == 7
             assert params["asker_id_peer_tier"] == 2
 

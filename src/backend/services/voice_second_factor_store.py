@@ -92,12 +92,12 @@ async def issue_ticket(user_id: int, client_ip: str | None) -> str | None:
     try:
         stored = await get_redis().set(_key(ticket), payload, ex=_ttl(), nx=True)
     except Exception as e:
-        logger.warning(f"voice 2fa: Ticket konnte nicht abgelegt werden: {e}")
+        logger.warning(f"voice 2fa: ticket could not be stored: {e}")
         return None
     if not stored:
         # A collision on a 256-bit token means something is fundamentally
         # wrong. No retry, no quiet continuation.
-        logger.error("voice 2fa: Ticketkollision — kein Ticket ausgegeben")
+        logger.error("voice 2fa: ticket collision — no ticket issued")
         return None
     return ticket
 
@@ -114,7 +114,7 @@ async def consume_ticket(ticket: str, client_ip: str | None) -> PendingVoiceFact
     try:
         raw = await get_redis().getdel(_key(ticket))
     except Exception as e:
-        logger.warning(f"voice 2fa: GETDEL fehlgeschlagen: {e}")
+        logger.warning(f"voice 2fa: GETDEL failed: {e}")
         return None
     if not raw:
         return None
@@ -125,7 +125,7 @@ async def consume_ticket(ticket: str, client_ip: str | None) -> PendingVoiceFact
             client_ip=d.get("client_ip"),
         )
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-        logger.warning(f"voice 2fa: unbrauchbare Nutzlast verworfen: {e}")
+        logger.warning(f"voice 2fa: unusable payload discarded: {e}")
         return None
 
     # Address binding, but only if one was bound when issuing. Comparison in
@@ -134,7 +134,7 @@ async def consume_ticket(ticket: str, client_ip: str | None) -> PendingVoiceFact
     if pending.client_ip is not None:
         if client_ip is None or not hmac.compare_digest(pending.client_ip, client_ip):
             logger.warning(
-                "voice 2fa: Ticket von einer anderen Adresse eingelöst — verworfen"
+                "voice 2fa: ticket redeemed from a different address — discarded"
             )
             return None
     return pending

@@ -385,10 +385,10 @@ def validate_boundaries(
             luecke = s - expected_start
             if luecke > _MAX_ABSORBED_GAP:
                 logger.warning(
-                    f"pdf-split: Luecke von {luecke} Seiten vor Seite {s} "
-                    f"(Bereich {start_page}-{end_page}) — zu gross fuer leere "
-                    f"Rueckseiten, hier fehlt ein ganzes Dokument. Verworfen "
-                    f"statt dem vorangehenden Dokument zugeschlagen."
+                    f"pdf-split: gap of {luecke} pages before page {s} "
+                    f"(range {start_page}-{end_page}) — too large for blank "
+                    f"back sides, a whole document is missing here. Rejected "
+                    f"instead of added to the preceding document."
                 )
                 return None
             absorbed += luecke
@@ -419,19 +419,19 @@ def validate_boundaries(
         luecke = end_page + 1 - expected_start
         if luecke > _MAX_ABSORBED_GAP:
             logger.warning(
-                f"pdf-split: Luecke von {luecke} Seiten am Ende "
-                f"(Bereich {start_page}-{end_page}) — zu gross fuer leere "
-                f"Rueckseiten. Verworfen."
+                f"pdf-split: gap of {luecke} pages at the end "
+                f"(range {start_page}-{end_page}) — too large for blank "
+                f"back sides. Rejected."
             )
             return None
         absorbed += luecke
         pieces[-1] = replace(pieces[-1], end_page=end_page)
     if absorbed:
         logger.info(
-            f"pdf-split: {absorbed} uebersprungene Seite(n) dem vorangehenden "
-            f"Dokument zugeschlagen (Seiten {start_page}-{end_page}, "
-            f"{len(pieces)} Stueck) — das Modell liess sie aus, der Prompt "
-            f"verlangt eine lueckenlose Ueberdeckung"
+            f"pdf-split: {absorbed} skipped page(s) added to the preceding "
+            f"document (pages {start_page}-{end_page}, "
+            f"{len(pieces)} pieces) — the model left them out, the prompt "
+            f"requires gap-free coverage"
         )
     return pieces
 

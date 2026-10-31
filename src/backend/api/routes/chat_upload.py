@@ -107,7 +107,7 @@ async def upload_chat_document(
         async with aiofiles.open(file_path, 'wb') as f:
             await f.write(content)
     except Exception as e:
-        logger.error(f"Chat upload: Datei speichern fehlgeschlagen: {e}")
+        logger.error(f"Chat upload: saving the file failed: {e}")
         raise HTTPException(status_code=500, detail="File save failed")
 
     # Create the row up-front in PROCESSING state so the client gets an id right
@@ -172,7 +172,7 @@ async def _extract_and_finalize(
     try:
         extracted_text = await _get_processor().extract_text_only(file_path)
     except Exception as e:
-        logger.error(f"Chat upload {upload_id}: Text-Extraktion fehlgeschlagen: {e}")
+        logger.error(f"Chat upload {upload_id}: text extraction failed: {e}")
         status = UPLOAD_STATUS_FAILED
         error_message = str(e)
 

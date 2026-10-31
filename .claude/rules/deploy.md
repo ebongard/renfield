@@ -17,7 +17,7 @@ Loaded only when a manifest or the deploy script is read. The runbook is the `de
   are built there and pushed to the registry; production is the private k8s cluster (context `renfield-private`).
 - The registry hostname is NOT committed: manifests carry the placeholder `your-registry.example/renfield/…`, scripts
   need `RENFIELD_REGISTRY`.
-- Two instances: household (`renfield`, auth off) and xidra (`renfield-xidra`, auth on). xidra's manifests and config
+- Two instances, both auth-on: household (`renfield`, since 2026-09-23, no HttpOnly cookie) and xidra (`renfield-xidra`). xidra's manifests and config
   live in the private `x-ren` repo — never apply household files there.
 
 ## Never

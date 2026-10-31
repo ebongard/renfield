@@ -41,5 +41,5 @@ async def refresh_keywords(user=Depends(require_permission(Permission.ADMIN))):
             "sample_keywords": list(keywords)[:20],
         }
     except Exception as e:
-        logger.error(f"❌ Keyword Refresh Fehler: {e}")
+        logger.error(f"❌ Keyword refresh error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e

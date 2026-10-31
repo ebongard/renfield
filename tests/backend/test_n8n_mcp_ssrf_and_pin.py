@@ -75,10 +75,10 @@ def test_n8n_mcp_is_allowed_to_reach_a_private_address():
     """Without the switch the n8n connection is dead, not merely limited."""
     env = _server("n8n").get("env") or {}
     assert env.get("WEBHOOK_SECURITY_MODE") == "permissive", (
-        "`WEBHOOK_SECURITY_MODE: permissive` fehlt in der n8n-Stanza — der "
-        "SSRF-Riegel von n8n-mcp weist dann jeden Aufruf an die LAN-Adresse "
-        "ab, waehrend der Server weiter als „verbunden\" gilt. Der Ausfall "
-        "ist lautlos: nur die Funktionssonde sieht ihn.")
+        "`WEBHOOK_SECURITY_MODE: permissive` is missing from the n8n stanza — "
+        "n8n-mcp's SSRF guard then rejects every call to the LAN address "
+        "while the server still counts as \"connected\". The outage is "
+        "silent: only the functional probe sees it.")
 
 
 def test_the_probe_that_catches_it_still_exists():
@@ -90,8 +90,8 @@ def test_the_probe_that_catches_it_still_exists():
     """
     sonde = _server("n8n").get("health_probe") or {}
     assert sonde.get("tool") == "n8n_list_workflows", (
-        "die n8n-Funktionssonde ist weg oder ruft ein anderes Werkzeug — dann "
-        "faellt ein Totalausfall der Anbindung wieder niemandem auf")
+        "the n8n functional probe is gone or calls a different tool — then "
+        "a total outage of the connection again goes unnoticed by anyone")
 
 
 def _npx_server_pakete() -> list[tuple[str, str]]:
@@ -112,7 +112,7 @@ def _npx_server_pakete() -> list[tuple[str, str]]:
         if e.get("command") != "npx":
             continue
         args = [a for a in (e.get("args") or []) if not a.startswith("-")]
-        assert args, f"npx-Server `{e['name']}` nennt kein Paket in args"
+        assert args, f"npx server `{e['name']}` names no package in args"
         treffer.append((e["name"], args[0]))
     return treffer
 
@@ -139,18 +139,18 @@ def test_every_npx_mcp_server_is_pinned_in_every_backend_image():
     runtime, with `NEWS_ENABLED: "true"`.
     """
     erwartet = _npx_server_pakete()
-    assert erwartet, "kein npx-Server mehr in der Konfiguration — Test anpassen"
+    assert erwartet, "no npx server left in the configuration — adjust the test"
     installiert = _installierte_pakete()
-    assert installiert, "keine globale npm-Installation in den Bilddateien"
+    assert installiert, "no global npm install in the image files"
 
     fehlend = []
     for datei, pakete in sorted(installiert.items()):
         for server, paket in erwartet:
             if paket not in pakete:
-                fehlend.append(f"{datei}: `{paket}` (Server `{server}`) fehlt")
+                fehlend.append(f"{datei}: `{paket}` (server `{server}`) missing")
     assert not fehlend, (
-        "ein per npx gestarteter MCP-Server ist nicht im Bild festgenagelt — "
-        "dann laedt der Pod ihn beim Start aus dem Netz:\n  "
+        "an MCP server started via npx is not pinned in the image — "
+        "the pod then downloads it from the network on start:\n  "
         + "\n  ".join(fehlend))
 
 
@@ -166,8 +166,8 @@ def test_no_mcp_package_in_the_image_floats_on_latest():
     offen = [f"{d}: {z}" for d, z in _globale_installationszeilen()
              if "@latest" in z]
     assert not offen, (
-        "ein MCP-Paket haengt an `@latest` — jeder Bildbau kann dann ein "
-        "anderes Verhalten einziehen, ohne dass der Diff etwas zeigt:\n  "
+        "an MCP package hangs on `@latest` — every image build can then pull in "
+        "different behaviour without the diff showing anything:\n  "
         + "\n  ".join(offen))
 
 
@@ -182,13 +182,13 @@ def test_every_globally_installed_mcp_package_names_an_exact_version():
     #1412.
     """
     zeilen = _globale_installationszeilen()
-    assert zeilen, "keine globale npm-Installation mehr im Bild — Test anpassen"
+    assert zeilen, "no global npm install left in the image — adjust the test"
     pakete = [(d, m) for d, z in zeilen
               for m in re.findall(r"npm install -g\s+(\S+)", z)]
     for datei, paket in pakete:
-        assert "@" in paket, f"{datei}: `{paket}` nennt keine Version"
+        assert "@" in paket, f"{datei}: `{paket}` names no version"
         version = paket.rsplit("@", 1)[1]
         assert re.match(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$", version), (
-            f"{datei}: `{paket}` schwebt — `latest`, ein dist-tag, `^x.y`, "
-            "`~x.y` oder `x` lassen den Bildbau entscheiden, welcher Code mit "
-            "dem Dienst spricht")
+            f"{datei}: `{paket}` floats — `latest`, a dist-tag, `^x.y`, "
+            "`~x.y` or `x` let the image build decide which code talks "
+            "to the service")

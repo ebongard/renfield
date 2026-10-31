@@ -339,7 +339,7 @@ async def upload_document(
     # Read the file contents and compute the SHA256 hash
     content = await file.read()
     file_hash = hashlib.sha256(content).hexdigest()
-    logger.info(f"📄 Datei-Hash berechnet: {file_hash[:16]}... ({file.filename})")
+    logger.info(f"📄 File hash computed: {file_hash[:16]}... ({file.filename})")
 
     # Duplicate check: is there already a document with this hash in the same knowledge base?
     existing_doc = await rag.db.execute(
@@ -378,7 +378,7 @@ async def upload_document(
         async with aiofiles.open(file_path, 'wb') as f:
             await f.write(content)
 
-        logger.info(f"Datei gespeichert: {file_path}")
+        logger.info(f"File stored: {file_path}")
 
     except Exception as e:
         logger.error(f"Failed to store the file: {e}")
@@ -461,7 +461,7 @@ async def upload_document(
                 # Don't let cleanup mask the real DB error the user
                 # needs to see. Log it and move on.
                 logger.warning(f"failed to clean up orphan upload {file_path}: {cleanup_err}")
-        logger.error(f"Fehler beim Anlegen des Document-Records: {e}")
+        logger.error(f"Failed to create the document record: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
     queue = DocumentTaskQueue(redis_client=get_redis())

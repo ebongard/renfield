@@ -128,7 +128,7 @@ def test_reines_latest_manifest_meldet_nichts_zu_tun(tmp_path: Path) -> None:
     ergebnis = _lauf(tmp_path, "--backend-tag", "2026-09-29-neu")
 
     assert ergebnis.returncode == 0, ergebnis.stderr
-    assert "nichts zu tun" in ergebnis.stdout
+    assert "nothing to do" in ergebnis.stdout
     assert pfad.read_text() == original
 
 

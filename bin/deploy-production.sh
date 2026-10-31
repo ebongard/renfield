@@ -218,10 +218,10 @@ count_lines() { printf '%s' "$1" | grep -c . || true; }
 # only way to rehearse the gate before a real deploy.
 gate_abort() {
   if [[ $DRY_RUN == 1 ]]; then
-    printf '  [dry-run] TOR WUERDE ABBRECHEN: %s\n' "$1"
+    printf '  [dry-run] GATE WOULD ABORT: %s\n' "$1"
   else
     printf '\n\033[1;31mERROR: %s\033[0m\n' "$1" >&2
-    echo "       Bewusstes Uebergehen (nur wenn die Lage geklaert ist): --skip-migration-gate" >&2
+    echo "       Deliberate override (only once the situation is clear): --skip-migration-gate" >&2
     exit 1
   fi
 }
@@ -229,10 +229,10 @@ gate_abort() {
 if [[ $SKIP_BACKEND == 1 ]]; then
   : # no new backend image -- there is no head to compare against
 elif [[ $SKIP_MIGRATION_GATE == 1 ]]; then
-  log "Migrations-Tor UEBERSPRUNGEN (--skip-migration-gate)"
-  echo "  WARNING: der Alembic-Kopf des Bildes wurde NICHT gegen $NS geprueft." >&2
+  log "Migration gate SKIPPED (--skip-migration-gate)"
+  echo "  WARNING: the image's Alembic head was NOT checked against $NS." >&2
 else
-  log "Vorflug-Tor: Alembic-Kopf im Bild gegen $NS"
+  log "Preflight gate: Alembic head in the image against $NS"
   IMAGE_REF="$REGISTRY/backend:$BACKEND_TAG"
   GATE_PROBED=1
 
@@ -249,11 +249,11 @@ else
   # missing, something else went wrong, and then nothing gets rolled out.
   if ! ssh "$BUILD_HOST" "docker image inspect $IMAGE_REF >/dev/null 2>&1"; then
     if [[ $DRY_RUN == 1 ]]; then
-      echo "  [dry-run] $IMAGE_REF liegt nicht auf $BUILD_HOST — im Probelauf ist das Tor damit NICHT probebar."
-      echo "  [dry-run] (im echten Lauf hat Schritt 2 das Bild gerade gebaut; ein Pull wird hier bewusst vermieden)"
+      echo "  [dry-run] $IMAGE_REF is not on $BUILD_HOST — in a trial run the gate is therefore NOT testable."
+      echo "  [dry-run] (in a real run step 2 has just built the image; a pull is deliberately avoided here)"
       GATE_PROBED=0
     else
-      gate_abort "$IMAGE_REF liegt nach dem Bau nicht auf $BUILD_HOST — Bau oder Push ist schiefgegangen. Es wird nicht ausgerollt."
+      gate_abort "$IMAGE_REF is not on $BUILD_HOST after the build — build or push went wrong. Nothing is rolled out."
     fi
   fi
 
@@ -262,7 +262,7 @@ else
     IMG_HEADS="$(printf '%s\n' "$img_out" | alembic_revs)"
   elif [[ $GATE_PROBED == 1 ]]; then
     printf '%s\n' "$img_out" | tail -5 >&2
-    gate_abort "Alembic-Kopf aus $IMAGE_REF nicht ermittelbar (docker-Fehler). Im Zweifel wird NICHT ausgerollt."
+    gate_abort "Alembic head of $IMAGE_REF cannot be determined (docker error). When in doubt, NOTHING is rolled out."
     GATE_PROBED=0
   fi
 
@@ -274,7 +274,7 @@ else
     DB_REVS="$(printf '%s\n' "$db_out" | alembic_revs)"
   elif [[ $GATE_PROBED == 1 ]]; then
     printf '%s\n' "$db_out" | tail -5 >&2
-    gate_abort "Alembic-Revision der Datenbank in $NS nicht ermittelbar (kein laufender backend-Pod?). Im Zweifel wird NICHT ausgerollt."
+    gate_abort "Alembic revision of the database in $NS cannot be determined (no running backend pod?). When in doubt, NOTHING is rolled out."
     GATE_PROBED=0
   fi
 
@@ -283,27 +283,27 @@ else
     DB_REV_COUNT="$(count_lines "$DB_REVS")"
     IMG_HEAD="$(printf '%s' "$IMG_HEADS" | head -1)"
     DB_REV="$(printf '%s' "$DB_REVS" | head -1)"
-    echo "  Bild  $IMAGE_REF"
-    echo "        Kopf:     ${IMG_HEADS//$'\n'/ } (${IMG_HEAD_COUNT})"
+    echo "  Image $IMAGE_REF"
+    echo "        Head:     ${IMG_HEADS//$'\n'/ } (${IMG_HEAD_COUNT})"
     echo "  DB    $NS"
     echo "        Revision: ${DB_REVS//$'\n'/ } (${DB_REV_COUNT})"
 
     if [[ $IMG_HEAD_COUNT -eq 0 ]]; then
-      gate_abort "Aus der Ausgabe von \`alembic heads\` liess sich keine Revision lesen — Format geaendert? Es wird nicht geraten."
+      gate_abort "No revision could be read from the output of \`alembic heads\` — format changed? Nothing is guessed."
     elif [[ $IMG_HEAD_COUNT -gt 1 ]]; then
       # A forked chain. Until now this was only checked when WRITING a
       # migration; here it stands on the rollout side.
-      gate_abort "Mehrere Alembic-Koepfe im Bild (gegabelte Kette): ${IMG_HEADS//$'\n'/ }. Erst zusammenfuehren (merge-Revision), dann ausrollen."
+      gate_abort "Several Alembic heads in the image (forked chain): ${IMG_HEADS//$'\n'/ }. Merge first (merge revision), then roll out."
     elif [[ $DB_REV_COUNT -ne 1 ]]; then
       # An empty or forked `alembic_version`. With --migrate the migration
       # step straightens it out; without it the situation is unclear.
       if [[ $DO_MIGRATE == 1 ]]; then
-        echo "  WARNING: Datenbank-Revision in $NS unklar ($DB_REV_COUNT Eintraege) — --migrate ist gesetzt, der Migrationsschritt laeuft davor." >&2
+        echo "  WARNING: database revision in $NS unclear ($DB_REV_COUNT entries) — --migrate is set, the migration step runs before." >&2
       else
-        gate_abort "Datenbank-Revision in $NS unklar ($DB_REV_COUNT Eintraege) — leere oder gegabelte \`alembic_version\`. Nicht ausrollen."
+        gate_abort "Database revision in $NS unclear ($DB_REV_COUNT entries) — empty or forked \`alembic_version\`. Not rolling out."
       fi
     elif [[ "$IMG_HEAD" == "$DB_REV" ]]; then
-      echo "  OK: Bild und Datenbank stehen auf $IMG_HEAD — keine Migration ausstehend."
+      echo "  OK: image and database are at $IMG_HEAD — no migration pending."
     # The heads differ. The direction decides, and it is ASKED FOR, not
     # guessed from image tags or date-based names: if the image knows the DB
     # revision, then that revision lies in its chain and the DB is BEHIND (the
@@ -335,19 +335,19 @@ else
 
       if [[ -z "$probe_head" || -z "$probe_db" ]]; then
         printf '%s\n' "$probe_out" | tail -5 >&2
-        gate_abort "$(printf 'Die Richtungs-Sonde hat nicht geantwortet (ssh/docker-Fehler?) — ob die Datenbank in %s zurueck oder weiter ist, ist damit UNBEKANNT.\n       Im Zweifel wird NICHT ausgerollt. Alembic-Kopf im Bild: %s, in der DB: %s.' "$NS" "$IMG_HEAD" "$DB_REV")"
+        gate_abort "$(printf 'The direction probe did not answer (ssh/docker error?) — whether the database in %s is behind or ahead is therefore UNKNOWN.\n       When in doubt, NOTHING is rolled out. Alembic head in the image: %s, in the DB: %s.' "$NS" "$IMG_HEAD" "$DB_REV")"
       elif [[ "$probe_head" != "0" ]]; then
-        gate_abort "$(printf 'Die Richtungs-Sonde ist KAPUTT: das Bild kennt seinen EIGENEN Kopf %s nicht (alembic show → %s).\n       Damit ist aus einem Fehlschlag fuer %s kein Schluss zu ziehen. Im Zweifel wird NICHT ausgerollt.' "$IMG_HEAD" "$probe_head" "$DB_REV")"
+        gate_abort "$(printf 'The direction probe is BROKEN: the image does not know its OWN head %s (alembic show → %s).\n       So no conclusion can be drawn from a failure for %s. When in doubt, NOTHING is rolled out.' "$IMG_HEAD" "$probe_head" "$DB_REV")"
       elif [[ "$probe_db" == "0" ]]; then
         if [[ $DO_MIGRATE == 1 ]]; then
-          echo "  Datenbank ist ZURUECK ($DB_REV → $IMG_HEAD) — --migrate ist gesetzt, der Migrationsschritt laeuft vor dem Rollout."
+          echo "  Database is BEHIND ($DB_REV → $IMG_HEAD) — --migrate is set, the migration step runs before the rollout."
         else
-          gate_abort "$(printf 'Die Datenbank in %s ist ZURUECK hinter dem Bild — ohne --migrate wird das ein Ausfall.\n       Alembic-Kopf im Bild:  %s\n       Alembic in der DB:     %s\n       Das ORM waehlt jede Spalte unbedingt: ein Pod auf diesem Bild scheitert an JEDER\n       Abfrage auf die geaenderten Tabellen, und /health/ready meldet dabei weiter healthy.\n       → --migrate nachlegen (die Migration laeuft dann VOR dem Rollout).' "$NS" "$IMG_HEAD" "$DB_REV")"
+          gate_abort "$(printf 'The database in %s is BEHIND the image — without --migrate this becomes an outage.\n       Alembic head in the image: %s\n       Alembic in the DB:         %s\n       The ORM selects every column unconditionally: a pod on this image fails on EVERY\n       query on the changed tables, and /health/ready keeps reporting healthy meanwhile.\n       → add --migrate (the migration then runs BEFORE the rollout).' "$NS" "$IMG_HEAD" "$DB_REV")"
         fi
       else
         # Permitted (the extra columns are nullable), but do not keep quiet about it.
-        echo "  WARNING: die Datenbank in $NS traegt $DB_REV — eine Revision, die dieses Bild nicht kennt (Kopf: $IMG_HEAD)." >&2
-        echo "           Das ist ein RUECKFALL auf ein aelteres Bild. Erlaubt, solange die zusaetzlichen Spalten nullbar sind — nachsehen." >&2
+        echo "  WARNING: the database in $NS carries $DB_REV — a revision this image does not know (head: $IMG_HEAD)." >&2
+        echo "           This is a ROLLBACK to an older image. Permitted as long as the extra columns are nullable — check." >&2
       fi
     fi
   fi
@@ -436,7 +436,7 @@ fi
 # a row the next commit in x-ren was called "image tags to the live state".
 # NOTHING is committed here -- the script only says what is pending.
 if [[ -n "$MANIFESTS_DIR" ]]; then
-  log "Bildmarken in die Manifeste schreiben (ohne Commit)"
+  log "Write image tags into the manifests (no commit)"
   # Explicit `if` blocks instead of `[[ ... ]] && cmd`: under `set -e` such a
   # chain's return code is that of the failing test, and whether that aborts
   # depends on the context. In a deploy script one does not want to guess.
@@ -445,7 +445,7 @@ if [[ -n "$MANIFESTS_DIR" ]]; then
   if [[ -n "$FRONTEND_TAG" ]]; then tag_args+=(--frontend-tag "$FRONTEND_TAG"); fi
   if [[ $DRY_RUN == 1      ]]; then tag_args+=(--dry-run); fi
   "$REPO_ROOT/bin/k8s-write-image-tags.sh" "${tag_args[@]}" \
-    || echo "WARNING: Bildmarken konnten nicht geschrieben werden — von Hand nachziehen" >&2
+    || echo "WARNING: image tags could not be written — update them by hand" >&2
 fi
 
 if [[ -z "$MANIFESTS_DIR" ]]; then

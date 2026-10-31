@@ -62,7 +62,7 @@ class FrigateClient:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"❌ Fehler beim Abrufen der Frigate Events: {e}")
+            logger.error(f"❌ Failed to fetch the Frigate events: {e}")
             return []
 
     async def get_snapshot(self, event_id: str) -> bytes | None:
@@ -76,7 +76,7 @@ class FrigateClient:
             response.raise_for_status()
             return response.content
         except Exception as e:
-            logger.error(f"❌ Fehler beim Laden des Snapshots: {e}")
+            logger.error(f"❌ Failed to load the snapshot: {e}")
             return None
 
     async def get_cameras(self) -> list[str]:
@@ -91,7 +91,7 @@ class FrigateClient:
             config = response.json()
             return list(config.get("cameras", {}).keys())
         except Exception as e:
-            logger.error(f"❌ Fehler beim Abrufen der Kamera-Liste: {e}")
+            logger.error(f"❌ Failed to fetch the camera list: {e}")
             return []
 
     def setup_mqtt(self, broker: str | None = None, port: int | None = None):
@@ -103,7 +103,7 @@ class FrigateClient:
         broker = broker or ha_glue_settings.frigate_mqtt_broker
         port = port if port is not None else ha_glue_settings.frigate_mqtt_port
         def on_connect(client, userdata, flags, rc):
-            logger.info(f"✅ MQTT verbunden (Code: {rc})")
+            logger.info(f"✅ MQTT connected (code: {rc})")
             # Subscribe to all Frigate events
             client.subscribe("frigate/events")
             client.subscribe("frigate/+/+/snapshot")
@@ -128,7 +128,7 @@ class FrigateClient:
                 for callback in self.event_callbacks:
                     callback(topic, payload)
             except Exception as e:
-                logger.error(f"❌ MQTT Message Fehler: {e}")
+                logger.error(f"❌ MQTT message error: {e}")
 
         self.mqtt_client = mqtt.Client()
         self.mqtt_client.on_connect = on_connect
@@ -137,9 +137,9 @@ class FrigateClient:
         try:
             self.mqtt_client.connect(broker, port, 60)
             self.mqtt_client.loop_start()
-            logger.info("✅ MQTT Client gestartet")
+            logger.info("✅ MQTT client started")
         except Exception as e:
-            logger.error(f"❌ MQTT Connection Fehler: {e}")
+            logger.error(f"❌ MQTT connection error: {e}")
 
     def _handle_new_object(self, payload: dict):
         """Handler for new objects"""
@@ -147,7 +147,7 @@ class FrigateClient:
         label = after.get("label")
         camera = after.get("camera")
 
-        logger.info(f"🎯 Neues Objekt erkannt: {label} auf {camera}")
+        logger.info(f"🎯 New object detected: {label} on {camera}")
 
         # A notification could be triggered here
 
@@ -157,7 +157,7 @@ class FrigateClient:
         label = after.get("label")
         camera = after.get("camera")
 
-        logger.info(f"👋 Objekt verlassen: {label} von {camera}")
+        logger.info(f"👋 Object left: {label} from {camera}")
 
     def add_event_callback(self, callback: Callable):
         """Register an event callback"""

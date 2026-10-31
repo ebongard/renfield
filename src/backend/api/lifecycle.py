@@ -90,7 +90,7 @@ def _spawn_periodic_task(
 async def _init_database():
     """Initialize database and run migrations."""
     await init_db()
-    logger.info("✅ Datenbank initialisiert")
+    logger.info("✅ Database initialised")
 
 
 async def _reconcile_credentials_boot():
@@ -113,17 +113,17 @@ async def _init_auth():
         async with AsyncSessionLocal() as db_session:
             # Ensure default roles exist
             roles = await ensure_default_roles(db_session)
-            logger.info(f"✅ Auth-Rollen initialisiert: {[r.name for r in roles]}")
+            logger.info(f"✅ Auth roles initialised: {[r.name for r in roles]}")
 
             # Ensure default admin user exists (only if no users exist)
             admin = await ensure_admin_user(db_session)
             if admin:
                 logger.warning(
-                    f"⚠️  Standard-Admin erstellt: '{admin.username}' - "
-                    f"BITTE PASSWORT SOFORT ÄNDERN!"
+                    f"⚠️  Default admin created: '{admin.username}' - "
+                    f"CHANGE THE PASSWORD IMMEDIATELY!"
                 )
     except Exception as e:
-        logger.error(f"❌ Auth-Initialisierung fehlgeschlagen: {e}")
+        logger.error(f"❌ Auth initialisation failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
 
@@ -133,7 +133,7 @@ async def _init_ollama(app: "FastAPI") -> OllamaService:
     ollama = OllamaService()
     await ollama.ensure_model_loaded()
     app.state.ollama = ollama
-    logger.info("✅ Ollama Service bereit")
+    logger.info("✅ Ollama service ready")
     return ollama
 
 
@@ -141,7 +141,7 @@ async def _init_task_queue(app: "FastAPI") -> TaskQueue:
     """Initialize the task queue."""
     task_queue = TaskQueue()
     app.state.task_queue = task_queue
-    logger.info("✅ Task Queue bereit")
+    logger.info("✅ Task queue ready")
     return task_queue
 
 
@@ -155,7 +155,7 @@ def _schedule_whisper_preload():
             try:
                 whisper_service = get_whisper_service()
                 whisper_service.load_model()
-                logger.info("✅ Whisper Service bereit (STT aktiviert)")
+                logger.info("✅ Whisper service ready (STT enabled)")
             except Exception as e:
                 logger.warning(f"⚠️  Whisper could not be preloaded: {e}")
                 logger.warning("💡 Speech input will be loaded on first use")
@@ -163,7 +163,7 @@ def _schedule_whisper_preload():
         task = asyncio.create_task(preload_whisper())
         _startup_tasks.append(task)
     except Exception as e:
-        logger.warning(f"⚠️  Whisper-Preloading fehlgeschlagen: {e}")
+        logger.warning(f"⚠️  Whisper preloading failed: {e}")
 
 
 def _schedule_reminder_checker():
@@ -335,7 +335,7 @@ async def _init_mcp(app: "FastAPI"):
     """Initialize MCP client connections to external tool servers."""
     if not settings.mcp_enabled:
         app.state.mcp_manager = None
-        logger.info("MCP Client deaktiviert")
+        logger.info("MCP client disabled")
         return
 
     try:
@@ -376,7 +376,7 @@ async def _init_mcp(app: "FastAPI"):
         prompt_tools = manager.get_prompt_tools_config()
         intent_registry.set_mcp_prompt_tools(prompt_tools)
 
-        logger.info(f"✅ MCP Client bereit: {len(mcp_tools)} Tools registriert")
+        logger.info(f"✅ MCP client ready: {len(mcp_tools)} tools registered")
 
         # Federation peer registry (F3c) — register paired PeerUsers as
         # virtual FEDERATION-transport MCP servers so the agent loop sees
@@ -403,7 +403,7 @@ async def _init_agent_router(app: "FastAPI"):
     if not settings.agent_enabled:
         app.state.agent_router = None
         app.state.agent_roles_config = None
-        logger.info("Agent Router deaktiviert (agent_enabled=false)")
+        logger.info("Agent router disabled (agent_enabled=false)")
         return
 
     try:
@@ -424,7 +424,7 @@ async def _init_agent_router(app: "FastAPI"):
         )
         app.state.agent_router = router
         app.state.agent_roles_config = roles_config
-        logger.info(f"✅ Agent Router bereit: {len(router.roles)} Rollen")
+        logger.info(f"✅ Agent router ready: {len(router.roles)} roles")
 
         # Initialize Semantic Router for fast classification
         if settings.semantic_router_enabled if hasattr(settings, 'semantic_router_enabled') else True:
@@ -665,7 +665,7 @@ async def lifespan(app: "FastAPI"):
     - Home Assistant keywords (background)
     - Zeroconf for satellite discovery
     """
-    logger.info("🚀 Renfield startet...")
+    logger.info("🚀 Renfield is starting...")
 
     # Block startup if auth is enabled but secret_key is still the default
     if settings.auth_enabled and settings.secret_key.get_secret_value() == "changeme-in-production-use-strong-random-key":

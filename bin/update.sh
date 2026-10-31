@@ -18,62 +18,62 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Create a backup
-echo "💾 Erstelle Backup..."
+echo "💾 Creating backup..."
 timestamp=$(date +%Y%m%d_%H%M%S)
 backup_dir="backups/backup_$timestamp"
 mkdir -p "$backup_dir"
 
 # Database backup
-echo "  → Datenbank..."
+echo "  → Database..."
 docker exec renfield-postgres pg_dump -U renfield renfield > "$backup_dir/database.sql"
 
 # .env Backup
-echo "  → Konfiguration..."
+echo "  → Configuration..."
 cp .env "$backup_dir/.env"
 
-echo -e "${GREEN}✓${NC} Backup erstellt in $backup_dir"
+echo -e "${GREEN}✓${NC} Backup created in $backup_dir"
 echo ""
 
 # Git pull (if this is a git repository)
 if [ -d .git ]; then
-    echo "📥 Lade Updates..."
+    echo "📥 Fetching updates..."
     git pull
-    echo -e "${GREEN}✓${NC} Code aktualisiert"
+    echo -e "${GREEN}✓${NC} Code updated"
     echo ""
 fi
 
 # Rebuild the containers
-echo "🔨 Baue Container neu..."
+echo "🔨 Rebuilding containers..."
 docker-compose build
 
 # Restart the containers
-echo "🔄 Starte Container neu..."
+echo "🔄 Restarting containers..."
 docker-compose down
 docker-compose up -d
 
 echo ""
-echo "⏳ Warte auf Services..."
+echo "⏳ Waiting for services..."
 sleep 15
 
 # Health Check
 if curl -s -f -o /dev/null "http://localhost:8000/health"; then
-    echo -e "${GREEN}✓${NC} Backend ist online"
+    echo -e "${GREEN}✓${NC} Backend is online"
 else
-    echo -e "${RED}✗${NC} Backend ist nicht erreichbar"
-    echo "Rollback mit: ./bin/rollback.sh $backup_dir"
+    echo -e "${RED}✗${NC} Backend is not reachable"
+    echo "Roll back with: ./bin/rollback.sh $backup_dir"
     exit 1
 fi
 
 if curl -s -f -o /dev/null "http://localhost:3000"; then
-    echo -e "${GREEN}✓${NC} Frontend ist online"
+    echo -e "${GREEN}✓${NC} Frontend is online"
 else
-    echo -e "${RED}✗${NC} Frontend ist nicht erreichbar"
+    echo -e "${RED}✗${NC} Frontend is not reachable"
 fi
 
 echo ""
 echo "================================================"
-echo -e "${GREEN}✓ Update erfolgreich!${NC}"
+echo -e "${GREEN}✓ Update successful!${NC}"
 echo "================================================"
 echo ""
-echo "Backup gespeichert in: $backup_dir"
+echo "Backup saved in: $backup_dir"
 echo ""

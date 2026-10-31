@@ -52,10 +52,10 @@ def test_kappung_erzeugt_einen_hinweis():
     because the helper returns empty AS A RULE.
     """
     hinweis = truncation_notice(TURN_END_TIMEOUT, "de")
-    assert hinweis, "bei `timeout` muss ein Hinweis entstehen — sonst ist die Kappung stumm"
+    assert hinweis, "on `timeout` a notice must arise — otherwise the truncation is silent"
     assert hinweis.endswith(" "), (
-        "der Hinweis wird der Antwort VORAN gestellt und braucht darum ein "
-        "trennendes Leerzeichen, sonst klebt er am ersten Wort"
+        "the notice is PREPENDED to the answer and therefore needs a "
+        "separating space, otherwise it sticks to the first word"
     )
 
 
@@ -108,13 +108,13 @@ def test_gesprochener_text_benutzt_echte_umlaute():
     # umlauts must occur, and the substitute spellings OF EXACTLY THE WORDS
     # that stand here must not.
     assert any(zeichen in de for zeichen in "äöüÄÖÜß"), (
-        f"kein echter Umlaut im gesprochenen Text: {de!r}"
+        f"no real umlaut in the spoken text: {de!r}"
     )
     de_klein = de.lower()
     for ersatz in ("hoechst", "gehoert", "aeusserung", "fuer", "ueber"):
         assert ersatz not in de_klein, (
-            f"Ersatzschreibung {ersatz!r} im gesprochenen Text: {de!r} — "
-            "die TTS spräche das falsch aus"
+            f"substitute spelling {ersatz!r} in the spoken text: {de!r} — "
+            "the TTS would mispronounce it"
         )
 
 
@@ -132,7 +132,7 @@ def test_sitzung_haelt_den_grund_fest():
         room="Prüfraum",
         state=SatelliteState.LISTENING,
     )
-    assert sitzung.turn_end_reason is None, "ohne Meldung kein Grund"
+    assert sitzung.turn_end_reason is None, "no report, no reason"
 
     sitzung.turn_end_reason = TURN_END_TIMEOUT
     assert sitzung.turn_end_reason == TURN_END_TIMEOUT
@@ -178,14 +178,14 @@ def test_handler_stellt_den_hinweis_VORAN():
 
     quelle = inspect.getsource(satellite_handler)
     assert "response_text = _cut_notice + response_text" in quelle, (
-        "der Hinweis muss VORAN gestellt werden, nicht angehängt"
+        "the notice must be PREPENDED, not appended"
     )
     assert "truncation_notice(reason, satellite_language)" in quelle, (
-        "der Handler muss den produktiven Helfer benutzen, keinen eigenen Text"
+        "the handler must use the production helper, not its own text"
     )
     assert "satellite_manager.set_turn_end_reason(session_id, reason)" in quelle, (
-        "der Grund muss festgehalten werden, nicht nur protokolliert — "
-        "genau das war der Fehler"
+        "the reason must be recorded, not merely logged — "
+        "exactly that was the bug"
     )
 
 
@@ -224,7 +224,7 @@ def test_gekappter_durchlauf_extrahiert_NICHT(monkeypatch):
     )
     assert ergebnis is None
     assert gerufen == [], (
-        f"ein gekappter Satz darf nichts extrahieren, gerufen wurde: {gerufen}"
+        f"a truncated sentence must extract nothing, called: {gerufen}"
     )
 
 

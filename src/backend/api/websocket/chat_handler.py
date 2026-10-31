@@ -871,12 +871,12 @@ async def _stream_rag_response(
 
             if is_followup and session_state.is_rag_context_valid():
                 rag_context = session_state.last_rag_context
-                logger.info(f"📚 RAG Follow-up erkannt, nutze gecachten Kontext ({len(rag_context)} Zeichen)")
+                logger.info(f"📚 RAG follow-up detected, using cached context ({len(rag_context)} chars)")
             else:
                 async with AsyncSessionLocal() as db_session:
                     rag_service = RAGService(db_session)
 
-                    logger.info(f"📚 RAG Suche: query='{content[:50]}...', kb_id={knowledge_base_id}, is_followup={is_followup}")
+                    logger.info(f"📚 RAG search: query='{content[:50]}...', kb_id={knowledge_base_id}, is_followup={is_followup}")
 
                     search_results = await rag_service.search(
                         query=content,
@@ -924,14 +924,14 @@ async def _stream_rag_response(
                 session_state.add_to_history("assistant", full_response)
                 return full_response
             else:
-                logger.info("📚 Kein RAG Kontext gefunden, nutze normale Konversation")
+                logger.info("📚 No RAG context found, using plain conversation")
                 await websocket.send_json({
                     "type": "rag_context",
                     "has_context": False,
                     "knowledge_base_id": knowledge_base_id
                 })
         except Exception as e:
-            logger.error(f"❌ RAG-Fehler, Fallback zu normaler Konversation: {e}")
+            logger.error(f"❌ RAG error, falling back to plain conversation: {e}")
             import traceback
             logger.error(traceback.format_exc())
 
@@ -964,7 +964,7 @@ async def websocket_endpoint(
         return
 
     await websocket.accept()
-    logger.info(f"✅ WebSocket Verbindung hergestellt (IP: {ip_address})")
+    logger.info(f"✅ WebSocket connection established (IP: {ip_address})")
 
     # Get rate limiter
     rate_limiter = get_rate_limiter()
@@ -1286,7 +1286,7 @@ async def websocket_endpoint(
             )
 
             _log_user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
-            logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}' (RAG: {use_rag}, session: {msg_session_id}, user: {_log_user_id})")
+            logger.info(f"📨 WebSocket message: {message_type} - '{content[:100]}' (RAG: {use_rag}, session: {msg_session_id}, user: {_log_user_id})")
 
             # Prompt injection check
             injection_result = detect_injection(content)
@@ -1345,7 +1345,7 @@ async def websocket_endpoint(
                             _newest = await ConversationService(
                                 _db_frisch).latest_message_id(msg_session_id)
                     except Exception as _exc:
-                        logger.warning(f"⚠️ Frischeprüfung fehlgeschlagen: {_exc}")
+                        logger.warning(f"⚠️ Freshness check failed: {_exc}")
 
                 # The rule lives in `shared.history_needs_reload` -- a pure
                 # function, so it is testable instead of buried here.
@@ -2206,12 +2206,12 @@ async def websocket_endpoint(
                             )
                         if _failed:
                             logger.warning(
-                                f"🤖 Orchestrator-Zug mit fehlgeschlagener Aktion: {_failed}"
+                                f"🤖 Orchestrator turn with a failed action: {_failed}"
                             )
                         if not intent:
                             intent = {"intent": "agent.orchestrated", "confidence": 1.0, "parameters": {}}
 
-                        logger.info(f"🎼 Orchestrator abgeschlossen: {agent_steps_count} Steps across {len(sub_queries)} sub-agents")
+                        logger.info(f"🎼 Orchestrator finished: {agent_steps_count} steps across {len(sub_queries)} sub-agents")
 
                 if sub_intent_handled:
                     pass  # Sub-intent plugin fully handled the turn
@@ -2373,14 +2373,14 @@ async def websocket_endpoint(
                         )
                     if _failed:
                         logger.warning(
-                            f"🤖 Agent-Zug mit fehlgeschlagener Aktion: {_failed}"
+                            f"🤖 Agent turn with a failed action: {_failed}"
                         )
 
                     # Gen-UI: emit any typed widgets the agent rendered via the
                     # render_table / render_list / weather_widget tools.
                     await _emit_turn_artifacts(_collect_tool_artifacts(agent_tool_results))
 
-                    logger.info(f"🤖 Agent [{role.name}] abgeschlossen: {agent_steps_count} Steps")
+                    logger.info(f"🤖 Agent [{role.name}] finished: {agent_steps_count} steps")
 
                     # Set intent info so frontend can show correction button
                     if not intent:
@@ -2388,7 +2388,7 @@ async def websocket_endpoint(
 
             elif not media_shortcut_handled and not paperless_confirm_handled:
                 # === Legacy Ranked Intent Path (agent_enabled=false or no router) ===
-                logger.info("🔍 Extrahiere Ranked Intents...")
+                logger.info("🔍 Extracting ranked intents...")
                 ranked_intents = await ollama.extract_ranked_intents(
                     content,
                     room_context=room_context,
@@ -2401,7 +2401,7 @@ async def websocket_endpoint(
 
                 for intent_candidate in ranked_intents:
                     intent_name = intent_candidate.get("intent", "general.conversation")
-                    logger.info(f"🎯 Versuche Intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
+                    logger.info(f"🎯 Trying intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
 
                     if intent_name == "general.unresolved":
                         logger.info("⏭️ Intent unresolved, skipping...")
@@ -2422,7 +2422,7 @@ async def websocket_endpoint(
                         intent = intent_candidate
                         action_result = candidate_result
                         intent_used = intent_candidate
-                        logger.info(f"✅ Intent {intent_name} erfolgreich: {candidate_result.get('message', '')[:80]}")
+                        logger.info(f"✅ Intent {intent_name} succeeded: {candidate_result.get('message', '')[:80]}")
 
                         session_state.update_action_context(intent, action_result)
 
@@ -2439,10 +2439,10 @@ async def websocket_endpoint(
                         })
                         break
 
-                    logger.info(f"⏭️ Intent {intent_name} lieferte kein Ergebnis, versuche nächsten...")
+                    logger.info(f"⏭️ Intent {intent_name} returned no result, trying the next one...")
 
                 if not intent_used:
-                    logger.info("💬 Alle Intents fehlgeschlagen, Fallback zu Konversation")
+                    logger.info("💬 All intents failed, falling back to conversation")
                     intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
                     intent_used = intent
 
@@ -2983,16 +2983,16 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                     lang=turn_lang,
                 )
 
-            logger.info(f"✅ WebSocket Response gesendet (tts_handled={tts_handled_by_server})")
+            logger.info(f"✅ WebSocket response sent (tts_handled={tts_handled_by_server})")
 
     except WebSocketDisconnect:
         if session_state.db_session_id:
             unregister_ws_connection(session_state.db_session_id, websocket)
-        logger.info("👋 WebSocket Verbindung getrennt")
+        logger.info("👋 WebSocket connection closed")
     except Exception as e:
         if session_state.db_session_id:
             unregister_ws_connection(session_state.db_session_id, websocket)
-        logger.error(f"❌ WebSocket Fehler: {e}")
+        logger.error(f"❌ WebSocket error: {e}")
         import traceback
         logger.error(traceback.format_exc())
         await websocket.close()

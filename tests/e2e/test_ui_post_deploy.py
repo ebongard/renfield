@@ -193,10 +193,10 @@ def test_all():
         print("\n" + "=" * 50)
         passed = sum(1 for _, s, _ in results if s == "PASS")
         failed = sum(1 for _, s, _ in results if s == "FAIL")
-        print(f"📊 Ergebnis: {passed} bestanden, {failed} fehlgeschlagen")
+        print(f"📊 Result: {passed} passed, {failed} failed")
 
         if failed > 0:
-            print("\nFehlgeschlagene Tests:")
+            print("\nFailed tests:")
             for name, status, detail in results:
                 if status == "FAIL":
                     print(f"  ❌ {name}: {detail}")

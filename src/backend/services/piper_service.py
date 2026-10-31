@@ -61,7 +61,7 @@ class PiperService:
 
         if not PIPER_AVAILABLE:
             logger.warning(
-                "⚠️  piper-tts Python package not installed. TTS-Funktionen sind deaktiviert. "
+                "⚠️  piper-tts Python package not installed. TTS functions are disabled. "
                 "Install with: pip install piper-tts>=1.2.0"
             )
         else:
@@ -175,10 +175,10 @@ class PiperService:
         try:
             voice = PiperVoice.load(model_path)
             self._voice_cache[voice_name] = voice
-            logger.info(f"📥 Piper voice geladen: {voice_name}")
+            logger.info(f"📥 Piper voice loaded: {voice_name}")
             return voice
         except Exception as e:
-            logger.error(f"❌ Fehler beim Laden der Piper voice {voice_name}: {e}")
+            logger.error(f"❌ Error loading the Piper voice {voice_name}: {e}")
             return None
 
     def ensure_model_downloaded(self):
@@ -197,7 +197,7 @@ class PiperService:
             language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
         """
         if not self.available:
-            logger.warning("Piper nicht verfügbar, TTS übersprungen")
+            logger.warning("Piper not available, TTS skipped")
             return False
 
         voice_name = self._get_voice_for_language(language)
@@ -208,7 +208,7 @@ class PiperService:
                     f.write(cached)
                 return True
             except Exception as e:
-                logger.error(f"❌ TTS Cache-Datei-Schreibfehler ({voice_name}): {e}")
+                logger.error(f"❌ TTS cache file write error ({voice_name}): {e}")
                 return False
 
         voice = self._load_voice(voice_name)
@@ -220,10 +220,10 @@ class PiperService:
             self._cache_put(voice_name, text, wav_bytes)
             with open(output_path, "wb") as f:
                 f.write(wav_bytes)
-            logger.info(f"✅ TTS erfolgreich ({voice_name}): {output_path}")
+            logger.info(f"✅ TTS successful ({voice_name}): {output_path}")
             return True
         except Exception as e:
-            logger.error(f"❌ TTS Fehler ({voice_name}): {e}")
+            logger.error(f"❌ TTS error ({voice_name}): {e}")
             return False
 
     async def synthesize_to_bytes(self, text: str, language: str = None) -> bytes:
@@ -253,7 +253,7 @@ class PiperService:
             return wav_bytes
 
         if not self.available:
-            logger.warning("Piper nicht verfügbar, TTS übersprungen")
+            logger.warning("Piper not available, TTS skipped")
             return b""
 
         voice = self._load_voice(voice_name)
@@ -265,7 +265,7 @@ class PiperService:
             self._cache_put(voice_name, text, wav_bytes)
             return wav_bytes
         except Exception as e:
-            logger.error(f"❌ TTS Fehler ({voice_name}): {e}")
+            logger.error(f"❌ TTS error ({voice_name}): {e}")
             return b""
 
     async def _synthesize_via_voice_server(self, text: str, *, language: str | None = None) -> bytes:

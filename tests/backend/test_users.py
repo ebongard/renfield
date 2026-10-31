@@ -202,7 +202,7 @@ class TestAdminUnlock:
         assert [c.args for c in unlock.await_args_list] == [
             (test_user.username,), (voice_factor_lock_id(test_user.id),),
         ]
-        assert body["cleared_keys"] == 6, "die Summe beider Zaehler"
+        assert body["cleared_keys"] == 6, "the sum of both counters"
         assert test_user.username in body["message"]
 
     @pytest.mark.database
@@ -1143,7 +1143,7 @@ class TestVoiceSecondFactorConsent:
             )
         assert exc.value.status_code == 401
         await db_session.refresh(test_user)
-        assert test_user.voice_second_factor_enabled is True, "nichts darf geschrieben sein"
+        assert test_user.voice_second_factor_enabled is True, "nothing may have been written"
 
     @pytest.mark.database
     async def test_arming_is_refused_while_recognition_is_off(
@@ -1231,7 +1231,7 @@ class TestTheUnlockButtonSeesBothCounters:
             user_id=test_user.id, db=db_session,
             current_user=MagicMock(username="admin", id=1),
         )
-        assert body.locked_out is True, "die Stimmsperre muss sichtbar sein"
+        assert body.locked_out is True, "the voice lockout must be visible"
         assert voice_id in asked
 
     @pytest.mark.database
@@ -1431,7 +1431,7 @@ class TestTheConsentBelongsToThePerson:
         for block in blockweise[1:]:
             kopf = block[:200]
             assert not re.search(r'detail\s*=\s*["\']', kopf), (
-                "Ein 409 dieser Route gibt einen SATZ heraus statt eines Codes:\n"
+                "A 409 from this route hands out a SENTENCE instead of a code:\n"
                 + kopf
             )
 
@@ -1484,8 +1484,8 @@ class TestTheConsentBelongsToThePerson:
                 db=db_session, current_user=fremder,
             )
         assert vorhanden.value.status_code == gibtsnicht.value.status_code == 403, (
-            "existierend und nicht existierend muessen fuer einen Unberechtigten "
-            "ununterscheidbar sein"
+            "existing and non-existing must be indistinguishable for an "
+            "unauthorized caller"
         )
 
 
@@ -1571,9 +1571,9 @@ class TestTheConsentBelongsToThePerson:
 
         ein = [m for lvl, m in gesehen if "enabled for user" in m]
         weg = [(lvl, m) for lvl, m in gesehen if "REMOVED" in m]
-        assert ein, "das Erteilen muss protokolliert sein"
-        assert weg, "das Entfernen muss protokolliert sein"
-        assert weg[0][0] == "WARNING", f"Entfernen war nur {weg[0][0]}"
+        assert ein, "granting must be logged"
+        assert weg, "removal must be logged"
+        assert weg[0][0] == "WARNING", f"removal was only {weg[0][0]}"
 
     @pytest.mark.database
     async def test_removing_your_own_factor_needs_the_password(
@@ -1610,9 +1610,9 @@ class TestTheConsentBelongsToThePerson:
                     ),
                     db=db_session, current_user=ich,
                 )
-            assert exc.value.status_code == 400, f"bei {falsch!r}"
+            assert exc.value.status_code == 400, f"for {falsch!r}"
             await db_session.refresh(test_user)
-            assert test_user.voice_second_factor_enabled is True, "nichts darf geschrieben sein"
+            assert test_user.voice_second_factor_enabled is True, "nothing may have been written"
 
     @pytest.mark.database
     async def test_an_admin_needs_no_password_for_a_stranger(

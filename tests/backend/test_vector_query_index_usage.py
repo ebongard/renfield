@@ -108,9 +108,9 @@ def test_every_indexed_vector_order_by_casts_to_halfvec():
         if "halfvec" not in line:
             offenders.append(f"{name}:{lineno}  {line[:100]}")
     assert offenders == [], (
-        "ORDER-BY-Vektorsuche auf einer indizierten Tabelle OHNE halfvec-Cast — "
-        "der HNSW-Index wird dort nicht benutzt (Seq Scan), gepflegt wird er "
-        "trotzdem:\n  " + "\n  ".join(offenders)
+        "ORDER BY vector search on an indexed table WITHOUT a halfvec cast — "
+        "the HNSW index is not used there (Seq Scan), yet it is still "
+        "maintained:\n  " + "\n  ".join(offenders)
     )
 
 
@@ -125,7 +125,7 @@ def test_the_cast_appears_on_both_sides():
         if line.count("halfvec") < 2:
             offenders.append(f"{name}:{lineno}  {line[:100]}")
     assert offenders == [], (
-        "halfvec steht nur auf EINER Seite des <=>:\n  " + "\n  ".join(offenders))
+        "halfvec is on only ONE side of the <=>:\n  " + "\n  ".join(offenders))
 
 
 def test_the_scale_exemption_is_documented_and_watched():
@@ -139,6 +139,6 @@ def test_the_scale_exemption_is_documented_and_watched():
     watched = (_services_dir() / "vector_index_threshold.py").read_text(encoding="utf-8")
     missing = [f for f in SCALE_EXEMPT_FILES if f not in watched]
     assert missing == [], (
-        "Diese Dateien sind vom halfvec-Cast ausgenommen, werden aber von der "
-        "Schwellen-Aufgabe NICHT beobachtet — die Ausnahme koennte still "
-        "veralten:\n  " + "\n  ".join(missing))
+        "These files are exempt from the halfvec cast but are NOT watched by "
+        "the threshold task — the exemption could silently "
+        "go stale:\n  " + "\n  ".join(missing))

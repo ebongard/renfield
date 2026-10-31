@@ -166,16 +166,16 @@ class TestTheUpgrade:
     async def test_it_adds_the_column_not_null_defaulting_false(self, schema_conn):
         conn, schema = schema_conn
         await _minimal_users(conn)
-        assert await _column(conn, schema) is None, "Voraussetzung: Spalte fehlt"
+        assert await _column(conn, schema) is None, "precondition: column is missing"
 
         await _run(conn, "upgrade")
 
         col = await _column(conn, schema)
-        assert col is not None, "der Aufweg hat die Spalte nicht angelegt"
+        assert col is not None, "the upgrade did not create the column"
         assert col["is_nullable"] == "NO"
         assert "false" in (col["default"] or "").lower(), (
-            "ohne `server_default` scheitert die Migration an bestehenden Zeilen — "
-            f"default war {col['default']!r}"
+            "without `server_default` the migration fails on existing rows — "
+            f"default was {col['default']!r}"
         )
         assert col["type"] == "boolean"
 
@@ -188,7 +188,7 @@ class TestTheUpgrade:
         vals = [r[0] for r in (await conn.execute(text(
             f"SELECT {_COLUMN} FROM users ORDER BY id"
         ))).all()]
-        assert vals == [False, False], f"bestehende Zeilen sind nicht false: {vals}"
+        assert vals == [False, False], f"existing rows are not false: {vals}"
 
     async def test_running_it_twice_is_harmless(self, schema_conn):
         """A fresh install already has the column from `create_all`. If the
@@ -228,7 +228,7 @@ class TestTheDowngradeIsExercised:
         assert await _column(conn, schema) is not None
 
         await _run(conn, "downgrade")
-        assert await _column(conn, schema) is None, "der Rückweg hat nichts entfernt"
+        assert await _column(conn, schema) is None, "the downgrade removed nothing"
 
     async def test_downgrade_twice_is_harmless(self, schema_conn):
         conn, schema = schema_conn

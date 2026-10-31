@@ -360,11 +360,11 @@ def test_the_handshake_routes_are_NOT_admin_gated():
 
     # Negative control first: the neighbour IS gated, so the detector measures.
     assert "permission_checker" in gesperrt, (
-        "Die Gegenprobe greift nicht mehr — `federation_user_links` ist nicht "
-        f"mehr admin-gesperrt. Gefunden: {sorted(gesperrt)}")
+        "The negative control no longer bites — `federation_user_links` is no "
+        f"longer admin-gated. Found: {sorted(gesperrt)}")
     assert "permission_checker" not in frei, (
-        "Der Personen-Handschlag ist admin-gesperrt und damit sinnlos. "
-        f"Gefunden: {sorted(frei)}")
+        "The person handshake is admin-gated and therefore pointless. "
+        f"Found: {sorted(frei)}")
 
 
 def test_both_protocols_sign_the_SAME_bytes():

@@ -102,11 +102,11 @@ exit 0
 def deploy(tmp_path):
     """Returns a caller that runs the real script against the stubs."""
     if shutil.which("bash") is None:  # pragma: no cover - environment guard
-        pytest.skip("bash nicht vorhanden")
-    assert _SCRIPT.is_file(), f"unvollstaendige Kopie: {_SCRIPT} fehlt (bin/ mitrsyncen)"
+        pytest.skip("bash not available")
+    assert _SCRIPT.is_file(), f"incomplete copy: {_SCRIPT} is missing (rsync bin/ too)"
     assert _MIGRATION_JOB.is_file(), (
-        f"unvollstaendige Kopie: {_MIGRATION_JOB} fehlt (k8s/ mitrsyncen) — "
-        "ohne das Manifest scheitert der --migrate-Zweig aus einem anderen Grund"
+        f"incomplete copy: {_MIGRATION_JOB} is missing (rsync k8s/ too) — "
+        "without the manifest the --migrate branch fails for a different reason"
     )
 
     stub_dir = tmp_path / "stub"
@@ -149,7 +149,7 @@ def test_image_ahead_of_db_without_migrate_aborts_before_rollout(deploy):
         STUB_SHOW_EXIT=0,
     )
     assert proc.returncode == 1
-    assert not rolled_out, "das Tor muss VOR dem ersten `set image` abbrechen"
+    assert not rolled_out, "the gate must abort BEFORE the first `set image`"
     # Both revisions in plain text, or the message is no use.
     assert "pc20260929_kg_validity" in proc.stderr
     assert "pc20260927_voice2fa" in proc.stderr
@@ -213,7 +213,7 @@ def test_explicit_bypass_proceeds(deploy):
     )
     assert proc.returncode == 0
     assert rolled_out
-    assert "NICHT gegen" in proc.stderr  # the waiver is logged
+    assert "NOT checked against" in proc.stderr  # the waiver is logged
 
 
 def test_db_ahead_of_image_warns_but_proceeds(deploy):
@@ -225,7 +225,7 @@ def test_db_ahead_of_image_warns_but_proceeds(deploy):
     )
     assert proc.returncode == 0
     assert rolled_out
-    assert "RUECKFALL" in proc.stderr
+    assert "ROLLBACK" in proc.stderr
 
 
 def test_heads_equal_proceeds_with_one_log_line(deploy):
@@ -235,14 +235,14 @@ def test_heads_equal_proceeds_with_one_log_line(deploy):
     )
     assert proc.returncode == 0
     assert rolled_out
-    assert "keine Migration ausstehend" in proc.stdout
+    assert "no migration pending" in proc.stdout
 
 
 def test_skip_backend_skips_the_gate(deploy):
     """Without a new backend image there is no head to compare."""
     proc, _ = deploy(backend_tag=None)
     assert proc.returncode == 0
-    assert "Vorflug-Tor" not in proc.stdout
+    assert "Preflight gate" not in proc.stdout
 
 
 def test_dry_run_shows_the_verdict_but_never_aborts(deploy):
@@ -255,8 +255,8 @@ def test_dry_run_shows_the_verdict_but_never_aborts(deploy):
         STUB_SHOW_EXIT=0,
     )
     assert proc.returncode == 0
-    assert not rolled_out, "ein Probelauf rollt nichts aus"
-    assert "TOR WUERDE ABBRECHEN" in proc.stdout
+    assert not rolled_out, "a dry run rolls nothing out"
+    assert "GATE WOULD ABORT" in proc.stdout
     assert "pc20260927_voice2fa" in proc.stdout
 
 
@@ -284,9 +284,9 @@ def test_a_silent_probe_aborts(deploy):
         STUB_DB_OUT="alt_rev",
         STUB_PROBE_SILENT=1,
     )
-    assert proc.returncode == 1, "eine stumme Sonde darf nicht durchlassen"
-    assert not rolled_out, "der Abbruch muss VOR dem ersten `set image` liegen"
-    assert "UNBEKANNT" in proc.stderr
+    assert proc.returncode == 1, "a silent probe must not let it through"
+    assert not rolled_out, "the abort must come BEFORE the first `set image`"
+    assert "UNKNOWN" in proc.stderr
 
 
 def test_a_probe_that_fails_on_its_own_head_aborts(deploy):
@@ -299,9 +299,9 @@ def test_a_probe_that_fails_on_its_own_head_aborts(deploy):
         STUB_SHOW_HEAD_EXIT=1,
         STUB_SHOW_EXIT=1,
     )
-    assert proc.returncode == 1, "eine kaputte Sonde darf nicht als Rueckfall gelten"
+    assert proc.returncode == 1, "a broken probe must not count as a fallback"
     assert not rolled_out
-    assert "KAPUTT" in proc.stderr
+    assert "BROKEN" in proc.stderr
 
 
 def test_a_genuine_rollback_still_proceeds(deploy):
@@ -315,9 +315,9 @@ def test_a_genuine_rollback_still_proceeds(deploy):
         STUB_SHOW_HEAD_EXIT=0,
         STUB_SHOW_EXIT=1,
     )
-    assert proc.returncode == 0, "ein echter Rueckfall muss durchlassen"
-    assert rolled_out, "und ausrollen"
-    assert "RUECKFALL" in proc.stderr
+    assert proc.returncode == 0, "a real fallback must let it through"
+    assert rolled_out, "and roll out"
+    assert "ROLLBACK" in proc.stderr
 
 
 def test_a_missing_image_in_dry_run_is_not_an_abort(deploy):
@@ -327,10 +327,10 @@ def test_a_missing_image_in_dry_run_is_not_an_abort(deploy):
     4.08 GB from the registry for it."""
     proc, _ = deploy("--dry-run", STUB_IMG_PRESENT_EXIT=1)
     assert proc.returncode == 0
-    assert "TOR WUERDE ABBRECHEN" not in proc.stdout, (
-        f"kein falscher Abbruch im Probelauf, war: {proc.stdout}"
+    assert "GATE WOULD ABORT" not in proc.stdout, (
+        f"no false abort in a dry run, was: {proc.stdout}"
     )
-    assert "NICHT probebar" in proc.stdout
+    assert "NOT testable" in proc.stdout
 
 
 def test_a_missing_image_in_a_real_run_aborts(deploy):

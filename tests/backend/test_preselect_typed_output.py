@@ -59,11 +59,11 @@ def test_maxItems_is_present_because_uniqueItems_is_NOT_enforced():
     """
     s = _build_preselect_schema(["mcp.a.b"])
     assert "maxItems" in s, (
-        "ohne maxItems verschiebt die Bindung den Fehlermodus nur — "
-        "siehe Docstring, am lebenden Endpunkt gemessen")
+        "without maxItems the binding only moves the failure mode — "
+        "see docstring, measured on the live endpoint")
     assert s["maxItems"] >= 5, (
-        "der Prompt fragt nach 3-5 Werkzeugen und `_with_required_companions` "
-        f"legt noch zu — {s['maxItems']} laesst keinen Spielraum")
+        "the prompt asks for 3-5 tools and `_with_required_companions` "
+        f"adds more — {s['maxItems']} leaves no headroom")
 
 
 def test_an_empty_offer_does_not_produce_a_schema_that_matches_nothing():
@@ -108,9 +108,9 @@ def test_the_binding_is_the_ONLY_difference_the_flag_makes():
             if isinstance(k, ast.Subscript) and isinstance(k.ctx, ast.Store):
                 zuweisungen.append(ast.unparse(k))
 
-    assert zuweisungen, "der Flag-Zweig wurde nicht gefunden — Test oder Code driftet"
+    assert zuweisungen, "the flag branch was not found — test or code is drifting"
     assert all("format" in z for z in zuweisungen), (
-        f"der Flag-Zweig setzt mehr als `format`: {zuweisungen}")
+        f"the flag branch sets more than `format`: {zuweisungen}")
 
 
 def test_the_harness_measures_the_SAME_schema_as_production():
@@ -132,7 +132,7 @@ def test_the_harness_measures_the_SAME_schema_as_production():
         and {ast.unparse(k).strip("'\"") for k in d.keys if isinstance(k, ast.Constant)}
         >= {"type", "maxItems", "items"}
     ]
-    assert kandidaten, "im Pruefstand steht kein Schema mit type/maxItems/items"
+    assert kandidaten, "the harness holds no schema with type/maxItems/items"
 
     stand = _build_preselect_schema(["x"])
     for d in kandidaten:
@@ -142,8 +142,8 @@ def test_the_harness_measures_the_SAME_schema_as_production():
         }
         assert paare["type"].value == stand["type"]
         assert paare["maxItems"].value == stand["maxItems"], (
-            f"maxItems driftet: Pruefstand {paare['maxItems'].value} "
-            f"gegen Produktion {stand['maxItems']}")
+            f"maxItems drifts: harness {paare['maxItems'].value} "
+            f"versus production {stand['maxItems']}")
 
 
 class TestTheEnumMatchesTheOffer:
@@ -193,9 +193,9 @@ class TestTheEnumMatchesTheOffer:
         prompt = kwargs["messages"][0]["content"]
         enum = kwargs["format"]["items"]["enum"]
 
-        assert "mcp.server.kaputt" not in prompt, "der kaputte Name steht im Prompt"
+        assert "mcp.server.kaputt" not in prompt, "the broken name stands in the prompt"
         assert "mcp.server.kaputt" not in enum, (
-            "das enum erlaubt einen Namen, den das Modell nie gesehen hat")
+            "the enum permits a name the model never saw")
         # Negative control: the check is not trivially true -- the HEALTHY
         # names do stand in both.
         assert "mcp.server.tool_0" in enum and "mcp.server.tool_0" in prompt

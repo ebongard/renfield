@@ -254,7 +254,7 @@ async def _init_zeroconf(app: Any) -> None:
     zeroconf_service = get_zeroconf_service(port=8000)
     await zeroconf_service.start()
     app.state.zeroconf_service = zeroconf_service
-    logger.info("✅ Zeroconf Service bereit")
+    logger.info("✅ Zeroconf service ready")
 
 
 def _schedule_ha_keywords_preload() -> None:
@@ -267,15 +267,15 @@ def _schedule_ha_keywords_preload() -> None:
                 ha_client = HomeAssistantClient()
                 keywords = await ha_client.get_keywords()
                 logger.info(
-                    f"✅ Home Assistant Keywords vorgeladen: {len(keywords)} Keywords"
+                    f"✅ Home Assistant keywords preloaded: {len(keywords)} keywords"
                 )
             except Exception as e:
-                logger.warning(f"⚠️  Keywords konnten nicht vorgeladen werden: {e}")
+                logger.warning(f"⚠️  Could not preload keywords: {e}")
 
         task = asyncio.create_task(preload_keywords())
         _ha_glue_tasks.append(task)
     except Exception as e:
-        logger.warning(f"⚠️  Keyword-Preloading fehlgeschlagen: {e}")
+        logger.warning(f"⚠️  Keyword preloading failed: {e}")
 
 
 async def _init_presence(app: Any) -> None:
@@ -338,7 +338,7 @@ def _schedule_satellite_cleanup() -> None:
 
     task = asyncio.create_task(cleanup_loop())
     _ha_glue_tasks.append(task)
-    logger.info(f"✅ Satellite Cleanup Scheduler gestartet (alle {interval}s)")
+    logger.info(f"✅ Satellite cleanup scheduler started (every {interval}s)")
 
 
 def _schedule_presence_event_cleanup() -> None:
@@ -363,8 +363,8 @@ def _schedule_presence_event_cleanup() -> None:
     task = asyncio.create_task(cleanup_loop())
     _ha_glue_tasks.append(task)
     logger.info(
-        f"Presence Event Cleanup Scheduler gestartet "
-        f"(retention={ha_glue_settings.presence_analytics_retention_days}d, täglich)"
+        f"Presence event cleanup scheduler started "
+        f"(retention={ha_glue_settings.presence_analytics_retention_days}d, daily)"
     )
 
 

@@ -41,12 +41,12 @@ find_ruff() {
 
 if ! RUFF="$(find_ruff)"; then
     cat >&2 <<EOF
-ruff ist nicht installiert. Einmalig:
+ruff is not installed. Once:
 
     pipx install ruff==${RUFF_PINNED_VERSION}
 
-(oder 'uv tool install ruff==${RUFF_PINNED_VERSION}'). ruff ist ein einzelnes
-Binary — es braucht keine Projekt-Umgebung und kein Python des Projekts.
+(or 'uv tool install ruff==${RUFF_PINNED_VERSION}'). ruff is a single
+binary — it needs no project environment and no project Python.
 EOF
     exit 127
 fi
@@ -56,8 +56,8 @@ if [[ "$FOUND_VERSION" != "$RUFF_PINNED_VERSION" ]]; then
     # A WARNING, not an abort: a differing version should not stop anybody
     # from linting. But it has to be VISIBLE, or one puzzles over findings that
     # come purely from the version difference.
-    echo "⚠ ruff ${FOUND_VERSION} statt der festgenagelten ${RUFF_PINNED_VERSION} —" >&2
-    echo "  Befundzahlen können abweichen (RUF100 hängt an der Regelmenge)." >&2
+    echo "⚠ ruff ${FOUND_VERSION} instead of the pinned ${RUFF_PINNED_VERSION} —" >&2
+    echo "  finding counts may differ (RUF100 depends on the rule set)." >&2
 fi
 
 cd "$ROOT"

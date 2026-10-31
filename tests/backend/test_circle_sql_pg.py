@@ -612,7 +612,7 @@ async def test_peer_scope_drops_explicit_grant(
 
     unscoped = await _run_kg_clause_for(pg_db_session, stranger_id)
     assert seeded_circle_world["kg_self_id"] in unscoped, (
-        "Vorbedingung: ohne Peer sieht stranger die Entitaet ueber die Freigabe"
+        "precondition: without a peer, stranger sees the entity through the share"
     )
 
     visible = await _run_kg_clause_peer_scoped(pg_db_session, owner_id, tier=4)

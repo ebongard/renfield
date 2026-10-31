@@ -56,9 +56,9 @@ def test_the_budget_sum_stays_at_the_MEASURED_edge():
     """
     summe = sum(b - _PRESELECT_DESC_CHARS for b in _PRESELECT_DESC_BUDGET.values())
     assert summe <= GEMESSENE_KANTE, (
-        f"Budgets summieren sich auf +{summe} Zeichen, gemessen und belegt sind "
-        f"+{GEMESSENE_KANTE}. Bei +2640 fiel die Peer-Sammlung auf 85 % und eine "
-        "lokale Suche wurde zur föderierten Anfrage. Erst messen, dann anheben.")
+        f"budgets add up to +{summe} characters, measured and proven is "
+        f"+{GEMESSENE_KANTE}. At +2640 the peer collection fell to 85 % and a "
+        "local search turned into a federated query. Measure first, then raise.")
 
 
 def test_no_budget_is_BELOW_the_default():
@@ -114,7 +114,7 @@ class TestTheBudgetedToolsAreActuallyComplete:
         """A budget for a renamed or removed tool is dead weight and hides
         the fact that the real text is being capped again."""
         fehlen = [n for n in _PRESELECT_DESC_BUDGET if n not in registry._tools]
-        assert not fehlen, f"Budget ohne Werkzeug: {fehlen}"
+        assert not fehlen, f"budget without a tool: {fehlen}"
 
     def test_no_budgeted_tool_is_truncated(self, registry):
         """The purpose of the mapping: these four are to stand COMPLETE."""
@@ -130,6 +130,6 @@ class TestTheBudgetedToolsAreActuallyComplete:
             if len(d) > budget:
                 zu_kurz.append((name, len(d), budget))
         assert not zu_kurz, (
-            "Budget kleiner als der Text — wird weiter abgeschnitten, nur "
-            f"nicht mehr sichtbar: {zu_kurz}. Text kürzen oder (nach einer "
-            "Messung) Budget und `GEMESSENE_KANTE` gemeinsam anheben.")
+            "budget smaller than the text — it keeps being truncated, only "
+            f"no longer visibly: {zu_kurz}. Shorten the text or (after a "
+            "measurement) raise the budget and `GEMESSENE_KANTE` together.")

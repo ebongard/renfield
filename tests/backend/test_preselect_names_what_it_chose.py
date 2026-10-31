@@ -91,8 +91,8 @@ async def test_the_log_line_names_the_chosen_tools(protokoll, gestellter_pfad):
         "scanne nach xidra", gestellter_pfad, "irgendein-modell",
     )
     assert set(gewaehlt) == set(GEWAEHLT), (
-        "die Vorauswahl selbst hat nicht das Erwartete geliefert — dann "
-        f"prueft dieser Test die falsche Sache: {sorted(gewaehlt or [])}")
+        "the preselection itself did not deliver what was expected — then "
+        f"this test checks the wrong thing: {sorted(gewaehlt or [])}")
 
     # 🛑 Check for "tools selected for:", not for "Tool pre-selection": the
     # PROMPT line and the fallback line carry that prefix too. With
@@ -100,12 +100,12 @@ async def test_the_log_line_names_the_chosen_tools(protokoll, gestellter_pfad):
     # grab the wrong line and fail misleadingly -- uncovered by the switch's
     # own negative control.
     zeile = next((z for z in protokoll if "tools selected for:" in z), None)
-    assert zeile is not None, f"keine Vorauswahl-Zeile im Protokoll: {protokoll}"
+    assert zeile is not None, f"no preselection line in the log: {protokoll}"
 
     for name in GEWAEHLT:
         assert name in zeile, (
-            f"`{name}` fehlt in der Zeile — dann ist aus dem Protokoll nicht "
-            f"zu entscheiden, ob das Werkzeug angeboten wurde:\n{zeile}")
+            f"`{name}` is missing from the line — then the log cannot "
+            f"tell whether the tool was offered:\n{zeile}")
 
 
 @pytest.mark.asyncio
@@ -128,11 +128,11 @@ async def test_the_log_line_still_carries_count_and_message(protokoll, gestellte
     # pre-selection then falls back to ALL tools and reports that as a model
     # error. Found in the review of #1413.
     assert "(in=" in zeile, (
-        f"der Eingabe-Fingerabdruck fehlt in der Zeile:\n{zeile}")
-    assert f"{len(GEWAEHLT)}/{len(ALLE)}" in zeile, f"die Zaehlung fehlt:\n{zeile}"
-    assert "scanne nach xidra" in zeile, f"der Anlass fehlt:\n{zeile}"
+        f"the input fingerprint is missing from the line:\n{zeile}")
+    assert f"{len(GEWAEHLT)}/{len(ALLE)}" in zeile, f"the count is missing:\n{zeile}"
+    assert "scanne nach xidra" in zeile, f"the occasion is missing:\n{zeile}"
     assert "{}" not in zeile, (
-        f"ein Argument wurde nicht ersetzt — die Zeile ist blind:\n{zeile}")
+        f"an argument was not substituted — the line is blind:\n{zeile}")
 
 
 @pytest.mark.asyncio
@@ -143,8 +143,8 @@ async def test_the_prompt_dump_is_dark_by_default(protokoll, gestellter_pfad):
         "scanne nach xidra", gestellter_pfad, "irgendein-modell",
     )
     assert not [z for z in protokoll if "PROMPT" in z], (
-        "der Prompt-Auszug erscheint ohne Schalter — damit stünde die volle "
-        "Nachricht jedes Zuges im Protokoll")
+        "the prompt dump appears without the switch — then the full "
+        "message of every turn would stand in the log")
 
 
 @pytest.mark.asyncio
@@ -165,12 +165,12 @@ async def test_the_prompt_dump_shows_the_real_prompt_when_switched_on(
         "scanne nach xidra", gestellter_pfad, "irgendein-modell",
     )
     zeilen = [z for z in protokoll if "PROMPT" in z]
-    assert zeilen, "der Schalter ist an, aber es kommt keine Zeile"
+    assert zeilen, "the switch is on, but no line comes"
     assert "(in=" in zeilen[0], (
-        "ohne die Signatur ist der Auszug keiner bestimmten Zeile zuzuordnen")
+        "without the signature the dump cannot be matched to a specific line")
     # 🛑 The CONTENT, not just the existence of the line. This assertion was
     # missing, and a mutation that emitted an EMPTY string instead of the
     # prompt left all ten tests green -- exactly the failure the switch is
     # meant to prevent. Found by mutation testing in the review of #1414.
     assert PROMPT_MARKE in zeilen[0], (
-        f"der Auszug traegt den Prompt nicht:\n{zeilen[0][:200]}")
+        f"the dump does not carry the prompt:\n{zeilen[0][:200]}")

@@ -106,7 +106,7 @@ class TestTheRightSignal:
         n = _Notify()
         out = await _run(notify=n, connected=["sat-a"],
                          rows=_rows(("sat-a", "Kueche", 24 * 30)), state=_State())
-        assert out is None, "ein VERBUNDENER Satellit darf nie gemeldet werden"
+        assert out is None, "a CONNECTED satellite must never be reported"
         assert n.calls == []
 
     async def test_a_freshly_authenticated_but_absent_one_is_reported(self, settled):
@@ -141,8 +141,8 @@ class TestTheMessage:
         rows = _rows(("a", "Kueche", 5), ("b", "Bad", 5))
         for _ in range(4):
             out = await _run(notify=n, connected=[], rows=rows, state=st)
-            assert out is not None, "die Lage steht weiter im Laufprotokoll"
-        assert len(n.calls) == 1, "nur die ERSTE Aenderung wird gemeldet"
+            assert out is not None, "the situation still stands in the run log"
+        assert len(n.calls) == 1, "only the FIRST change is reported"
 
     async def test_a_changed_situation_is_reported_again(self, settled):
         n, st = _Notify(), _State()
@@ -173,7 +173,7 @@ class TestTheMessage:
 
         out = await _run(notify=n, connected=["a"], rows=rows, state=st)
         assert out is None
-        assert st.value == "", "der Marker muss geleert werden"
+        assert st.value == "", "the marker must be cleared"
         assert len(n.calls) == 2
         assert "wieder verbunden" in n.calls[1]["title"]
 
@@ -186,7 +186,7 @@ class TestTheMessage:
         out = await _run(notify=n, connected=["a"], rows=_rows(("a", "Kueche", 1)),
                          state=st)
         assert out is None
-        assert n.calls == [], "keine Rueckkehr melden, wenn nie etwas fehlte"
+        assert n.calls == [], "report no return when nothing was ever missing"
 
     async def test_days_instead_of_hours_once_it_gets_long(self, settled):
         n = _Notify()
@@ -285,5 +285,5 @@ class TestTheFeatureGate:
             fetch_enrolled=lambda: _async(_rows(("a", "Kueche", 5))),
             read_state=_State().read, write_state=_State().write,
         )
-        assert asked == [1], "mit Satellitenmerkmal MUSS die Registratur gefragt werden"
-        assert out is not None, "der Satellit fehlt, also muss gemeldet werden"
+        assert asked == [1], "with the satellites feature the registry MUST be asked"
+        assert out is not None, "the satellite is missing, so it must be reported"
