@@ -449,3 +449,52 @@ class TestHollowCompactionFallsBack:
 
         assert json.loads(compacted["message"]) == payload
         assert not warnings_logged
+
+
+# ============================================================================
+# The MCP client's truncation note survives every rule
+# ============================================================================
+
+
+class TestTruncationNoteSurvives:
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("tool_name", sorted(RECORDED_SHAPES))
+    def test_truncation_note_is_kept_by_every_shipped_rule(self, shipped_rules, tool_name):
+        """_truncate_response embeds `_truncation` when it cut the largest array;
+        a rule that drops it makes a cut list read as the complete answer."""
+        note = {"showing": 1, "total": 2, "note": "Showing 1 of 2 results"}
+        payload = {**RECORDED_SHAPES[tool_name], "_truncation": note}
+        compacted = compact_mcp_result(tool_name, _as_mcp_result(payload))
+
+        assert json.loads(compacted["message"])["_truncation"] == note
+        assert json.loads(compacted["data"][0]["text"])["_truncation"] == note
+
+    @pytest.mark.unit
+    def test_payload_cut_by_the_real_client_keeps_its_note(self, shipped_rules):
+        from services.mcp_client import _truncate_response
+
+        many = dict(PAPERLESS_SEARCH_DOCUMENTS)
+        many["results"] = [
+            {**PAPERLESS_SEARCH_DOCUMENTS["results"][0], "id": i, "snippet": "x" * 400}
+            for i in range(50)
+        ]
+        cut = _truncate_response(json.dumps(many), max_size=4096)
+        assert "_truncation" in json.loads(cut)  # negative control: the client did cut
+
+        compacted = compact_mcp_result(
+            "mcp.paperless.search_documents", {"success": True, "message": cut, "data": None}
+        )
+        message = json.loads(compacted["message"])
+        assert message["_truncation"]["total"] == 50
+        assert message["_truncation"]["showing"] == len(message["results"]) < 50
+
+    @pytest.mark.unit
+    def test_a_note_alone_is_still_a_hollow_compaction(self, monkeypatch, warnings_logged):
+        monkeypatch.setitem(mcp_compact._compact_rules, "stale", {"tool": ["id"]})
+        payload = {"results": [{"title": "a"}], "_truncation": {"showing": 1, "total": 9}}
+        result = {"success": True, "message": json.dumps(payload), "data": None}
+        compacted = compact_mcp_result("mcp.stale.tool", result)
+
+        assert compacted["message"] == result["message"]
+        assert len(warnings_logged) == 1

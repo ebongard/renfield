@@ -17,6 +17,10 @@ from loguru import logger
 
 _compact_rules: dict[str, dict[str, list[str]]] = {}
 
+# The note services/mcp_client.py::_truncate_response embeds in a JSON payload
+# whose largest array it cut.
+_TRUNCATION_KEY = "_truncation"
+
 
 def load_compact_config(config_path: str = "config/mcp_compact.yaml") -> None:
     """Load field whitelist rules from YAML config.
@@ -99,9 +103,18 @@ def _compact_json_text(text: Any, field_paths: list[str], tool_name: str) -> str
     response shape than the tool answers (paperless search_documents matched
     nothing for months after the MCP wrapped its list into {"summary", "results"},
     and the agent answered "nothing found" to every search). Handing the agent an
-    empty object is worse than the uncompacted payload, which the MCP client has
-    already truncated to its size limit, so the payload stays and a WARNING names
-    the mismatch. Only the payload's top-level keys are logged, never its content.
+    empty object is worse than the uncompacted payload, so the payload stays and
+    a WARNING names the mismatch. Only the payload's top-level keys are logged,
+    never its content.
+
+    The "uncompacted" payload is bounded for the PROMPT, not at the source: the
+    message was truncated by the MCP client (``_truncate_response``), the data
+    items carry the raw text, and the agent loop truncates both to
+    ``agent_response_truncation`` before they reach the LLM.
+
+    The MCP client's own ``_truncation`` note (it cut the payload's largest
+    array to fit its size limit) is kept whatever the rule says: without it the
+    agent reads a cut list as the complete answer.
     """
     try:
         parsed = json.loads(text)
@@ -118,6 +131,8 @@ def _compact_json_text(text: Any, field_paths: list[str], tool_name: str) -> str
         )
         return None
 
+    if isinstance(parsed, dict) and isinstance(compacted, dict) and _TRUNCATION_KEY in parsed:
+        compacted = {**compacted, _TRUNCATION_KEY: parsed[_TRUNCATION_KEY]}
     return json.dumps(compacted, ensure_ascii=False)
 
 
