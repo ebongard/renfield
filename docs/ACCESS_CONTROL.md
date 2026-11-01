@@ -163,6 +163,13 @@ MCP Tools:
 
 **Beispiel:** Ein Benutzer mit `ha.full` hat automatisch auch `ha.control` und `ha.read`.
 
+**Falle — die unterste Stufe ist kein Sperrkriterium.** Weil jede höhere Stufe `kb.none` / `ha.none` / `cam.none`
+impliziert, ist `has_permission(perms, Permission.KB_NONE)` für JEDEN Benutzer mit irgendeiner KB-Stufe wahr. Bis
+2026-10-31 sperrte genau diese Prüfung `GET /api/knowledge/bases`: jede Familie-Rolle bekam eine leere Liste. Die
+Sperre heißt `holds_no_rung_above(perms, Permission.KB_NONE)` (`models/permissions.py`) — wahr bei nur `kb.none`
+UND bei einer Rolle ganz ohne KB-Stufe (fail-closed, z. B. Kiosk). `tests/backend/test_kb_list_permissions.py`
+verbietet per AST-Scan jedes `has_permission(…, Permission.*_NONE)` im Backend.
+
 ### Geschützte Endpoints
 
 | Endpoint | Benötigte Berechtigung |
@@ -174,7 +181,8 @@ MCP Tools:
 | `/api/homeassistant/service` | `ha.full` |
 | `/api/camera/events` | `cam.view` |
 | `/api/camera/snapshot` | `cam.full` |
-| `/api/knowledge/bases` | `kb.own` + Ownership |
+| `/api/knowledge/bases` (GET) | `kb.all`: alle · `kb.shared`: eigene + öffentliche + explizit geteilte · `kb.own`: eigene + explizit geteilte · `kb.none`/keine KB-Stufe: keine |
+| `/api/knowledge/search` | mindestens `kb.own`, sonst 403 |
 | `/api/knowledge/upload` | `rag.manage` oder KB-Schreibzugriff |
 | `/api/roles/*` (GET) | `roles.view` |
 | `/api/roles/*` (POST/PATCH/DELETE) | `roles.manage` |
