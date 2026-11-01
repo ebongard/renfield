@@ -38,6 +38,7 @@ def _fake_manager(sat):
     return SimpleNamespace(
         get_satellite=lambda sid: sat,
         set_update_status=lambda *a, **k: None,
+        begin_update_run=lambda sid: "run-x",
     )
 
 
@@ -63,6 +64,7 @@ class TestInitiateUpdateForwarding:
         assert sent["type"] == "update_request"
         assert sent["manifest"] == '{"version":"9.9.9","files":{}}'
         assert sent["signature"] == "c2ln"
+        assert sent["run_id"] == "run-x"
 
     async def test_require_signature_refuses_unsigned(self, monkeypatch):
         svc = SatelliteUpdateService()

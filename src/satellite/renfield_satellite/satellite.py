@@ -71,6 +71,9 @@ class Satellite:
         self._running = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None  # Main event loop
 
+        # Run id of the OTA run in flight (#1280), echoed in its progress frames.
+        self._ota_run_id: str | None = None
+
         # Current session
         self._session_id: Optional[str] = None
         self._silence_chunks: int = 0  # Consecutive non-speech chunks (for audio-time silence detection)
@@ -1502,6 +1505,7 @@ class Satellite:
         size_bytes: int,
         manifest: str | None = None,
         signature: str | None = None,
+        run_id: str | None = None,
     ):
         """
         Handle OTA update request from server.
@@ -1512,6 +1516,7 @@ class Satellite:
             checksum: Expected checksum (sha256:hexdigest)
             size_bytes: Expected package size
             manifest/signature: signed release manifest (H6), verified before install
+            run_id: the backend's id for this run (#1280); None from an older backend
         """
         print(f"📦 OTA Update requested: v{target_version}")
 
@@ -1525,10 +1530,17 @@ class Satellite:
             print("⚠️ Cannot start update: no server URL")
             return
 
+        # The progress frames of the run in flight carry ITS id. A request that
+        # arrives while a run is still going is refused by the update manager —
+        # it must not relabel that run's frames with its own id.
+        if not self.update_manager.is_updating:
+            self._ota_run_id = run_id
+
         # Start update asynchronously
         self._schedule_async(
             self._start_update(
-                target_version, package_url, checksum, size_bytes, base_url, manifest, signature
+                target_version, package_url, checksum, size_bytes, base_url, manifest, signature,
+                run_id=run_id,
             )
         )
 
@@ -1541,6 +1553,7 @@ class Satellite:
         base_url: str,
         manifest: str | None = None,
         signature: str | None = None,
+        run_id: str | None = None,
     ):
         """Start the OTA update process"""
         from . import __version__
@@ -1563,7 +1576,8 @@ class Satellite:
             await self.ws_client.send_update_complete(
                 success=True,
                 old_version=old_version,
-                new_version=target_version
+                new_version=target_version,
+                run_id=run_id,
             )
         else:
             # Send the REAL failure reason (e.g. "release manifest signature does
@@ -1573,6 +1587,7 @@ class Satellite:
                 stage=self.update_manager.current_stage.value,
                 error=self.update_manager.last_error or "Update failed - check satellite logs",
                 rolled_back=self.update_manager.rolled_back,
+                run_id=run_id,
             )
 
     def _on_update_progress(self, stage: UpdateStage, progress: int, message: str):
@@ -1581,7 +1596,10 @@ class Satellite:
 
         Sends progress to server via WebSocket.
         """
-        # Send progress to server asynchronously
+        # Send progress to server asynchronously. The run id is read NOW, while
+        # the run reports, not when the scheduled send finally executes.
         self._schedule_async(
-            self.ws_client.send_update_progress(stage.value, progress, message)
+            self.ws_client.send_update_progress(
+                stage.value, progress, message, run_id=self._ota_run_id
+            )
         )

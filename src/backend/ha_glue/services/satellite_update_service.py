@@ -336,13 +336,11 @@ class SatelliteUpdateService:
                            "run bin/sign_satellite_release.py and rebuild the image.",
             }
 
-        # Update status
-        manager.set_update_status(
-            satellite_id,
-            UpdateStatus.IN_PROGRESS,
-            stage="initiating",
-            progress=0
-        )
+        # Start the run under a fresh id (#1280): the satellite echoes it in its
+        # progress/complete/failed frames, so a straggler from an earlier run
+        # can no longer end this one. Firmware that predates the id ignores the
+        # extra key and keeps the legacy behaviour.
+        run_id = manager.begin_update_run(satellite_id)
 
         # Send update request to satellite
         try:
@@ -355,6 +353,7 @@ class SatelliteUpdateService:
                 # Signed release manifest (H6) — None on unsigned releases.
                 "manifest": package_info.get("manifest"),
                 "signature": package_info.get("signature"),
+                "run_id": run_id,
             })
 
             logger.info(f"📤 Update request sent to satellite {satellite_id}")

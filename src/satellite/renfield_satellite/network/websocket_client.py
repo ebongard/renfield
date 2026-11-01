@@ -60,6 +60,17 @@ def _headers_kwarg() -> str:
 _HEADERS_KWARG = _headers_kwarg()
 
 
+def _with_run_id(frame: dict[str, Any], run_id: str | None) -> dict[str, Any]:
+    """Add the OTA run id to a frame, but only when there is one (#1280).
+
+    Without an id (an older backend sent none) the frame stays byte-identical
+    to the legacy format.
+    """
+    if run_id is not None:
+        frame["run_id"] = run_id
+    return frame
+
+
 # Maximum TTS audio payload size (10MB ≈ 40s speech) to prevent OOM on constrained devices
 MAX_AUDIO_PAYLOAD_BYTES = 10 * 1024 * 1024
 
@@ -184,7 +195,7 @@ class WebSocketClient:
         self._on_error: Optional[Callable[[str], None]] = None
         self._on_rate_limited: Optional[Callable[[], None]] = None
         self._on_config_update: Optional[Callable[[ServerConfig], None]] = None
-        self._on_update_request: Optional[Callable[..., None]] = None  # version, url, checksum, size, manifest, signature
+        self._on_update_request: Optional[Callable[..., None]] = None  # version, url, checksum, size, manifest, signature, run_id=
         self._on_ble_known_devices: Optional[Callable[[List[str]], None]] = None
         self._on_classic_bt_known_devices: Optional[Callable[[List[str]], None]] = None
         self._on_ble_irks: Optional[Callable[[List[Dict[str, Any]]], None]] = None
@@ -695,10 +706,16 @@ class WebSocketClient:
             # Signed release manifest (H6) — None on unsigned/legacy releases.
             manifest = data.get("manifest")
             signature = data.get("signature")
+            # Run id minted by the backend (#1280), echoed in every progress /
+            # complete / failed frame of this run. None from an older backend.
+            run_id = data.get("run_id")
+            if not isinstance(run_id, str):
+                run_id = None
             print(f"📥 Update request received: v{target_version}")
             if self._on_update_request:
                 self._on_update_request(
-                    target_version, package_url, checksum, size_bytes, manifest, signature
+                    target_version, package_url, checksum, size_bytes, manifest, signature,
+                    run_id=run_id,
                 )
 
         elif msg_type == "ble_known_devices":
@@ -1027,7 +1044,8 @@ class WebSocketClient:
         self,
         stage: str,
         progress: int,
-        message: str = ""
+        message: str = "",
+        run_id: str | None = None,
     ):
         """
         Send update progress to server.
@@ -1036,23 +1054,25 @@ class WebSocketClient:
             stage: Current update stage (downloading, verifying, etc.)
             progress: Progress percentage (0-100)
             message: Optional status message
+            run_id: The run id from the update_request (#1280), if any
         """
         if not self.is_connected:
             return
 
-        await self._send({
+        await self._send(_with_run_id({
             "type": "update_progress",
             "stage": stage,
             "progress": progress,
             "message": message
-        })
+        }, run_id))
 
     async def send_update_complete(
         self,
         success: bool,
         old_version: str,
         new_version: str,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        run_id: str | None = None,
     ):
         """
         Send update completion status to server.
@@ -1062,23 +1082,25 @@ class WebSocketClient:
             old_version: Previous version
             new_version: New version (if successful)
             error: Error message (if failed)
+            run_id: The run id from the update_request (#1280), if any
         """
         if not self.is_connected:
             return
 
-        await self._send({
+        await self._send(_with_run_id({
             "type": "update_complete",
             "success": success,
             "old_version": old_version,
             "new_version": new_version,
             "error": error
-        })
+        }, run_id))
 
     async def send_update_failed(
         self,
         stage: str,
         error: str,
-        rolled_back: bool = False
+        rolled_back: bool = False,
+        run_id: str | None = None,
     ):
         """
         Send update failure notification to server.
@@ -1087,16 +1109,17 @@ class WebSocketClient:
             stage: Stage where failure occurred
             error: Error message
             rolled_back: Whether rollback was performed
+            run_id: The run id from the update_request (#1280), if any
         """
         if not self.is_connected:
             return
 
-        await self._send({
+        await self._send(_with_run_id({
             "type": "update_failed",
             "stage": stage,
             "error": error,
             "rolled_back": rolled_back
-        })
+        }, run_id))
 
     async def send_ble_presence(self, devices: List[Dict[str, Any]]):
         """

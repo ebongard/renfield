@@ -26,6 +26,44 @@ from loguru import logger
 from ha_glue.services.opus_transport import frame_packets
 from utils.config import settings
 
+# ---------------------------------------------------------------------------
+# Device-supplied values (#1279)
+#
+# Every field below arrives as JSON from a LAN device and ends up in the
+# roster, from which the ADMIN REST models are built. Pydantic v2 does not
+# coerce a dict into `str` or a string into `int`, so ONE wrong type used to
+# surface as a ValidationError at response-build time. These helpers are the
+# single place where such a value is brought into the declared type: a value
+# of the wrong type is replaced by the field's default, never passed through.
+# ---------------------------------------------------------------------------
+
+MAX_DEVICE_TEXT_CHARS = 64
+
+
+def device_text(value: object, cap: int = MAX_DEVICE_TEXT_CHARS) -> str | None:
+    """Coerce any device-supplied value into a bounded string, or None."""
+    if value is None or value == "":
+        return None
+    text = value if isinstance(value, str) else str(value)
+    return text[:cap]
+
+
+def device_int(value: object, default: int) -> int:
+    """An int, or the default. `bool` is an int subclass and is refused."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+def device_bool(value: object, default: bool) -> bool:
+    """A real JSON boolean, or the default."""
+    return value if isinstance(value, bool) else default
+
+
+def device_float(value: object) -> float | None:
+    """A number, or None. `bool` is refused, as in `device_int`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
 
 class SatelliteState(str, Enum):
     """Satellite operational states"""
@@ -109,6 +147,13 @@ class SatelliteInfo:
     # cleared the moment it reaches a terminal state, so `cleanup_stale` can
     # tell a genuinely running update from one that never terminated (#1209).
     update_started_at: float | None = None
+    # The id the backend minted for the current run and sent in the
+    # `update_request` (#1280). A satellite that knows the protocol echoes it in
+    # every `update_progress` / `update_complete` / `update_failed`; a frame
+    # carrying a DIFFERENT id is a straggler from an earlier run and is dropped.
+    # Kept after the run ends, so a late frame of THIS run still matches and is
+    # handled by the terminal-state guard instead.
+    update_run_id: str | None = None
 
 
 @dataclass
@@ -216,16 +261,19 @@ class SatelliteManager:
                     pass  # Connection may already be closed
 
             # Create capability object
+            # Typed field by field (#1279): the dict is the device's JSON.
+            if not isinstance(capabilities, dict):
+                capabilities = {}
             caps = SatelliteCapabilities(
-                local_wakeword=capabilities.get("local_wakeword", True),
-                speaker=capabilities.get("speaker", True),
-                led_count=capabilities.get("led_count", 3),
-                button=capabilities.get("button", True),
-                led_type=capabilities.get("led_type"),
-                mic_count=capabilities.get("mic_count", 1),
-                has_camera=capabilities.get("has_camera", False),
-                has_display=capabilities.get("has_display", False),
-                has_enviro=capabilities.get("has_enviro", False),
+                local_wakeword=device_bool(capabilities.get("local_wakeword"), True),
+                speaker=device_bool(capabilities.get("speaker"), True),
+                led_count=device_int(capabilities.get("led_count"), 3),
+                button=device_bool(capabilities.get("button"), True),
+                led_type=device_text(capabilities.get("led_type")),
+                mic_count=device_int(capabilities.get("mic_count"), 1),
+                has_camera=device_bool(capabilities.get("has_camera"), False),
+                has_display=device_bool(capabilities.get("has_display"), False),
+                has_enviro=device_bool(capabilities.get("has_enviro"), False),
             )
 
             # Register satellite
@@ -752,29 +800,33 @@ class SatelliteManager:
             sat = self.satellites[satellite_id]
             sat.last_heartbeat = time.time()
 
-            # Update version if provided
+            # Update version if provided — bounded like every other
+            # device-supplied field (#1279).
             if version and version != "unknown":
-                sat.version = version
+                self.set_version(satellite_id, version)
 
-            # Update metrics if provided
-            if metrics:
+            # Update metrics if provided. Each value is brought into the type
+            # the response model declares; a wrong type becomes the default.
+            if isinstance(metrics, dict) and metrics:
+                is_speech = metrics.get("is_speech")
+                last_wakeword = metrics.get("last_wakeword")
                 sat.metrics = {
-                    "audio_rms": metrics.get("audio_rms"),
-                    "audio_db": metrics.get("audio_db"),
-                    "is_speech": metrics.get("is_speech"),
-                    "cpu_percent": metrics.get("cpu_percent"),
-                    "memory_percent": metrics.get("memory_percent"),
-                    "temperature": metrics.get("temperature"),
-                    "last_wakeword": metrics.get("last_wakeword"),
-                    "session_count_1h": metrics.get("session_count_1h", 0),
-                    "error_count_1h": metrics.get("error_count_1h", 0),
+                    "audio_rms": device_float(metrics.get("audio_rms")),
+                    "audio_db": device_float(metrics.get("audio_db")),
+                    "is_speech": is_speech if isinstance(is_speech, bool) else None,
+                    "cpu_percent": device_float(metrics.get("cpu_percent")),
+                    "memory_percent": device_float(metrics.get("memory_percent")),
+                    "temperature": device_float(metrics.get("temperature")),
+                    "last_wakeword": last_wakeword if isinstance(last_wakeword, dict) else None,
+                    "session_count_1h": device_int(metrics.get("session_count_1h"), 0),
+                    "error_count_1h": device_int(metrics.get("error_count_1h"), 0),
                 }
 
                 # Track history
                 self._add_event(satellite_id, "heartbeat", {
                     "state": sat.state.value,
-                    "audio_rms": metrics.get("audio_rms"),
-                    "is_speech": metrics.get("is_speech"),
+                    "audio_rms": sat.metrics["audio_rms"],
+                    "is_speech": sat.metrics["is_speech"],
                 })
 
     def _add_event(self, satellite_id: str, event_type: str, details: dict[str, Any] = None):
@@ -898,9 +950,7 @@ class SatelliteManager:
             # guard) turns ONE bad entry into a 500 for the whole admin list.
             sat.update_status = status
             sat.update_stage = self._bounded_text(stage, self._MAX_UPDATE_STAGE_CHARS)
-            sat.update_progress = (
-                progress if isinstance(progress, int) and not isinstance(progress, bool) else 0
-            )
+            sat.update_progress = device_int(progress, 0)
             sat.update_error = self._bounded_error(error)
             # Stamp the start of a run, and clear it on any terminal state. The
             # first IN_PROGRESS write wins, so progress frames during a run do
@@ -935,13 +985,7 @@ class SatelliteManager:
     _MAX_UPDATE_STAGE_CHARS = 64
     _MAX_VERSION_CHARS = 64
 
-    @staticmethod
-    def _bounded_text(value: object, cap: int) -> str | None:
-        """Coerce any device-supplied value into a bounded string, or None."""
-        if value is None or value == "":
-            return None
-        text = value if isinstance(value, str) else str(value)
-        return text[:cap]
+    _bounded_text = staticmethod(device_text)
 
     @classmethod
     def _bounded_error(cls, message: object) -> str | None:
@@ -953,10 +997,7 @@ class SatelliteManager:
         and `list_satellites` has no per-entry guard, so ONE bad entry 500s the
         whole admin list.
         """
-        if message is None or message == "":
-            return None
-        text = message if isinstance(message, str) else str(message)
-        return text[:cls._MAX_UPDATE_ERROR_CHARS]
+        return device_text(message, cls._MAX_UPDATE_ERROR_CHARS)
 
     def apply_update_progress(
         self, satellite_id: str, stage: str, progress: int, message: str = ""
@@ -996,7 +1037,7 @@ class SatelliteManager:
 
         # The frame is JSON from a LAN device; neither field is trustworthy.
         stage = stage if isinstance(stage, str) else str(stage)
-        progress = progress if isinstance(progress, int) and not isinstance(progress, bool) else 0
+        progress = device_int(progress, 0)
 
         terminal = self._TERMINAL_UPDATE_STAGES.get(stage)
         if terminal is not None:
@@ -1014,6 +1055,45 @@ class SatelliteManager:
         self.set_update_status(
             satellite_id, UpdateStatus.IN_PROGRESS, stage=stage, progress=progress
         )
+
+    def begin_update_run(self, satellite_id: str) -> str | None:
+        """Start a new OTA run: mint its id and mark it IN_PROGRESS (#1280).
+
+        Returns the id to send in the `update_request`, or None when the
+        satellite is not registered.
+        """
+        sat = self.satellites.get(satellite_id)
+        if sat is None:
+            return None
+        sat.update_run_id = uuid.uuid4().hex
+        self.set_update_status(
+            satellite_id, UpdateStatus.IN_PROGRESS, stage="initiating", progress=0
+        )
+        return sat.update_run_id
+
+    def accepts_update_frame(self, satellite_id: str, run_id: object) -> bool:
+        """Whether an OTA frame belongs to the run currently on record (#1280).
+
+        * No `run_id` in the frame: a satellite on firmware that predates the
+          id. Accepted, exactly as before — the fleet updates over this very
+          path, so refusing it would strand every old device.
+        * A `run_id`: accepted only when it is the id of the run on record. A
+          different one is a straggler from an earlier run; with no run on
+          record (e.g. the backend restarted) it belongs to a run this process
+          never started. Both are dropped.
+        """
+        if run_id is None:
+            return True
+        sat = self.satellites.get(satellite_id)
+        if sat is None:
+            return False
+        if sat.update_run_id is not None and run_id == sat.update_run_id:
+            return True
+        logger.info(
+            f"Stray OTA frame from {satellite_id} discarded "
+            f"(run {device_text(run_id)!r}, current {sat.update_run_id!r})"
+        )
+        return False
 
     def set_version(self, satellite_id: str, version: object) -> None:
         """Store a device-reported version, bounded.

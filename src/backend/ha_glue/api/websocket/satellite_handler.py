@@ -23,6 +23,7 @@ from ha_glue.services.opus_transport import (
     BinaryFrameError,
     parse_audio_frame,
 )
+from ha_glue.services.satellite_manager import device_text
 from ha_glue.utils.config import ha_glue_settings
 from models.websocket_messages import WSErrorCode
 from services.database import AsyncSessionLocal
@@ -323,6 +324,33 @@ def _rate_verdict(raw: dict, rate_key: str, satellite_id: str | None, rate_limit
 
     rate_limiter.record_violation(rate_key, reason)
     return False, reason
+
+
+def _belongs_to_current_run(manager, satellite_id: str, data: dict) -> bool:
+    """Gate for the three OTA frames (`update_progress`, `update_complete`,
+    `update_failed`), so all of them apply the same run-id rule (#1280).
+
+    The rule itself lives in `SatelliteManager.accepts_update_frame`; a frame
+    without `run_id` (older firmware) passes as before.
+    """
+    return manager.accepts_update_frame(satellite_id, data.get("run_id"))
+
+
+def _register_fields(data: dict) -> tuple[str, dict, str, str]:
+    """Room, capabilities, language and version from a register frame, typed.
+
+    The frame is a LAN device's JSON (#1279). Each of these values is stored in
+    the roster and served by the ADMIN API, whose response models declare
+    them as `str` / a capabilities object — a dict for a room or a list for
+    the capabilities used to reach those models unchanged.
+    """
+    room = device_text(data.get("room")) or "Unknown Room"
+    capabilities = data.get("capabilities")
+    if not isinstance(capabilities, dict):
+        capabilities = {}
+    language = device_text(data.get("language"), 16) or settings.default_language
+    version = device_text(data.get("version")) or "unknown"
+    return room, capabilities, language, version
 
 
 async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) -> bool:
@@ -682,10 +710,7 @@ async def satellite_websocket(
             # Handle registration
             if msg_type == "register":
                 satellite_id = data.get("satellite_id", "unknown")
-                room = data.get("room", "Unknown Room")
-                capabilities = data.get("capabilities", {})
-                language = data.get("language", settings.default_language)
-                version = data.get("version", "unknown")
+                room, capabilities, language, version = _register_fields(data)
                 enrollment_psk = data.get("token")
 
                 # Per-satellite enrollment gate (security review H1). Verify the
@@ -1571,7 +1596,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
             # Handle OTA update progress
             elif msg_type == "update_progress":
-                if satellite_id:
+                if satellite_id and _belongs_to_current_run(satellite_manager, satellite_id, data):
                     stage = data.get("stage", "unknown")
                     progress = data.get("progress", 0)
                     message = data.get("message", "")
@@ -1583,7 +1608,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
             # Handle OTA update complete
             elif msg_type == "update_complete":
-                if satellite_id:
+                if satellite_id and _belongs_to_current_run(satellite_manager, satellite_id, data):
                     from ha_glue.services.satellite_manager import UpdateStatus
                     success = data.get("success", False)
                     old_version = data.get("old_version", "unknown")
@@ -1613,7 +1638,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
             # Handle OTA update failed
             elif msg_type == "update_failed":
-                if satellite_id:
+                if satellite_id and _belongs_to_current_run(satellite_manager, satellite_id, data):
                     from ha_glue.services.satellite_manager import UpdateStatus
                     stage = data.get("stage", "unknown")
                     error = data.get("error", "Unknown error")
