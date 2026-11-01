@@ -452,6 +452,110 @@ class TestHollowCompactionFallsBack:
 
 
 # ============================================================================
+# A rule that keeps its scalars but loses its list is a mismatch too (#1448)
+# ============================================================================
+
+
+def _renamed(payload: dict, path: tuple[str, ...], new_key: str) -> dict:
+    """Deep copy of ``payload`` with the key at ``path`` renamed to ``new_key``."""
+    copy = json.loads(json.dumps(payload))
+    parent = copy
+    for part in path[:-1]:
+        parent = parent[part]
+    parent[new_key] = parent.pop(path[-1])
+    return copy
+
+
+class TestLostListFallsBack:
+    """The shipped rules always keep a top-level key (``summary``, ``success``),
+    so the hollow check alone never fires when only the list is renamed."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(("tool_name", "path", "new_key"), [
+        ("mcp.paperless.search_documents", ("results",), "documents"),
+        ("mcp.n8n.n8n_list_workflows", ("data", "workflows"), "items"),
+    ])
+    def test_renamed_list_passes_through_uncompacted(
+        self, shipped_rules, warnings_logged, tool_name, path, new_key,
+    ):
+        payload = _renamed(RECORDED_SHAPES[tool_name], path, new_key)
+        result = _as_mcp_result(payload)
+        compacted = compact_mcp_result(tool_name, result)
+
+        assert compacted["message"] == result["message"]
+        assert compacted["data"] == result["data"]
+        assert len(warnings_logged) == 2  # message + data text
+        line = warnings_logged[0]
+        assert tool_name in line
+        assert ".".join(path) + "[]" in line and new_key in line
+        assert "Jahresabrechnung" not in line and "Backup" not in line
+
+    @pytest.mark.unit
+    def test_renamed_item_fields_pass_through_uncompacted(self, shipped_rules, warnings_logged):
+        payload = json.loads(json.dumps(PAPERLESS_SEARCH_DOCUMENTS))
+        payload["results"] = [
+            {f"doc_{k}": v for k, v in doc.items()} for doc in payload["results"]
+        ]
+        result = _as_mcp_result(payload)
+        compacted = compact_mcp_result("mcp.paperless.search_documents", result)
+
+        assert compacted["message"] == result["message"]
+        assert len(warnings_logged) == 2
+        assert "every item" in warnings_logged[0]
+        assert "Jahresabrechnung" not in warnings_logged[0]
+
+    @pytest.mark.unit
+    def test_empty_result_list_is_an_empty_answer_without_warning(
+        self, shipped_rules, warnings_logged,
+    ):
+        payload = {**PAPERLESS_SEARCH_DOCUMENTS, "results": []}
+        compacted = compact_mcp_result("mcp.paperless.search_documents", _as_mcp_result(payload))
+
+        assert json.loads(compacted["message"]) == {
+            "summary": PAPERLESS_SEARCH_DOCUMENTS["summary"], "results": [],
+        }
+        assert not warnings_logged
+
+    @pytest.mark.unit
+    def test_missing_list_without_another_list_is_no_mismatch(self, shipped_rules, warnings_logged):
+        """An answer without the list and without anything list-like beside it
+        (a bare summary) is compacted as before — no false alarm."""
+        payload = {"summary": {"total_matching": 0}}
+        compacted = compact_mcp_result("mcp.paperless.search_documents", _as_mcp_result(payload))
+
+        assert json.loads(compacted["message"]) == payload
+        assert not warnings_logged
+
+    @pytest.mark.unit
+    def test_missing_parent_level_is_no_mismatch(self, shipped_rules, warnings_logged):
+        """The n8n error envelope has no `data` at all: nothing to compare."""
+        payload = {"success": False, "error": "boom", "hints": ["retry"]}
+        compacted = compact_mcp_result("mcp.n8n.n8n_list_workflows", _as_mcp_result(payload))
+
+        assert json.loads(compacted["message"]) == {"success": False, "error": "boom"}
+        assert not warnings_logged
+
+    @pytest.mark.unit
+    def test_items_without_dicts_are_not_hollow(self, monkeypatch, warnings_logged):
+        """A list of scalars under an array rule is kept as it is, not flagged."""
+        monkeypatch.setitem(mcp_compact._compact_rules, "s", {"t": ["n", "tags[].name"]})
+        payload = {"n": 1, "tags": ["a", "b"]}
+        compacted = compact_mcp_result("mcp.s.t", _as_mcp_result(payload))
+
+        assert json.loads(compacted["message"]) == payload
+        assert not warnings_logged
+
+    @pytest.mark.unit
+    def test_top_level_list_payload_is_left_to_the_hollow_check(self, monkeypatch, warnings_logged):
+        monkeypatch.setitem(mcp_compact._compact_rules, "s", {"t": ["id", "tags[].name"]})
+        payload = [{"id": 1, "labels": ["x"]}]
+        compacted = compact_mcp_result("mcp.s.t", _as_mcp_result(payload))
+
+        assert json.loads(compacted["message"]) == [{"id": 1}]
+        assert not warnings_logged
+
+
+# ============================================================================
 # The MCP client's truncation note survives every rule
 # ============================================================================
 
