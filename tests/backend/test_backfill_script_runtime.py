@@ -472,3 +472,66 @@ class TestCorrespondentExitCodes:
         _patch_correspondent_env(monkeypatch, tmp_path)
         assert _bounded_call(lambda: cli.main(["--mode", "correspondent"])) == 0
         assert "mcp.paperless.update_document" not in manager.tool_calls
+
+
+# --------------------------------------------------------------------------- kb_shares log
+
+
+class _NoopSession:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+@pytest.mark.unit
+class TestKbSharesBackfillLog:
+    """``--commit`` must claim its revert log BEFORE the insert commits: inserted
+    kb_shares rows without a log cannot be named by ``--revert`` any more."""
+
+    @pytest.fixture
+    def kbs(self, monkeypatch):
+        module = _load(_BIN / "backfill_kb_shares.py")
+        calls: list[bool] = []
+
+        async def fake_backfill(session, *, dry_run):
+            calls.append(dry_run)
+            from services.kb_shares_service import KBShareBackfillResult
+            return KBShareBackfillResult(
+                pairs_with_grants=1,
+                inserted=[] if dry_run else [
+                    {"kb_id": 1, "user_id": 2, "granted_at": "2026-10-01T00:00:00"}
+                ],
+            )
+
+        monkeypatch.setattr(module, "backfill_kb_shares", fake_backfill)
+        monkeypatch.setattr(module, "AsyncSessionLocal", lambda: _NoopSession())
+        return module, calls
+
+    def test_unwritable_log_refuses_before_any_write(self, kbs, tmp_path):
+        module, calls = kbs
+        args = SimpleNamespace(commit=True, revert=False,
+                               log=str(tmp_path / "missing-dir" / "run.json"))
+        assert asyncio.run(module._run(args)) == 2
+        assert calls == []  # the database was never touched
+
+    def test_commit_writes_the_complete_log(self, kbs, tmp_path):
+        module, calls = kbs
+        log = tmp_path / "run.json"
+        args = SimpleNamespace(commit=True, revert=False, log=str(log))
+        assert asyncio.run(module._run(args)) == 0
+        assert calls == [False]
+        data = json.loads(log.read_text())
+        assert data["complete"] is True
+        assert data["inserted"] == [
+            {"kb_id": 1, "user_id": 2, "granted_at": "2026-10-01T00:00:00"}
+        ]
+
+    def test_dry_run_writes_no_log(self, kbs, tmp_path, monkeypatch):
+        module, calls = kbs
+        monkeypatch.chdir(tmp_path)
+        args = SimpleNamespace(commit=False, revert=False, log=None)
+        assert asyncio.run(module._run(args)) == 0
+        assert calls == [True]
+        assert list(tmp_path.iterdir()) == []

@@ -116,6 +116,16 @@ async def _run(args: argparse.Namespace) -> int:
 
     dry_run = not args.commit
     mode = "DRY RUN (no writes)" if dry_run else "WRITE RUN"
+    log_path: Path | None = None
+    if not dry_run:
+        # Claim the log BEFORE the insert commits: a log that cannot be written
+        # afterwards would leave inserted rows that no --revert can name.
+        log_path = Path(args.log or f"kb-shares-backfill-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json")
+        try:
+            log_path.write_text(json.dumps({"inserted": [], "complete": False}, indent=2))
+        except OSError as err:
+            logger.error("Log not writable (%s): %s; nothing written to the database.", log_path, err)
+            return 2
     async with AsyncSessionLocal() as session:
         result = await backfill_kb_shares(session, dry_run=dry_run)
     logger.info("%s | (kb, user) pairs with legacy grants: %d | already in kb_shares: %d "
@@ -124,8 +134,8 @@ async def _run(args: argparse.Namespace) -> int:
     if dry_run:
         logger.info("Nothing written. Re-run with --commit to insert %d row(s).", result.missing)
         return 0
-    log_path = Path(args.log or f"kb-shares-backfill-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json")
-    log_path.write_text(json.dumps({"inserted": result.inserted}, indent=2))
+    assert log_path is not None
+    log_path.write_text(json.dumps({"inserted": result.inserted, "complete": True}, indent=2))
     logger.info("Inserted: %d | log written: %s", len(result.inserted), log_path)
     return 0
 
