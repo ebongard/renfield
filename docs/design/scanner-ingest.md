@@ -396,8 +396,9 @@ Hardening from the pre-merge review (2026-09-14):
   `push_pending`, `crashed`). Conversation history is re-read by later agent
   turns, so event text would be a prompt-injection channel.
   `blank_backs_dropped` (page numbers of the back sides the scanner set aside,
-  see Risks below) is bounded in `ScanJobResult` (≤ 500 non-negative ints,
-  otherwise 422 like `documents`) and only its LENGTH is used: a count > 0
+  see Risks below) is LENIENT in `ScanJobResult` like `stage_id` — not a list →
+  none, longer than the `pages` bound → capped, never a 422 that would discard a
+  genuine completion notice — and only its LENGTH is used: a count > 0
   appends one fixed sentence ("1 leere Rückseite wurde entfernt." / "N leere
   Rückseiten wurden entfernt."; English for every other language). Count 0 or
   field absent (older scanner) → the message is byte-identical to before. The
