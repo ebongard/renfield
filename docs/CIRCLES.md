@@ -30,12 +30,15 @@ Ein Nutzer A sieht ein Atom mit Eigentümer O und Tier T wenn **eine** der folge
 2. **PUBLIC** — T == 4 (öffentliche Atome hat jeder)
 3. **EXPLICIT GRANT** — in `atom_explicit_grants` existiert ein Eintrag `(atom_id, granted_to_user_id=A)` (der Notion/Drive/Dropbox-Ausnahme-Fall: *„teile dieses eine Dokument mit dieser einen Person, ohne ihre Tier-Einstufung anzufassen"*)
 4. **TIER-REACH** — über `circle_memberships` ist A in einem Circle von O, dessen Tier ≤ T ist (Leiter-Reichweite)
+5. **KB-SHARE** (nur Dokumente, Chunks, Fakten) — in `kb_shares` existiert `(kb_id = Wissensbasis des Dokuments, user_id = A)`. Zur Abfragezeit über `d.knowledge_base_id` ausgewertet: eine Freigabe deckt **jedes** Dokument der Wissensbasis, auch später hochgeladene oder hineinverschobene. Eigentümer des Dokument-Atoms bleibt der KB-Eigentümer.
 
-Die Vier-Zweig-Logik wird einmal zentral formuliert in `services/circle_sql.py` und in jedes Retrieval-Modul als SQL-`WHERE`-Klausel injiziert — kein Retrieval-Code schreibt die Policy selbst.
+🛑 **Bis `pc20261101` gab es keine Freigabe-Zeile.** `share_kb` schrieb je *vorhandenem* Dokument einen Grant (Zweig 3), sonst nichts: eine leere KB zu teilen speicherte nichts, ein späteres Dokument war nie gedeckt (Bob konnte seinen eigenen Upload in Alices geteilte KB nicht lesen, weil der Upload Alice gehört), und mit dem letzten Dokument verschwand die Freigabe. Auch die KB-Routenrechte (wer hochladen darf) wurden aus denselben Grants abgeleitet. Diese Alt-Grants bleiben bestehen und zählen weiter (Zugriff = `kb_shares` ODER Grant, Stufe = Maximum aus beiden), bis der Eigentümer `bin/backfill_kb_shares.py` laufen lässt (Standard: Trockenlauf, `--commit` schreibt und protokolliert, `--revert --log` nimmt genau das zurück). `revoke_kb_share` löscht die Zeile UND die Alt-Grants des Nutzers auf den Dokumenten der KB; `move_documents` löscht die Grants der verschobenen Dokumente (sie wanderten sonst mit dem Atom aus der geteilten KB heraus). Beides ist nur korrekt, weil heute kein Code einen Einzeldokument-Grant schreibt — ein solches Feature braucht eine Markierungsspalte.
+
+Die Zweig-Logik wird einmal zentral formuliert in `services/circle_sql.py` und in jedes Retrieval-Modul als SQL-`WHERE`-Klausel injiziert — kein Retrieval-Code schreibt die Policy selbst.
 
 **Edge-Case — Single-User-Mode**: bei `AUTH_ENABLED=false` wird die gesamte Filterlogik übersprungen (OR-Short-Circuit). Ein einzelner Nutzer sieht alles, unabhängig von Tiers.
 
-**Ausnahme — Federation (`peer`)**: der Single-User-Bypass gilt **nur für lokale Aufrufer**. Eine föderierte Peer-Query reicht eine `PeerScope(owner_id, tier)` bis in den Filter; jedes Retrieval-Modul filtert dann weiter, auch bei `AUTH_ENABLED=false`. Der Filter lässt die Zweige „Owner-Gleichheit" und „expliziter Grant" weg, und es bleibt beweisbar `(public) ODER (DIESER Eigentümer UND seine gewährte Stufe)`.
+**Ausnahme — Federation (`peer`)**: der Single-User-Bypass gilt **nur für lokale Aufrufer**. Eine föderierte Peer-Query reicht eine `PeerScope(owner_id, tier)` bis in den Filter; jedes Retrieval-Modul filtert dann weiter, auch bei `AUTH_ENABLED=false`. Der Filter lässt die Zweige „Owner-Gleichheit", „expliziter Grant" und „KB-Share" weg, und es bleibt beweisbar `(public) ODER (DIESER Eigentümer UND seine gewährte Stufe)`.
 
 🛑 **Beide Hälften sind tragend.** Die Stufe allein genügt nicht: ohne die Bindung an `peer_users.circle_owner_id` sähe der Peer seine Stufe bei *jedem* Eigentümer der Instanz.
 
@@ -142,7 +145,7 @@ Die Review-Schlange wird **je Namens-Cluster** entschieden, nicht je Paar (`POST
 | `atom_explicit_grants` | Ausnahme-Grants: `(atom_id, granted_to_user_id, permission_level)` |
 | `circles` | Pro-User Tier-Konfiguration (optionale Anpassung der 5 Standard-Stufen) |
 | `circle_memberships` | Wer ist in welchem Tier-Ring welches Eigentümers |
-| `kb_shares` | Knowledge-Base-Level Share → ein Grant je Dokument-Atom (seit `pc20260423`, vorher je Chunk; siehe `kb_shares_service.py`) |
+| `kb_shares` | Knowledge-Base-Freigabe `(kb_id, user_id, permission_level)` — eine Zeile je Freigabe, zur Abfragezeit ausgewertet (seit `pc20261101`; vorher nur Grants je damals vorhandenem Dokument, die als Alt-Grants weiter zählen) |
 
 **Denormalisierte Spalten**: `document_chunks.circle_tier`, `document_chunks.atom_id`, dasselbe Paar auf `kg_entities`, `kg_relations`, `conversation_memories`.
 
@@ -179,7 +182,7 @@ Jedes Subsystem, das Inhalte dem LLM präsentiert, wendet den Circle-Filter an:
 | `services/circle_resolver.py` | `PolicyEvaluator` + Cache, Access-Checks außerhalb von SQL |
 | `services/circle_sql.py` | `build_filter(user_id)` — die zentrale WHERE-Klausel-Factory |
 | `services/polymorphic_atom_store.py` | Cross-Source-Retrieval mit RRF für `/api/atoms` |
-| `services/kb_shares_service.py` | KB-Level-Share → generiert pro Dokument einen `AtomExplicitGrant` |
+| `services/kb_shares_service.py` | KB-Freigabe: `kb_shares`-Zeile schreiben/entziehen, KB-Rechtestufe = Maximum aus `kb_shares` und Alt-Grants, Backfill aus Alt-Grants |
 
 ---
 
