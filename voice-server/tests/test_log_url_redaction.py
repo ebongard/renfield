@@ -296,8 +296,9 @@ def backend_log_safety():
     spec = importlib.util.spec_from_file_location("_backend_log_safety", BACKEND_LOG_SAFETY)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    if not hasattr(mod, "redact_url_secrets"):
-        pytest.skip("backend has no URL redaction yet (renfield #1441 not merged)")
+    # A rename on the backend side must FAIL here, never skip: a skip would let
+    # the two copies drift apart unnoticed.
+    assert hasattr(mod, "redact_url_secrets"), "backend URL redaction renamed or removed"
     return mod
 
 
