@@ -720,11 +720,22 @@ async def forward_via_email(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_optional_user),
 ):
-    """Forward a chat upload via Email MCP."""
+    """Forward a chat upload via Email MCP.
+
+    Under auth only the upload's OWNER may forward it (the same rule as
+    ``/index``): the original file leaves the house to any address the caller
+    names. Reaching the upload through a shared conversation is enough to read
+    its preview, not to send the file on. Paperless and Simba stay reach-based
+    (they file inside the household's own systems).
+    """
     # Fetch upload (scoped to the authenticated user's conversations)
     upload = await _get_owned_upload(db, upload_id, user)
     if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
+    if settings.auth_enabled and not await _caller_owns_upload(db, upload, user):
+        raise HTTPException(
+            status_code=403, detail="Only the owner of this upload can forward it",
+        )
 
     # Check file exists on disk
     if not upload.file_path or not Path(upload.file_path).is_file():
