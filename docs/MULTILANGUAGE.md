@@ -267,7 +267,7 @@ Alle sechs Configs sind in jeder Standard-Postgres-Installation enthalten — ke
 
 **Funktionsweise:**
 
-Zwei `GENERATED STORED`-Spalten — `conversation_memories.search_vector` (Migration `pc20260528`) und `document_chunks.search_vector` (Migration `pc20260529`) — berechnen bei jedem Insert/Update ihren Wert serverseitig als Union aller sechs `to_tsvector`-Aufrufe:
+Sechs `GENERATED STORED`-Spalten `search_vector` — `conversation_memories` (`pc20260528`), `document_chunks` (`pc20260529`), `document_facts` (`pc20260602`), `messages` (`pc20260617`), `notes` (`pc20260720`), `documents` (`pc20260829`) — berechnen bei jedem Insert/Update ihren Wert serverseitig als Union aller sechs `to_tsvector`-Aufrufe. Die Liste samt Inhaltsausdruck je Tabelle steht an EINER Stelle: `services/fts_generated_columns.GENERATED_SEARCH_VECTORS`. Beispiel für eine Tabelle über `content`:
 
 ```sql
 GENERATED ALWAYS AS (
@@ -290,7 +290,9 @@ Die Query-Seite unioniert analog `websearch_to_tsquery` über dieselbe Menge. Fo
    - `document_chunks.search_vector` — Vorlage: `pc20260529` (atomic-swap-Pattern, minimiert das Schreib-Lock auf grossen Korpora)
 3. GIN-Indexe `idx_conversation_memories_search_vector_gin` und `idx_document_chunks_search_vector_gin` werden von den Vorlagen-Migrationen automatisch mit CONCURRENTLY neu aufgebaut.
 
-Beide Spalten sind ab pc20260529 auto-multilingual — `RAG_HYBRID_FTS_CONFIG` wird nicht mehr im Query-Pfad konsultiert und ist nur noch deklarativ (Startup-Warnung bei Werten ausserhalb `FTS_LANGUAGES`).
+🛑 **`create_all` baut diese Spalten NICHT als GENERATED**, sondern als leere, nie gefüllte Spalte — das Modell kennt nur `FetchedValue()`. Eine Neuinstallation (Baseline `pc20260926_baseline` = `create_all`) hatte deshalb bis 2026-10-31 sechs leere Spalten und BM25 lieferte nichts; `pc20261031_sv_generated` repariert das nach SPALTENZUSTAND (`attgenerated`), die Testumgebung (`tests/backend/conftest.py`) ruft dieselbe Funktion, und der Start warnt laut, wenn eine `FetchedValue()`-Spalte nicht GENERATED ist. Ursache der Lücke: der „wie Produktion“-Beweis der Baseline verglich Tabellen und Indexe (die GIN-Indexe waren da), nicht die Spaltenform; `tests/backend/test_pc20261031_search_vector_generated.py` spielt die echte Neuinstallationskette in einem Wegwerf-Schema nach und prüft jede `FetchedValue()`-Spalte auf `attgenerated = 's'`. Bei einer 7. Sprache: auch `GENERATED_SEARCH_VECTORS` gilt dann für alle sechs Tabellen — die Folge-Migration muss JEDE der sechs Spalten neu anlegen; die Reparaturfunktion lässt eine schon GENERATED-Spalte bewusst in Ruhe und ersetzt also keinen alten Ausdruck.
+
+Beide ursprünglichen Spalten sind ab pc20260529 auto-multilingual — `RAG_HYBRID_FTS_CONFIG` wird nicht mehr im Query-Pfad konsultiert und ist nur noch deklarativ (Startup-Warnung bei Werten ausserhalb `FTS_LANGUAGES`).
 
 ### Speech-to-Text (Whisper)
 

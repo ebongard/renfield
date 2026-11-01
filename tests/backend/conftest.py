@@ -198,46 +198,16 @@ def _truncate_sql(names: list[str]) -> str:
 
 
 # `create_all` renders `search_vector` as a plain tsvector column: SQLAlchemy
-# does not know it is GENERATED — the migrations add it with an ALTER. A plain
-# column is never filled, so every full-text search finds nothing and the test
-# that "passes" proves only that the sqlite fallback ran. Rebuild the columns
-# the way production has them, from the very same expression builder the
-# migrations use.
-# table → the content EXPRESSION the migration feeds to the tsvector builder
-# (copied from the migrations so the harness and production agree).
-_FTS_GENERATED_COLUMNS = {
-    "messages": "content",
-    "conversation_memories": "content",
-    "document_chunks": "content",
-    "document_facts": (
-        "value || ' ' || coalesce(normalized_value, '') || ' ' || "
-        "coalesce(excerpt, '') || ' ' || kind"
-    ),
-    "notes": "title || ' ' || coalesce(body, '')",
-    "documents": (
-        "(coalesce(generated_title, '') || ' ' || coalesce(title, '') || ' ' "
-        "|| coalesce(filename, ''))"
-    ),
-}
-
-
+# does not know it is GENERATED. A plain column is never filled, so every
+# full-text search finds nothing and the test that "passes" proves only that
+# the sqlite fallback ran. Rebuild the columns with the SAME code the repair
+# migration `pc20261031_sv_generated` runs on a fresh install -- this harness
+# used to carry its own copy, which is exactly why no test ever saw that a
+# fresh install lacked them (2026-10-31).
 async def _add_generated_search_vectors(conn) -> None:
-    from services.fts_languages import build_generated_tsvector_expression
+    from services.fts_generated_columns import ensure_generated_search_vectors
 
-    for table, content_expr in _FTS_GENERATED_COLUMNS.items():
-        exists = (await conn.execute(_sa_text(
-            "SELECT 1 FROM information_schema.tables WHERE table_name = :t"
-        ), {"t": table})).scalar()
-        if exists is None:
-            continue  # table gone — the migration owns the truth, not this list
-        expr = build_generated_tsvector_expression(content_expr)
-        await conn.execute(_sa_text(
-            f"ALTER TABLE {table} DROP COLUMN IF EXISTS search_vector"
-        ))
-        await conn.execute(_sa_text(
-            f"ALTER TABLE {table} ADD COLUMN search_vector tsvector "
-            f"GENERATED ALWAYS AS ({expr}) STORED"
-        ))
+    await conn.run_sync(ensure_generated_search_vectors)
 
 
 # One key for the whole run. `_SCHEMA_READY` is a PROCESS flag, and the first

@@ -23,6 +23,9 @@ Loaded only when a migration file is read. Deploy order and the migration Job: `
   job (`--migrate`), never at boot.
   **A new raw-SQL index goes in a NEW migration, never into the baseline** — migrations after it run on a fresh
   install like any other. The baseline covers only what came before it and never needs updating.
+- 🛑 **A schema comparison must include column SHAPE (`pg_attribute.attgenerated`), not only tables + indexes.**
+  `create_all` builds a `FetchedValue()` column PLAIN and never filled: fresh installs had six dead `search_vector`
+  columns, BM25 = 0 (2026-10-31), repaired by `pc20261031_sv_generated`. History: `docs/MULTILANGUAGE.md`.
 - 🛑 **Historisch (bis #B3): raw-SQL DDL in a migration NEVER reached a fresh install.** `create_all` builds
   tables and ORM-declared indexes; anything a migration adds via `op.execute("CREATE INDEX …")` is skipped, and the
   stamp then claims it was applied, so nothing ever backfills it. Measured 2026-09-24, 37 data points without one
@@ -91,7 +94,8 @@ migration is safe.
 SQLite and `create_all` prove nothing about a migration. Test the real upgrade on the dedicated `renfield_test`
 database on the build box, never on a live DB: create the pre-migration state, `alembic stamp <previous>`,
 `upgrade head`, check the column and an existing row, `downgrade -1`, `upgrade head` again. `create_all` does not build
-GENERATED `search_vector` columns — add them explicitly when a test needs them. pgvector caps an indexed vector at
+GENERATED `search_vector` columns — call `services.fts_generated_columns.ensure_generated_search_vectors` (what the
+harness and `pc20261031` run), never a private copy of the expressions. pgvector caps an indexed vector at
 2000 dimensions: use `::halfvec(2560)`.
 🛑 **A throwaway schema stays EMPTY under a bare `create_all`.** With `SET search_path TO "<schema>", public` it
 skips every table that is merely VISIBLE through `public`, so the rows land in the shared `public` tables and stay
