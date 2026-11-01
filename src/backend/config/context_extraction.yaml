@@ -9,45 +9,50 @@
 #         path: "[0].field"            # JSON path into the result
 #       - key: "list_variable"
 #         path: "[].field"             # Collects all values into a list
-
-homeassistant:
-  get_states:
-    - key: "queried_entities"
-      path: "[].entity_id"
+#       - key: "wrapped"
+#         path: "results.[0].field"    # A list one level down
+#
+# A path is resolved against the result AFTER mcp_compact.yaml has compacted
+# it, and against the tool's CURRENT response shape: a path into an older shape
+# extracts nothing, silently. Every rule here has a recorded response shape in
+# tests/backend/test_context_extractor.py (RECORDED_SHAPES), built from the
+# MCP source — add one with each new rule.
 
 paperless:
+  # renfield-mcp-paperless: {"summary": {...}, "results": [{...}, ...]}
   search_documents:
     - key: "last_document_id"
-      path: "[0].id"
+      path: "results.[0].id"
     - key: "last_document_title"
-      path: "[0].title"
+      path: "results.[0].title"
     - key: "last_document_correspondent"
-      path: "[0].correspondent"
+      path: "results.[0].correspondent"
 
 jellyfin:
-  search:
+  # renfield-mcp-jellyfin: {"total": N, "items": [{"id", "name", ...}, ...]}
+  search_media:
     - key: "last_media_id"
-      path: "[0].Id"
+      path: "items.[0].id"
     - key: "last_media_name"
-      path: "[0].Name"
-    - key: "last_media_type"
-      path: "[0].Type"
+      path: "items.[0].name"
 
 n8n:
+  # n8n-mcp wraps every answer: {"success": true, "data": ...}
   n8n_get_workflow:
     - key: "current_workflow_id"
-      path: "id"
+      path: "data.id"
     - key: "current_workflow_name"
-      path: "name"
+      path: "data.name"
   n8n_list_workflows:
     - key: "workflow_count"
-      path: "__length__"
+      path: "data.returned"
 
 email:
+  # renfield-mcp-mail: {"account", "folder", "query", "count", "results": [...]}
   search_emails:
     - key: "last_email_id"
-      path: "[0].id"
+      path: "results.[0].id"
     - key: "last_email_subject"
-      path: "[0].subject"
+      path: "results.[0].subject"
     - key: "last_email_from"
-      path: "[0].from"
+      path: "results.[0].from"

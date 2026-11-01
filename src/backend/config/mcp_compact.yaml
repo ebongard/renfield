@@ -8,35 +8,40 @@
 #       - simple_field
 #       - nested.field
 #       - array[].field
-
-homeassistant:
-  get_states:
-    - entity_id
-    - state
-    - attributes.friendly_name
-    - attributes.unit_of_measurement
-    - last_changed
+#
+# A rule is written against the tool's CURRENT response shape and breaks
+# silently when the MCP server wraps its answer differently. Every rule here
+# therefore has a recorded response shape in tests/backend/test_mcp_compact.py
+# (RECORDED_SHAPES), built from the MCP source — add one with each new rule.
+# A rule that reduces a non-empty payload to nothing falls back to the
+# uncompacted payload and logs a WARNING (services/mcp_compact.py).
+# Keep "error" in each rule: an error envelope must reach the agent intact.
 
 paperless:
+  # renfield-mcp-paperless (pinned in requirements.txt) answers
+  # {"summary": {...}, "results": [{...}, ...]}; tags are resolved names.
   search_documents:
-    - id
-    - title
-    - correspondent
-    - tags[].name
-    - created_date
-    - added
-
-jellyfin:
-  search:
-    - Id
-    - Name
-    - Type
-    - ProductionYear
-    - Overview
+    - error
+    - summary
+    - results[].id
+    - results[].title
+    - results[].created
+    - results[].correspondent
+    - results[].document_type
+    - results[].tags
+    - results[].page_count
+    - results[].snippet
 
 n8n:
+  # n8n-mcp (pinned in src/backend/Dockerfile) answers
+  # {"success": true, "data": {"workflows": [...], "returned": N, ...}}.
   n8n_list_workflows:
-    - id
-    - name
-    - active
-    - updatedAt
+    - success
+    - error
+    - data.workflows[].id
+    - data.workflows[].name
+    - data.workflows[].active
+    - data.workflows[].updatedAt
+    - data.returned
+    - data.hasMore
+    - data.nextCursor

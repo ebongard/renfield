@@ -17,6 +17,10 @@ from loguru import logger
 
 _compact_rules: dict[str, dict[str, list[str]]] = {}
 
+# The note services/mcp_client.py::_truncate_response embeds in a JSON payload
+# whose largest array it cut.
+_TRUNCATION_KEY = "_truncation"
+
 
 def load_compact_config(config_path: str = "config/mcp_compact.yaml") -> None:
     """Load field whitelist rules from YAML config.
@@ -72,12 +76,9 @@ def compact_mcp_result(tool_name: str, result: dict) -> dict:
     # Compact the message field (typically JSON)
     message = result.get("message", "")
     if message:
-        try:
-            parsed = json.loads(message)
-            compacted = _extract_fields(parsed, field_paths)
-            result = {**result, "message": json.dumps(compacted, ensure_ascii=False)}
-        except (json.JSONDecodeError, TypeError):
-            pass  # Not JSON, leave as-is
+        compacted_message = _compact_json_text(message, field_paths, tool_name)
+        if compacted_message is not None:
+            result = {**result, "message": compacted_message}
 
     # Compact the data field if present
     data = result.get("data")
@@ -85,17 +86,63 @@ def compact_mcp_result(tool_name: str, result: dict) -> dict:
         compacted_data = []
         for item in data:
             if isinstance(item, dict) and item.get("type") == "text":
-                try:
-                    parsed = json.loads(item["text"])
-                    compacted = _extract_fields(parsed, field_paths)
-                    compacted_data.append({**item, "text": json.dumps(compacted, ensure_ascii=False)})
-                except (json.JSONDecodeError, TypeError):
-                    compacted_data.append(item)
+                compacted_text = _compact_json_text(item.get("text"), field_paths, tool_name)
+                compacted_data.append(item if compacted_text is None else {**item, "text": compacted_text})
             else:
                 compacted_data.append(item)
         result = {**result, "data": compacted_data}
 
     return result
+
+
+def _compact_json_text(text: Any, field_paths: list[str], tool_name: str) -> str | None:
+    """Compact one JSON text with the whitelist; None means "keep it as it is".
+
+    None is returned for text that is not JSON, and for a whitelist that turns a
+    non-empty payload into nothing. The latter is a rule written against another
+    response shape than the tool answers (paperless search_documents matched
+    nothing for months after the MCP wrapped its list into {"summary", "results"},
+    and the agent answered "nothing found" to every search). Handing the agent an
+    empty object is worse than the uncompacted payload, so the payload stays and
+    a WARNING names the mismatch. Only the payload's top-level keys are logged,
+    never its content.
+
+    The "uncompacted" payload is bounded for the PROMPT, not at the source: the
+    message was truncated by the MCP client (``_truncate_response``), the data
+    items carry the raw text, and the agent loop truncates both to
+    ``agent_response_truncation`` before they reach the LLM.
+
+    The MCP client's own ``_truncation`` note (it cut the payload's largest
+    array to fit its size limit) is kept whatever the rule says: without it the
+    agent reads a cut list as the complete answer.
+    """
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None  # Not JSON, leave as-is
+
+    compacted = _extract_fields(parsed, field_paths)
+    if _is_hollow(compacted) and not _is_hollow(parsed):
+        shape = sorted(parsed)[:10] if isinstance(parsed, dict) else type(parsed).__name__
+        logger.warning(
+            f"MCP compaction rule for {tool_name} kept nothing of a non-empty payload "
+            f"(top-level shape: {shape}) — rule does not match the response shape, "
+            f"passing the payload through uncompacted"
+        )
+        return None
+
+    if isinstance(parsed, dict) and isinstance(compacted, dict) and _TRUNCATION_KEY in parsed:
+        compacted = {**compacted, _TRUNCATION_KEY: parsed[_TRUNCATION_KEY]}
+    return json.dumps(compacted, ensure_ascii=False)
+
+
+def _is_hollow(value: Any) -> bool:
+    """True for an empty dict/list, or a list holding only hollow items."""
+    if isinstance(value, dict):
+        return not value
+    if isinstance(value, list):
+        return all(_is_hollow(item) for item in value)
+    return False
 
 
 def _resolve_tool_name(namespaced: str) -> tuple[str, str] | None:
