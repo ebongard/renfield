@@ -187,7 +187,8 @@ verbietet per AST-Scan jedes `has_permission(…, Permission.*_NONE)` im Backend
 | `/api/chat/upload` (POST) | Schreibrecht auf die Unterhaltung `session_id` nach der Regel des Chats selbst (`ConversationService.reaches`, wie `save_message`): bestehende Unterhaltung im Kreis erreichbar, sonst 403 (eigentümerlose erreicht niemand); noch keine Zeile = neue, vom Client erzeugte Sitzung → erlaubt; anonym → 401 |
 | WS-Chat `attachment_ids` | bei Auth an nur Uploads DIESER Unterhaltung (`ChatUpload.session_id` = die geprüfte Sitzung des Zuges, `chat_handler._fetch_document_context`); fremde IDs werden still ausgelassen, ohne Sitzung nichts |
 | `/api/chat/upload/{id}/index` | eigener Upload (Eigentümer der Unterhaltung; Erreichbarkeit über Kreise genügt nicht → 403) UND Schreibzugriff auf die Ziel-KB wie oben; anonym → 401 |
-| `/api/chat/upload/{id}` (+ `/paperless`, `/email`, `/simba`) | Unterhaltung im Kreis erreichbar; anonym bei Auth an → 404 |
+| `/api/chat/upload/{id}/email` | eigener Upload (Eigentümer der Unterhaltung, wie `/index`): die Originaldatei verlässt das Haus an eine beliebige Adresse — Erreichbarkeit über Kreise genügt nicht → 403; nicht erreichbar oder anonym bei Auth an → 404 |
+| `/api/chat/upload/{id}` (+ `/paperless`, `/simba`) | Unterhaltung im Kreis erreichbar; anonym bei Auth an → 404 |
 | `/api/roles/*` (GET) | `roles.view` |
 | `/api/roles/*` (POST/PATCH/DELETE) | `roles.manage` |
 | `/api/users/*` (GET) | `users.view` |
