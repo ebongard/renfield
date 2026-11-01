@@ -13,3 +13,4 @@ that enforceable.
 | v0.3.3 | 2026-07-19 | d929420c | `your-registry.example/renfield/voice-server@sha256:2e977a367522561431435c4b412fcaefe9f62463ae52c89ef7c67a2484ff2a30` |
 | v0.3.7 | 2026-07-22 | ad403347 | `your-registry.example/renfield/voice-server@sha256:25ecbb757143978bdc03b4bbd781fe87bf795d00107ae36e952e1ed2aa29341c` |
 | v0.3.8 | 2026-11-01 | d7fdd242 | `registry.treehouse.x-idra.de/renfield/voice-server@sha256:3211adbfb39af10a7d6f45afd91e9f79bd463836a91d23663099c536e1e5c3eb` |
+| v0.3.9 | 2026-11-01 | ea65eecd | `registry.treehouse.x-idra.de/renfield/voice-server@sha256:dcc54dafffc7bd6ec25c2bdd624b8b1a84bc098c0774702d041ceb701b5b73e0` |
