@@ -102,9 +102,7 @@ skips every table that is merely VISIBLE through `public`, so the rows land in t
 there — the test is green once, then red on every rerun and looks order-dependent. Create with
 `execution_options(schema_translate_map={None: schema})` and assert `to_regclass('"<schema>".roles')` (see
 `test_kb_shares_service.py`).
-🛑 **Nothing in `public` survives a test run.** The harness (`tests/backend/conftest.py`) starts each run with
-`DROP SCHEMA public CASCADE` and recreates it plus `vector` — `drop_all` knew only this branch's tables and died on
-another branch's leftover FK (2026-11-01). It refuses any database not named `renfield_test` / `renfield_test<suffix>`.
+Nothing in `public` of `renfield_test` survives a test run — see `docs/TECHNICAL_DEBT.md` → Testbank.
 
 ## The REVERSE path is exercised, never asserted
 Applies to `downgrade()`, to a backfill's `--revert`, to any flag rollback — the forward path gets the care and
