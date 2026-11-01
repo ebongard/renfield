@@ -127,7 +127,10 @@ log "record digest"
 if [[ $DRY_RUN == 0 ]]; then
   DIGEST=$(on_build "docker inspect --format='{{index .RepoDigests 0}}' $IMAGE:$TAG")
   [[ "$DIGEST" == *"@sha256:"* ]] || fail "could not read pushed digest for $IMAGE:$TAG"
-  printf '| %s | %s | %s | `%s` |\n' "$TAG" "$(date -u +%Y-%m-%d)" "$GIT_SHA" "$DIGEST" >> "$VSDIR/RELEASES.md"
+  # RELEASES.md is public: record the digest under the placeholder registry,
+  # like every earlier row; the digest alone identifies the image.
+  printf '| %s | %s | %s | `%s` |\n' "$TAG" "$(date -u +%Y-%m-%d)" "$GIT_SHA" \
+    "your-registry.example/renfield/voice-server@${DIGEST#*@}" >> "$VSDIR/RELEASES.md"
   git tag "$GIT_TAG"
   log "released $IMAGE:$TAG"
   echo "digest (pin THIS in consuming manifests):"
