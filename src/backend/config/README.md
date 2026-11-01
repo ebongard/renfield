@@ -4,9 +4,31 @@ Backend-internal config shipped inside the image (`COPY . .` in `src/backend/Doc
 
 ## What lives here
 
-- `context_extraction.yaml` — LLM extraction prompts for context vars
-- `mcp_compact.yaml` — MCP response compaction rules
+- `context_extraction.yaml` — JSON-path rules that pull follow-up context vars
+  (last document id, last email, …) out of MCP tool results; no LLM involved
+- `mcp_compact.yaml` — MCP response compaction rules (field whitelists per tool)
 - `i18n/` — backend translations
+
+Both YAMLs are written against the CURRENT response shape of each MCP tool, and a
+path into an older shape matches nothing — silently. That is how every agent
+Paperless search reached the LLM as `{}` ("nothing found") for months after
+renfield-mcp-paperless wrapped its list into `{"summary", "results"}`. So:
+
+- Every rule has a recorded response shape (`RECORDED_SHAPES`, built from the MCP
+  source, invented values) in `tests/backend/test_mcp_compact.py` /
+  `test_context_extractor.py`; the tests load the shipped YAML and fail for a rule
+  without a shape. When an MCP pin in `requirements.txt` or the `n8n-mcp` pin in
+  the Dockerfile moves, re-check the shapes against the new source.
+- Extraction runs on the COMPACTED result: a compaction rule must keep every field
+  an extraction rule reads.
+- A compaction rule that reduces a non-empty payload to nothing falls back to the
+  uncompacted payload with a WARNING
+  `MCP compaction rule for <tool> kept nothing …`. That line in the backend log
+  means the rule no longer matches its tool. "Truncated" holds for the prompt:
+  the MCP client cuts `message`, the agent loop cuts message and data to
+  `AGENT_RESPONSE_TRUNCATION`.
+- The MCP client's `_truncation` note (it cut the largest array to its size
+  limit) is kept by every rule, so a cut list never reads as the whole answer.
 
 ## What does NOT live here
 

@@ -25,7 +25,8 @@ Full table (every tool, purpose, source, gate): `docs/INTERNAL_TOOLS.md`.
 ## Identity is injected, never taken from LLM params
 - `services/action_executor.py` special-cases these tools because the generic `intent.startswith("internal.")` hook
   path cannot provide `mcp_manager`, `session_id`, the authenticated `user_id` or `user_permissions`.
-- A handler must never read `user_id` / `session_id` / permissions from the tool arguments.
+- A handler must never read `user_id` / `session_id` / permissions from the tool arguments: the executor strips them
+  (`strip_server_injected_keys`), ha_glue reads `self._caller_user_id`. Guard + history: `test_internal_tool_identity.py`, `docs/INTERNAL_TOOLS.md`.
 - A new tool that needs one of these must be wired into that special case, or it silently gets none.
 - Widget tools return `data["artifacts"]`; `chat_handler._collect_tool_artifacts` → `_emit_turn_artifacts` validates,
   emits and persists. Typed JSON from the agent via `artifact_service.validate_artifact`, NEVER free-text parsing.

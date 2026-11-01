@@ -817,7 +817,23 @@ async def schicht_a_post_document_ingest_hook(
             lang = lang or settings.default_language
 
             result = await SchichtAExtractor().extract(field_text, lang=lang)
+            if result.error:
+                # extract() logs the failure itself, but without the document: the
+                # line could not be tied to the document it cost. Name it here.
+                logger.warning(
+                    f"Schicht A: extraction for doc {document_id} failed "
+                    f"({result.error}); kept {len(result.facts)} deterministic "
+                    f"fact(s)"
+                )
             if not result.facts:
+                # No facts → no generated title and no document date either; the
+                # document stays that way until it is re-extracted. This exit was
+                # silent, so such a document left no trace at all (xidra doc 669).
+                logger.warning(
+                    f"Schicht A: doc {document_id} produced no facts "
+                    f"(error={result.error or 'none'}, {len(field_text)} chars of "
+                    f"field text) — no title, no document date"
+                )
                 return
 
             capped = result.facts[:_MAX_FACTS_PER_DOC]

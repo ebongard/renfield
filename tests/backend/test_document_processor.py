@@ -617,6 +617,19 @@ _VLM_CLEAN = (
 )
 
 
+def _stub_pages(dp, images, render_log=None):
+    """Stub the per-page renderer: ``images`` are the rendered pages (empty list =
+    page count unknown); ``render_log`` collects the rendered page indices."""
+    dp._page_count = lambda fp: len(images)
+
+    def _render(fp, idx):
+        if render_log is not None:
+            render_log.append(idx)
+        return images[idx]
+
+    dp._render_page_b64 = _render
+
+
 class _FakeVision:
     def __init__(self, text):
         self._t = text
@@ -633,7 +646,7 @@ async def test_vlm_fallback_noop_when_disabled(monkeypatch):
     monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", False)
     dp = DocumentProcessor()
     rendered = []
-    dp._render_pages_b64 = lambda fp, mx: rendered.append(1) or ["img"]
+    _stub_pages(dp, ["img"], rendered)
 
     assert await dp._vlm_ocr_fallback("/x.pdf", _VLM_GARBLE) is None
     assert rendered == []  # never renders / calls the VLM when off
@@ -647,7 +660,7 @@ async def test_vlm_fallback_skips_when_ocr_already_good(monkeypatch):
     monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
     dp = DocumentProcessor()
     rendered = []
-    dp._render_pages_b64 = lambda fp, mx: rendered.append(1) or ["img"]
+    _stub_pages(dp, ["img"], rendered)
     dp._ollama_service = _FakeVision(_VLM_CLEAN)
 
     assert await dp._vlm_ocr_fallback("/x.pdf", _VLM_CLEAN) is None
@@ -661,10 +674,37 @@ async def test_vlm_fallback_replaces_garbled_ocr_with_better_text(monkeypatch):
 
     monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
     dp = DocumentProcessor()
-    dp._render_pages_b64 = lambda fp, mx: ["img"]
+    _stub_pages(dp, ["img"])
     dp._ollama_service = _FakeVision(_VLM_CLEAN)
 
-    assert await dp._vlm_ocr_fallback("/x.pdf", _VLM_GARBLE) == _VLM_CLEAN
+    assert (await dp._vlm_ocr_fallback("/x.pdf", _VLM_GARBLE)).text == _VLM_CLEAN
+
+
+@_pytest.mark.unit
+@_pytest.mark.asyncio
+async def test_extract_text_only_returns_the_vlm_text(monkeypatch, tmp_path):
+    """extract_text_only (Paperless audit re-OCR, chat upload) is the second
+    caller of the fallback. It must use the transcription's TEXT: slicing the
+    VlmTranscription object raised, and the except turned an accepted VLM
+    recovery into None (no text at all)."""
+    from types import SimpleNamespace
+
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
+    monkeypatch.setattr(settings, "rag_force_ocr", False)
+    monkeypatch.setattr(settings, "rag_ocr_auto_detect", False)
+    pdf = tmp_path / "scan.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    dp = DocumentProcessor()
+    dp._ensure_initialized = lambda: None
+    dp._convert_document = lambda fp: SimpleNamespace(
+        document=SimpleNamespace(export_to_text=lambda: _VLM_GARBLE)
+    )
+    _stub_pages(dp, ["img"])
+    dp._ollama_service = _FakeVision(_VLM_CLEAN)
+
+    assert await dp.extract_text_only(str(pdf)) == _VLM_CLEAN
 
 
 @_pytest.mark.unit
@@ -675,7 +715,7 @@ async def test_vlm_fallback_keeps_ocr_when_vlm_not_better(monkeypatch):
 
     monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
     dp = DocumentProcessor()
-    dp._render_pages_b64 = lambda fp, mx: ["img"]
+    _stub_pages(dp, ["img"])
     dp._ollama_service = _FakeVision(_VLM_GARBLE)  # VLM also garbage
 
     assert await dp._vlm_ocr_fallback("/x.pdf", _VLM_GARBLE) is None
@@ -704,13 +744,13 @@ async def test_vlm_fallback_gibberish_gate_triggers_on_pseudo_word_garble(monkey
     monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
     monkeypatch.setattr(settings, "ocr_vlm_gibberish_gate_enabled", True)
     dp = DocumentProcessor()
-    dp._render_pages_b64 = lambda fp, mx: ["img"]
+    _stub_pages(dp, ["img"])
     # pronounceable pseudo-words: garble_ratio ~0 → score_ocr_quality would pass it
     style2 = "ZOGEOLONIGGY bunaorstaoyuy NMCVAUN MOUYBOS aul Tuo readable looking here"
     vlm_out = "Bezahlung MasterCard Betrag Gesamt Rechnung Nummer Datum Kunde Steuer"
     dp._ollama_service = _FakeVisionGate(vlm_out, gibberish_prefix="ZOGEO")
 
-    assert await dp._vlm_ocr_fallback("/x.pdf", style2) == vlm_out
+    assert (await dp._vlm_ocr_fallback("/x.pdf", style2)).text == vlm_out
 
 
 @_pytest.mark.unit
@@ -723,7 +763,7 @@ async def test_vlm_fallback_gate_skips_readable_text(monkeypatch):
     monkeypatch.setattr(settings, "ocr_vlm_gibberish_gate_enabled", True)
     dp = DocumentProcessor()
     rendered = []
-    dp._render_pages_b64 = lambda fp, mx: rendered.append(1) or ["img"]
+    _stub_pages(dp, ["img"], rendered)
     dp._ollama_service = _FakeVisionGate("x", gibberish_prefix="ZZZ_NEVER")
     clean = "Bezahlung MasterCard Betrag Gesamt Rechnung Nummer Datum Kunde Steuer heute"
 

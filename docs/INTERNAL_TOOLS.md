@@ -305,13 +305,26 @@ Identifier pass:
 Dispatch for these tools is a special case in `services/action_executor.py` that injects dependencies the generic
 `intent.startswith("internal.")` hook path cannot provide:
 
-- `mcp_manager`, `session_id`, and the authenticated `user_id` for `list_my_memories` / `ingest_file` /
+- `mcp_manager`, `session_id`, and the authenticated `user_id` for `knowledge_search` / `list_my_memories` / `ingest_file` /
   `ingest_status` / `reindex_documents` / `list_chunkless_documents` / `list_unfiled_documents` /
   `refile_to_paperless` / `find_duplicate_documents` / `create_reminder`;
 - `session_id` for `create_reminder`;
 - `user_permissions` for `reindex_documents`'s + `refile_to_paperless`'s `RAG_MANAGE` gate,
   `list_unfiled_documents`'s owner-scope admin check, and `paperless_dedupe`'s `ADMIN` gate;
 - `mcp_manager` for `weather_widget` / `paperless_dedupe`.
+
+**Identity never comes from the parameter dict.** For every `internal.*` / `knowledge.*` intent the executor drops
+`user_id` / `session_id` / `user_permissions` from the LLM-built parameters (`strip_server_injected_keys`) and hands
+the authenticated values on as keyword arguments. ha_glue's tools get the caller through the `execute_tool` hook:
+`ha_glue_execute_tool` builds `InternalToolService(caller_user_id=user_id)`, and the radio-favorite tools plus the Media
+Follow Me session owner read `self._caller_user_id`. Until 2026-10-31 `knowledge_search` was dispatched WITHOUT
+`user_id` and read it from the params instead (a stale comment claimed FastMCP injected it): with auth on the agent's
+search ran as nobody and reached the public tier only, so a user's own documents were never found. The radio
+favorites read it from the params too, i.e. were stored owner-less. With auth on, an UNIDENTIFIED turn (device token,
+unrecognised voice) is refused by the three favorite tools rather than sharing the owner-less bucket; auth off keeps
+the single shared list. Every `run_hooks("execute_tool", …)` call carries `user_id=` (the chat handler's
+media-transport shortcut once passed none). Guarded by `tests/backend/test_internal_tool_identity.py`
+(dispatch on real Postgres + an AST check of the executor body and of every handler module).
 
 The render/weather tools' `data["artifacts"]` is collected by `chat_handler._collect_tool_artifacts` from
 `agent_tool_results` and fed to `_emit_turn_artifacts` (both the single-agent and orchestration paths), the same

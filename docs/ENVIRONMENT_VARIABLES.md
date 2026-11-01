@@ -1465,7 +1465,11 @@ OCR_VLM_FALLBACK_ENABLED=false   # Wenn Tesseract/EasyOCR-Text weiter schlecht s
                                  # Vision-Modell (OLLAMA_VISION_MODEL) transkribieren lassen. Nur
                                  # genutzt, wenn das VLM-Ergebnis strikt besser scored. Dark/opt-in.
 OCR_VLM_FALLBACK_SCORE_THRESHOLD=2  # OCR-Score <= dieser Wert → VLM-Fallback versuchen
-OCR_VLM_FALLBACK_MAX_PAGES=5     # Max. Seiten pro Dokument fürs VLM (Kosten-/Latenz-Grenze)
+OCR_VLM_FALLBACK_MAX_PAGES=50    # Kostengrenze (ein Vision-Aufruf je Seite, nacheinander), KEINE Kürzung:
+                                 # ein längeres Dokument wird gar nicht neu gelesen und behält seinen
+                                 # vollständigen OCR-Text (WARNING „pages exceed"). Bis 2026-10-31
+                                 # Vorgabe 5 — damals verlor ein VLM-ersetztes Dokument still jede
+                                 # Seite ab der 6. Bereich 1–1000.
 OCR_VLM_GIBBERISH_GATE_ENABLED=false  # Schneller LM-Check (is_ocr_gibberish, Intent-Modell) als
                                  # VLM-Trigger+Akzeptanz — fängt „aussprechbaren" Pseudo-Wort-Müll
                                  # (ZOGEOLONIGGY), den Zeichenstatistik nicht erkennt. 1 kleiner
@@ -2987,12 +2991,21 @@ SEARCH_FUNCTIONAL_MIN_ENGINES=2       # degraded, wenn < N distinct general-Engi
 # erwartet ist und eine gesunde Instanz NICHT allein degraded flaggen darf.
 SEARCH_FUNCTIONAL_BACKBONE_ENGINES=bing,google-cse
 
-# Paperless-NGX URL
-# Seit 2026-10-27 liest das Backend sie auch selbst (`settings.paperless_api_url`),
-# um aus `GET /api/knowledge/documents/<id>` ein fertiges `paperless_url` zu bauen —
-# der Knopf unter einer Scan-Fertigmeldung. Leer heisst: kein Link, kein Fehler.
-# Es ist eine LAN-Adresse; der Link traegt nur im Heimnetz.
+# Paperless-NGX URL — die Adresse, unter der das BACKEND und der Paperless-MCP
+# Paperless erreichen (Compose: Containername, Haushalt: LAN-Adresse).
+# Das Backend liest sie selbst (`settings.paperless_api_url`) für den Prüfsummen-
+# Abgleich (#1166) und als RÜCKFALL-Basis des „In Paperless öffnen"-Links.
 PAPERLESS_API_URL=http://paperless.local:8000
+
+# Browser-seitige Basis-URL der Paperless-Oberfläche (optional, Standard: leer).
+# Aus ihr baut `GET /api/knowledge/documents/<id>` das fertige `paperless_url` —
+# der Knopf unter einer Scan-Fertigmeldung (`document_ref`), Form
+# `<basis>/documents/<paperless_id>/details`; ein abschliessender `/` wird entfernt,
+# ein Pfadpräfix hinter einem Reverse-Proxy bleibt erhalten.
+# Leer/ungesetzt → Rückfall auf PAPERLESS_API_URL (Verhalten wie vor der Trennung).
+# Beide leer → kein Link, kein Fehler. Nötig, sobald die API-Adresse im Browser
+# nicht taugt (`http://paperless:8000` unter Compose, LAN-Adresse ausserhalb des Heimnetzes).
+# PAPERLESS_PUBLIC_URL=https://paperless.example.org
 
 # Calendar (Unified Calendar MCP Server — EWS, Google, CalDAV)
 # Config via config/calendar_accounts.yaml
@@ -3370,6 +3383,7 @@ EMAIL_MCP_ENABLED=true
 N8N_BASE_URL=http://192.168.1.78:5678
 SEARXNG_API_URL=http://cuda.local:3002
 PAPERLESS_API_URL=http://paperless.local:8000
+# PAPERLESS_PUBLIC_URL=https://paperless.example.org  # Link-Basis für den Browser; leer = PAPERLESS_API_URL
 
 # MCP-Server Secrets: In Produktion als Docker Secrets!
 # OPENWEATHER_API_KEY=...     → secrets/openweather_api_key

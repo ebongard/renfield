@@ -625,7 +625,7 @@ async def detect_boundaries(
 
 def _render_page_b64(file_path: str, page_number: int) -> str | None:
     """Render ONE page to a base64 PNG for the VLM (blocking — executor).
-    Mirrors DocumentProcessor._render_pages_b64 but per-index, so the slow
+    Mirrors DocumentProcessor._render_page_b64 (1-based here), so the slow
     lane renders exactly the garbage pages instead of a head slice."""
     import base64
     import io

@@ -195,6 +195,32 @@ async def _warn_about_tables_no_migration_created() -> None:
         logger.debug("Table reconciliation skipped: {}", exc)
 
 
+async def _warn_about_columns_not_generated() -> None:
+    """Report model columns the DATABASE must compute that it does not.
+
+    A `FetchedValue()` column (every `search_vector`) is GENERATED in
+    production, but `create_all` builds it as a plain column that is never
+    filled -- full-text search then finds nothing, without any error. Measured
+    2026-10-31 on a fresh install: all six were plain. One loud line here
+    instead of a search that is silently empty.
+    """
+    try:
+        import ha_glue.models.database  # noqa: F401 — populates Base.metadata
+        from models.database import Base
+        from services.fts_generated_columns import not_generated
+
+        async with engine.begin() as conn:
+            plain = await conn.run_sync(lambda c: not_generated(c, Base.metadata))
+        if plain:
+            logger.warning(
+                "{} column(s) should be GENERATED but are plain and never filled: {}. "
+                "Full-text search on them returns nothing -- run `alembic upgrade head`.",
+                len(plain), ", ".join(plain),
+            )
+    except Exception as exc:  # pragma: no cover - a warning must never disrupt
+        logger.debug("Generated-column check skipped: {}", exc)
+
+
 async def init_db():
     """Create the schema of a fresh database -- via the MIGRATION, not
     via `create_all`.
@@ -235,12 +261,14 @@ async def init_db():
             # better ONE loud line at startup than `UndefinedTable` at some
             # point in the middle of operation.
             await _warn_about_tables_no_migration_created()
+            await _warn_about_columns_not_generated()
             logger.info("Database present — no initialisation needed")
             return
 
         logger.info("Empty database detected -- schema via the baseline migration")
         await _stamp_pre_baseline()
         await _run_alembic_upgrade_head()
+        await _warn_about_columns_not_generated()
         logger.info("✅ Schema created via `alembic upgrade head`")
     except Exception as e:
         logger.error(f"❌ Failed to initialise the database: {error_text_without_content(e)}")
