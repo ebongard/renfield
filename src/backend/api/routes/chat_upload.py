@@ -28,6 +28,7 @@ from models.database import (
 from models.permissions import Permission
 from services.auth_service import get_optional_user, require_permission
 from services.circle_sql import conversations_circles_filter
+from services.conversation_service import ConversationService
 from services.database import AsyncSessionLocal, get_db
 from services.document_processor import DocumentProcessor
 from services.ingest_common import get_or_create_owned_kb
@@ -79,6 +80,10 @@ async def upload_chat_document(
     # to the first user (the admin) — the same exposure the per-owner KB ends.
     if settings.auth_enabled and not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    if settings.auth_enabled and not await _may_write_session(db, session_id, user):
+        raise HTTPException(
+            status_code=403, detail="No write access to this conversation",
+        )
 
     # Validate file extension
     filename = file.filename or "unknown"
@@ -279,6 +284,27 @@ async def _get_owned_upload(
             query = query.where(Conversation.user_id == user.id)
     result = await db.execute(query)
     return result.scalar_one_or_none()
+
+
+async def _may_write_session(db: AsyncSession, session_id: str, user) -> bool:
+    """May the caller attach a file to conversation ``session_id``? (auth on)
+
+    The SAME rule the chat's own message write applies
+    (``ConversationService.save_message`` with ``enforce_ownership``): an
+    existing conversation must be within the caller's REACH
+    (``ConversationService.reaches``, the four-branch circle filter) — so a
+    member may attach to a shared room thread they may post in, and nobody
+    may attach to a thread they cannot reach; an ownerless one reaches nobody.
+    No row yet is a brand-new session the client minted: the browser attaches
+    before its first message creates the conversation, and that message then
+    creates it for this caller — allowed, as in ``save_message``.
+    """
+    conversation_id = (await db.execute(
+        select(Conversation.id).where(Conversation.session_id == session_id)
+    )).scalar_one_or_none()
+    if conversation_id is None:
+        return True
+    return await ConversationService(db).reaches(conversation_id, user.id)
 
 
 async def _caller_owns_upload(db: AsyncSession, upload: ChatUpload, user) -> bool:
