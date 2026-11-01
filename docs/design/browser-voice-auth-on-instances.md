@@ -36,7 +36,7 @@ SPEAKER_RECOGNITION_ENABLED (xidra: false → no voiceprint is stored)
 | D4 | Speaker recognition **off** on xidra (all four `SPEAKER_*` knobs) **plus** code gates, so no voiceprint is persisted on any path: `chat_handler` + the resolver (voice turns), admin enrollment routes/services (409 / refusal), and meetings (the per-cluster ECAPA `embedding` is stripped before `Meeting.segments` is ever written — independent of flags — and fingerprints, which persist a centroid, need `meeting_fingerprints_enabled` AND `speaker_recognition_enabled`). Read-only count 2026-09-15: 0 meetings on either instance → nothing to purge; `bin/purge_meeting_segment_embeddings.py` exists for legacy rows (dry-run first). Opt-in later, only after a GDPR assessment (TODOS). The household deviates deliberately (speaker recognition stays on with per-member consent — D-6 in `household-auth-on-cutover.md` §3). |
 | D5 | Users may enable the browser wake word themselves once voice is on; it stays gated only on `isFeatureEnabled('voice')`. |
 | D6 | No in-app notice — the browser's own microphone permission prompt is the consent surface. |
-| D7 | Voice-server hardening (token redaction in the access log, per-client origins) → next voice-server release, not this change. |
+| D7 | Voice-server hardening (token redaction in the access log, per-client origins) → next voice-server release, not this change. Token redaction: done in #1452 (live with the next voice-server release); per-client origins still open. |
 | — | **No maximum recording length** anywhere on this path (client, Traefik, voice-server). |
 
 The composer mic is now gated on `isFeatureEnabled('voice')` too (it wasn't —
