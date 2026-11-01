@@ -760,7 +760,10 @@ async def schicht_a_post_document_ingest_hook(
     extraction miss never fails the upload. Idempotent on re-ingest: prior facts
     for the document are purged (via the sanctioned AtomPurgeService) before
     re-extraction, so reindexing a document refreshes its facts instead of
-    duplicating them.
+    duplicating them. Exception: a re-extraction whose LLM step failed
+    (``result.error``) leaves a document that already has facts untouched —
+    prior facts, generated title and document date are kept rather than
+    replaced by the deterministic subset.
 
     Per-fact tier-override carry-over: before writing the fresh fact set, the
     prior facts that carry an owner-set per-fact tier override
