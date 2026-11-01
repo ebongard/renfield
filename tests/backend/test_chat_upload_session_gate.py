@@ -176,3 +176,75 @@ async def test_auth_off_upload_into_any_session_is_unchanged(async_client: Async
     resp = await _post(async_client, "s-authoff")
 
     assert resp.status_code == 200, resp.text
+
+
+# ---------------------------------------------------------------------------
+# The chat turn's own read of attachments (WS ``attachment_ids``)
+# ---------------------------------------------------------------------------
+#
+# The client names upload ids in the chat frame; the ids are sequential. The
+# turn must read only uploads attached to ITS session, or any user could put
+# another user's document text into their own prompt.
+
+
+@pytest.fixture
+def _chat_handler_on_test_db(async_engine, async_client):
+    """``_fetch_document_context`` opens its own session; bind it to the test DB."""
+    from sqlalchemy.ext.asyncio import AsyncSession as _AS
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    maker = async_sessionmaker(async_engine, class_=_AS, expire_on_commit=False)
+    with patch("api.websocket.chat_handler.AsyncSessionLocal", maker):
+        yield
+
+
+async def _completed_upload(db, session_id: str, text: str) -> int:
+    upload = ChatUpload(
+        session_id=session_id, filename="doc.txt", file_type="txt", file_size=10,
+        status="completed", extracted_text=text,
+    )
+    db.add(upload)
+    await db.commit()
+    return upload.id
+
+
+async def test_turn_reads_an_upload_of_its_own_session(db_session, auth_on, _chat_handler_on_test_db):
+    from api.websocket.chat_handler import _fetch_document_context
+
+    upload_id = await _completed_upload(db_session, "s-turn", "MY-ATTACHED-TEXT")
+
+    context = await _fetch_document_context([upload_id], lang="en", session_id="s-turn")
+
+    assert "MY-ATTACHED-TEXT" in context
+
+
+async def test_turn_does_not_read_an_upload_of_another_session(
+    db_session, auth_on, _chat_handler_on_test_db,
+):
+    """Negative control is the test above: same upload shape, only the session differs."""
+    from api.websocket.chat_handler import _fetch_document_context
+
+    foreign_id = await _completed_upload(db_session, "s-someone-else", "FOREIGN-TEXT")
+
+    context = await _fetch_document_context([foreign_id], lang="en", session_id="s-turn")
+
+    assert context == ""
+
+
+async def test_turn_without_session_reads_nothing_under_auth(db_session, auth_on, _chat_handler_on_test_db):
+    from api.websocket.chat_handler import _fetch_document_context
+
+    upload_id = await _completed_upload(db_session, "s-any", "SOME-TEXT")
+
+    assert await _fetch_document_context([upload_id], lang="en", session_id=None) == ""
+
+
+async def test_turn_reads_across_sessions_with_auth_off(db_session, _chat_handler_on_test_db):
+    """Auth off is single-user: unchanged."""
+    from api.websocket.chat_handler import _fetch_document_context
+
+    upload_id = await _completed_upload(db_session, "s-elsewhere", "AUTH-OFF-TEXT")
+
+    context = await _fetch_document_context([upload_id], lang="en", session_id="s-turn")
+
+    assert "AUTH-OFF-TEXT" in context

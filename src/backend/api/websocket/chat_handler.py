@@ -698,12 +698,24 @@ async def _pending_paperless_confirm(session_id: str) -> str | None:
         return None
 
 
-async def _fetch_document_context(attachment_ids: list[int], lang: str) -> str:
+async def _fetch_document_context(
+    attachment_ids: list[int], *, lang: str, session_id: str | None,
+) -> str:
     """Fetch extracted text from uploaded documents and format as prompt context.
+
+    Under auth only uploads attached to THIS turn's conversation are read
+    (``ChatUpload.session_id == session_id``). The ids come from the client
+    and are sequential: without the session match any user could name another
+    user's upload id and have its text put into their own prompt, past every
+    reach check the REST routes apply. The session is the boundary-checked one
+    (after ``_replacement_session_for``), and ``POST /api/chat/upload`` only
+    attaches to a session the caller may write — so an upload in this session
+    is one the caller reaches. Auth off: unchanged.
 
     Args:
         attachment_ids: List of ChatUpload IDs to include
         lang: Language for prompt templates (de/en)
+        session_id: The turn's (boundary-checked) session id
 
     Returns:
         Formatted document context string, or empty string on error/no results.
@@ -717,15 +729,17 @@ async def _fetch_document_context(attachment_ids: list[int], lang: str) -> str:
         from models.database import ChatUpload
         from services.prompt_manager import prompt_manager
 
+        query = select(ChatUpload).where(
+            ChatUpload.id.in_(attachment_ids),
+            ChatUpload.status == "completed",
+            ChatUpload.extracted_text.isnot(None),
+        )
+        if settings.auth_enabled:
+            if not session_id:
+                return ""
+            query = query.where(ChatUpload.session_id == session_id)
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(ChatUpload).where(
-                    ChatUpload.id.in_(attachment_ids),
-                    ChatUpload.status == "completed",
-                    ChatUpload.extracted_text.isnot(None),
-                )
-            )
-            uploads = result.scalars().all()
+            uploads = (await db.execute(query)).scalars().all()
 
         if not uploads:
             return ""
@@ -1666,7 +1680,7 @@ async def websocket_endpoint(
                 )
                 if attachment_ids:
                     document_context = await _fetch_document_context(
-                        attachment_ids, lang=turn_lang
+                        attachment_ids, lang=turn_lang, session_id=msg_session_id,
                     )
                 # LLM fallback: a pending confirm exists but the reply didn't look
                 # like ja/nein/field-choices. Tell the agent so it can still route
