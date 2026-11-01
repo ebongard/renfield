@@ -66,6 +66,28 @@ class TestChatUploadAPI:
         assert body["id"]
 
     @pytest.mark.backend
+    async def test_anonymous_upload_is_refused_under_auth(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch
+    ):
+        """Auth on, no user → 401 and no row. Accepted, the upload would be
+        auto-indexed into the ownerless KB with the admin as atom owner."""
+        from sqlalchemy import func
+
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "auth_enabled", True)
+        files = {"file": ("test.txt", io.BytesIO(b"secret"), "text/plain")}
+        data = {"session_id": "anon-session"}
+
+        response = await async_client.post("/api/chat/upload", files=files, data=data)
+
+        assert response.status_code == 401
+        count = (await db_session.execute(
+            select(func.count()).select_from(ChatUpload)
+        )).scalar()
+        assert count == 0
+
+    @pytest.mark.backend
     async def test_upload_invalid_format(self, async_client: AsyncClient):
         """.exe files are rejected with 400"""
         content = b"MZ\x00\x00"
@@ -81,6 +103,7 @@ class TestChatUploadAPI:
     async def test_upload_too_large(self, async_client: AsyncClient):
         """Files exceeding max size are rejected with 400"""
         with patch("api.routes.chat_upload.settings") as mock_settings:
+            mock_settings.auth_enabled = False  # a bare MagicMock attribute is truthy
             mock_settings.max_file_size_mb = 1
             mock_settings.allowed_extensions_list = ["txt"]
             mock_settings.upload_dir = "/tmp/renfield-test-uploads"

@@ -73,6 +73,12 @@ async def upload_chat_document(
 
     Returns extracted text preview and metadata.
     """
+    # Fail closed under auth: an anonymous upload would be auto-indexed into
+    # the ownerless "Chat Uploads" KB, whose documents' atom owner falls back
+    # to the first user (the admin) — the same exposure the per-owner KB ends.
+    if settings.auth_enabled and not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     # Validate file extension
     filename = file.filename or "unknown"
     ext = Path(filename).suffix.lower().lstrip('.')
