@@ -168,7 +168,9 @@ the role descriptions in `config/agent_roles.yaml`.
   `Eingang` is left as it is (not moved, not re-owned); new documents go to the
   per-owner inbox. Schema: `knowledge_bases` is unique on `(name, owner_id) NULLS NOT
   DISTINCT` (migration `pc20261031_kb_name_per_owner`, replaced the global
-  `UNIQUE(name)`; its downgrade refuses while a name is shared). Chat uploads and
+  `UNIQUE(name)`; its downgrade refuses while a name is shared). Two concurrent first pushes of one
+  owner both miss the lookup; the helper inserts inside a SAVEPOINT and, on a violation of
+  exactly that index, re-selects the winner's row instead of failing the push. Chat uploads and
   meeting transcripts follow the same rule: one `Chat Uploads` / `Meetings` KB per
   uploader / meeting owner (see `docs/CIRCLES.md` → "System KBs are per owner"). The health
   `kb_resolved` reports whether the configured target user's inbox exists.
