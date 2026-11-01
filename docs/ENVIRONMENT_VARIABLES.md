@@ -1696,6 +1696,7 @@ PDF_SPLIT_WINDOW_CHARS=24000     # Zeichenbudget pro Boundary-LLM-Fenster (Konte
 PDF_SPLIT_VLM_PAGE_TIMEOUT_S=45  # Zeitlimit pro VLM-Seitentranskription in der Slow-Lane (zeitbasiert — bewusst KEIN Seiten-Cap)
 PDF_SPLIT_WORKER_MAX_TRANSIENT_RETRIES=10  # Slow-Lane: transiente Fehlversuche, bevor der Fail-Safe greift (Übergabe als EIN Dokument — nie ein dauerhaft fehlgeschlagenes Doc)
 PDF_SPLIT_AUTO_THRESHOLD=0.85    # Whole-File-Gate: JEDES Teilstück muss diese Konfidenz erreichen, sonst Review statt Auto-Split
+PDF_SPLIT_BLANK_FOLD_ENABLED=false  # Leere Seiten (≤ 30 Zeichen Textebene UND keine Tinte im Seitenbild) werden dem VORANGEHENDEN Dokument zugeschlagen; ein rein leeres Teilstück entfällt samt seiner Konfidenz (dark; aus = byte-identisch)
 ```
 
 Die Slow-Lane (schlechte Scans → VLM-Seitentranskription; überlange Dateien →
@@ -1708,7 +1709,7 @@ sonst Status quo (Einzeldokument, lautes Log). Fail-Safe der Lane ist immer die
 
 **Defaults:** `PDF_SPLIT_ENABLED`: `false` · `PDF_SPLIT_WINDOW_CHARS`: `24000` ·
 `PDF_SPLIT_VLM_PAGE_TIMEOUT_S`: `45` · `PDF_SPLIT_AUTO_THRESHOLD`: `0.85` ·
-`PDF_SPLIT_WORKER_MAX_TRANSIENT_RETRIES`: `10`
+`PDF_SPLIT_WORKER_MAX_TRANSIENT_RETRIES`: `10` · `PDF_SPLIT_BLANK_FOLD_ENABLED`: `false`
 
 ---
 
