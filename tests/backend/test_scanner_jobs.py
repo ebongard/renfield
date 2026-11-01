@@ -928,8 +928,11 @@ async def test_route_drops_unknown_result_fields_and_bounds_the_known_ones(clien
     assert oversized.status_code == 422
 
 
-async def test_route_forwards_the_dropped_blank_backs_and_bounds_them(client):
-    """Before, `extra="ignore"` silently discarded the scanner's field."""
+async def test_route_forwards_the_dropped_blank_backs_and_never_rejects_them(client):
+    """Before, `extra="ignore"` silently discarded the scanner's field.
+
+    LENIENT like `stage_id`: only the length is used, so a malformed value must
+    not 422 the completion notice (the scanner would retry it for 24 h, then drop it)."""
     handler = AsyncMock(return_value="delivered")
     auth = {"Authorization": "Bearer ok"}
 
@@ -942,15 +945,21 @@ async def test_route_forwards_the_dropped_blank_backs_and_bounds_them(client):
         forwarded = handler.await_args.args[1]["result"]["blank_backs_dropped"]
         absent = await client.post("/api/scanner/job-event", json=_body(), headers=auth)
         forwarded_absent = handler.await_args.args[1]["result"]["blank_backs_dropped"]
-        oversized = await client.post("/api/scanner/job-event", json=body([2] * 501), headers=auth)
-        negative = await client.post("/api/scanner/job-event", json=body([2, -1]), headers=auth)
-        not_ints = await client.post("/api/scanner/job-event", json=body(["x"]), headers=auth)
+        large = await client.post("/api/scanner/job-event", json=body([2] * 501), headers=auth)
+        forwarded_large = handler.await_args.args[1]["result"]["blank_backs_dropped"]
+        odd_items = await client.post("/api/scanner/job-event", json=body([2, -1, "x"]), headers=auth)
+        forwarded_odd = handler.await_args.args[1]["result"]["blank_backs_dropped"]
+        not_a_list = await client.post("/api/scanner/job-event", json=body({"n": 3}), headers=auth)
+        forwarded_not_a_list = handler.await_args.args[1]["result"]["blank_backs_dropped"]
+        too_many = await client.post("/api/scanner/job-event", json=body([0] * 100_001), headers=auth)
+        forwarded_too_many = handler.await_args.args[1]["result"]["blank_backs_dropped"]
 
     assert resp.status_code == 200 and forwarded == [2, 4]
     assert absent.status_code == 200 and forwarded_absent == []
-    assert oversized.status_code == 422
-    assert negative.status_code == 422
-    assert not_ints.status_code == 422
+    assert large.status_code == 200 and len(forwarded_large) == 501
+    assert odd_items.status_code == 200 and len(forwarded_odd) == 3
+    assert not_a_list.status_code == 200 and forwarded_not_a_list == []
+    assert too_many.status_code == 200 and len(forwarded_too_many) == 100_000
 
 
 @pytest.mark.parametrize("header", [{}, {"Authorization": "Bearer "}, {"Authorization": "Basic abc"}])

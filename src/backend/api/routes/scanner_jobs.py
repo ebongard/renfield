@@ -27,11 +27,11 @@ scanner with it.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.api_rate_limiter import limiter
@@ -90,12 +90,21 @@ class ScanJobResult(BaseModel):
     documents: list[Any] = Field(default_factory=list, max_length=500)
     skipped: list[Any] = Field(default_factory=list, max_length=500)
     # Page numbers of the back sides the scanner set aside as blank
-    # (SCANNER_BLANK_BACKS=drop). Only the LENGTH reaches the message.
-    blank_backs_dropped: list[Annotated[int, Field(ge=0)]] = Field(
-        default_factory=list, max_length=500)
+    # (SCANNER_BLANK_BACKS=drop). Only the LENGTH reaches the message, so the
+    # field is LENIENT like `stage_id`: a malformed value must not reject the
+    # completion notice with a 422 -- see `_lenient_blank_backs`.
+    blank_backs_dropped: list[Any] = Field(default_factory=list)
     # A code, never the free-form error text: the message is rendered from fixed
     # localised templates (see services/scanner_jobs.render_completion_message).
     error_code: str | None = Field(default=None, max_length=40)
+
+    @field_validator("blank_backs_dropped", mode="before")
+    @classmethod
+    def _lenient_blank_backs(cls, value: Any) -> list[Any]:
+        """Not a list → none dropped; longer than the `pages` bound → capped."""
+        if not isinstance(value, list):
+            return []
+        return value[:100_000]
 
 
 class ScanJobEvent(BaseModel):
