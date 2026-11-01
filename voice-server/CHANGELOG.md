@@ -3,6 +3,17 @@
 Releases via `bin/release-voice-server.sh` — the script refuses to release a
 version without a section here. Pushed digests live in `RELEASES.md`.
 
+## [Unreleased]
+
+- **No voice token in the log.** uvicorn logged `/ws/voice?token=<JWT>` in its
+  access line and in its `WebSocket … [accepted]` line (`uvicorn.error`, on even
+  with `--no-access-log`). `voice_server/log_safety.py` now redacts every
+  credential query parameter on both loggers, installed at import of
+  `voice_server.main` (image CMD and anonymous listener alike); names are
+  percent-decoded first (`?%74oken=` authenticates too). It is a copy of the
+  backend's `utils/log_safety` (the image has no backend package), pinned to it
+  by `tests/test_log_url_redaction.py`. (renfield #1441 follow-up)
+
 ## [0.3.7] — 2026-07-22
 
 - **Per-meeting ASR language.** `/transcribe-meeting` gains an optional `language`

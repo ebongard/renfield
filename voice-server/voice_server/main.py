@@ -18,6 +18,12 @@ from fastapi import FastAPI
 
 from voice_server import __version__
 from voice_server.config import settings
+from voice_server.log_safety import install_uvicorn_url_redaction
+
+# No credential from a URL (`/ws/voice?token=...`) in uvicorn's access/WebSocket
+# lines. At import, so the image CMD, the anonymous listener and any manual
+# `uvicorn voice_server.main:app` all get it.
+install_uvicorn_url_redaction()
 
 logger = logging.getLogger("voice_server")
 
