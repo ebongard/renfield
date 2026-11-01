@@ -591,6 +591,14 @@ den späteren MCP-Server, der dieselbe PDF-Assemblierung vornimmt:
 - Ein Gerätefehler mitten im Stapel erzeugt **kein** Teil-Dokument: der Lauf
   bricht hörbar ab und bewahrt die bereits erfassten Seiten, statt einen zu
   kurzen Scan klaglos abzulegen.
+- **Leere Rückseiten** einseitigen Papiers im Duplex-Einzug kann der Scanner
+  selbst aussortieren (`SCANNER_BLANK_BACKS=off|measure|drop`, Vorgabe `off`;
+  erst `measure` an echten Stapeln). Aussortierte Seiten bleiben bis zum
+  Aufräumen des Stagings erhalten. Die Fertigmeldung im Chat nennt nur ihre
+  **Anzahl** („2 leere Rückseiten wurden entfernt.“), nie die Seitennummern;
+  ohne aussortierte Seite bleibt sie unverändert. Grenze: eine Markierung so
+  blass wie Durchschein wird mit aussortiert. Einzelheiten:
+  `docs/design/scanner-ingest.md`.
 
 ## Multi-Room Device System
 

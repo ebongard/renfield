@@ -131,6 +131,9 @@ _TEXT = {
                        "ist. Bitte nicht davon ausgehen, dass etwas abgelegt wurde; wartende "
                        "Scans lassen sich auf dem Scanner prüfen.",
         "doc": " (dort Dokument {id})",
+        # Count only -- the page numbers come from the untrusted event.
+        "blank_backs_one": "1 leere Rückseite wurde entfernt.",
+        "blank_backs_many": "{count} leere Rückseiten wurden entfernt.",
         "unknown_error": "unbekannter Fehler",
         "title": " „{title}“",
         "errors": {
@@ -167,6 +170,8 @@ _TEXT = {
                        "Do not assume anything was filed; waiting scans can be checked on the "
                        "scanner.",
         "doc": " (document {id} there)",
+        "blank_backs_one": "1 blank back side was removed.",
+        "blank_backs_many": "{count} blank back sides were removed.",
         "unknown_error": "unknown error",
         "title": " “{title}”",
         "errors": {
@@ -354,6 +359,21 @@ def render_completion_message(status: str, title: str, result: dict, lang: str) 
     no free-form text from the event reaches the chat — it is re-injected into
     later agent turns, so it must not be a prompt-injection channel."""
     text = _TEXT.get(lang) or _TEXT["en"]
+    message = _render_outcome(text, status, title, result)
+    dropped = result.get("blank_backs_dropped")
+    count = len(dropped) if isinstance(dropped, list) else 0
+    if not count:
+        return message
+    # The scanner set near-blank back sides aside (SCANNER_BLANK_BACKS=drop).
+    # Only the COUNT is used, rendered into a fixed sentence.
+    clause = (text["blank_backs_one"] if count == 1
+              else text["blank_backs_many"].format(count=count))
+    if not message.endswith((".", "?", "!")):
+        message += "."
+    return f"{message} {clause}"
+
+
+def _render_outcome(text: dict, status: str, title: str, result: dict) -> str:
     title_part = text["title"].format(title=title) if title else ""
     if status == "done":
         documents = result.get("documents")

@@ -193,6 +193,7 @@ costs nothing now and keeps the option open.
 ```
 ScanSnap (USB, SANE fujitsu backend)
    │  scanimage: ADF Duplex, 300dpi, swdeskew + swcrop + swskip
+   │  (SCANNER_BLANK_BACKS=drop: swskip 0, blank backs set aside here)
    ▼
 PDF assembly (img2pdf) + OCR text layer (ocrmypdf, deu+eng)
    │
@@ -394,6 +395,14 @@ Hardening from the pre-merge review (2026-09-14):
   `scanner_fault`, `unknown_target`, `missing_token`, `ingest_rejected`,
   `push_pending`, `crashed`). Conversation history is re-read by later agent
   turns, so event text would be a prompt-injection channel.
+  `blank_backs_dropped` (page numbers of the back sides the scanner set aside,
+  see Risks below) is LENIENT in `ScanJobResult` like `stage_id` — not a list →
+  none, longer than the `pages` bound → capped, never a 422 that would discard a
+  genuine completion notice — and only its LENGTH is used: a count > 0
+  appends one fixed sentence ("1 leere Rückseite wurde entfernt." / "N leere
+  Rückseiten wurden entfernt."; English for every other language). Count 0 or
+  field absent (older scanner) → the message is byte-identical to before. The
+  spoken short form carries no count.
 - **An unknown job is 409, not 2xx.** A scan that fails instantly can report back
   before the requester is recorded; 409 makes the scanner retry until it is, and
   an event sent to the wrong instance ends as a loud give-up.
@@ -729,8 +738,35 @@ server must never push a batch that faulted mid-stack.
   reverse 3.97 % — too narrow a margin to threshold without also dropping
   sparse real pages (a short letter, a receipt). Do not crank `--swskip`.
   Prefer `ADF Front` for single-sided stacks, or Gray/Lineart for text
-  documents where the metric is better behaved. A surviving near-blank page
-  costs one page and harms nothing downstream.
+  documents where the metric is better behaved.
+  🛑 **A surviving near-blank page is NOT harmless** (audit 2026-10-31, last
+  30 batches on both instances): 24 % / 33 % of all pages were blank backs of
+  single-sided paper fed in duplex; they stalled the PDF-split review in 8 of
+  30 batches (the lowest-confidence segment was a blank page) or were filed as
+  blank documents. Hence the scanner's own blank-back handling (scanner PR #16,
+  `blank.py`; full contract and calibration in its README),
+  `SCANNER_BLANK_BACKS`:
+  - `off` (**default**) — nothing measured, scan exactly as before
+    (`--swskip 2.0`).
+  - `measure` — every back side is measured and the would-be verdict logged
+    (numbers only); nothing dropped. Run this on real stacks first.
+  - `drop` — a duplex back side is set aside only when OCR reads no word AND
+    mean luminance is high AND the ink area inside the margin is below a floor;
+    `--swskip` goes to 0 (SANE's skip renumbers pages and would turn backs into
+    fronts). Never dropped: a front, a simplex page, anything in an odd-count
+    duplex scan, the only page, or so much that a scan would be empty. Runs
+    BEFORE separator segmentation.
+  - **Retention:** a dropped page moves to `<stage>/dropped/` with
+    `blank-backs.json`, after delivery to `<staging>/dropped-backs/<stage>/`,
+    and is swept after `SCANNER_STAGING_RETENTION_DAYS` — a wrong drop is
+    recoverable when it first shows (a page missing from the filed document).
+  - **In Renfield:** the job result's `blank_backs_dropped` becomes a fixed
+    count sentence in the completion message (see "No free text from the event
+    reaches the chat" above) — that is how the requester learns a page is
+    missing on purpose.
+  - 🛑 **The limit:** a mark as faint as show-through (e.g. a pencil note or a
+    pale stamp at raw ~0.85 of paper and lighter) is indistinguishable from it
+    and IS dropped. That is why the default is `off` and `measure` comes first.
 - **`ocrmypdf` at ingest is partly redundant** with the backend's own
   Docling/OCR + VLM coverage fallback. Keeping a text layer still helps dedup
   and classification; revisit if it costs wall-clock.
