@@ -11,6 +11,7 @@ This module handles:
 """
 
 import asyncio
+import functools
 import json
 from datetime import date
 from typing import NamedTuple
@@ -23,6 +24,7 @@ from ha_glue.services.opus_transport import (
     BinaryFrameError,
     parse_audio_frame,
 )
+from ha_glue.services.voice_empty_turn import SATELLITE_VAD_FLOOR_SECONDS, record_empty_turn
 from ha_glue.utils.config import ha_glue_settings
 from models.websocket_messages import WSErrorCode
 from services.database import AsyncSessionLocal
@@ -973,10 +975,25 @@ async def satellite_websocket(
                 # packets → forward the packet blob; else it's legacy PCM.
                 opus_blob = satellite_manager.get_opus_blob(session_id) if opus_mode else None
                 audio_bytes = None if opus_blob is not None else satellite_manager.get_audio_buffer(session_id)
+                satellite_info = satellite_manager.get_satellite_by_session(session_id)
+
+                # A turn that ends without text is CLASSIFIED, not just logged
+                # (#1386): a false wake and unintelligible speech need opposite
+                # repairs and looked the same. Content-free: kind, length, room.
+                empty_turn = functools.partial(
+                    record_empty_turn,
+                    source="satellite",
+                    session_id=session_id,
+                    room=satellite_info.room if satellite_info else None,
+                    turn_end_reason=reason,
+                    audio_seconds=satellite_manager.recorded_audio_seconds(session_id),
+                    floor_seconds=SATELLITE_VAD_FLOOR_SECONDS,
+                )
 
                 if opus_blob is None and not audio_bytes:
-                    logger.warning(f"⚠️ No audio buffered for session {session_id}")
-                    await satellite_manager.end_session(session_id, reason="no_audio")
+                    await satellite_manager.end_session(
+                        session_id, reason="no_audio", detail=empty_turn(),
+                    )
                     continue
 
                 _size = len(opus_blob) if opus_blob is not None else len(audio_bytes)
@@ -984,7 +1001,6 @@ async def satellite_websocket(
                 logger.info(f"🎵 Processing {_size} bytes of {_kind}")
 
                 # Get satellite's configured language + room context
-                satellite_info = satellite_manager.get_satellite_by_session(session_id)
                 satellite_language = satellite_info.language if satellite_info else settings.default_language
                 satellite_room_id = satellite_info.room_id if satellite_info else None
                 logger.info(f"🌐 Using language: {satellite_language}")
@@ -1050,6 +1066,7 @@ async def satellite_websocket(
                                 language=satellite_language,
                                 initial_prompt=initial_prompt,
                                 is_opus=stt_is_opus,
+                                raise_stt_errors=True,
                             )
                             text = result.get("text", "")
                             speaker_name = result.get("speaker_name")
@@ -1074,11 +1091,13 @@ async def satellite_websocket(
                             language=satellite_language,
                             initial_prompt=initial_prompt,
                             is_opus=stt_is_opus,
+                            raise_stt_errors=True,
                         )
 
                     if not text or not text.strip():
-                        logger.warning(f"⚠️ Empty transcription for session {session_id}")
-                        await satellite_manager.end_session(session_id, reason="empty_transcription")
+                        await satellite_manager.end_session(
+                            session_id, reason="empty_transcription", detail=empty_turn(),
+                        )
                         continue
 
                     logger.info(f"📝 Transcription: '{text}'")
@@ -1088,7 +1107,10 @@ async def satellite_websocket(
                     logger.error(f"❌ Whisper transcription failed: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
-                    await satellite_manager.end_session(session_id, reason="transcription_error")
+                    await satellite_manager.end_session(
+                        session_id, reason="transcription_error",
+                        detail=empty_turn(stt_failed=True),
+                    )
                     continue
 
                 # Process with Ollama (intent extraction + action)

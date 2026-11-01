@@ -421,6 +421,55 @@ class TestAgentSchemaRepairCounter:
         assert recorded == set(metrics_module.AGENT_SCHEMA_REPAIR_KINDS)
 
 
+class TestVoiceEmptyTurnCounter:
+    """renfield_voice_empty_turn_total (#1386)."""
+
+    def test_noop_when_not_initialized(self):
+        from utils.metrics import record_voice_empty_turn
+
+        record_voice_empty_turn("satellite", "vad_floor")
+
+    def test_labels_source_and_kind(self):
+        import utils.metrics as metrics_module
+
+        counter = MagicMock()
+        metrics_module._metrics_initialized = True
+        metrics_module._voice_empty_turn_total = counter
+        try:
+            metrics_module.record_voice_empty_turn("satellite", "vad_floor")
+            counter.labels.assert_called_once_with(source="satellite", kind="vad_floor")
+            counter.labels().inc.assert_called_once()
+        finally:
+            metrics_module._metrics_initialized = False
+            metrics_module._voice_empty_turn_total = None
+
+    def test_prime_exports_every_source_and_kind(self, monkeypatch):
+        import utils.metrics as metrics_module
+
+        counter = MagicMock()
+        monkeypatch.setattr(metrics_module, "_voice_empty_turn_total", counter)
+        metrics_module._prime_voice_empty_turn()
+        primed = {(c.kwargs["source"], c.kwargs["kind"]) for c in counter.labels.call_args_list}
+        assert primed == {
+            (s, k)
+            for s in metrics_module.VOICE_EMPTY_TURN_SOURCES
+            for k in metrics_module.VOICE_EMPTY_TURN_KINDS
+        }
+        counter.labels.return_value.inc.assert_not_called()
+
+    def test_handlers_use_only_primed_sources(self):
+        import re
+        from pathlib import Path
+
+        import utils.metrics as metrics_module
+
+        ws = Path(__file__).resolve().parents[2] / "src/backend/ha_glue/api/websocket"
+        sources = set()
+        for name in ("satellite_handler.py", "device_handler.py"):
+            sources |= set(re.findall(r'source="([a-z_]+)"', (ws / name).read_text()))
+        assert sources == set(metrics_module.VOICE_EMPTY_TURN_SOURCES)
+
+
 class TestTruncationSeriesPriming:
     """A labelled counter emits nothing until first use — prime the agent's."""
 

@@ -465,6 +465,23 @@ class SatelliteManager:
         """
         return session_id in self.sessions
 
+    def recorded_audio_seconds(self, session_id: str) -> float:
+        """Length of the audio buffered for a session (0.0 when unknown).
+
+        Counted from the buffer, not the wall clock: Opus packets at 40 ms
+        each, PCM at 16 kHz mono S16_LE. Read by the empty-turn classifier
+        (#1386), whose VAD floor is a recording length.
+        """
+        from ha_glue.services.voice_empty_turn import recorded_seconds
+
+        session = self.sessions.get(session_id)
+        if not session:
+            return 0.0
+        return recorded_seconds(
+            opus_packets=len(session.opus_packets),
+            pcm_bytes=sum(len(c) for c in session.audio_chunks),
+        )
+
     def get_audio_buffer(self, session_id: str) -> bytes | None:
         """
         Get the complete audio buffer for a session.
@@ -683,18 +700,24 @@ class SatelliteManager:
             except Exception as e:
                 logger.error(f"❌ Failed to send TTS audio: {e}")
 
-    async def end_session(self, session_id: str, reason: str = "completed"):
+    async def end_session(
+        self, session_id: str, reason: str = "completed", detail: dict | None = None,
+    ):
         """
         End an active session.
 
         Args:
             session_id: Session to end
             reason: Reason for ending (completed, timeout, error)
+            detail: Extra content-free fields for the `session_end` event,
+                e.g. why an empty turn produced no text (#1386)
         """
         async with self._lock:
-            await self._end_session_internal(session_id, reason)
+            await self._end_session_internal(session_id, reason, detail)
 
-    async def _end_session_internal(self, session_id: str, reason: str = "completed"):
+    async def _end_session_internal(
+        self, session_id: str, reason: str = "completed", detail: dict | None = None,
+    ):
         """Internal session end without lock"""
         if session_id not in self.sessions:
             return
@@ -730,7 +753,8 @@ class SatelliteManager:
             "turn_end_reason": session.turn_end_reason,
             "duration": duration,
             "success": success,
-            "transcription": session.transcription
+            "transcription": session.transcription,
+            **(detail or {}),
         })
         self._update_stats(session.satellite_id, duration, success)
 
