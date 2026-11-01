@@ -36,7 +36,6 @@ set -euo pipefail
 
 # --- config -----------------------------------------------------------------
 BUILD_HOST="${RENFIELD_BUILD_HOST:-evdb@192.168.1.159}"
-REGISTRY="${RENFIELD_REGISTRY:?set RENFIELD_REGISTRY, e.g. export RENFIELD_REGISTRY=your-registry.example/renfield}"
 KCTX="${RENFIELD_KCTX:-renfield-private}"
 NS="${RENFIELD_NS:-renfield}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -60,6 +59,10 @@ while [[ $# -gt 0 ]]; do
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+# Required, but only once the arguments are parsed: `--help` must be readable
+# without first setting the variable the help is meant to explain (#1399).
+REGISTRY="${RENFIELD_REGISTRY:?set RENFIELD_REGISTRY, e.g. export RENFIELD_REGISTRY=your-registry.example/renfield}"
 
 [[ $SKIP_BACKEND == 0 && -z "$BACKEND_TAG" ]] && { echo "ERROR: --backend-tag required (or --skip-backend)"; exit 2; }
 [[ $SKIP_FRONTEND == 0 && -z "$FRONTEND_TAG" ]] && { echo "ERROR: --frontend-tag required (or --skip-frontend)"; exit 2; }
