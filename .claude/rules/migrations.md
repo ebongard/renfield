@@ -102,6 +102,7 @@ skips every table that is merely VISIBLE through `public`, so the rows land in t
 there — the test is green once, then red on every rerun and looks order-dependent. Create with
 `execution_options(schema_translate_map={None: schema})` and assert `to_regclass('"<schema>".roles')` (see
 `test_kb_shares_service.py`).
+Nothing in `public` of `renfield_test` survives a test run — see `docs/TECHNICAL_DEBT.md` → Testbank.
 
 ## The REVERSE path is exercised, never asserted
 Applies to `downgrade()`, to a backfill's `--revert`, to any flag rollback — the forward path gets the care and

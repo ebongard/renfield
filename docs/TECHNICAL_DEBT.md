@@ -640,6 +640,28 @@ Und dies ist die EINZIGE Stelle, die eine Testzahl führt: `CLAUDE.md` nannte bi
 2026-09-27 „backend 3.400+" — weniger als die Hälfte — und verweist jetzt hierher,
 statt eine zweite Zahl zu pflegen, die zwangsläufig auseinanderdriftet.
 
+### Testbank (`renfield_test`)
+
+Die Backend-Tests laufen gegen echtes Postgres (`RENFIELD_TEST_PG_URL`, auf der Build-Box
+von `bin/run-backend-tests.sh` gesetzt). Der Harness in `tests/backend/conftest.py`:
+
+- **Baut `public` je Lauf von Grund auf neu:** `DROP SCHEMA public CASCADE`, dann das Schema
+  wie bei einer frischen Postgres-15+-Datenbank (Eigentümer `pg_database_owner`, `USAGE` für
+  PUBLIC), `vector` neu, `create_all`, die GENERATED-`search_vector`-Spalten. Nichts in `public`
+  überlebt einen Lauf. Vorher lief `Base.metadata.drop_all`, das nur die Tabellen des
+  EIGENEN Zweigs kennt: am 2026-11-01 ließ eine liegengebliebene `kb_shares` eines anderen
+  Zweigs (FK auf `knowledge_bases`) jeden Lauf beim Aufbau scheitern. Tabellen per Reflexion
+  mit CASCADE zu löschen hätte veraltete Enum-Typen, Views und Sequenzen stehen lassen;
+  `create_all` übernimmt einen gleichnamigen Enum-Typ stillschweigend mit alten Werten.
+- **Verweigert jede andere Datenbank:** der Name muss `renfield_test` oder
+  `renfield_test<Ziffern|_suffix>` lauten (ein Suffix mit `prod` oder `live` wird abgelehnt) und darf nicht die Anwendungsdatenbank
+  (`DATABASE_URL`) sein; geprüft unmittelbar vor dem Löschen, an der URL der Verbindung selbst.
+- **Leert zwischen Tests** nur die Tabellen, die Zeilen haben, und setzt benutzte Sequenzen zurück.
+- **Sperrt die Datenbank je Lauf** (Advisory-Lock); ein zweiter Lauf bricht sofort ab.
+
+Die Migrationstests arbeiten in eigenen Wegwerf-Schemata neben `public` und finden `vector`
+über `search_path = <schema>, public`; der Neuaufbau berührt sie nicht.
+
 ### Fehlende Tests
 
 - [x] `services/audio_output_service.py` - `tests/backend/test_audio_output_service.py`

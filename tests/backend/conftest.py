@@ -12,6 +12,7 @@ Provides:
 """
 
 import os as _os
+import re as _re
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -230,6 +231,13 @@ async def _claim_database(dsn: str) -> None:
     global _RUN_LOCK_CONN, _RUN_LOCK_ENGINE
     from sqlalchemy.pool import NullPool
 
+    # Already ours: a schema build that failed is retried by the next database
+    # test, and asking again on a NEW connection would find this run's own lock
+    # and abort with "Another pytest run holds this test database" -- which on
+    # 2026-11-01 hid the real setup error behind a false one.
+    if _RUN_LOCK_CONN is not None:
+        return
+
     _RUN_LOCK_ENGINE = create_async_engine(dsn, poolclass=NullPool, echo=False)
     conn = await _RUN_LOCK_ENGINE.connect()
     got = (await conn.execute(
@@ -265,16 +273,41 @@ def _db_name_only(url: str | None) -> str:
     """
     if not url:
         return "<unset>"
-    return url.rsplit("/", 1)[-1].split("?")[0]
+    # Parsed the way the driver parses it: a slash inside the query string
+    # (`/renfield?x=/renfield_test`) must not make the guard read the wrong name.
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import ArgumentError
+
+    try:
+        return make_url(url).database or ""
+    except ArgumentError:
+        return ""
+
+
+# The schema reset DROPS the whole `public` schema, so the harness only ever
+# touches a database whose NAME says it is a test database: `renfield_test`, or
+# a run's own copy next to it (`renfield_test2`, `renfield_test_<name>`). A
+# suffix naming a live role (`prod`, `live`) is refused even so: the name is
+# the only thing checked, not the host. A typo, a pasted live DSN or a
+# mis-derived URL then stops the run instead of emptying a real database.
+_TEST_DB_NAME_RE = _re.compile(r"renfield_test(?:\d+|_(?![a-z0-9_]*(?:prod|live))[a-z0-9_]+)?")
 
 
 def _refuse_the_application_database(dsn: str) -> None:
-    """Never run the suite against the database the application itself uses."""
+    """Never run the suite against anything but a dedicated test database."""
+    _name = _db_name_only
+
+    if not _TEST_DB_NAME_RE.fullmatch(_name(dsn)):
+        pytest.exit(
+            f"RENFIELD_TEST_PG_URL names the database {_name(dsn)!r}, which is "
+            "not a test database. This harness drops the whole public schema "
+            "-- point it at `renfield_test` (or `renfield_test<suffix>`).",
+            returncode=1,
+        )
+
     live = _os.environ.get("DATABASE_URL", "")
     if not live:
         return
-
-    _name = _db_name_only
 
     if _name(dsn) and _name(dsn) == _name(live):
         pytest.exit(
@@ -283,6 +316,47 @@ def _refuse_the_application_database(dsn: str) -> None:
             "dedicated test database.",
             returncode=1,
         )
+
+
+# Rebuild `public` from nothing instead of `Base.metadata.drop_all`.
+#
+# The test database is shared between branches. `drop_all` only knows the
+# tables of THIS branch's models, so anything another branch left behind
+# survives it -- and a leftover table with a foreign key into one of ours makes
+# the drop fail outright. Measured 2026-11-01: a `kb_shares` table from another
+# branch (FK to `knowledge_bases`) failed every run at setup with "cannot drop
+# table knowledge_bases because other objects depend on it" until it was
+# dropped by hand. Dropping the reflected tables with CASCADE would fix that
+# one case, but leave stale enum types, views and sequences standing, and
+# `create_all` silently REUSES an enum type of the same name with old labels.
+# Dropping the schema removes every kind of object at once.
+#
+# The schema is recreated exactly as a fresh Postgres 15+ database has it
+# (owner `pg_database_owner`, USAGE for everyone), and `vector` -- whose types
+# lived in `public` and went with it -- is installed again. The throwaway
+# schemas of the migration tests sit beside `public` and are not touched; they
+# find `vector` through `search_path = <schema>, public` as before.
+_RESET_PUBLIC_SCHEMA_SQL = (
+    "DROP SCHEMA IF EXISTS public CASCADE",
+    "CREATE SCHEMA public AUTHORIZATION pg_database_owner",
+    "GRANT USAGE ON SCHEMA public TO PUBLIC",
+    "COMMENT ON SCHEMA public IS 'standard public schema'",
+    "CREATE EXTENSION IF NOT EXISTS vector SCHEMA public",
+)
+
+
+async def _reset_public_schema(conn) -> None:
+    """Empty the test database completely, whatever any branch left in it."""
+    _refuse_the_application_database(conn.engine.url.render_as_string(hide_password=True))
+    for stmt in _RESET_PUBLIC_SCHEMA_SQL:
+        await conn.execute(_sa_text(stmt))
+
+
+async def _build_schema(conn) -> None:
+    """A fresh `public` holding exactly this branch's schema."""
+    await _reset_public_schema(conn)
+    await conn.run_sync(Base.metadata.create_all)
+    await _add_generated_search_vectors(conn)
 
 
 async def _ensure_schema() -> None:
@@ -305,10 +379,7 @@ async def _ensure_schema() -> None:
     await _claim_database(dsn)
     try:
         async with engine.begin() as conn:
-            await conn.execute(_sa_text("CREATE EXTENSION IF NOT EXISTS vector"))
-            await conn.run_sync(Base.metadata.drop_all)
-            await conn.run_sync(Base.metadata.create_all)
-            await _add_generated_search_vectors(conn)
+            await _build_schema(conn)
     finally:
         await engine.dispose()
     _SCHEMA_READY = True
