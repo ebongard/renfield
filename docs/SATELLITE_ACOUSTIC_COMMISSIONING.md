@@ -290,17 +290,30 @@ Commissioning is not once-forever. Re-run steps 3-6 when:
 - the mic hardware or the capture gain changes
 - the room starts showing wakes with empty transcriptions
 
-**Detection signal.** A wake followed by an empty transcription is the
-fingerprint of a false positive: the model woke, recorded, and there was no
-speech to transcribe. Watch it per satellite:
+**Detection signal.** Since #1386 every turn without text is classified. The
+fingerprint of a false positive is `kind=vad_floor`: the device stopped on
+silence at the earliest moment its VAD allows (2.0 s grace + 1.2 s silence =
+3.12 s with the fleet values), i.e. its VAD saw no speech after the grace
+period. `vad_heard_speech` is the other case — the VAD kept the turn open,
+STT returned nothing (unintelligible speech, or a loud non-speech sound) —
+and `stt_error` is a failed STT call, not a wake at all. Watch it per room:
 
 ```bash
 kubectl --context renfield-private -n renfield logs deploy/backend --since=12h \
-  | grep "empty_transcription" | grep -oE "sat-[a-z]+" | sort | uniq -c | sort -rn
+  | grep "Empty voice turn (satellite)" | grep -oE "room=[^ ]+ kind=[a-z_]+" \
+  | sort | uniq -c | sort -rn
 ```
 
-A room that dominates that count and has near-zero successful sessions is not
-commissioned, whatever its provisioning status says.
+or as a rate: `renfield_voice_empty_turn_total{source="satellite",kind="vad_floor"}`
+(the counter has no room label; the log line and the `session_end` event in the
+satellite history carry the room and the length). A `vad_floor` is not proof:
+a short command spoken entirely inside the grace period ends at the floor too.
+
+A room that dominates the `vad_floor` count and has near-zero successful
+sessions is not commissioned, whatever its provisioning status says. The floor
+constants live in `ha_glue/services/voice_empty_turn.py`;
+`tests/satellite/test_backend_vad_floor_matches_fleet.py` fails when the fleet
+settings (both sources) drift away from them.
 
 ---
 

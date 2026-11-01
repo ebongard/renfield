@@ -963,7 +963,10 @@ METRICS_ENABLED=false               # Aktivieren: true
 Endpoint: `GET /metrics` (Prometheus Exposition Format). Nur in-cluster
 erreichbar (Ingress routet den Pfad nicht); der `endpoint`-Label nutzt das
 exakte Route-Template (Kardinalitätsschutz, `{id}`-Fallback für 404-Pfade).
-Enthält u. a. den MCP-Health-Heartbeat `renfield_mcp_health_ticks_total`.
+Enthält u. a. den MCP-Health-Heartbeat `renfield_mcp_health_ticks_total`,
+`renfield_agent_schema_repairs_total` (#1381) und
+`renfield_voice_empty_turn_total` (warum ein Sprachdurchlauf keinen Text
+ergab, #1386).
 
 ### Health Checks
 - `GET /health` — Backend Health Check

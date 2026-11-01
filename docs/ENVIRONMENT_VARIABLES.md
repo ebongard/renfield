@@ -245,6 +245,14 @@ Segmente zu `{id}` (Kardinalitätsschutz).
 - WebSocket Connection Gauge
 - LLM Call Duration Histogram
 - Agent Steps Histogram
+- `renfield_agent_schema_repairs_total{kind}`: Agent-Antworten, die erst nach
+  einer Formreparatur angenommen wurden (`answer_without_action`: `{"answer": …}`
+  ohne `action`, #1381); der Lauf selbst zählt als `final_answer`
+- `renfield_voice_empty_turn_total{source,kind}`: Sprachdurchläufe ohne Text,
+  nach Grund (`no_audio`, `stt_error`, `vad_floor`, `vad_heard_speech`,
+  `cap_reached`, `button`, `unknown_end`; #1386, Bedeutung in
+  `ha_glue/services/voice_empty_turn.py`)
+- Beide mit 0 vorbelegt, damit `increase()` auch das erste Ereignis sieht
 - Circuit Breaker State + Failures
 
 **Prometheus Scrape Config:**
