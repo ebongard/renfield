@@ -814,6 +814,8 @@ async def _refresh_deterministic_facts(
     atom, tier and any per-fact tier override survive without a carry-over step.
     Unmatched fresh facts are written at the document tier; unmatched prior rows
     are purged after the commit (write-new-then-purge-old, as on the full path).
+    The caller only comes here with at least one fresh deterministic fact; an
+    empty fresh set keeps the prior facts (as a successful run with zero facts).
 
     Returns ``(kept_llm, kept_det, added_det, removed_det)``.
     """
@@ -1015,8 +1017,19 @@ async def schicht_a_post_document_ingest_hook(
                 # and document date derived below with them. Keep the prior LLM
                 # facts, title and date; the next successful reindex refreshes them.
                 # The deterministic facts DID run on the new (possibly cleaner)
-                # text, so they replace the prior deterministic ones. A FIRST
+                # text, so they replace the prior deterministic ones — unless the new
+                # text yields none at all: like a successful run with zero facts
+                # (early exit above), an empty result keeps everything. A FIRST
                 # extraction has nothing to keep and stores the subset.
+                if result.error and old_atom_ids and not any(
+                    f.source == DOC_FACT_SOURCE_DETERMINISTIC for f in capped
+                ):
+                    logger.warning(
+                        f"Schicht A: doc {document_id} re-extraction incomplete and "
+                        f"found no deterministic facts; kept the existing "
+                        f"{len(old_atom_ids)} fact(s), title and document date"
+                    )
+                    return
                 if result.error and old_atom_ids:
                     kept_llm, kept_det, added_det, removed_det = (
                         await _refresh_deterministic_facts(

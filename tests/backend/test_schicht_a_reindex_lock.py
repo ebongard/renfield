@@ -497,27 +497,36 @@ async def test_reindex_with_llm_error_keeps_an_unchanged_deterministic_row_and_i
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_reindex_with_llm_error_and_no_identifiers_retires_the_old_ones(
+async def test_reindex_with_llm_error_and_no_identifiers_keeps_the_existing_facts(
     pg_async_engine, _patch_extractor, _wire_session, monkeypatch
 ):
-    """The deterministic layer ran on the new text and found nothing: the old
-    regex identifiers go, the LLM facts and the title stay."""
+    """The new text yields no deterministic facts at all: like a successful run
+    with zero facts, an empty result keeps everything — the old identifiers, the
+    LLM facts, the title and the date (rows unchanged). The non-empty case
+    (``…replaces_a_changed_deterministic_fact``) is the negative control."""
     from unittest.mock import patch
 
     uid, did = await _ingest_full_set(pg_async_engine, monkeypatch)
     before = await _doc_title_and_date(pg_async_engine, did)
+    rows_before = await _fact_rows(pg_async_engine, did)
 
     with patch("services.schicht_a_extractor.logger") as mock_logger:
-        await _reindex_with(
+        title = await _reindex_with(
             pg_async_engine, monkeypatch, uid, did,
             SchichtAResult(facts=[], error="llm_extraction_failed"),
         )
 
-    assert await _fact_values(pg_async_engine, did) == ["Rechnung"]
+    assert await _fact_rows(pg_async_engine, did) == rows_before
     assert await _doc_title_and_date(pg_async_engine, did) == before
+    title.assert_not_awaited()
     msg = _warnings(mock_logger)
-    assert "deterministic facts: 0 kept, 0 added, 1 removed" in msg
+    assert (
+        f"doc {did} re-extraction incomplete and found no deterministic facts; "
+        f"kept the existing 2 fact(s), title and document date"
+    ) in msg
+    assert "removed" not in msg
     assert "produced no facts" not in msg
+    assert "some field text" not in msg
 
 
 @pytest.mark.postgres
