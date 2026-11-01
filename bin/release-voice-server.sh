@@ -28,7 +28,7 @@
 #   6. rsync voice-server/ to the build host, docker build (BuildKit,
 #      hf_token secret), push ONLY the semver tag (no :latest)
 #   7. smoke the built image: import app, opus decode available,
-#      /health-reported version == tag
+#      cu128 torch/torchaudio + pyannote importable, version == tag
 #   8. export the OpenAPI contract to voice-server/contracts/openapi-<tag>.json
 #   9. record tag/date/git-sha/digest in voice-server/RELEASES.md
 #  10. create the local git tag voice-server-<tag> (push it yourself)
@@ -99,11 +99,15 @@ on_build "set -e; cd $STAGING && \
   docker push $IMAGE:$TAG"
 
 # --- post-build smoke (the built artifact, not the source) ------------------
-log "smoke: import app + opus + version == $VERSION"
+log "smoke: import app + opus + cu128 torch + pyannote + version == $VERSION"
 on_build "docker run --rm -e AUTH_REQUIRED=false $IMAGE:$TAG python - <<'PY'
 from voice_server import __version__
 from voice_server.services.opus_decode import OPUSLIB_AVAILABLE
 from voice_server.main import app  # import-smokes the whole ASGI surface
+import torch, torchaudio  # the meeting stack must match the pinned cu128 build
+assert torch.__version__.endswith(\"+cu128\"), f\"torch {torch.__version__}, expected +cu128\"
+assert torchaudio.__version__.endswith(\"+cu128\"), f\"torchaudio {torchaudio.__version__}\"
+from pyannote.audio import Pipeline  # noqa: F401 -- startup imports it (v0.3.8)
 assert __version__ == \"$VERSION\", f\"image reports {__version__}, expected $VERSION\"
 assert OPUSLIB_AVAILABLE, \"opuslib/libopus missing — satellites would 503 (silent skew)\"
 print(\"smoke ok:\", __version__)
