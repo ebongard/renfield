@@ -27,7 +27,7 @@ scanner with it.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from loguru import logger
@@ -89,6 +89,10 @@ class ScanJobResult(BaseModel):
     stage_id: str | None = Field(default=None, max_length=64)
     documents: list[Any] = Field(default_factory=list, max_length=500)
     skipped: list[Any] = Field(default_factory=list, max_length=500)
+    # Page numbers of the back sides the scanner set aside as blank
+    # (SCANNER_BLANK_BACKS=drop). Only the LENGTH reaches the message.
+    blank_backs_dropped: list[Annotated[int, Field(ge=0)]] = Field(
+        default_factory=list, max_length=500)
     # A code, never the free-form error text: the message is rendered from fixed
     # localised templates (see services/scanner_jobs.render_completion_message).
     error_code: str | None = Field(default=None, max_length=40)
