@@ -518,3 +518,34 @@ async def test_reindex_with_llm_error_and_no_identifiers_retires_the_old_ones(
     msg = _warnings(mock_logger)
     assert "deterministic facts: 0 kept, 0 added, 1 removed" in msg
     assert "produced no facts" not in msg
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_reindex_with_llm_error_heals_duplicates_left_by_a_crash_before_the_purge(
+    pg_async_engine, _patch_extractor, _wire_session, monkeypatch
+):
+    """Write-new-then-purge-old: a failure between the commit and the purge
+    leaves the old AND the new identifier behind. The next pass with an LLM
+    error retires the stale one instead of keeping both for good."""
+    from services.atom_purge_service import AtomPurgeService
+
+    uid, did = await _ingest_full_set(pg_async_engine, monkeypatch)
+    fresh = _partial_with("114/5876/5298", "11458765298")
+
+    real_purge = AtomPurgeService.purge
+    monkeypatch.setattr(
+        AtomPurgeService, "purge", AsyncMock(side_effect=RuntimeError("crash"))
+    )
+    await _reindex_with(pg_async_engine, monkeypatch, uid, did, fresh)
+    assert await _fact_values(pg_async_engine, did) == [
+        "114/5876/5293", "114/5876/5298", "Rechnung",
+    ]
+    new_row = {r[3]: r for r in await _fact_rows(pg_async_engine, did)}["114/5876/5298"]
+
+    monkeypatch.setattr(AtomPurgeService, "purge", real_purge)
+    await _reindex_with(pg_async_engine, monkeypatch, uid, did, fresh)
+
+    rows = {r[3]: r for r in await _fact_rows(pg_async_engine, did)}
+    assert sorted(rows) == ["114/5876/5298", "Rechnung"]
+    assert rows["114/5876/5298"] == new_row   # the surviving row is kept, not rewritten
