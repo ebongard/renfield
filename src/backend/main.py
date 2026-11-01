@@ -17,6 +17,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 logger.remove()
 logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
+# No credential from a URL (`/ws?token=...`) in uvicorn's access/WebSocket lines.
+from utils.log_safety import install_uvicorn_url_redaction
+
+install_uvicorn_url_redaction()
+
 # Local imports
 from api.lifecycle import lifespan
 from api.routes import (

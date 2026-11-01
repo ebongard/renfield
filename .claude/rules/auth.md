@@ -67,3 +67,9 @@ Eigene Rule: `.claude/rules/voice-second-factor.md` (lädt bei den Stimm-Dateien
 Was hier zählt: `/auth/login` gibt für ein Konto mit `users.voice_second_factor_enabled`
 **keine Token**, sondern ein Einmalticket — die Vorbedingungen dafür stehen NUR in
 `services/voice_factor_preconditions`, nie daneben im Login.
+
+## Tokens never in logs
+Bearer mode carries the (~90 s, ws-scoped) JWT as `/ws?token=`; uvicorn logs that URL (access line AND `WebSocket … [accepted]`,
+which `--no-access-log` leaves on). `utils/log_safety.install_uvicorn_url_redaction()` (in `main.py`) redacts credential
+params (add new ones to `SECRET_QUERY_PARAMS`) on `uvicorn.access` + `uvicorn.error`, names percent-decoded first (`%74oken` authenticates too). Every nginx (frontend,
+`config/nginx*.conf`) logs the path cut off `$request_uri`, never `$request`/`$uri`. Gaps + detail: `docs/SECURITY.md`.
