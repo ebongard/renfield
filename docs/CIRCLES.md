@@ -64,9 +64,12 @@ Proof on real Postgres: `tests/backend/test_system_kb_per_owner_pg.py`.
 existing "Chat Uploads" / "Meetings" KB is owned (by the admin), every OTHER user's first upload / meeting after the
 deploy creates their own KB of that name. The old KB keeps all its documents, stays readable by its owner (the admin)
 exactly as before, and the admin's own new uploads keep landing in it. Documents already in it stay exposed to its
-owner until the owner moves or re-owns them.
+owner until the owner moves or re-owns them. With auth on, an anonymous chat upload is refused (401) — accepted, it
+would land in the ownerless KB with the first user (the admin) as atom owner.
 
-Pre-deploy check — read-only, counts only:
+Pre-deploy check — read-only, counts only. Run it inside `BEGIN TRANSACTION READ ONLY; … ROLLBACK;` so the server
+enforces that. `chat_uploads` has no uploader column: the uploader is taken as the owner of the conversation the upload
+belongs to, so uploads in a conversation without an owner (or without a conversation row) are not counted.
 
 ```sql
 -- KBs and documents per system-KB name, ownerless vs owned
