@@ -654,7 +654,7 @@ von `bin/run-backend-tests.sh` gesetzt). Der Harness in `tests/backend/conftest.
   mit CASCADE zu löschen hätte veraltete Enum-Typen, Views und Sequenzen stehen lassen;
   `create_all` übernimmt einen gleichnamigen Enum-Typ stillschweigend mit alten Werten.
 - **Verweigert jede andere Datenbank:** der Name muss `renfield_test` oder
-  `renfield_test<Ziffern|_suffix>` lauten und darf nicht die Anwendungsdatenbank
+  `renfield_test<Ziffern|_suffix>` lauten (ein Suffix mit `prod` oder `live` wird abgelehnt) und darf nicht die Anwendungsdatenbank
   (`DATABASE_URL`) sein; geprüft unmittelbar vor dem Löschen, an der URL der Verbindung selbst.
 - **Leert zwischen Tests** nur die Tabellen, die Zeilen haben, und setzt benutzte Sequenzen zurück.
 - **Sperrt die Datenbank je Lauf** (Advisory-Lock); ein zweiter Lauf bricht sofort ab.
