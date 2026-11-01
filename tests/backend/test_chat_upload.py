@@ -446,7 +446,7 @@ class TestDocumentContextInjection:
         await db_session.refresh(upload)
 
         from api.websocket.chat_handler import _fetch_document_context
-        result = await _fetch_document_context([upload.id], lang="en")
+        result = await _fetch_document_context([upload.id], lang="en", session_id=None)
 
         assert "report.pdf" in result
         assert "quarterly earnings" in result
@@ -472,7 +472,7 @@ class TestDocumentContextInjection:
             await db_session.refresh(u)
 
         from api.websocket.chat_handler import _fetch_document_context
-        result = await _fetch_document_context([u.id for u in uploads], lang="en")
+        result = await _fetch_document_context([u.id for u in uploads], lang="en", session_id=None)
 
         assert "UPLOADED DOCUMENTS" in result
         assert "2 files" in result
@@ -505,7 +505,7 @@ class TestDocumentContextInjection:
         await db_session.refresh(bad)
 
         from api.websocket.chat_handler import _fetch_document_context
-        result = await _fetch_document_context([good.id, bad.id], lang="en")
+        result = await _fetch_document_context([good.id, bad.id], lang="en", session_id=None)
 
         assert "good.txt" in result
         assert "bad.txt" not in result
@@ -532,7 +532,7 @@ class TestDocumentContextInjection:
             mock_settings.chat_upload_max_context_chars = 1000
 
             from api.websocket.chat_handler import _fetch_document_context
-            result = await _fetch_document_context([upload.id], lang="en")
+            result = await _fetch_document_context([upload.id], lang="en", session_id=None)
 
         # The result should be significantly smaller than the 100k original
         assert len(result) < 5000
@@ -541,14 +541,14 @@ class TestDocumentContextInjection:
     async def test_fetch_document_context_empty_ids(self, async_client):
         """Empty ID list returns empty string"""
         from api.websocket.chat_handler import _fetch_document_context
-        result = await _fetch_document_context([], lang="de")
+        result = await _fetch_document_context([], lang="de", session_id=None)
         assert result == ""
 
     @pytest.mark.backend
     async def test_fetch_document_context_invalid_ids(self, async_client, db_session: AsyncSession):
         """Non-existent IDs return empty string"""
         from api.websocket.chat_handler import _fetch_document_context
-        result = await _fetch_document_context([99999, 99998], lang="en")
+        result = await _fetch_document_context([99999, 99998], lang="en", session_id=None)
         assert result == ""
 
     @pytest.mark.backend

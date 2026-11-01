@@ -103,6 +103,31 @@ GROUP BY kb.name;
 
 If `CHAT_UPLOAD_DEFAULT_KB_NAME` is overridden on an instance, use that name instead of `'Chat Uploads'`.
 
+### Filing into a KB is a write on that KB
+
+Because the OWNER branch grants `kb.owner_id` every document in the KB, and `create_document_record` derives the
+new document's atom owner from the KB owner, a caller-supplied `knowledge_base_id` hands the document to whoever owns
+that KB. Every endpoint that files into a caller-named KB therefore requires write access on it via
+`knowledge.check_kb_access(kb, user, "write", db)`: owner, `kb.all`, or an explicit `write`/`admin` share (a public
+KB is read-only). `rag.manage` does not stand in for it. `POST /api/chat/upload/{id}/index` additionally requires the
+upload to be the caller's own: the conversation's `user_id` (circle reach is enough to READ an attachment, not to
+file it). Sites checked: `/api/knowledge/upload`, `/api/chat/upload/{id}/index` (both fixed), `/documents/move`
+(already gated: target write + per-source `check_document_access`), the ingest paths (folder, email, meetings,
+PDF split, auto-index): server-resolved owner KBs, no caller KB id. Proof: `tests/backend/test_kb_write_gate.py`.
+
+Attaching is a write on the conversation: `POST /api/chat/upload` applies the chat's own message-write rule to its
+`session_id` (`chat_upload._may_write_session` → `ConversationService.reaches`, exactly as `save_message` with
+`enforce_ownership`). An existing conversation must be in reach, so a member may attach to a shared room thread they
+may post in. A session with no row yet is allowed: the browser mints the id and attaches before its first message
+creates the conversation. The turn's own read follows the same boundary: the client names upload ids in the WS frame (`attachment_ids`, sequential), and under auth `_fetch_document_context` reads only uploads whose `session_id` is the turn's boundary-checked session, so a foreign id never reaches the prompt. Proof: `tests/backend/test_chat_upload_session_gate.py`. Remaining by design: in a SHARED
+thread the conversation owner (not the member who attached) is who `/index` accepts, because `chat_uploads` records
+no uploader (needs a column + migration).
+
+Open owner decision: a write-sharee filing into a shared KB gets a document whose atom owner is the KB OWNER, and
+KB shares are per-document grants that are not extended to new documents, so the uploader's own retrieval returns it
+only where the KB owner's circle reaches the uploader at the KB's default tier. Passing the uploader as `owner_user_id_override` would keep their ownership, but the KB's
+`default_circle_tier` would then be read against the uploader's circles instead of the KB owner's.
+
 ---
 
 ## Atoms — der polymorphe Identitätsträger

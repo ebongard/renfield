@@ -28,6 +28,7 @@ from models.database import (
 from models.permissions import Permission
 from services.auth_service import get_optional_user, require_permission
 from services.circle_sql import conversations_circles_filter
+from services.conversation_service import ConversationService
 from services.database import AsyncSessionLocal, get_db
 from services.document_processor import DocumentProcessor
 from services.ingest_common import get_or_create_owned_kb
@@ -46,6 +47,7 @@ from .chat_upload_schemas import (
     SimbaUploadRequest,
     SimbaUploadResponse,
 )
+from .knowledge import check_kb_access
 
 router = APIRouter()
 
@@ -78,6 +80,10 @@ async def upload_chat_document(
     # to the first user (the admin) — the same exposure the per-owner KB ends.
     if settings.auth_enabled and not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    if settings.auth_enabled and not await _may_write_session(db, session_id, user):
+        raise HTTPException(
+            status_code=403, detail="No write access to this conversation",
+        )
 
     # Validate file extension
     filename = file.filename or "unknown"
@@ -260,7 +266,12 @@ async def _get_owned_upload(
     established in #433. In auth-enabled multi-user mode, an out-of-reach lookup
     returns None (soft 404) rather than a 403, so the response doesn't leak
     the existence of other users' uploads.
+
+    Auth on and no user (anonymous request) → None, fail-closed: skipping the
+    filter there would hand any upload to an unauthenticated caller.
     """
+    if settings.auth_enabled and user is None:
+        return None
     query = select(ChatUpload).where(ChatUpload.id == upload_id)
     if user is not None:
         query = query.join(
@@ -273,6 +284,41 @@ async def _get_owned_upload(
             query = query.where(Conversation.user_id == user.id)
     result = await db.execute(query)
     return result.scalar_one_or_none()
+
+
+async def _may_write_session(db: AsyncSession, session_id: str, user) -> bool:
+    """May the caller attach a file to conversation ``session_id``? (auth on)
+
+    The SAME rule the chat's own message write applies
+    (``ConversationService.save_message`` with ``enforce_ownership``): an
+    existing conversation must be within the caller's REACH
+    (``ConversationService.reaches``, the four-branch circle filter) — so a
+    member may attach to a shared room thread they may post in, and nobody
+    may attach to a thread they cannot reach; an ownerless one reaches nobody.
+    No row yet is a brand-new session the client minted: the browser attaches
+    before its first message creates the conversation, and that message then
+    creates it for this caller — allowed, as in ``save_message``.
+    """
+    conversation_id = (await db.execute(
+        select(Conversation.id).where(Conversation.session_id == session_id)
+    )).scalar_one_or_none()
+    if conversation_id is None:
+        return True
+    return await ConversationService(db).reaches(conversation_id, user.id)
+
+
+async def _caller_owns_upload(db: AsyncSession, upload: ChatUpload, user) -> bool:
+    """True when the upload hangs in a conversation the caller OWNS.
+
+    ``chat_uploads`` has no uploader column; the owning conversation is the
+    only record of whose upload it is. A conversation without an owner
+    (legacy row) belongs to nobody here — fail-closed.
+    """
+    owner_id = (await db.execute(
+        select(Conversation.user_id)
+        .where(Conversation.session_id == upload.session_id)
+    )).scalar_one_or_none()
+    return owner_id is not None and owner_id == user.id
 
 
 @router.get("/upload/{upload_id}", response_model=ChatUploadResponse)
@@ -306,11 +352,30 @@ async def index_chat_upload(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_optional_user),
 ):
-    """Index a chat upload into a RAG knowledge base."""
+    """Index a chat upload into a RAG knowledge base.
+
+    Under auth this is a WRITE twice over, and both halves are checked:
+
+    - the upload must be the caller's own: reaching it through a shared
+      conversation (circle reach) is enough to read it, not to file it — the
+      filed document gets an owner, and that must not become somebody else's
+      content;
+    - the target KB must be one the caller may write (``check_kb_access``:
+      owner, ``kb.all``, or an explicit write/admin share). The KB owner is
+      granted every document in the KB and becomes the document's atom owner,
+      so filing into a foreign KB hands the upload to that user.
+    """
+    if settings.auth_enabled and user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     # Fetch upload (scoped to the authenticated user's conversations)
     upload = await _get_owned_upload(db, upload_id, user)
     if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
+    if settings.auth_enabled and not await _caller_owns_upload(db, upload, user):
+        raise HTTPException(
+            status_code=403, detail="Only the owner of this upload can index it",
+        )
 
     # Check file exists on disk
     if not upload.file_path or not Path(upload.file_path).is_file():
@@ -327,6 +392,10 @@ async def index_chat_upload(
     kb = kb_result.scalar_one_or_none()
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
+    if not await check_kb_access(kb, user, "write", db):
+        raise HTTPException(
+            status_code=403, detail="No write access to this knowledge base",
+        )
 
     # Ingest via RAGService
     from services.rag_service import RAGService
@@ -651,11 +720,22 @@ async def forward_via_email(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_optional_user),
 ):
-    """Forward a chat upload via Email MCP."""
+    """Forward a chat upload via Email MCP.
+
+    Under auth only the upload's OWNER may forward it (the same rule as
+    ``/index``): the original file leaves the house to any address the caller
+    names. Reaching the upload through a shared conversation is enough to read
+    its preview, not to send the file on. Paperless and Simba stay reach-based
+    (they file inside the household's own systems).
+    """
     # Fetch upload (scoped to the authenticated user's conversations)
     upload = await _get_owned_upload(db, upload_id, user)
     if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
+    if settings.auth_enabled and not await _caller_owns_upload(db, upload, user):
+        raise HTTPException(
+            status_code=403, detail="Only the owner of this upload can forward it",
+        )
 
     # Check file exists on disk
     if not upload.file_path or not Path(upload.file_path).is_file():

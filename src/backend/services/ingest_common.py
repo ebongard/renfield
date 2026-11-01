@@ -13,9 +13,28 @@ import secrets
 
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KnowledgeBase, SystemSetting, User
+
+# The unique index (name, owner_id) NULLS NOT DISTINCT that makes "one KB of a
+# name per owner" hold under concurrency (migration pc20261031_kb_name_per_owner).
+KB_NAME_OWNER_INDEX = "uq_knowledge_bases_name_owner"
+
+
+def _violated_constraint(err: IntegrityError) -> str | None:
+    """The constraint/index name Postgres reports for ``err``, or None.
+
+    SQLAlchemy's asyncpg adapter wraps the driver exception; the name sits on
+    the asyncpg ``UniqueViolationError`` (``orig.__cause__``), so look there as
+    well as on ``orig`` itself."""
+    orig = getattr(err, "orig", None)
+    for candidate in (orig, getattr(orig, "__cause__", None)):
+        name = getattr(candidate, "constraint_name", None)
+        if name:
+            return str(name)
+    return None
 
 
 def owned_kb_filter(name: str, owner_user_id: int | None):
@@ -42,14 +61,30 @@ async def get_or_create_owned_kb(
     never file a document into a KB owned by somebody else. Looking up by
     (name, owner) and creating for exactly that owner keeps the KB owner and
     the document's atom owner identical. ``owner_user_id`` None → the shared
-    ownerless KB of that name, as before per-owner inboxes existed."""
-    kb = (
-        await db.execute(select(KnowledgeBase).where(owned_kb_filter(name, owner_user_id)))
-    ).scalar_one_or_none()
+    ownerless KB of that name, as before per-owner inboxes existed.
+
+    Race-safe: two first uploads of one owner both miss the lookup and both
+    INSERT; the unique index lets one through and the other raises. The INSERT
+    runs inside a SAVEPOINT, so the loser rolls back only the savepoint (the
+    caller's transaction stays usable) and re-selects the winner's row, which
+    READ COMMITTED shows to the new statement. Only a violation of
+    ``uq_knowledge_bases_name_owner`` is absorbed; any other integrity error
+    (e.g. an owner that does not exist) propagates."""
+    lookup = select(KnowledgeBase).where(owned_kb_filter(name, owner_user_id))
+    kb = (await db.execute(lookup)).scalar_one_or_none()
     if kb:
         return kb
-    kb = KnowledgeBase(name=name, description=description, owner_id=owner_user_id)
-    db.add(kb)
+    try:
+        async with db.begin_nested():
+            kb = KnowledgeBase(name=name, description=description, owner_id=owner_user_id)
+            db.add(kb)
+    except IntegrityError as err:
+        if _violated_constraint(err) != KB_NAME_OWNER_INDEX:
+            raise
+        logger.info(
+            f"KB '{name}' (owner {owner_user_id}) was created concurrently; using that row"
+        )
+        return (await db.execute(lookup)).scalar_one()
     await db.commit()
     await db.refresh(kb)
     return kb
