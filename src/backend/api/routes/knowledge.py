@@ -147,7 +147,7 @@ async def check_kb_access(
         if has_permission(user_perms, Permission.KB_SHARED):
             return True
 
-    # Check explicit grants via the atom_explicit_grants → chunks aggregation.
+    # KB share: kb_shares row or legacy per-document grants (MAX level).
     if db:
         from services.kb_shares_service import get_user_kb_permission_level
         level = await get_user_kb_permission_level(db, kb.id, user.id)
@@ -242,7 +242,7 @@ async def get_user_kb_permission(
     if kb.owner_id == user.id:
         return "owner"
 
-    # Check explicit grants via the atom_explicit_grants → chunks aggregation.
+    # KB share: kb_shares row or legacy per-document grants (MAX level).
     from services.kb_shares_service import get_user_kb_permission_level
     level = await get_user_kb_permission_level(db, kb.id, user.id)
     if level:
@@ -1521,8 +1521,8 @@ async def list_kb_permissions(
     """
     List all permissions for a knowledge base. Owner or admin only.
 
-    Lane C: aggregates atom_explicit_grants by user_id so one logical
-    KB-share surfaces as one row even though it's stored per chunk.
+    One row per grantee: the kb_shares row merged with any legacy
+    per-document grants (MAX level), see kb_shares_service.list_kb_shares.
     The `id` field in the response is the granted_to_user_id (same thing
     the revoke endpoint's {permission_id} path param now accepts).
     """

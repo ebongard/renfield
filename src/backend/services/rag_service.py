@@ -1125,13 +1125,33 @@ class RAGService(AtomOwnerResolverMixin):
 
         # Move only documents that are not already in the target knowledge base
         moved = 0
+        moved_atom_ids: list[str] = []
         for doc in docs:
             if doc.knowledge_base_id != target_kb_id:
                 doc.knowledge_base_id = target_kb_id
                 moved += 1
+                if doc.atom_id:
+                    moved_atom_ids.append(doc.atom_id)
+
+        if moved_atom_ids:
+            # Access through a KB share follows the document's CURRENT KB at query
+            # time (kb_shares). Per-document grants are residue of the older share
+            # code and would travel with the atom — a document moved OUT of a
+            # shared KB would stay readable by that KB's grantees. Drop them: no
+            # code writes a single-document grant today, so every document grant
+            # is share-derived. (A future single-document grant needs a marker
+            # column and must be spared here and in revoke_kb_share.)
+            await self.db.execute(
+                text("DELETE FROM atom_explicit_grants WHERE atom_id = ANY(:ids)"),
+                {"ids": moved_atom_ids},
+            )
 
         if moved > 0:
             await self.db.commit()
+            if moved_atom_ids:
+                from services.circle_resolver import CircleResolver
+                for atom_id in moved_atom_ids:
+                    CircleResolver.invalidate_for_atom(atom_id)
             logger.info(
                 f"📦 {moved} document(s) moved to KB '{target_kb.name}' (ID={target_kb_id})"
             )

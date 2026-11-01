@@ -374,10 +374,11 @@ class KnowledgeBase(Base):
     # Relationships
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
     owner = relationship("User", back_populates="knowledge_bases", foreign_keys=[owner_id])
-    # Note: KBPermission was removed in circles v1 — explicit per-resource shares
-    # now live on AtomExplicitGrant (per-chunk granularity, MAX-permissive with
-    # circle_tier). Migration code in pc20260420_circles_v1_schema.py preserves
-    # legacy permissions by creating one grant per (chunk, user, permission).
+    # A KB-level share is a `KBShare` row (pc20261101_kb_shares). It is
+    # evaluated at query time, so it covers documents added to the KB later.
+    # Per-document AtomExplicitGrant rows written by older share code (and by
+    # pc20260420_circles_v1_schema.py from the dropped `kb_permissions`) are
+    # kept and still count — see services/kb_shares_service.py.
 
 
 class Project(Base):
@@ -1341,6 +1342,40 @@ KB_PERM_WRITE = "write"
 KB_PERM_ADMIN = "admin"
 
 KB_PERMISSION_LEVELS = [KB_PERM_READ, KB_PERM_WRITE, KB_PERM_ADMIN]
+
+
+class KBShare(Base):
+    """A knowledge base shared with one user — the source of truth for the share.
+
+    Read at QUERY TIME: the document filters in ``services/circle_sql.py`` and
+    ``CircleResolver.can_access_atom`` let the grantee read every document whose
+    ``knowledge_base_id`` is ``kb_id`` — including documents added (or moved in)
+    after the share was made. The document atom's owner stays the KB owner.
+
+    ``permission_level`` drives the KB route ACL (who may upload into / manage the
+    KB); retrieval does not look at the level (any share = read).
+
+    Before this table existed a share was ONLY its per-document
+    ``atom_explicit_grants`` rows, so sharing an empty KB stored nothing and a
+    later document was never covered. Those rows are kept and still count
+    (``kb_shares_service``); ``bin/backfill_kb_shares.py`` derives the missing
+    ``kb_shares`` rows from them.
+    """
+    __tablename__ = "kb_shares"
+
+    kb_id = Column(
+        Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), primary_key=True
+    )
+    # No ON DELETE on the user FKs, like atom_explicit_grants: deleting a user who
+    # still holds shares is refused by the database (see api/routes/users.py).
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    permission_level = Column(String(16), nullable=False, default=KB_PERM_READ)
+    granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    granted_at = Column(DateTime, nullable=False, default=_utcnow)
+
+    __table_args__ = (
+        Index("idx_kb_shares_user", "user_id"),
+    )
 
 
 # =============================================================================

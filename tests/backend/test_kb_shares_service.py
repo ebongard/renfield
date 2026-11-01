@@ -2,7 +2,7 @@
 Unit tests for kb_shares_service — the legacy KBPermission consumer rewrite.
 
 These are pure surface tests: signature shape, error handling on bad inputs,
-and the SQL-string contents that wire the chunks → atoms → grants joins.
+and the SQL-string contents (kb_shares + the legacy atoms → grants joins).
 Real DB roundtrips live in tests/backend/test_circles_v1_migration.py and
 the (deferred) integration suite.
 """
@@ -35,7 +35,7 @@ def test_share_kb_rejects_unknown_permission_level():
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_share_kb_emits_upsert_with_join_chain():
+async def test_share_kb_upserts_the_kb_shares_row_and_writes_no_document_grants():
     db = MagicMock()
     db.execute = AsyncMock()
     db.commit = AsyncMock()
@@ -44,21 +44,16 @@ async def test_share_kb_emits_upsert_with_join_chain():
         db, kb_id=42, target_user_id=7, permission_level="write", granted_by=99,
     )
 
-    db.execute.assert_called_once()
-    sql_text = str(db.execute.call_args.args[0])
-    # Post pc20260423: grants anchor on documents (one grant per doc), not
-    # per chunk. The join chain is atoms → documents directly.
-    assert "INSERT INTO atom_explicit_grants" in sql_text
-    assert "FROM atoms a" in sql_text
-    assert "JOIN documents d ON a.source_id = d.id::text" in sql_text
-    assert "WHERE a.source_table = 'documents'" in sql_text
-    # Chunks must not appear anywhere — regression guard against reverting
-    # the atoms-per-document granularity change.
-    assert "document_chunks" not in sql_text
-    # Idempotent upsert
-    assert "ON CONFLICT" in sql_text
-    # Bind params
-    binds = db.execute.call_args.args[1]
+    statements = [str(c.args[0]) for c in db.execute.call_args_list]
+    upsert, align = statements
+    # The share is ONE row, evaluated at query time — it covers later documents.
+    assert "INSERT INTO kb_shares" in upsert
+    assert "ON CONFLICT (kb_id, user_id) DO UPDATE" in upsert
+    # Legacy per-document grants only get their level aligned; none are created.
+    assert align.startswith("UPDATE atom_explicit_grants")
+    assert not any("INSERT INTO atom_explicit_grants" in st for st in statements)
+    assert not any("document_chunks" in st for st in statements)
+    binds = db.execute.call_args_list[0].args[1]
     assert binds["target"] == 7
     assert binds["perm"] == "write"
     assert binds["granter"] == 99
@@ -71,17 +66,17 @@ async def test_share_kb_emits_upsert_with_join_chain():
 @pytest.mark.unit
 async def test_revoke_kb_share_returns_rowcount():
     db = MagicMock()
-    fake_result = MagicMock()
-    fake_result.rowcount = 13
-    db.execute = AsyncMock(return_value=fake_result)
+    db.execute = AsyncMock(side_effect=[MagicMock(rowcount=1), MagicMock(rowcount=13)])
     db.commit = AsyncMock()
 
     removed = await kb_shares_service.revoke_kb_share(db, kb_id=1, target_user_id=2)
 
-    assert removed == 13
-    sql_text = str(db.execute.call_args.args[0])
-    assert "DELETE FROM atom_explicit_grants" in sql_text
-    assert "WHERE g.atom_id = a.atom_id" in sql_text
+    # The kb_shares row + the legacy per-document grants of that user.
+    assert removed == 14
+    share_sql, grants_sql = (str(c.args[0]) for c in db.execute.call_args_list)
+    assert "DELETE FROM kb_shares" in share_sql
+    assert "DELETE FROM atom_explicit_grants" in grants_sql
+    assert "WHERE g.atom_id = a.atom_id" in grants_sql
     db.commit.assert_called_once()
 
 
@@ -133,8 +128,10 @@ async def test_list_kb_shares_uses_distinct_on_for_paired_granter():
     sql = str(db.execute.call_args.args[0])
     # DISTINCT ON ensures one row per user, paired correctly.
     assert "DISTINCT ON" in sql
-    # Post pc20260423: CTE picks most-recent grant per (user, document).
-    assert "latest_per_doc" in sql
+    # kb_shares rows and the most-recent legacy grant per (user, document)
+    # are merged before the per-user aggregation.
+    assert "per_source" in sql
+    assert "FROM kb_shares ks" in sql
     # The legacy arbitrary MAX(granted_by) must not appear.
     assert "MAX(granted_by)" not in sql.replace(" ", "")
     assert "MAX(g.granted_by)" not in sql
@@ -144,9 +141,7 @@ async def test_list_kb_shares_uses_distinct_on_for_paired_granter():
 @pytest.mark.unit
 async def test_get_user_kb_permission_level_none_when_no_rows():
     db = MagicMock()
-    fake_result = MagicMock()
-    fake_result.scalar.return_value = None
-    db.execute = AsyncMock(return_value=fake_result)
+    db.execute = AsyncMock(return_value=MagicMock(fetchall=lambda: []))
 
     level = await kb_shares_service.get_user_kb_permission_level(db, kb_id=1, user_id=2)
     assert level is None
@@ -159,7 +154,7 @@ async def test_get_user_kb_permission_level_translates_rank_to_string():
     for rank, expected in cases:
         db = MagicMock()
         fake_result = MagicMock()
-        fake_result.scalar.return_value = rank
+        fake_result.fetchall.return_value = [MagicMock(kb_id=1, rank=rank)]
         db.execute = AsyncMock(return_value=fake_result)
 
         level = await kb_shares_service.get_user_kb_permission_level(db, kb_id=1, user_id=2)
@@ -171,7 +166,9 @@ async def test_get_user_kb_permission_level_translates_rank_to_string():
 async def test_list_user_shared_kb_ids_returns_set_of_ints():
     db = MagicMock()
     fake_result = MagicMock()
-    fake_result.fetchall.return_value = [(7,), (42,), (101,)]
+    fake_result.fetchall.return_value = [
+        MagicMock(kb_id=7, rank=1), MagicMock(kb_id=42, rank=2), MagicMock(kb_id=101, rank=3),
+    ]
     db.execute = AsyncMock(return_value=fake_result)
 
     ids = await kb_shares_service.list_user_shared_kb_ids(db, user_id=42)
@@ -188,9 +185,9 @@ async def test_get_user_kb_permission_levels_batches_into_one_query():
     db = MagicMock()
     fake_result = MagicMock()
     fake_result.fetchall.return_value = [
-        MagicMock(knowledge_base_id=1, rank=3),
-        MagicMock(knowledge_base_id=2, rank=2),
-        MagicMock(knowledge_base_id=3, rank=1),
+        MagicMock(kb_id=1, rank=3),
+        MagicMock(kb_id=2, rank=2),
+        MagicMock(kb_id=3, rank=1),
     ]
     db.execute = AsyncMock(return_value=fake_result)
 
@@ -202,8 +199,10 @@ async def test_get_user_kb_permission_levels_batches_into_one_query():
     assert levels == {1: "admin", 2: "write", 3: "read"}
     # GROUP BY must be present — single query, not per-KB
     sql = str(db.execute.call_args.args[0])
-    assert "GROUP BY d.knowledge_base_id" in sql
-    assert "ANY(:kb_ids)" in sql
+    assert "GROUP BY kb_id" in sql
+    # Both sources are restricted: legacy grants and kb_shares.
+    assert "d.knowledge_base_id = ANY(:kb_ids)" in sql
+    assert "ks.kb_id = ANY(:kb_ids)" in sql
 
 
 @pytest.mark.asyncio
@@ -226,7 +225,7 @@ async def test_get_user_kb_permission_levels_none_returns_all_grants():
     db = MagicMock()
     fake_result = MagicMock()
     fake_result.fetchall.return_value = [
-        MagicMock(knowledge_base_id=7, rank=2),
+        MagicMock(kb_id=7, rank=2),
     ]
     db.execute = AsyncMock(return_value=fake_result)
 
@@ -243,10 +242,11 @@ async def test_get_user_kb_permission_levels_none_returns_all_grants():
 # ===========================================================================
 # Real-Postgres integration test (ebongard/renfield#447)
 #
-# Post-pc20260423 the KB-share grant explosion is per-DOCUMENT (one
-# atom_explicit_grants row per document atom), not per-CHUNK. This asserts the
-# rowcount contract against a real Postgres: sharing a KB of 3 documents ×
-# 50 chunks produces 3 grants (NOT 150), and revoking removes 3.
+# Since pc20261101 a KB share is ONE kb_shares row, evaluated at query time;
+# share_kb writes no per-document grants. Legacy grants (one per document,
+# never per chunk) are kept, and revoke deletes them with the share row.
+# The behaviour across documents added later lives in
+# test_kb_shares_cover_new_documents_pg.py.
 #
 # Runs inside a throwaway schema (search_path pinned) so it never touches the
 # public-schema tables; teardown is DROP SCHEMA ... CASCADE. Skipped cleanly
@@ -297,7 +297,7 @@ async def kb_schema_conn():
 
 
 @pytest.mark.database
-async def test_revoke_kb_share_rowcount_is_per_document(kb_schema_conn):
+async def test_share_is_one_row_and_revoke_clears_legacy_grants(kb_schema_conn):
     conn, schema = kb_schema_conn
 
     from models.database import Base, KnowledgeBase, Role, User
@@ -385,7 +385,21 @@ async def test_revoke_kb_share_rowcount_is_per_document(kb_schema_conn):
         assert doc_atoms == 3
         assert chunk_count == 150
 
-    # Share → exactly 3 grants (per-document), NOT 150 (per-chunk).
+    # Three legacy per-document grants, as the pre-kb_shares share_kb wrote them.
+    async with sm() as session:
+        await session.execute(
+            text(
+                "INSERT INTO atom_explicit_grants "
+                "(atom_id, granted_to_user_id, permission_level, granted_by, granted_at) "
+                "SELECT atom_id, :t, 'read', :o, NOW() FROM atoms "
+                "WHERE atom_type = 'kb_document'"
+            ),
+            {"t": target_id, "o": owner_id},
+        )
+        await session.commit()
+
+    # Share → ONE kb_shares row (not one per document, let alone per chunk),
+    # and no new grant: the share is evaluated at query time.
     async with sm() as session:
         await kb_shares_service.share_kb(
             session,
@@ -396,22 +410,24 @@ async def test_revoke_kb_share_rowcount_is_per_document(kb_schema_conn):
         )
 
     async with sm() as session:
-        grant_count = (
-            await session.execute(
-                text("SELECT COUNT(*) FROM atom_explicit_grants")
-            )
+        share_count = (
+            await session.execute(text("SELECT COUNT(*) FROM kb_shares"))
         ).scalar()
+        grant_count = (
+            await session.execute(text("SELECT COUNT(*) FROM atom_explicit_grants"))
+        ).scalar()
+        assert share_count == 1
         assert grant_count == 3, (
-            f"expected 3 per-document grants, got {grant_count} "
-            "(150 would mean a regression to per-chunk explosion)"
+            f"expected the 3 legacy grants untouched, got {grant_count} "
+            "(more would mean share_kb is materialising grants again)"
         )
 
-    # Revoke → removes exactly those 3.
+    # Revoke → removes the share row AND the 3 legacy grants.
     async with sm() as session:
         removed = await kb_shares_service.revoke_kb_share(
             session, kb_id=kb_id, target_user_id=target_id
         )
-        assert removed == 3
+        assert removed == 4
 
     async with sm() as session:
         remaining = (
@@ -420,3 +436,4 @@ async def test_revoke_kb_share_rowcount_is_per_document(kb_schema_conn):
             )
         ).scalar()
         assert remaining == 0
+        assert (await session.execute(text("SELECT COUNT(*) FROM kb_shares"))).scalar() == 0
