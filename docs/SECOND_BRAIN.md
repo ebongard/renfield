@@ -277,6 +277,11 @@ history, the tooling and the frontend wiring.
   re-OCR silently reset a deliberate override to the document tier.
 - The per-document advisory lock (`_reindex_lock`, NS `0x5341`) exists so two overlapping re-extractions of one
   document cannot both leave their new set behind (duplicate facts).
+- A re-extraction whose LLM step failed (`SchichtAResult.error`: outage / timeout) holds only the deterministic
+  subset. Since 2026-10-31 the hook then KEEPS the prior fact set, generated title and document date (WARNING
+  `Schicht A: doc N re-extraction incomplete; kept the existing K fact(s)…`, id and count only) instead of replacing
+  them with that subset; before, a reindex during an outage downgraded the document for good. A FIRST extraction
+  with an LLM error still stores the deterministic facts (nothing to keep). The next successful reindex refreshes.
 
 ### Obligation notifier + weekly digest — background
 

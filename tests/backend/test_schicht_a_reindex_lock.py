@@ -260,20 +260,119 @@ async def test_hook_names_the_document_when_extraction_yields_no_facts(
 async def test_hook_names_the_document_on_a_partial_extraction(
     pg_async_engine, _patch_extractor, _wire_session, monkeypatch
 ):
-    """LLM failed but the deterministic layer found facts: they are stored, and
-    the failure is still attributed to the document."""
+    """FIRST extraction: the LLM failed but the deterministic layer found facts.
+    There is nothing to keep, so they are stored, and the failure is still
+    attributed to the document."""
     from unittest.mock import patch
 
     from services import schicht_a_extractor as mod
 
-    partial = _two_facts()
-    partial.error = "llm_extraction_failed"
-    monkeypatch.setattr(mod.SchichtAExtractor, "extract", AsyncMock(return_value=partial))
+    monkeypatch.setattr(mod.SchichtAExtractor, "extract",
+                        AsyncMock(return_value=_partial()))
     uid, did = await _seed_user_and_doc(pg_async_engine)
 
     with patch("services.schicht_a_extractor.logger") as mock_logger:
         await schicht_a_post_document_ingest_hook([], document_id=did, user_id=uid,
                                                   field_text="some field text")
 
-    assert await _count_facts(pg_async_engine, did) == 2
+    assert await _fact_values(pg_async_engine, did) == ["114/5876/5293"]
     assert f"extraction for doc {did} failed (llm_extraction_failed)" in _warnings(mock_logger)
+
+
+# ============================================================================
+# A RE-extraction whose LLM step failed keeps the prior fact set
+# ============================================================================
+# On a reindex during an LLM outage the result holds only the deterministic
+# subset. Write-new-then-purge-old replaced the full prior set with it, and the
+# title and document date derived from the facts went with it, for good.
+
+
+def _partial() -> SchichtAResult:
+    """What extract() returns when the LLM fails: the deterministic facts only."""
+    return SchichtAResult(
+        facts=[f for f in _two_facts().facts if f.source == "deterministic"],
+        error="llm_extraction_failed",
+    )
+
+
+async def _fact_values(engine, doc_id: int) -> list[str]:
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        return sorted(r[0] for r in (await s.execute(
+            text("SELECT value FROM document_facts WHERE document_id = :d"),
+            {"d": doc_id},
+        )).all())
+
+
+async def _doc_title_and_date(engine, doc_id: int):
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        return tuple((await s.execute(
+            text("SELECT generated_title, document_date FROM documents WHERE id = :d"),
+            {"d": doc_id},
+        )).one())
+
+
+async def _ingest_full_set(engine, monkeypatch) -> tuple[int, int]:
+    """A document whose first extraction succeeded: two facts and a title."""
+    from services import schicht_a_extractor as mod
+
+    monkeypatch.setattr(mod, "generate_document_title",
+                        AsyncMock(return_value="Rechnung Stadtwerke"))
+    uid, did = await _seed_user_and_doc(engine)
+    await schicht_a_post_document_ingest_hook([], document_id=did, user_id=uid,
+                                              field_text="some field text")
+    assert await _fact_values(engine, did) == ["114/5876/5293", "Rechnung"]
+    return uid, did
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_reindex_with_llm_error_keeps_the_existing_facts(
+    pg_async_engine, _patch_extractor, _wire_session, monkeypatch
+):
+    from unittest.mock import patch
+
+    from services import schicht_a_extractor as mod
+
+    uid, did = await _ingest_full_set(pg_async_engine, monkeypatch)
+    before = await _doc_title_and_date(pg_async_engine, did)
+    assert before[0] == "Rechnung Stadtwerke"
+
+    monkeypatch.setattr(mod.SchichtAExtractor, "extract",
+                        AsyncMock(return_value=_partial()))
+    title = AsyncMock(return_value="Steuernummer")
+    monkeypatch.setattr(mod, "generate_document_title", title)
+    with patch("services.schicht_a_extractor.logger") as mock_logger:
+        await schicht_a_post_document_ingest_hook([], document_id=did, user_id=uid,
+                                                  field_text="some field text")
+
+    assert await _fact_values(pg_async_engine, did) == ["114/5876/5293", "Rechnung"]
+    assert await _doc_title_and_date(pg_async_engine, did) == before
+    title.assert_not_awaited()
+    msg = _warnings(mock_logger)
+    assert f"doc {did} re-extraction incomplete; kept the existing 2 fact(s)" in msg
+    assert "some field text" not in msg
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_reindex_without_error_replaces_the_facts(
+    pg_async_engine, _patch_extractor, _wire_session, monkeypatch
+):
+    from services import schicht_a_extractor as mod
+
+    uid, did = await _ingest_full_set(pg_async_engine, monkeypatch)
+
+    fresh = SchichtAResult(facts=[
+        ExtractedFact(category="identifier", kind="kundennummer", value="K-77",
+                      normalized_value="k77", source="llm"),
+    ])
+    monkeypatch.setattr(mod.SchichtAExtractor, "extract", AsyncMock(return_value=fresh))
+    monkeypatch.setattr(mod, "generate_document_title",
+                        AsyncMock(return_value="Kundenkonto K-77"))
+    await schicht_a_post_document_ingest_hook([], document_id=did, user_id=uid,
+                                              field_text="some field text")
+
+    assert await _fact_values(pg_async_engine, did) == ["K-77"]
+    assert (await _doc_title_and_date(pg_async_engine, did))[0] == "Kundenkonto K-77"

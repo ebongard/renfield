@@ -760,7 +760,10 @@ async def schicht_a_post_document_ingest_hook(
     extraction miss never fails the upload. Idempotent on re-ingest: prior facts
     for the document are purged (via the sanctioned AtomPurgeService) before
     re-extraction, so reindexing a document refreshes its facts instead of
-    duplicating them.
+    duplicating them. Exception: a re-extraction whose LLM step failed
+    (``result.error``) leaves a document that already has facts untouched —
+    prior facts, generated title and document date are kept rather than
+    replaced by the deterministic subset.
 
     Per-fact tier-override carry-over: before writing the fresh fact set, the
     prior facts that carry an owner-set per-fact tier override
@@ -869,6 +872,20 @@ async def schicht_a_post_document_ingest_hook(
                         DocumentFact.document_id == document_id
                     )
                 )).scalars().all()
+
+                # A RE-extraction whose LLM step failed (outage / timeout) holds only
+                # the deterministic subset. Replacing the prior set with it would
+                # silently downgrade the document's facts for good, and the title
+                # and document date derived below with them. Keep the prior set,
+                # title and date; the next successful reindex refreshes them. A
+                # FIRST extraction has nothing to keep and stores the subset.
+                if result.error and old_atom_ids:
+                    logger.warning(
+                        f"Schicht A: doc {document_id} re-extraction incomplete; "
+                        f"kept the existing {len(old_atom_ids)} fact(s), title and "
+                        f"document date"
+                    )
+                    return
 
                 # Carry-over snapshot: a per-fact tier OVERRIDE (e.g. a public issuer
                 # on a private document) is bound to the current fact row, but a
