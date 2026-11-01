@@ -892,6 +892,122 @@ def _parse_agent_json(raw: str) -> dict | None:
     return None
 
 
+#: Top-level keys of the agent's JSON schema. The parse-failure fingerprint
+#: reports which of THESE appear — a fixed vocabulary, so the log line can
+#: never carry a word of the answer itself.
+_AGENT_SCHEMA_KEYS = ("action", "actions", "answer", "parameters", "reason", "thought")
+
+
+def _answer_without_action(parsed: dict) -> dict | None:
+    """Turn ``{"answer": "<text>"}`` without ``action`` into a final answer (#1381).
+
+    The model sometimes drops the ``action`` key from an otherwise valid final
+    answer. The intent is unambiguous, yet the loop discarded a usable answer
+    and paid an extra summary LLM call for it. Accepted only when the shape
+    cannot be a tool call that lost its name: ``answer`` is a non-empty string,
+    and neither ``parameters`` nor ``actions`` is present.
+
+    The result goes through the ordinary ``final_answer`` branch and therefore
+    through the same output guard as every other answer — the text stays
+    untrusted.
+    """
+    if "action" in parsed or "actions" in parsed or "parameters" in parsed:
+        return None
+    answer = parsed.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        return None
+    reason = parsed.get("reason")
+    return {
+        "action": "final_answer",
+        "answer": answer,
+        "reason": reason if isinstance(reason, str) else "",
+    }
+
+
+def _char_class(ch: str) -> str:
+    """A content-free name for one character of a raw LLM response."""
+    if ch == '"':
+        return "quote"
+    if ch in "{}[]":
+        return "bracket"
+    if ch in ",:":
+        return "separator"
+    if ch == "\\":
+        return "backslash"
+    if ch in "\n\r":
+        return "newline"
+    if ch.isspace():
+        return "space"
+    if ord(ch) < 0x20:
+        return "control"
+    if ch.isdigit():
+        return "digit"
+    if ch.isalpha():
+        return "letter"
+    return "other"
+
+
+def _describe_unparsable(raw: str) -> str:
+    """Fingerprint an unparsable agent response WITHOUT its content (#1381).
+
+    The response carries the answer to the user, i.e. user content, so its text
+    is never logged. A parse failure is diagnosed from its structure: where the
+    direct ``json.loads`` gave up and why (decoder message, position, the
+    character class there), whether a string was still open at the end
+    (truncation or an unescaped quote), the brace balance outside strings,
+    which schema keys occur, and a short hash that recognises the same output
+    across log lines.
+    """
+    text = raw.strip()
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    parts = [f"len={len(text)}", f"sha256={digest}"]
+    try:
+        json.loads(text)
+        parts.append("direct=not_an_object")
+    except json.JSONDecodeError as e:
+        at = _char_class(text[e.pos]) if e.pos < len(text) else "eof"
+        parts.append(f"direct={e.msg!r}@{e.pos}({at})")
+    depth = 0
+    in_string = False
+    escape = False
+    control_in_string = 0
+    for ch in text:
+        if escape:
+            escape = False
+        elif in_string and ch == "\\":
+            escape = True
+        elif ch == '"':
+            in_string = not in_string
+        elif in_string:
+            if ord(ch) < 0x20:
+                control_in_string += 1
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+    keys = [k for k in _AGENT_SCHEMA_KEYS if re.search(rf'"{k}"\s*:', text)]
+    parts += [
+        f"starts={_char_class(text[0]) if text else 'eof'}",
+        f"ends={_char_class(text[-1]) if text else 'eof'}",
+        f"open_string={in_string}",
+        f"brace_balance={depth}",
+        f"ctrl_in_strings={control_in_string}",
+        f"fenced={'```' in text}",
+        f"keys={keys}",
+    ]
+    return " ".join(parts)
+
+
+def _record_schema_repair(kind: str) -> None:
+    """Count an agent response accepted after repairing its shape. Never raises."""
+    try:
+        from utils.metrics import record_agent_schema_repair
+
+        record_agent_schema_repair(kind)
+    except Exception as e:
+        logger.warning(f"⚠️ Could not record agent schema repair: {e!r}")
+
+
 def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | None) -> None:
     """Export how many steps an agent run took and how it ended.
 
@@ -2271,11 +2387,25 @@ class AgentService:
             else:
                 parsed = _parse_agent_json(response_text)
 
-            # Treat JSON without "action" field as malformed (LLM output just parameters)
+            # JSON without "action": a bare final answer is accepted as one
+            # (#1381); any other shape (typically just the parameters) is
+            # malformed and goes to the retry below.
             if parsed and "action" not in parsed:
-                logger.info(f"🔄 Agent step {step_num}: JSON missing 'action' field, treating as empty for retry")
-                parsed = None
-                response_text = ""
+                repaired = _answer_without_action(parsed)
+                if repaired is not None:
+                    logger.info(
+                        f"🩹 Agent step {step_num}: answer without 'action' accepted as final_answer"
+                    )
+                    _record_schema_repair("answer_without_action")
+                    parsed = repaired
+                else:
+                    logger.info(
+                        f"🔄 Agent step {step_num}: JSON missing 'action' field "
+                        f"(keys={[k for k in _AGENT_SCHEMA_KEYS if k in parsed]}), "
+                        "treating as empty for retry"
+                    )
+                    parsed = None
+                    response_text = ""
 
             # Retry once on empty response with a nudge prompt
             if not parsed and not response_text.strip():
@@ -2304,6 +2434,15 @@ class AgentService:
                     else:
                         response_text = extract_response_content(retry_response) or ""
                         parsed = _parse_agent_json(response_text)
+                    repaired = (
+                        _answer_without_action(parsed)
+                        if parsed and "action" not in parsed else None
+                    )
+                    if repaired is not None:
+                        # Same rule as the first attempt. Any other action-less
+                        # shape keeps its old path (an invalid-tool step).
+                        _record_schema_repair("answer_without_action")
+                        parsed = repaired
                     context.track_tokens(nudge, response_text)
                     logger.info(f"🔄 Agent step {step_num} retry ({len(response_text)} chars): {response_text[:200]}")
                 except Exception as e:
@@ -2314,17 +2453,14 @@ class AgentService:
                 parsed = _recover_send_email(response_text, context)
 
             if not parsed:
-                # Head AND tail: the head is always a well-formed '{"action": …'
-                # prefix, while the defect (an unescaped quote, a missing
-                # closing brace, trailing prose) sits at the END. Logging only
-                # the first 500 chars made every such failure undiagnosable.
-                _tail = (
-                    f" … {response_text[max(500, len(response_text) - 300):]}"
-                    if len(response_text) > 500 else ""
-                )
+                # A structural fingerprint, never the text: the response is the
+                # answer to the user. The defect (an unescaped quote, a missing
+                # closing brace, trailing prose) sits where the decoder gave
+                # up, and the fingerprint names that spot by position and
+                # character class.
                 logger.warning(
-                    f"⚠️ Agent step {step_num}: JSON parse failed (len={len(response_text)}): "
-                    f"{response_text[:500]}{_tail}"
+                    f"⚠️ Agent step {step_num}: JSON parse failed: "
+                    f"{_describe_unparsable(response_text)}"
                 )
                 # If we have collected tool results, summarize them via LLM
                 has_results = any(s.step_type == "tool_result" and s.success for s in context.steps)

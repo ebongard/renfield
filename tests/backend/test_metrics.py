@@ -376,6 +376,51 @@ class TestRoutingAndEmbeddingCounters:
 
 
 
+class TestAgentSchemaRepairCounter:
+    """renfield_agent_schema_repairs_total (#1381)."""
+
+    def test_noop_when_not_initialized(self):
+        from utils.metrics import record_agent_schema_repair
+
+        record_agent_schema_repair("answer_without_action")
+
+    def test_labels_kind(self):
+        import utils.metrics as metrics_module
+
+        counter = MagicMock()
+        metrics_module._metrics_initialized = True
+        metrics_module._agent_schema_repairs_total = counter
+        try:
+            metrics_module.record_agent_schema_repair("answer_without_action")
+            counter.labels.assert_called_once_with(kind="answer_without_action")
+            counter.labels().inc.assert_called_once()
+        finally:
+            metrics_module._metrics_initialized = False
+            metrics_module._agent_schema_repairs_total = None
+
+    def test_prime_exports_zero_series_for_every_kind(self, monkeypatch):
+        import utils.metrics as metrics_module
+
+        counter = MagicMock()
+        monkeypatch.setattr(metrics_module, "_agent_schema_repairs_total", counter)
+        metrics_module._prime_agent_schema_repairs()
+        assert [c.kwargs for c in counter.labels.call_args_list] == [
+            {"kind": k} for k in metrics_module.AGENT_SCHEMA_REPAIR_KINDS
+        ]
+        counter.labels.return_value.inc.assert_not_called()
+
+    def test_kinds_match_the_agent_call_sites(self):
+        """A kind the loop records but nobody primes is the blind spot again."""
+        import re
+        from pathlib import Path
+
+        import utils.metrics as metrics_module
+
+        src = (Path(__file__).resolve().parents[2] / "src/backend/services/agent_service.py").read_text()
+        recorded = set(re.findall(r'_record_schema_repair\("([a-z_]+)"\)', src))
+        assert recorded == set(metrics_module.AGENT_SCHEMA_REPAIR_KINDS)
+
+
 class TestTruncationSeriesPriming:
     """A labelled counter emits nothing until first use — prime the agent's."""
 
