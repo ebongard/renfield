@@ -78,7 +78,8 @@ Bump `voice_server/__init__.py` `__version__` to `0.3.2` and add a
 # On a host with SSH to the build box:
 renfield/bin/release-voice-server.sh v0.3.2        # builds, pushes, records digest
 # Pin the new digest in private_k8s/voice-server/10-deployment.yaml
-# (image: ...voice-server@sha256:<from voice-server/RELEASES.md>)
+# (image: <your registry>/voice-server@sha256:<from voice-server/RELEASES.md>;
+#  the ledger is public and records the placeholder registry — keep only the digest)
 # Add the env to the same deployment:
 #   - name: ANON_DEFAULT_CLIENT
 #     value: "renfield"
