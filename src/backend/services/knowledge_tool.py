@@ -132,6 +132,7 @@ async def _visible_document_meta(
             owner_table_alias="kb",
             source_id_expr="d.id",
             owner_atom_id_expr="d.atom_id",
+            kb_share_kb_id_expr="d.knowledge_base_id",
         )
         doc_params = circles_filter_params(user_id_int, source_table_value="documents")
 

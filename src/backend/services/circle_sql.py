@@ -12,6 +12,7 @@ column on the source table) is:
     asker owns row                                       -- own everything
     OR row.circle_tier == public_tier_index              -- public to anyone
     OR EXISTS (atom_explicit_grants for this asker)      -- per-resource grant
+    OR EXISTS (kb_shares for the row's KB and this asker) -- documents only
     OR EXISTS (circle_memberships where asker.tier <= row.circle_tier)
                                                           -- tier reach
 
@@ -72,6 +73,7 @@ def circles_filter_clause(
     owner_table_alias: str | None = None,
     source_id_expr: str | None = None,
     owner_atom_id_expr: str | None = None,
+    kb_share_kb_id_expr: str | None = None,
     peer: PeerScope | None = None,
 ) -> str:
     """
@@ -123,6 +125,13 @@ def circles_filter_clause(
                            is NULL so the owner can never reach their own content
                            via the KB-owner branch. The atom-owner fallback keeps
                            ownership intact for KB-less documents. (CM-1 fix.)
+        kb_share_kb_id_expr: SQL expression yielding the row's knowledge-base
+                           id (``d.knowledge_base_id``). When set, a row is also
+                           visible if its KB is shared with the asker
+                           (``kb_shares``) — evaluated at query time, so a share
+                           covers documents added to the KB after it was made.
+                           Documents only; a NULL KB never matches. Dropped for
+                           federated queries like the grant branch.
         peer:              a `PeerScope` makes the query FEDERATED: the
                            "owner equality" and "explicit grant" branches drop
                            out, and the tier comes from the PAIRING instead of
@@ -193,6 +202,17 @@ def circles_filter_clause(
             f"  WHERE a.source_table = :{asker_param}_src "
             f"  AND a.source_id = ({sid_expr})::text "
             f"  AND g.granted_to_user_id = :{asker_param}"
+            f")"
+        )
+
+    if kb_share_kb_id_expr and peer is None:
+        # KB-level share (kb_shares PK (kb_id, user_id) — an index probe). Same
+        # suppression as the grant branch: `user_id = :asker` is a raw equality.
+        parts.append(
+            f"EXISTS ("
+            f"  SELECT 1 FROM kb_shares ks "
+            f"  WHERE ks.kb_id = {kb_share_kb_id_expr} "
+            f"  AND ks.user_id = :{asker_param}"
             f")"
         )
 
@@ -383,7 +403,9 @@ def document_chunks_circles_filter(
     owner) WITH a fallback to the document's atom owner: null-KB / global-RAG
     documents have no ``knowledge_bases`` row, so ``kb.owner_id`` is NULL and
     the owner could otherwise never reach their own content via ownership
-    (CM-1 fix — uses ``d.atom_id``). Callers MUST join knowledge_bases under
+    (CM-1 fix — uses ``d.atom_id``). A KB-level share (``kb_shares``) is a
+    fifth branch on ``d.knowledge_base_id``, so it covers documents added to
+    the KB later. Callers MUST join knowledge_bases under
     ``kb_alias`` (LEFT JOIN, so null-KB docs survive) AND documents under
     ``doc_alias``.
 
@@ -405,6 +427,7 @@ def document_chunks_circles_filter(
         owner_table_alias=kb_alias,
         source_id_expr=f"{doc_alias}.id",
         owner_atom_id_expr=f"{doc_alias}.atom_id",
+        kb_share_kb_id_expr=f"{doc_alias}.knowledge_base_id",
         peer=peer,
     )
     # The federated case drops the grant branch (and with it `_src`) AND the
@@ -456,6 +479,7 @@ def document_facts_circles_filter(
         owner_table_alias=kb_alias,
         source_id_expr=f"{doc_alias}.id",
         owner_atom_id_expr=f"{doc_alias}.atom_id",
+        kb_share_kb_id_expr=f"{doc_alias}.knowledge_base_id",
         peer=peer,
     )
     # The federated case drops the grant branch (and with it `_src`) AND the

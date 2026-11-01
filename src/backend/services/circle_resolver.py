@@ -15,6 +15,7 @@ ASCII access-check flow:
         ├── explicit grant exists for asker → True   (per-resource exception
         │                                              from atom_explicit_grants;
         │                                              MAX-permissive with tier)
+        ├── kb_document in a KB shared with asker → True (kb_shares, query time)
         ├── asker has no membership in owner's circles → False
         └── PolicyEvaluator.satisfies(atom.policy, asker_memberships, dimensions)
 
@@ -39,16 +40,18 @@ from typing import Any
 
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
-    Atom as AtomModel,
-)
-from models.database import (
+    ATOM_TYPE_KB_DOCUMENT,
     AtomExplicitGrant,
     Circle,
     CircleMembership,
     User,
+)
+from models.database import (
+    Atom as AtomModel,
 )
 from services.atom_types import Atom, DimensionSpec
 
@@ -219,6 +222,20 @@ class CircleResolver:
         self._explicit_grant_cache[cache_key] = has_grant
         return has_grant
 
+    async def has_kb_share(self, atom_id: str, asker_id: int) -> bool:
+        """True when the KB holding this document atom is shared with the asker
+        (``kb_shares``). NOT cached: a share, revoke or document move changes the
+        answer, and none of those paths would have to remember to invalidate."""
+        row = (await self.db.execute(
+            sa_text(
+                "SELECT 1 FROM documents d "
+                "JOIN kb_shares ks ON ks.kb_id = d.knowledge_base_id "
+                "WHERE d.atom_id = :atom_id AND ks.user_id = :asker LIMIT 1"
+            ),
+            {"atom_id": atom_id, "asker": asker_id},
+        )).first()
+        return row is not None
+
     async def can_access_atom(
         self,
         asker: User | int,
@@ -247,6 +264,13 @@ class CircleResolver:
 
         # Per-resource explicit grant trumps tier (MAX-permissive with circles).
         if await self.has_explicit_grant(atom.atom_id, asker_id):
+            return True
+
+        # A KB-level share covers every document of the KB, evaluated now (the
+        # same branch the circle_sql document filters carry).
+        if atom.atom_type == ATOM_TYPE_KB_DOCUMENT and await self.has_kb_share(
+            atom.atom_id, asker_id
+        ):
             return True
 
         # Tier / dimension membership check.
@@ -288,6 +312,16 @@ class CircleResolver:
         Call when an atom's tier changes or an explicit grant is added/removed.
         """
         keys = [k for k in cls._explicit_grant_cache if k[0] == atom_id]
+        for k in keys:
+            cls._explicit_grant_cache.pop(k, None)
+
+    @classmethod
+    def invalidate_for_grantee(cls, granted_to_user_id: int) -> None:
+        """
+        Clear every cached explicit-grant entry of this grantee across the
+        process. Call when grants of one user are removed in bulk (KB revoke).
+        """
+        keys = [k for k in cls._explicit_grant_cache if k[1] == granted_to_user_id]
         for k in keys:
             cls._explicit_grant_cache.pop(k, None)
 

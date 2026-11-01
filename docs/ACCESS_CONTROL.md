@@ -309,7 +309,7 @@ class KnowledgeBase:
 1. `kb.all` → Voller Zugriff auf alle KBs
 2. `owner_id == user.id` → Voller Zugriff auf eigene KBs
 3. `is_public == True` + `kb.shared` → Lesezugriff auf öffentliche KBs
-4. Explizite `KBPermission` → Per-User Zugriff
+4. KB-Freigabe (`kb_shares`, Stufe `read`/`write`/`admin`) → Per-User Zugriff. Die Stufe ist das Maximum aus der `kb_shares`-Zeile und etwaigen Alt-Grants je Dokument (vor `pc20261101`), siehe `docs/CIRCLES.md` → Zugriffsregel, Zweig 5.
 
 ### Konversationen
 
@@ -341,6 +341,8 @@ curl -X POST http://localhost:8000/api/knowledge/bases/1/share \
     "permission": "read"
   }'
 ```
+
+Eine Freigabe ist eine Zeile in `kb_shares` und gilt für **jedes** Dokument der KB — auch für später hochgeladene, hineinverschobene, und für eine bei der Freigabe noch leere KB. Ein von der berechtigten Person hochgeladenes Dokument gehört weiterhin dem KB-Eigentümer (Stufe = KB-Standardstufe); lesen kann sie es über die Freigabe. Ein aus der KB herausverschobenes Dokument ist für sie nicht mehr sichtbar. Entziehen löscht die Freigabe und die Alt-Grants dieser Person auf den Dokumenten der KB. Bestands-Freigaben, die nur als Alt-Grants existieren, gelten weiter, decken aber erst nach `bin/backfill_kb_shares.py --commit` auch neue Dokumente.
 
 ### Permission-Level
 
