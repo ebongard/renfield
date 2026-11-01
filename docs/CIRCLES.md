@@ -116,7 +116,7 @@ Attaching is a write on the conversation: `POST /api/chat/upload` applies the ch
 `session_id` (`chat_upload._may_write_session` → `ConversationService.reaches`, exactly as `save_message` with
 `enforce_ownership`). An existing conversation must be in reach, so a member may attach to a shared room thread they
 may post in. A session with no row yet is allowed: the browser mints the id and attaches before its first message
-creates the conversation. Proof: `tests/backend/test_chat_upload_session_gate.py`. Remaining by design: in a SHARED
+creates the conversation. The turn's own read follows the same boundary: the client names upload ids in the WS frame (`attachment_ids`, sequential), and under auth `_fetch_document_context` reads only uploads whose `session_id` is the turn's boundary-checked session, so a foreign id never reaches the prompt. Proof: `tests/backend/test_chat_upload_session_gate.py`. Remaining by design: in a SHARED
 thread the conversation owner (not the member who attached) is who `/index` accepts, because `chat_uploads` records
 no uploader (needs a column + migration).
 
