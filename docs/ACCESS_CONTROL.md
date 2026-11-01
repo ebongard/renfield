@@ -184,6 +184,7 @@ verbietet per AST-Scan jedes `has_permission(…, Permission.*_NONE)` im Backend
 | `/api/knowledge/bases` (GET) | `kb.all`: alle · `kb.shared`: eigene + öffentliche + explizit geteilte · `kb.own`: eigene + explizit geteilte · `kb.none`/keine KB-Stufe: keine |
 | `/api/knowledge/search` | mindestens `kb.own`, sonst 403 |
 | `/api/knowledge/upload` | mit `knowledge_base_id`: Schreibzugriff auf DIESE KB (Eigentümer, `kb.all` oder Freigabe `write`/`admin`) — `rag.manage` öffnet keine fremde KB; unbekannte KB → 404 · ohne KB: `rag.manage` |
+| `/api/chat/upload` (POST) | Schreibrecht auf die Unterhaltung `session_id` nach der Regel des Chats selbst (`ConversationService.reaches`, wie `save_message`): bestehende Unterhaltung im Kreis erreichbar, sonst 403 (eigentümerlose erreicht niemand); noch keine Zeile = neue, vom Client erzeugte Sitzung → erlaubt; anonym → 401 |
 | `/api/chat/upload/{id}/index` | eigener Upload (Eigentümer der Unterhaltung; Erreichbarkeit über Kreise genügt nicht → 403) UND Schreibzugriff auf die Ziel-KB wie oben; anonym → 401 |
 | `/api/chat/upload/{id}` (+ `/paperless`, `/email`, `/simba`) | Unterhaltung im Kreis erreichbar; anonym bei Auth an → 404 |
 | `/api/roles/*` (GET) | `roles.view` |
