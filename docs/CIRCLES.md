@@ -112,6 +112,14 @@ file it). Sites checked: `/api/knowledge/upload`, `/api/chat/upload/{id}/index` 
 (already gated: target write + per-source `check_document_access`), the ingest paths (folder, email, meetings,
 PDF split, auto-index): server-resolved owner KBs, no caller KB id. Proof: `tests/backend/test_kb_write_gate.py`.
 
+Attaching is a write on the conversation: `POST /api/chat/upload` applies the chat's own message-write rule to its
+`session_id` (`chat_upload._may_write_session` → `ConversationService.reaches`, exactly as `save_message` with
+`enforce_ownership`). An existing conversation must be in reach, so a member may attach to a shared room thread they
+may post in. A session with no row yet is allowed: the browser mints the id and attaches before its first message
+creates the conversation. Proof: `tests/backend/test_chat_upload_session_gate.py`. Remaining by design: in a SHARED
+thread the conversation owner (not the member who attached) is who `/index` accepts, because `chat_uploads` records
+no uploader (needs a column + migration).
+
 Open owner decision: a write-sharee filing into a shared KB gets a document whose atom owner is the KB OWNER, and
 KB shares are per-document grants that are not extended to new documents, so the uploader's own retrieval returns it
 only where the KB owner's circle reaches the uploader at the KB's default tier. Passing the uploader as `owner_user_id_override` would keep their ownership, but the KB's
