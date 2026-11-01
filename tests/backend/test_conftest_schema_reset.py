@@ -49,6 +49,14 @@ def test_guard_refuses_any_other_database(name, monkeypatch):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("tail", ["renfield?x=/renfield_test", "renfield?application_name=renfield_test"])
+def test_guard_reads_the_database_the_driver_connects_to(tail, monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(pytest.exit.Exception):
+        _refuse_the_application_database(_BASE + tail)
+
+
+@pytest.mark.unit
 def test_guard_refuses_the_application_database_even_when_named_like_a_test(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", _BASE + "renfield_test")
     with pytest.raises(pytest.exit.Exception):

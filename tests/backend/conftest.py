@@ -273,7 +273,15 @@ def _db_name_only(url: str | None) -> str:
     """
     if not url:
         return "<unset>"
-    return url.rsplit("/", 1)[-1].split("?")[0]
+    # Parsed the way the driver parses it: a slash inside the query string
+    # (`/renfield?x=/renfield_test`) must not make the guard read the wrong name.
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import ArgumentError
+
+    try:
+        return make_url(url).database or ""
+    except ArgumentError:
+        return ""
 
 
 # The schema reset DROPS the whole `public` schema, so the harness only ever
