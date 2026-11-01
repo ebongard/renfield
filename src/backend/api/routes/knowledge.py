@@ -274,7 +274,8 @@ async def upload_document(
 
     Supported formats: PDF, DOCX, TXT, MD, HTML, PPTX, XLSX
 
-    Requires: rag.manage permission or write access to KB
+    Requires (auth on): write access to a named KB (check_kb_access);
+    a KB-less upload requires rag.manage.
     """
     # Permission check
     if settings.auth_enabled:
