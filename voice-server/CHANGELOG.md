@@ -5,6 +5,8 @@ version without a section here. Pushed digests live in `RELEASES.md`.
 
 ## [Unreleased]
 
+## [0.3.8] — 2026-11-01
+
 - **No voice token in the log.** uvicorn logged `/ws/voice?token=<JWT>` in its
   access line and in its `WebSocket … [accepted]` line (`uvicorn.error`, on even
   with `--no-access-log`). `voice_server/log_safety.py` now redacts every
