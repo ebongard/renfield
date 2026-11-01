@@ -20,14 +20,14 @@ Fresh installs: the baseline builds the CURRENT model, which already declares th
 new index and no name constraint -- both steps below are guarded and no-ops then.
 
 Revision ID: pc20261031_kb_name_per_owner
-Revises: pc20261029_audit_basis
+Revises: pc20261031_sv_generated
 Create Date: 2026-10-31
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision: str = "pc20261031_kb_name_per_owner"
-down_revision: str | None = "pc20261029_audit_basis"
+down_revision: str | None = "pc20261031_sv_generated"
 branch_labels: None = None
 depends_on: None = None
 
