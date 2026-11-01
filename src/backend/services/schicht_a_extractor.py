@@ -744,6 +744,146 @@ async def _reindex_lock(bind: Any, document_id: int | None):
         await lock_conn.close()
 
 
+def _warn_no_facts(document_id: int, error: str | None, n_chars: int) -> None:
+    # No facts → no generated title and no document date either; the document
+    # stays that way until it is re-extracted. This exit was silent, so such a
+    # document left no trace at all (xidra doc 669). Counts only, no content.
+    logger.warning(
+        f"Schicht A: doc {document_id} produced no facts "
+        f"(error={error or 'none'}, {n_chars} chars of "
+        f"field text) — no title, no document date"
+    )
+
+
+async def _store_fact(
+    db: Any,
+    atom_svc: Any,
+    *,
+    document_id: int,
+    owner_id: int,
+    fact: ExtractedFact,
+    tier: int,
+    tier_overridden: bool,
+) -> None:
+    """Write one fact row behind its atom (AtomService — never a direct INSERT)."""
+    from models.database import ATOM_TYPE_DOCUMENT_FACT, DocumentFact
+
+    atom_id = await atom_svc.create_with_source(
+        atom_type=ATOM_TYPE_DOCUMENT_FACT,
+        owner_user_id=int(owner_id),
+        tier=tier,
+    )
+    row = DocumentFact(
+        document_id=document_id,
+        category=fact.category,
+        kind=fact.kind,
+        value=fact.value,
+        normalized_value=fact.normalized_value,
+        excerpt=fact.excerpt,
+        obligation_date=fact.obligation_date,
+        amount_value=fact.amount_value,
+        amount_currency=fact.amount_currency,
+        legal_gate=fact.legal_gate,
+        payment_method=fact.payment_method,
+        confidence=fact.confidence,
+        source=fact.source,
+        atom_id=atom_id,
+        circle_tier=tier,
+        tier_overridden=tier_overridden,
+    )
+    db.add(row)
+    await db.flush()
+    await atom_svc.finalize_source_id(atom_id, row.id)
+
+
+async def _refresh_deterministic_facts(
+    db: Any,
+    *,
+    document_id: int,
+    owner_id: int,
+    tier: int,
+    facts: list[ExtractedFact],
+) -> tuple[int, int, int, int]:
+    """Re-extraction whose LLM step failed: replace only the prior DETERMINISTIC
+    facts by the freshly extracted ones; the prior LLM facts stay as they are.
+
+    The deterministic layer ran on the new text (a re-OCR / VLM fallback exists to
+    produce cleaner text), so its identifiers are the better ones even when the
+    LLM is down. A prior deterministic row whose content identity
+    (``_fact_identity_key``) matches a fresh fact is KEPT unchanged — row id,
+    atom, tier and any per-fact tier override survive without a carry-over step.
+    Unmatched fresh facts are written at the document tier; unmatched prior rows
+    are purged after the commit (write-new-then-purge-old, as on the full path).
+
+    Returns ``(kept_llm, kept_det, added_det, removed_det)``.
+    """
+    from sqlalchemy import func, select
+
+    from models.database import DocumentFact
+    from services.atom_purge_service import AtomPurgeService
+    from services.atom_service import AtomService
+
+    prior = (await db.execute(
+        select(
+            DocumentFact.atom_id,
+            DocumentFact.category,
+            DocumentFact.kind,
+            DocumentFact.normalized_value,
+            DocumentFact.value,
+        ).where(
+            DocumentFact.document_id == document_id,
+            DocumentFact.source == DOC_FACT_SOURCE_DETERMINISTIC,
+        ).order_by(DocumentFact.id)
+    )).all()
+    kept_llm = int((await db.execute(
+        select(func.count()).select_from(DocumentFact).where(
+            DocumentFact.document_id == document_id,
+            DocumentFact.source != DOC_FACT_SOURCE_DETERMINISTIC,
+        )
+    )).scalar() or 0)
+
+    # First row per identity wins; a duplicate prior row is retired.
+    prior_by_key: dict[tuple[str, str, str], str] = {}
+    for r in prior:
+        prior_by_key.setdefault(
+            _fact_identity_key(r.category, r.kind, r.normalized_value, r.value),
+            r.atom_id,
+        )
+
+    keep_atom_ids: set[str] = set()
+    seen: set[tuple[str, str, str]] = set()
+    to_add: list[ExtractedFact] = []
+    for f in facts:
+        if f.source != DOC_FACT_SOURCE_DETERMINISTIC:
+            continue
+        key = _fact_identity_key(f.category, f.kind, f.normalized_value, f.value)
+        if key in seen:
+            continue
+        seen.add(key)
+        match = prior_by_key.get(key)
+        if match is not None:
+            keep_atom_ids.add(match)
+        else:
+            to_add.append(f)
+
+    atom_svc = AtomService(db)
+    for f in to_add:
+        await _store_fact(
+            db, atom_svc, document_id=document_id, owner_id=owner_id,
+            fact=f, tier=tier, tier_overridden=False,
+        )
+    await db.commit()
+
+    removed = 0
+    for r in prior:
+        if r.atom_id and r.atom_id not in keep_atom_ids:
+            await AtomPurgeService.purge(
+                db, atom_id=r.atom_id, reason="schicht_a_reextract"
+            )
+            removed += 1
+    return kept_llm, len(keep_atom_ids), len(to_add), removed
+
+
 async def schicht_a_post_document_ingest_hook(
     chunks: list[str],
     document_id: int | None = None,
@@ -761,9 +901,10 @@ async def schicht_a_post_document_ingest_hook(
     for the document are purged (via the sanctioned AtomPurgeService) before
     re-extraction, so reindexing a document refreshes its facts instead of
     duplicating them. Exception: a re-extraction whose LLM step failed
-    (``result.error``) leaves a document that already has facts untouched —
-    prior facts, generated title and document date are kept rather than
-    replaced by the deterministic subset.
+    (``result.error``) on a document that already has facts refreshes only the
+    deterministic facts (``_refresh_deterministic_facts``) — the prior LLM facts,
+    generated title and document date are kept rather than replaced by the
+    deterministic subset.
 
     Per-fact tier-override carry-over: before writing the fresh fact set, the
     prior facts that carry an owner-set per-fact tier override
@@ -788,7 +929,7 @@ async def schicht_a_post_document_ingest_hook(
 
     from sqlalchemy import select
 
-    from models.database import ATOM_TYPE_DOCUMENT_FACT, Atom, Document, DocumentFact
+    from models.database import Atom, Document, DocumentFact
     from services.atom_purge_service import AtomPurgeService
     from services.atom_service import AtomService
     from services.database import AsyncSessionLocal
@@ -828,15 +969,10 @@ async def schicht_a_post_document_ingest_hook(
                     f"({result.error}); kept {len(result.facts)} deterministic "
                     f"fact(s)"
                 )
-            if not result.facts:
-                # No facts → no generated title and no document date either; the
-                # document stays that way until it is re-extracted. This exit was
-                # silent, so such a document left no trace at all (xidra doc 669).
-                logger.warning(
-                    f"Schicht A: doc {document_id} produced no facts "
-                    f"(error={result.error or 'none'}, {len(field_text)} chars of "
-                    f"field text) — no title, no document date"
-                )
+            # An LLM failure with no deterministic facts still has to reach the
+            # lock below: on a REINDEX it retires the prior deterministic facts.
+            if not result.facts and not result.error:
+                _warn_no_facts(document_id, result.error, len(field_text))
                 return
 
             capped = result.facts[:_MAX_FACTS_PER_DOC]
@@ -876,15 +1012,27 @@ async def schicht_a_post_document_ingest_hook(
                 # A RE-extraction whose LLM step failed (outage / timeout) holds only
                 # the deterministic subset. Replacing the prior set with it would
                 # silently downgrade the document's facts for good, and the title
-                # and document date derived below with them. Keep the prior set,
-                # title and date; the next successful reindex refreshes them. A
-                # FIRST extraction has nothing to keep and stores the subset.
+                # and document date derived below with them. Keep the prior LLM
+                # facts, title and date; the next successful reindex refreshes them.
+                # The deterministic facts DID run on the new (possibly cleaner)
+                # text, so they replace the prior deterministic ones. A FIRST
+                # extraction has nothing to keep and stores the subset.
                 if result.error and old_atom_ids:
+                    kept_llm, kept_det, added_det, removed_det = (
+                        await _refresh_deterministic_facts(
+                            db, document_id=document_id, owner_id=int(owner_id),
+                            tier=tier, facts=capped,
+                        )
+                    )
                     logger.warning(
                         f"Schicht A: doc {document_id} re-extraction incomplete; "
-                        f"kept the existing {len(old_atom_ids)} fact(s), title and "
-                        f"document date"
+                        f"kept {kept_llm} LLM fact(s), title and document date; "
+                        f"deterministic facts: {kept_det} kept, {added_det} added, "
+                        f"{removed_det} removed"
                     )
+                    return
+                if not capped:
+                    _warn_no_facts(document_id, result.error, len(field_text))
                     return
 
                 # Carry-over snapshot: a per-fact tier OVERRIDE (e.g. a public issuer
@@ -931,32 +1079,10 @@ async def schicht_a_post_document_ingest_hook(
                     fact_tier = carried if carried is not None else tier
                     is_override = carried is not None
 
-                    atom_id = await atom_svc.create_with_source(
-                        atom_type=ATOM_TYPE_DOCUMENT_FACT,
-                        owner_user_id=int(owner_id),
-                        tier=fact_tier,
+                    await _store_fact(
+                        db, atom_svc, document_id=document_id, owner_id=int(owner_id),
+                        fact=f, tier=fact_tier, tier_overridden=is_override,
                     )
-                    row = DocumentFact(
-                        document_id=document_id,
-                        category=f.category,
-                        kind=f.kind,
-                        value=f.value,
-                        normalized_value=f.normalized_value,
-                        excerpt=f.excerpt,
-                        obligation_date=f.obligation_date,
-                        amount_value=f.amount_value,
-                        amount_currency=f.amount_currency,
-                        legal_gate=f.legal_gate,
-                        payment_method=f.payment_method,
-                        confidence=f.confidence,
-                        source=f.source,
-                        atom_id=atom_id,
-                        circle_tier=fact_tier,
-                        tier_overridden=is_override,
-                    )
-                    db.add(row)
-                    await db.flush()
-                    await atom_svc.finalize_source_id(atom_id, row.id)
                     stored += 1
                     if is_override:
                         carried_over += 1
