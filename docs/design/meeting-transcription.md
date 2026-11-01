@@ -160,7 +160,9 @@ in `.claude/rules/meetings.md`.
 - Voice-server `POST /transcribe-meeting` (`voice-server/voice_server/services/meeting_service.py`): pyannote
   diarization + faster-whisper word-timestamps + a PURE fixture-tested `align_words_to_segments` + per-cluster ECAPA in
   the ONNX `/stt` space. pyannote loads only when `MEETING_ENABLED`; the image bakes GPU torch cu128 + the pyannote
-  model via a BuildKit secret.
+  model via a BuildKit secret. `PIP_CONSTRAINT` holds that torch for every later pip step (v0.3.8 lost it to a
+  transitive upgrade and crash-looped at startup), a failed bake fails the build, and the release smoke asserts the
+  `+cu128` build and imports pyannote.
 - Attribution = honest pseudonyms ("Sprecher N") + one-click human labeling (`POST /api/meetings/{id}/relabel`,
   re-render → reindex in place, stable `transcript_document_id`). Auto-match to enrolled speakers is NOT
   built and not planned (decision 2026-09-20; the placeholder flag `meeting_auto_match_enabled` was removed) —

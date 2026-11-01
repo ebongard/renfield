@@ -63,6 +63,15 @@ RUN pip install --upgrade pip wheel
 RUN pip install --index-url https://download.pytorch.org/whl/cu128 \
         torch==2.7.1 torchaudio==2.7.1
 
+# Hold that torch for every later pip step. Without it the resolver upgrades
+# torch for a transitive (pyannote's torch-audiomentations / lightning wanted a
+# newer one in 2026-11) and swaps in a PyPI torch with CUDA-13 libraries;
+# torchaudio 2.9+ then lacks `AudioMetaData` and pyannote 3.x cannot import
+# (v0.3.8 crash-looped at startup). Pinned here, the resolver backtracks to
+# compatible transitive versions or fails the build loudly.
+RUN printf 'torch==2.7.1+cu128\ntorchaudio==2.7.1+cu128\n' > /opt/torch-constraints.txt
+ENV PIP_CONSTRAINT=/opt/torch-constraints.txt
+
 RUN pip install \
         numpy>=1.26 \
         soundfile>=0.12 \
@@ -81,13 +90,14 @@ RUN pip install "pyannote.audio>=3.1,<4" "huggingface_hub<0.26"
 # Bake the gated pyannote diarization model into the image (offline-first). Uses
 # a BuildKit secret so the HF token never lands in image history. No secret →
 # the script skips cleanly (exit 0) and the runtime downloads on warmup via
-# HF_TOKEN when MEETING_ENABLED. Done via a committed script (NOT a heredoc in a
+# HF_TOKEN when MEETING_ENABLED. With a secret, a failed bake fails the build:
+# it is the first place that imports pyannote, so swallowing it hid a broken
+# torch stack in v0.3.8. Done via a committed script (NOT a heredoc in a
 # RUN) — a heredoc under a `\`-continued RUN is a Dockerfile parse hazard.
 ENV HF_HOME=/opt/hf-cache
 COPY scripts/bake_pyannote.py /tmp/bake_pyannote.py
 RUN --mount=type=secret,id=hf_token \
-    HF_TOKEN="$(cat /run/secrets/hf_token 2>/dev/null || true)" python /tmp/bake_pyannote.py \
-    || echo "[bake] pyannote bake failed — model downloads on warmup"
+    HF_TOKEN="$(cat /run/secrets/hf_token 2>/dev/null || true)" python /tmp/bake_pyannote.py
 
 # cuDNN is required by onnxruntime-gpu's CUDAExecutionProvider but is
 # NOT included in nvidia/cuda:12.6-runtime base. Pull it via pip wheel.

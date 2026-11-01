@@ -5,6 +5,20 @@ version without a section here. Pushed digests live in `RELEASES.md`.
 
 ## [Unreleased]
 
+## [0.3.9] — 2026-11-01
+
+- **The image holds the cu128 torch.** In 0.3.8, installing `pyannote.audio`
+  let pip replace torch 2.7.1+cu128 with a PyPI torch 2.15 (CUDA-13 libraries)
+  for a transitive; torchaudio 2.11 lacks `AudioMetaData`, so pyannote failed
+  at import and the server crash-looped at startup. A constraints file
+  (`PIP_CONSTRAINT`) now pins torch/torchaudio for every later pip step, a
+  failed pyannote bake fails the build, and the release smoke asserts the
+  `+cu128` build and imports pyannote.
+- Carries the 0.3.8 change below. **0.3.8 is broken and was never live** (rolled
+  back to 0.3.7 within minutes); do not pin it.
+
+## [0.3.8] — 2026-11-01 (broken, see 0.3.9)
+
 - **No voice token in the log.** uvicorn logged `/ws/voice?token=<JWT>` in its
   access line and in its `WebSocket … [accepted]` line (`uvicorn.error`, on even
   with `--no-access-log`). `voice_server/log_safety.py` now redacts every
