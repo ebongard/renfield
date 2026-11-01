@@ -613,10 +613,17 @@ class Settings(BaseSettings):
     # (rotated / poor scan → character-level garble), render the page(s) and let the
     # vision model transcribe them (robust to orientation/noise). Only used if the
     # VLM result scores strictly better. Dark by default (opt-in per instance);
-    # needs a configured OLLAMA_VISION_MODEL. Bounded to the first N pages (cost).
+    # needs a configured OLLAMA_VISION_MODEL.
     ocr_vlm_fallback_enabled: bool = False
     ocr_vlm_fallback_score_threshold: int = 2   # OCR score <= this → try the VLM
-    ocr_vlm_fallback_max_pages: int = Field(default=5, ge=1, le=20)
+    # Page cap — a COST bound (one sequential vision call per page), never a
+    # truncation: a longer document is not re-read at all (WARNING) and keeps
+    # its complete OCR text, because the VLM transcription replaces every chunk
+    # and would otherwise silently delete the pages past the cap. Until
+    # 2026-10-31 it was 5 (le=20) and DID truncate: a 6+ page VLM-replaced
+    # document lost every page past 5. 50 covers any real letter / contract /
+    # statement scan.
+    ocr_vlm_fallback_max_pages: int = Field(default=50, ge=1, le=1000)
     # Coverage trigger: even when the SURVIVING (post-drop) text scores fine, a
     # doc whose chunker dropped more than this fraction is mostly-lost content —
     # classically a "usable-but-garbled" embedded text layer (DATEV letter-

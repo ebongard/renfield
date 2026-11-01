@@ -607,6 +607,19 @@ def test_images_scale_config_default_within_bounds():
 # and a coverage-aware acceptance keeps the fuller VLM transcription.
 
 
+def _stub_pages(dp, images, render_log=None):
+    """Stub the per-page renderer: ``images`` are the rendered pages (empty list =
+    page count unknown); ``render_log`` collects the rendered page indices."""
+    dp._page_count = lambda fp: len(images)
+
+    def _render(fp, idx):
+        if render_log is not None:
+            render_log.append(idx)
+        return images[idx]
+
+    dp._render_page_b64 = _render
+
+
 class _FakeOllama:
     def __init__(self, vlm_text, gibberish=False):
         self._vlm = vlm_text
@@ -648,11 +661,11 @@ class TestVlmCoverageTrigger:
         # Faithful: repeats the survivor content (high token overlap) + recovers more.
         vlm_text = (survivor + " " + "wiederhergestellte Zeile Betrag Euro " * 8).strip()
         processor._ollama_service = _FakeOllama(vlm_text)
-        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+        _stub_pages(processor, ["img1"])
 
         out = await processor._vlm_ocr_fallback("x.pdf", survivor, drop_rate=0.98)
 
-        assert out == vlm_text
+        assert out.text == vlm_text
         assert processor._ollama_service.extract_calls == 1
 
     async def test_coverage_rejects_hallucination_low_overlap(self, processor, monkeypatch):
@@ -664,7 +677,7 @@ class TestVlmCoverageTrigger:
         # Fluent, longer, readable — but entirely different content (a hallucination).
         hallucination = "Vollkommen andere erfundene Rechnung Betrag Kaufvertrag " * 8
         processor._ollama_service = _FakeOllama(hallucination)
-        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+        _stub_pages(processor, ["img1"])
 
         out = await processor._vlm_ocr_fallback("x.pdf", survivor, drop_rate=0.98)
 
@@ -676,7 +689,7 @@ class TestVlmCoverageTrigger:
         overlap) is rejected; just over 1.5× is accepted."""
         _vlm_settings(monkeypatch)
         survivor = "alpha bravo charlie delta"  # 25 chars
-        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+        _stub_pages(processor, ["img1"])
 
         # Exactly 1.5× (len 25 → boundary at 37.5; build 37 ≤ 37.5 → reject even
         # though every survivor token is present).
@@ -687,13 +700,13 @@ class TestVlmCoverageTrigger:
         # Comfortably over 1.5× with full overlap → accepted.
         over = survivor + " echo foxtrot golf hotel india juliet kilo"
         processor._ollama_service = _FakeOllama(over)
-        assert await processor._vlm_ocr_fallback("x.pdf", survivor, drop_rate=0.98) == over
+        assert (await processor._vlm_ocr_fallback("x.pdf", survivor, drop_rate=0.98)).text == over
 
     async def test_no_trigger_when_drop_rate_low(self, processor, monkeypatch):
         """Low drop-rate + clean survivor score → VLM never runs."""
         _vlm_settings(monkeypatch)
         processor._ollama_service = _FakeOllama("should not be used")
-        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+        _stub_pages(processor, ["img1"])
 
         out = await processor._vlm_ocr_fallback("x.pdf", "clean survivor", drop_rate=0.10)
 
@@ -706,7 +719,7 @@ class TestVlmCoverageTrigger:
         _vlm_settings(monkeypatch)
         long_survivor = "clean survivor text " * 30  # ~600 chars
         processor._ollama_service = _FakeOllama("tiny clean")  # much shorter
-        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+        _stub_pages(processor, ["img1"])
 
         out = await processor._vlm_ocr_fallback("x.pdf", long_survivor, drop_rate=0.95)
 
@@ -717,7 +730,7 @@ class TestVlmCoverageTrigger:
         """coverage_drop_threshold=0 → coverage trigger off; clean survivor → no VLM."""
         _vlm_settings(monkeypatch, coverage=0.0)
         processor._ollama_service = _FakeOllama("should not be used")
-        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+        _stub_pages(processor, ["img1"])
 
         out = await processor._vlm_ocr_fallback("x.pdf", "clean survivor", drop_rate=0.99)
 
@@ -729,16 +742,16 @@ class TestVlmCoverageTrigger:
         strictly-better VLM score, independent of drop_rate."""
         _vlm_settings(monkeypatch)
         processor._ollama_service = _FakeOllama("clean recovered text")
-        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+        _stub_pages(processor, ["img1"])
 
         out = await processor._vlm_ocr_fallback("x.pdf", "GARBAGE r . : n ; :", drop_rate=None)
 
-        assert out == "clean recovered text"
+        assert out.text == "clean recovered text"
 
     async def test_disabled_returns_none(self, processor, monkeypatch):
         _vlm_settings(monkeypatch, enabled=False)
         processor._ollama_service = _FakeOllama("x")
-        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+        _stub_pages(processor, ["img1"])
         out = await processor._vlm_ocr_fallback("x.pdf", "clean", drop_rate=0.99)
         assert out is None
 
@@ -755,7 +768,7 @@ class TestVlmCoverageTrigger:
         patch the module logger (the local convention, see test_warning_log_on_drop)."""
         _vlm_settings(monkeypatch)
         processor._ollama_service = _FakeOllama("unused")
-        processor._render_pages_b64 = lambda *a, **k: []  # render produced nothing
+        _stub_pages(processor, [])  # render produced nothing
 
         with patch("services.document_processor.logger") as mock_logger:
             out = await processor._vlm_ocr_fallback("garbled.pdf", "clean survivor", drop_rate=0.98)
@@ -773,7 +786,7 @@ class TestVlmCoverageTrigger:
         (VLM produced nothing) instead of a silent None."""
         _vlm_settings(monkeypatch)
         processor._ollama_service = _FakeOllama("")  # VLM returns empty
-        processor._render_pages_b64 = lambda *a, **k: ["img1", "img2"]
+        _stub_pages(processor, ["img1", "img2"])
 
         with patch("services.document_processor.logger") as mock_logger:
             out = await processor._vlm_ocr_fallback("garbled.pdf", "clean survivor", drop_rate=0.98)
@@ -804,3 +817,188 @@ class TestTokenOverlap:
         # No survivor tokens to verify → don't block (1.0). Covers the early-return.
         assert DocumentProcessor._token_overlap("", "anything here") == 1.0
         assert DocumentProcessor._token_overlap("a b", "nothing") == 1.0  # <3-char tokens ignored
+
+
+# ---- VLM fallback keeps page boundaries + never truncates (fix/vlm-fallback-pages)
+#
+# The VLM transcription used to be one flat string: every chunk of a VLM-replaced
+# document carried page_number=None (no page provenance in citations), and the
+# page cap rendered only the first N pages, so a longer document silently lost
+# every page past the cap when its chunks were replaced.
+
+_PAGE_TEXTS = [
+    "Seite eins: Sehr geehrte Damen und Herren, anbei erhalten Sie die Unterlagen.",
+    "Seite zwei: Die Zahlung ist innerhalb von vierzehn Tagen faellig geworden.",
+    "Seite drei: Mit freundlichen Gruessen aus der Buchhaltung und alles Gute.",
+]
+
+
+class _PagedOllama:
+    """Vision stub answering page by page, in call order."""
+
+    def __init__(self, answers):
+        self._answers = list(answers)
+        self.extract_calls = 0
+
+    async def extract_text_from_image(self, _img):
+        self.extract_calls += 1
+        return self._answers.pop(0)
+
+    async def is_ocr_gibberish(self, _text):
+        return False
+
+
+def _write_blank_pdf(path, pages):
+    """A real n-page PDF, so the page count and render run through pypdfium2."""
+    pdfium = pytest.importorskip("pypdfium2")
+    pdf = pdfium.PdfDocument.new()
+    try:
+        for _ in range(pages):
+            pdf.new_page(200, 200)
+        pdf.save(str(path))
+    finally:
+        pdf.close()
+
+
+class TestVlmFallbackPages:
+    async def test_three_page_fallback_chunks_carry_page_numbers(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """End to end through process_document on a real 3-page PDF: the
+        VLM-replaced chunks carry page_number 1..3, like Docling's."""
+        _vlm_settings(monkeypatch)
+        monkeypatch.setattr(
+            "services.document_processor.settings.rag_ocr_auto_detect", False
+        )
+        f = tmp_path / "three_pages.pdf"
+        _write_blank_pdf(f, 3)
+        TestProcessDocumentTextLayerChunkPath._wire(
+            None, processor, first_chunks=[CLEAN_CHUNK, CLEAN_CHUNK],
+            text_layer="", tl_usable=False,
+        )
+        # Docling's export is garbled → the score trigger fires.
+        processor._convert_document.return_value.document.export_to_text = MagicMock(
+            return_value="GARBAGE docling export"
+        )
+        processor._ollama_service = _PagedOllama(_PAGE_TEXTS)
+
+        result = await processor.process_document(str(f), force_ocr=False)
+
+        assert result["status"] == "completed"
+        assert result["ocr_engine"] == "vlm_fallback"
+        assert processor._ollama_service.extract_calls == 3
+        assert [c["metadata"]["page_number"] for c in result["chunks"]] == [1, 2, 3]
+        assert [c["chunk_index"] for c in result["chunks"]] == [0, 1, 2]
+        assert result["chunks"][1]["text"] == _PAGE_TEXTS[1]
+
+    async def test_blank_page_keeps_the_numbering_of_the_others(
+        self, processor, monkeypatch
+    ):
+        """A blank middle page (VLM answers "") yields no chunk, and page 3 stays
+        page 3 — numbering follows the PDF, not the count of non-empty answers."""
+        _vlm_settings(monkeypatch)
+        processor._ollama_service = _PagedOllama([_PAGE_TEXTS[0], "", _PAGE_TEXTS[2]])
+        _stub_pages(processor, ["p1", "p2", "p3"])
+
+        out = await processor._vlm_ocr_fallback("x.pdf", "GARBAGE r . :", drop_rate=None)
+
+        assert [n for n, _ in out.pages] == [1, 3]
+        chunks = processor._chunk_vlm_pages(out)
+        assert [c["metadata"]["page_number"] for c in chunks] == [1, 3]
+
+    async def test_long_page_splits_into_chunks_of_the_same_page(self, processor):
+        from services.document_processor import VlmTranscription
+
+        long_page = "Ein ganz normaler Satz mit genug Woertern. " * 200
+        chunks = processor._chunk_vlm_pages(
+            VlmTranscription(pages=((1, "Kurz."), (2, long_page)))
+        )
+
+        assert len(chunks) > 2
+        assert chunks[0]["metadata"]["page_number"] == 1
+        assert {c["metadata"]["page_number"] for c in chunks[1:]} == {2}
+        assert [c["chunk_index"] for c in chunks] == list(range(len(chunks)))
+
+    async def test_document_over_the_cap_is_not_truncated(self, processor, monkeypatch):
+        """4 pages > cap 3: the VLM must NOT read pages 1..3 and replace the whole
+        document with them — it keeps the complete OCR text and says so LOUDLY."""
+        _vlm_settings(monkeypatch)  # cap = 3
+        processor._ollama_service = _PagedOllama([*_PAGE_TEXTS, "vierte Seite"])
+        rendered: list[int] = []
+        _stub_pages(processor, ["p1", "p2", "p3", "p4"], rendered)
+
+        with patch("services.document_processor.logger") as mock_logger:
+            out = await processor._vlm_ocr_fallback("long.pdf", "GARBAGE r . :", drop_rate=None)
+
+        assert out is None
+        assert rendered == []
+        assert processor._ollama_service.extract_calls == 0
+        msg = " ".join(str(c.args[0]) for c in mock_logger.warning.call_args_list)
+        assert "long.pdf" in msg
+        assert "4 pages exceed OCR_VLM_FALLBACK_MAX_PAGES=3" in msg
+
+    async def test_document_at_the_cap_is_read_completely(self, processor, monkeypatch):
+        _vlm_settings(monkeypatch)  # cap = 3
+        processor._ollama_service = _PagedOllama(_PAGE_TEXTS)
+        _stub_pages(processor, ["p1", "p2", "p3"])
+
+        out = await processor._vlm_ocr_fallback("x.pdf", "GARBAGE r . :", drop_rate=None)
+
+        assert [n for n, _ in out.pages] == [1, 2, 3]
+
+    async def test_failed_vision_call_on_one_page_discards_the_transcription(
+        self, processor, monkeypatch
+    ):
+        """None = no answer (outage / open breaker). Accepting pages 1 and 3 would
+        replace the document's chunks without page 2 — keep the OCR text instead."""
+        _vlm_settings(monkeypatch)
+        processor._ollama_service = _PagedOllama([_PAGE_TEXTS[0], None, _PAGE_TEXTS[2]])
+        _stub_pages(processor, ["p1", "p2", "p3"])
+
+        with patch("services.document_processor.logger") as mock_logger:
+            out = await processor._vlm_ocr_fallback("x.pdf", "GARBAGE r . :", drop_rate=None)
+
+        assert out is None
+        assert processor._ollama_service.extract_calls == 2  # stopped at the failure
+        msg = " ".join(str(c.args[0]) for c in mock_logger.warning.call_args_list)
+        assert "page 2/3" in msg
+
+    async def test_render_failure_on_a_later_page_discards_the_transcription(
+        self, processor, monkeypatch
+    ):
+        _vlm_settings(monkeypatch)
+        processor._ollama_service = _PagedOllama(_PAGE_TEXTS)
+        _stub_pages(processor, ["p1", None, "p3"])
+
+        out = await processor._vlm_ocr_fallback("x.pdf", "GARBAGE r . :", drop_rate=None)
+
+        assert out is None
+        assert processor._ollama_service.extract_calls == 1
+
+    async def test_four_pages_over_the_cap_keep_their_ocr_chunks(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """End to end on a real 4-page PDF with cap 3: the document keeps its
+        OCR chunks. Before the fix the VLM read pages 1..3 and those REPLACED
+        every chunk — page 4 vanished from the knowledge base without a word."""
+        _vlm_settings(monkeypatch)  # cap = 3
+        monkeypatch.setattr(
+            "services.document_processor.settings.rag_ocr_auto_detect", False
+        )
+        f = tmp_path / "four_pages.pdf"
+        _write_blank_pdf(f, 4)
+        TestProcessDocumentTextLayerChunkPath._wire(
+            None, processor, first_chunks=[CLEAN_CHUNK, CLEAN_CHUNK],
+            text_layer="", tl_usable=False,
+        )
+        processor._convert_document.return_value.document.export_to_text = MagicMock(
+            return_value="GARBAGE docling export"
+        )
+        processor._ollama_service = _PagedOllama([*_PAGE_TEXTS, "vierte Seite"])
+
+        result = await processor.process_document(str(f), force_ocr=False)
+
+        assert result["status"] == "completed"
+        assert result["ocr_engine"] != "vlm_fallback"
+        assert [c["text"] for c in result["chunks"]] == [CLEAN_CHUNK, CLEAN_CHUNK]
+        assert processor._ollama_service.extract_calls == 0
