@@ -351,7 +351,10 @@ async def test_reindex_with_llm_error_keeps_the_existing_facts(
     assert await _doc_title_and_date(pg_async_engine, did) == before
     title.assert_not_awaited()
     msg = _warnings(mock_logger)
-    assert f"doc {did} re-extraction incomplete; kept the existing 2 fact(s)" in msg
+    assert (
+        f"doc {did} re-extraction incomplete; kept 1 LLM fact(s), title and "
+        f"document date; deterministic facts: 1 kept, 0 added, 0 removed"
+    ) in msg
     assert "some field text" not in msg
 
 
@@ -376,3 +379,182 @@ async def test_reindex_without_error_replaces_the_facts(
 
     assert await _fact_values(pg_async_engine, did) == ["K-77"]
     assert (await _doc_title_and_date(pg_async_engine, did))[0] == "Kundenkonto K-77"
+
+
+# ============================================================================
+# ... but refreshes the DETERMINISTIC facts from the new text
+# ============================================================================
+# A reindex after an audit re-OCR / VLM fallback exists to pick up cleaner text.
+# Keeping the whole prior set on an LLM failure also kept the old regex
+# identifiers (read from possibly garbled text) and threw the exact new ones
+# away; a document whose LLM step always fails stayed frozen. Only the LLM facts,
+# the title and the date are worth keeping; the deterministic facts are replaced.
+
+
+async def _fact_rows(engine, doc_id: int) -> list[tuple]:
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        return [tuple(r) for r in (await s.execute(
+            text(
+                "SELECT id, atom_id, source, value, circle_tier, tier_overridden "
+                "FROM document_facts WHERE document_id = :d ORDER BY value"
+            ),
+            {"d": doc_id},
+        )).all()]
+
+
+async def _atom_exists(engine, atom_id: str) -> bool:
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        return bool((await s.execute(
+            text("SELECT count(*) FROM atoms WHERE atom_id = :a"), {"a": atom_id}
+        )).scalar())
+
+
+async def _set_document_date(engine, doc_id: int, value: dt.date) -> None:
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        await s.execute(
+            text("UPDATE documents SET document_date = :v WHERE id = :d"),
+            {"v": value, "d": doc_id},
+        )
+        await s.commit()
+
+
+def _partial_with(value: str, normalized: str) -> SchichtAResult:
+    return SchichtAResult(
+        facts=[ExtractedFact(category="identifier", kind="steuernummer",
+                             value=value, normalized_value=normalized,
+                             source="deterministic")],
+        error="llm_extraction_failed",
+    )
+
+
+async def _reindex_with(engine, monkeypatch, uid, did, result) -> AsyncMock:
+    from services import schicht_a_extractor as mod
+
+    monkeypatch.setattr(mod.SchichtAExtractor, "extract", AsyncMock(return_value=result))
+    title = AsyncMock(return_value="Steuernummer")
+    monkeypatch.setattr(mod, "generate_document_title", title)
+    await schicht_a_post_document_ingest_hook([], document_id=did, user_id=uid,
+                                              field_text="some field text")
+    return title
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_reindex_with_llm_error_replaces_a_changed_deterministic_fact(
+    pg_async_engine, _patch_extractor, _wire_session, monkeypatch
+):
+    uid, did = await _ingest_full_set(pg_async_engine, monkeypatch)
+    await _set_document_date(pg_async_engine, did, dt.date(2026, 2, 1))
+    before = await _doc_title_and_date(pg_async_engine, did)
+    old_rows = {r[3]: r for r in await _fact_rows(pg_async_engine, did)}
+    old_det, old_llm = old_rows["114/5876/5293"], old_rows["Rechnung"]
+
+    # The cleaner text reads a different digit the old OCR had garbled.
+    title = await _reindex_with(
+        pg_async_engine, monkeypatch, uid, did,
+        _partial_with("114/5876/5298", "11458765298"),
+    )
+
+    rows = {r[3]: r for r in await _fact_rows(pg_async_engine, did)}
+    assert sorted(rows) == ["114/5876/5298", "Rechnung"]
+    assert rows["Rechnung"] == old_llm                  # LLM fact untouched
+    assert rows["114/5876/5298"][2] == "deterministic"
+    assert not await _atom_exists(pg_async_engine, old_det[1])  # old atom purged
+    assert await _atom_exists(pg_async_engine, rows["114/5876/5298"][1])
+    assert await _doc_title_and_date(pg_async_engine, did) == before
+    title.assert_not_awaited()
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_reindex_with_llm_error_keeps_an_unchanged_deterministic_row_and_its_override(
+    pg_async_engine, _patch_extractor, _wire_session, monkeypatch
+):
+    uid, did = await _ingest_full_set(pg_async_engine, monkeypatch)
+    maker = async_sessionmaker(pg_async_engine, expire_on_commit=False)
+    async with maker() as s:
+        await s.execute(
+            text(
+                "UPDATE document_facts SET circle_tier = 3, tier_overridden = true "
+                "WHERE document_id = :d AND source = 'deterministic'"
+            ),
+            {"d": did},
+        )
+        await s.commit()
+    before = await _fact_rows(pg_async_engine, did)
+
+    # Same identity under different letter-spacing → the same fact.
+    await _reindex_with(
+        pg_async_engine, monkeypatch, uid, did,
+        _partial_with("114 / 5876 / 5293", "11458765293"),
+    )
+
+    assert await _fact_rows(pg_async_engine, did) == before  # same ids, tier, flag
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_reindex_with_llm_error_and_no_identifiers_keeps_the_existing_facts(
+    pg_async_engine, _patch_extractor, _wire_session, monkeypatch
+):
+    """The new text yields no deterministic facts at all: like a successful run
+    with zero facts, an empty result keeps everything — the old identifiers, the
+    LLM facts, the title and the date (rows unchanged). The non-empty case
+    (``…replaces_a_changed_deterministic_fact``) is the negative control."""
+    from unittest.mock import patch
+
+    uid, did = await _ingest_full_set(pg_async_engine, monkeypatch)
+    before = await _doc_title_and_date(pg_async_engine, did)
+    rows_before = await _fact_rows(pg_async_engine, did)
+
+    with patch("services.schicht_a_extractor.logger") as mock_logger:
+        title = await _reindex_with(
+            pg_async_engine, monkeypatch, uid, did,
+            SchichtAResult(facts=[], error="llm_extraction_failed"),
+        )
+
+    assert await _fact_rows(pg_async_engine, did) == rows_before
+    assert await _doc_title_and_date(pg_async_engine, did) == before
+    title.assert_not_awaited()
+    msg = _warnings(mock_logger)
+    assert (
+        f"doc {did} re-extraction incomplete and found no deterministic facts; "
+        f"kept the existing 2 fact(s), title and document date"
+    ) in msg
+    assert "removed" not in msg
+    assert "produced no facts" not in msg
+    assert "some field text" not in msg
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_reindex_with_llm_error_heals_duplicates_left_by_a_crash_before_the_purge(
+    pg_async_engine, _patch_extractor, _wire_session, monkeypatch
+):
+    """Write-new-then-purge-old: a failure between the commit and the purge
+    leaves the old AND the new identifier behind. The next pass with an LLM
+    error retires the stale one instead of keeping both for good."""
+    from services.atom_purge_service import AtomPurgeService
+
+    uid, did = await _ingest_full_set(pg_async_engine, monkeypatch)
+    fresh = _partial_with("114/5876/5298", "11458765298")
+
+    real_purge = AtomPurgeService.purge
+    monkeypatch.setattr(
+        AtomPurgeService, "purge", AsyncMock(side_effect=RuntimeError("crash"))
+    )
+    await _reindex_with(pg_async_engine, monkeypatch, uid, did, fresh)
+    assert await _fact_values(pg_async_engine, did) == [
+        "114/5876/5293", "114/5876/5298", "Rechnung",
+    ]
+    new_row = {r[3]: r for r in await _fact_rows(pg_async_engine, did)}["114/5876/5298"]
+
+    monkeypatch.setattr(AtomPurgeService, "purge", real_purge)
+    await _reindex_with(pg_async_engine, monkeypatch, uid, did, fresh)
+
+    rows = {r[3]: r for r in await _fact_rows(pg_async_engine, did)}
+    assert sorted(rows) == ["114/5876/5298", "Rechnung"]
+    assert rows["114/5876/5298"] == new_row   # the surviving row is kept, not rewritten
