@@ -185,8 +185,12 @@ async def ingest_pushed_document(
         # its tier, or put it in another knowledge base. A client with no
         # override configured falls back to the global folder_ingest_* settings,
         # which is exactly what every client did before Phase 4.
-        kb = await resolve_target_kb(db, ingest_client.kb_name)
+        # The document's owner picks the inbox: one per person, never a KB
+        # somebody else owns.
         owner_user_id = await resolve_owner_user_id(db, ingest_client.owner)
+        kb = await resolve_target_kb(
+            db, ingest_client.kb_name, owner_user_id=owner_user_id
+        )
         tier = (
             ingest_client.tier
             if ingest_client.tier is not None

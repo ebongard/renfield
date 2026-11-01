@@ -133,10 +133,19 @@ def render_transcript_markdown(meeting: Meeting, segments: list[dict]) -> str:
 
 
 async def _resolve_meetings_kb(db) -> KnowledgeBase:
-    """Get-or-create the dedicated Meetings KB (mirrors resolve_target_kb)."""
+    """Get-or-create the dedicated Meetings KB.
+
+    KB names are unique per OWNER, not globally, so a user may own a KB of the
+    same name: take the oldest — the row this lookup always returned while names
+    were globally unique — instead of raising MultipleResultsFound."""
     kb = (
-        await db.execute(select(KnowledgeBase).where(KnowledgeBase.name == _MEETINGS_KB_NAME))
-    ).scalar_one_or_none()
+        await db.execute(
+            select(KnowledgeBase)
+            .where(KnowledgeBase.name == _MEETINGS_KB_NAME)
+            .order_by(KnowledgeBase.id)
+            .limit(1)
+        )
+    ).scalars().first()
     if kb:
         return kb
     kb = KnowledgeBase(name=_MEETINGS_KB_NAME, description="Meeting transcripts (§2)")

@@ -783,11 +783,18 @@ async def cleanup_old_uploads(
 
 
 async def _get_or_create_default_kb(db: AsyncSession) -> KnowledgeBase:
-    """Get or create the default KB for auto-indexed chat uploads."""
+    """Get or create the default KB for auto-indexed chat uploads.
+
+    KB names are unique per OWNER, not globally, so a user may own a KB of the
+    same name: take the oldest — the row this lookup always returned while names
+    were globally unique — instead of raising MultipleResultsFound."""
     result = await db.execute(
-        select(KnowledgeBase).where(KnowledgeBase.name == settings.chat_upload_default_kb_name)
+        select(KnowledgeBase)
+        .where(KnowledgeBase.name == settings.chat_upload_default_kb_name)
+        .order_by(KnowledgeBase.id)
+        .limit(1)
     )
-    kb = result.scalar_one_or_none()
+    kb = result.scalars().first()
     if kb:
         return kb
 

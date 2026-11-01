@@ -41,6 +41,7 @@ from services.folder_ingest import (
 from services.ingest_common import (
     generate_ingest_token,
     get_ingest_token,
+    get_or_create_owned_kb,
     resolve_user_id,
     verify_ingest_token,
 )
@@ -92,20 +93,17 @@ def resolve_mailbox_target(mailbox_id: str) -> MailboxTarget | None:
     return None
 
 
-async def _resolve_kb(db: AsyncSession, kb_name: str) -> KnowledgeBase:
-    """Get-or-create the mailbox's target KB by name (mirrors folder-ingest)."""
-    kb = (
-        await db.execute(select(KnowledgeBase).where(KnowledgeBase.name == kb_name))
-    ).scalar_one_or_none()
-    if kb:
-        return kb
-    kb = KnowledgeBase(
-        name=kb_name, description="Auto-ingested documents from watched email mailboxes"
+async def _resolve_kb(
+    db: AsyncSession, kb_name: str, owner_user_id: int | None
+) -> KnowledgeBase:
+    """Get-or-create the mailbox owner's inbox ``kb_name`` (mirrors
+    folder-ingest): looked up by (name, owner) and created for exactly that
+    owner, so a mailbox never files into a KB somebody else owns. None → the
+    shared ownerless KB of that name."""
+    return await get_or_create_owned_kb(
+        db, kb_name, owner_user_id,
+        description="Auto-ingested documents from watched email mailboxes",
     )
-    db.add(kb)
-    await db.commit()
-    await db.refresh(kb)
-    return kb
 
 
 async def _resolve_owner(db: AsyncSession, owner: str) -> int | None:
@@ -178,8 +176,8 @@ async def ingest_email_document(
         logger.warning(f"email-ingest: unknown mailbox_id {mailbox_id!r}; rejecting")
         return IngestResult(IngestStatus.FAILED, detail="unknown_mailbox")
 
-    kb = await _resolve_kb(db, target.kb_name)
     owner_user_id = await _resolve_owner(db, target.owner)
+    kb = await _resolve_kb(db, target.kb_name, owner_user_id)
 
     # Coerce optional metadata to str|None — a watcher could send a non-string
     # (e.g. {"sha256": 123}) which would crash downstream `.lower()` / DB writes.

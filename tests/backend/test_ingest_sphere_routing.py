@@ -27,7 +27,7 @@ async def test_client_without_an_override_uses_the_global_default(db_session, mo
         db_session, client_id="files", label="Files", route=ic.ROUTE_FOLDER)
     client = await ic.resolve_ingest_client(db_session, ic.ROUTE_FOLDER, token)
     assert client.kb_name is None and client.owner is None and client.tier is None
-    kb = await resolve_target_kb(db_session, client.kb_name)
+    kb = await resolve_target_kb(db_session, client.kb_name, owner_user_id=None)
     assert kb.name == "Eingang"
 
 
@@ -38,7 +38,7 @@ async def test_client_override_routes_to_its_own_kb(db_session, monkeypatch):
         kb_name="Scans", tier=2)
     client = await ic.resolve_ingest_client(db_session, ic.ROUTE_FOLDER, token)
     assert client.kb_name == "Scans" and client.tier == 2
-    kb = await resolve_target_kb(db_session, client.kb_name)
+    kb = await resolve_target_kb(db_session, client.kb_name, owner_user_id=None)
     assert kb.name == "Scans"
 
 

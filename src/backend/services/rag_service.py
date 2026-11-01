@@ -1035,10 +1035,21 @@ class RAGService(AtomOwnerResolverMixin):
     async def create_knowledge_base(
         self,
         name: str,
-        description: str | None = None
+        description: str | None = None,
+        *,
+        owner_id: int | None = None,
+        is_public: bool = False,
     ) -> KnowledgeBase:
-        """Create a new knowledge base"""
-        kb = KnowledgeBase(name=name, description=description)
+        """Create a new knowledge base.
+
+        The owner is part of the ONE insert: names are unique per owner
+        (``uq_knowledge_bases_name_owner``), so a row committed ownerless first
+        and given its owner afterwards would collide with the shared ownerless
+        KB of that name, or survive as an ownerless orphan when the owner
+        update then hits the owner's own KB of that name."""
+        kb = KnowledgeBase(
+            name=name, description=description, owner_id=owner_id, is_public=is_public
+        )
         self.db.add(kb)
         await self.db.commit()
         await self.db.refresh(kb)

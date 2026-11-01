@@ -6,8 +6,9 @@ tier-scoped to the project's ``circle_tier``. Meetings / timeline / minutes are
 later phases (business-instance plan §7) and live
 nowhere in here.
 
-``KnowledgeBase.name`` is UNIQUE, so the per-project KB name embeds the freshly
-minted project id (guaranteed unique) to avoid a collision on same-named projects.
+``KnowledgeBase.name`` is unique per owner, so the per-project KB name embeds the
+freshly minted project id (guaranteed unique) to avoid a collision on same-named
+projects of one creator.
 """
 from __future__ import annotations
 

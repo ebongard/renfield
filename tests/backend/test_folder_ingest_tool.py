@@ -163,3 +163,26 @@ async def test_owner_falls_back_to_configured_when_unauthenticated(monkeypatch):
     await ingest_file({"path": "/inbox/x.pdf"}, mcp_manager=_mcp(), user_id=None)
     _, kwargs = ingest.await_args
     assert kwargs["owner_user_id"] == 3  # configured target_user, not None
+
+
+@pytest.mark.asyncio
+async def test_the_asker_files_into_their_own_inbox(monkeypatch):
+    # The document belongs to the asker, so the KB must be the asker's inbox —
+    # never the configured target user's, whose owner would reach it.
+    ingest = _wire(monkeypatch)
+    monkeypatch.setattr(tool_mod, "resolve_owner_user_id", AsyncMock(return_value=3))
+    kb = AsyncMock(return_value=MagicMock(id=1))
+    monkeypatch.setattr(tool_mod, "resolve_target_kb", kb)
+    await ingest_file({"path": "/inbox/x.pdf"}, mcp_manager=_mcp(), user_id=9)
+    assert kb.await_args.kwargs["owner_user_id"] == 9
+    assert ingest.await_args.kwargs["owner_user_id"] == 9
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_tool_uses_the_target_users_inbox(monkeypatch):
+    _wire(monkeypatch)
+    monkeypatch.setattr(tool_mod, "resolve_owner_user_id", AsyncMock(return_value=3))
+    kb = AsyncMock(return_value=MagicMock(id=1))
+    monkeypatch.setattr(tool_mod, "resolve_target_kb", kb)
+    await ingest_file({"path": "/inbox/x.pdf"}, mcp_manager=_mcp(), user_id=None)
+    assert kb.await_args.kwargs["owner_user_id"] == 3
