@@ -11,13 +11,13 @@ show that owner everyone else's documents. Instead:
   differs from the owner the document is filed under;
 - no resolvable owner → the shared ownerless KB of that name (as before);
 - an existing shared "Eingang" is left exactly as it is;
-- other by-name lookups (chat uploads, meetings) survive a repeated name.
+- chat uploads and meetings resolve their KB by (name, owner) the same way.
 """
 import json
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 import services.email_ingest as email_svc
@@ -220,29 +220,36 @@ async def test_ownerless_mailbox_uses_the_shared_inbox(db_session, monkeypatch):
     assert captured["owner_user_id"] is None and captured["kb_id"] == shared.id
 
 
-# --- other by-name lookups survive a repeated name --------------------------
+# --- chat uploads and meetings: one KB per owner too ----------------------
+# Visibility through circle_sql: tests/backend/test_system_kb_per_owner_pg.py.
 
-async def test_chat_upload_default_kb_takes_the_oldest_of_a_repeated_name(
-    db_session, make_user, monkeypatch
-):
+async def test_chat_upload_kb_is_the_uploaders_own(db_session, make_user, monkeypatch):
     from api.routes import chat_upload
 
+    await make_user(1)
     await make_user(8)
     monkeypatch.setattr(chat_upload.settings, "chat_upload_default_kb_name", "Chat Uploads")
-    system = await _shared(db_session, name="Chat Uploads")
-    await _shared(db_session, name="Chat Uploads", owner=8)  # a user's own KB
-    assert (await chat_upload._get_or_create_default_kb(db_session)).id == system.id
+    admins = await _shared(db_session, name="Chat Uploads", owner=1)  # the backfilled one
+    shared = await _shared(db_session, name="Chat Uploads")
+    mine = await chat_upload._get_or_create_default_kb(db_session, 8)
+    assert mine.owner_id == 8 and mine.id not in (admins.id, shared.id)
+    assert (await chat_upload._get_or_create_default_kb(db_session, 8)).id == mine.id
+    # No identity → the ownerless KB, never the admin's.
+    assert (await chat_upload._get_or_create_default_kb(db_session, None)).id == shared.id
 
 
-async def test_meetings_kb_takes_the_oldest_of_a_repeated_name(db_session, make_user):
+async def test_meetings_kb_is_the_meeting_owners_own(db_session, make_user):
     from services import meeting_pipeline
 
+    await make_user(1)
     await make_user(8)
-    system = await _shared(db_session, name=meeting_pipeline._MEETINGS_KB_NAME)
-    await _shared(db_session, name=meeting_pipeline._MEETINGS_KB_NAME, owner=8)
-    assert (await meeting_pipeline._resolve_meetings_kb(db_session)).id == system.id
-    count = (await db_session.execute(select(func.count()).select_from(KnowledgeBase))).scalar()
-    assert count == 2
+    name = meeting_pipeline._MEETINGS_KB_NAME
+    admins = await _shared(db_session, name=name, owner=1)
+    mine = await meeting_pipeline._resolve_meetings_kb(db_session, 8)
+    assert mine.owner_id == 8 and mine.id != admins.id
+    ownerless = await meeting_pipeline._resolve_meetings_kb(db_session, None)
+    assert ownerless.owner_id is None and ownerless.id != admins.id
+    assert len(await _kbs(db_session, name)) == 3
 
 
 # --- manual KB creation (POST /api/knowledge/bases) ------------------------

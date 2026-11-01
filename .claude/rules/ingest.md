@@ -45,7 +45,9 @@ Long form: `docs/FOLDER_INGEST.md`, `docs/EMAIL_INGEST.md`.
   So ingest resolves its KB by (name, owner) via `ingest_common.get_or_create_owned_kb` and creates it for exactly
   the document's owner — never file into a KB owned by someone else. `internal.ingest_file`: the ASKER's inbox.
 - `knowledge_bases` is unique on (name, owner_id) NULLS NOT DISTINCT (`pc20261031_kb_name_per_owner`): a name can
-  repeat, so a by-name lookup with `scalar_one_or_none()` now raises — scope it by owner or take the oldest row.
+  repeat, so a by-name lookup with `scalar_one_or_none()` now raises — scope it by owner, never "take the oldest".
+- 🛑 Chat uploads and meeting transcripts too: KB per uploader / meeting owner. An OWNERLESS shared KB is no fix — the
+  tier-reach branch keys on `kb.owner_id` (NULL → nobody). Pre-deploy SQL + consequences: `docs/CIRCLES.md`.
 
 ## Email sphere routing is SERVER-authoritative
 - The backend maps `mailbox_id` → owner/tier/kb. Never accept owner, tier or KB from the push payload — a leaked push

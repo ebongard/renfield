@@ -66,6 +66,28 @@ class TestChatUploadAPI:
         assert body["id"]
 
     @pytest.mark.backend
+    async def test_anonymous_upload_is_refused_under_auth(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch
+    ):
+        """Auth on, no user → 401 and no row. Accepted, the upload would be
+        auto-indexed into the ownerless KB with the admin as atom owner."""
+        from sqlalchemy import func
+
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "auth_enabled", True)
+        files = {"file": ("test.txt", io.BytesIO(b"secret"), "text/plain")}
+        data = {"session_id": "anon-session"}
+
+        response = await async_client.post("/api/chat/upload", files=files, data=data)
+
+        assert response.status_code == 401
+        count = (await db_session.execute(
+            select(func.count()).select_from(ChatUpload)
+        )).scalar()
+        assert count == 0
+
+    @pytest.mark.backend
     async def test_upload_invalid_format(self, async_client: AsyncClient):
         """.exe files are rejected with 400"""
         content = b"MZ\x00\x00"
@@ -81,6 +103,7 @@ class TestChatUploadAPI:
     async def test_upload_too_large(self, async_client: AsyncClient):
         """Files exceeding max size are rejected with 400"""
         with patch("api.routes.chat_upload.settings") as mock_settings:
+            mock_settings.auth_enabled = False  # a bare MagicMock attribute is truthy
             mock_settings.max_file_size_mb = 1
             mock_settings.allowed_extensions_list = ["txt"]
             mock_settings.upload_dir = "/tmp/renfield-test-uploads"
@@ -253,6 +276,23 @@ class TestExtractAndFinalize:
         assert payload["error"] is None
         # Auto-index fires on success.
         auto.assert_awaited_once()
+
+    async def test_finalize_hands_the_uploader_to_auto_index(self, db_session, monkeypatch, make_user):
+        """The auto-index KB is resolved per uploader, so the uploader's id must
+        reach it — dropped, the upload would land in the shared ownerless KB."""
+        await make_user(7)
+        cu, _notify, auto = self._wire(monkeypatch, db_session, auto_index=True)
+        upload, fpath = await self._seed(db_session, file_hash="uploader")
+        proc = AsyncMock()
+        proc.extract_text_only = AsyncMock(return_value="body")
+        monkeypatch.setattr(cu, "_get_processor", lambda: proc)
+
+        await cu._extract_and_finalize(
+            upload_id=upload.id, file_path=fpath, user_id=7,
+            session_id="bg-session", safe_name=upload.filename, file_hash="uploader",
+        )
+        auto.assert_awaited_once()
+        assert auto.await_args.kwargs["user_id"] == 7
 
     async def test_finalize_failure_marks_failed_and_skips_autoindex(self, db_session, monkeypatch):
         """Defensive path: if extract_text_only ever RAISES, the row is marked
@@ -1009,7 +1049,7 @@ class TestAutoIndex:
         with patch("api.routes.chat_upload.settings") as mock_settings:
             mock_settings.chat_upload_default_kb_name = "Auto-Test KB"
 
-            kb = await _get_or_create_default_kb(db_session)
+            kb = await _get_or_create_default_kb(db_session, None)
 
         assert kb is not None
         assert kb.name == "Auto-Test KB"
@@ -1018,7 +1058,7 @@ class TestAutoIndex:
         # Calling again returns the same KB
         with patch("api.routes.chat_upload.settings") as mock_settings:
             mock_settings.chat_upload_default_kb_name = "Auto-Test KB"
-            kb2 = await _get_or_create_default_kb(db_session)
+            kb2 = await _get_or_create_default_kb(db_session, None)
 
         assert kb2.id == kb.id
 

@@ -165,7 +165,8 @@ in `.claude/rules/meetings.md`.
   re-render → reindex in place, stable `transcript_document_id`). Auto-match to enrolled speakers is NOT
   built and not planned (decision 2026-09-20; the placeholder flag `meeting_auto_match_enabled` was removed) —
   the spike separation gate was insufficient-data on synthetic audio; anonymous cross-meeting fingerprints cover the need.
-- Ingest into a dedicated "Meetings" KB via `folder_ingest.ingest_document` with `source="meeting_transcript"` (new
+- Ingest into the meeting owner's own "Meetings" KB (resolved by name + owner, see `docs/CIRCLES.md` → "System KBs are
+  per owner") via `folder_ingest.ingest_document` with `source="meeting_transcript"` (new
   `documents.source` column, migration `pc20260714b`), which gates Schicht-A OFF (D14) and sets
   `file_to_paperless=False`.
 - Biometrics: the voice-server's per-cluster ECAPA `embedding` is never stored on `Meeting.segments`
