@@ -287,9 +287,11 @@ history, the tooling and the frontend wiring.
   facts are replaced by the fresh ones (`_refresh_deterministic_facts`). A fresh fact with the same
   `_fact_identity_key` as a prior one keeps that ROW unchanged (id, atom, tier, per-fact override) instead of
   delete + insert; an unmatched fresh fact is written at the document tier, an unmatched prior one purged after the
-  commit — also when the fresh deterministic set is empty. WARNING `… kept N LLM fact(s), title and document date;
-  deterministic facts: K kept, A added, R removed` (id and counts only). Before, the old regex identifiers from the
-  possibly garbled text survived, and a document whose LLM step always failed stayed frozen.
+  commit. WARNING `… kept N LLM fact(s), title and document date; deterministic facts: K kept, A added, R removed`
+  (id and counts only). An EMPTY fresh deterministic set keeps everything, like a successful run with zero facts
+  (owner decision 2026-11-01): WARNING `… re-extraction incomplete and found no deterministic facts; kept the existing
+  K fact(s), title and document date`. Before, the old regex identifiers from the possibly garbled text survived even
+  when the new text read different ones, and a document whose LLM step always failed stayed frozen.
 
 ### Obligation notifier + weekly digest — background
 
