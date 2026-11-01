@@ -46,6 +46,8 @@ Long form: `docs/FOLDER_INGEST.md`, `docs/EMAIL_INGEST.md`.
   the document's owner — never file into a KB owned by someone else. `internal.ingest_file`: the ASKER's inbox.
 - `knowledge_bases` is unique on (name, owner_id) NULLS NOT DISTINCT (`pc20261031_kb_name_per_owner`): a name can
   repeat, so a by-name lookup with `scalar_one_or_none()` now raises — scope it by owner, never "take the oldest".
+- The helper is race-safe: INSERT in a SAVEPOINT, a violation of exactly `uq_knowledge_bases_name_owner` → re-select
+  the winner's row; any other IntegrityError propagates. Never wrap it in a bare `except IntegrityError`.
 - 🛑 Chat uploads and meeting transcripts too: KB per uploader / meeting owner. An OWNERLESS shared KB is no fix — the
   tier-reach branch keys on `kb.owner_id` (NULL → nobody). Pre-deploy SQL + consequences: `docs/CIRCLES.md`.
 
