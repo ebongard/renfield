@@ -38,7 +38,8 @@ def test_guard_accepts_test_databases(name, monkeypatch):
 @pytest.mark.parametrize(
     "name",
     ["renfield", "renfield_prod", "postgres", "renfield_testing", "renfield_test-x",
-     "test", "x_renfield_test", ""],
+     "test", "x_renfield_test", "", "renfield_test_prod", "renfield_test_live",
+     "renfield_test_xidra_prod", "renfield_test_prod2"],
 )
 def test_guard_refuses_any_other_database(name, monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)

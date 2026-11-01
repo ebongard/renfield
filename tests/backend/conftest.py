@@ -287,9 +287,10 @@ def _db_name_only(url: str | None) -> str:
 # The schema reset DROPS the whole `public` schema, so the harness only ever
 # touches a database whose NAME says it is a test database: `renfield_test`, or
 # a run's own copy next to it (`renfield_test2`, `renfield_test_<name>`). A
-# typo, a pasted live DSN or a mis-derived URL then stops the run instead of
-# emptying a real database.
-_TEST_DB_NAME_RE = _re.compile(r"renfield_test(?:\d+|_[a-z0-9_]+)?")
+# suffix naming a live role (`prod`, `live`) is refused even so: the name is
+# the only thing checked, not the host. A typo, a pasted live DSN or a
+# mis-derived URL then stops the run instead of emptying a real database.
+_TEST_DB_NAME_RE = _re.compile(r"renfield_test(?:\d+|_(?![a-z0-9_]*(?:prod|live))[a-z0-9_]+)?")
 
 
 def _refuse_the_application_database(dsn: str) -> None:
