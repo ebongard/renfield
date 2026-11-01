@@ -274,7 +274,8 @@ async def upload_document(
 
     Supported formats: PDF, DOCX, TXT, MD, HTML, PPTX, XLSX
 
-    Requires: rag.manage permission or write access to KB
+    Requires (auth on): write access to a named KB (check_kb_access);
+    a KB-less upload requires rag.manage.
     """
     # Permission check
     if settings.auth_enabled:
@@ -283,24 +284,30 @@ async def upload_document(
 
         user_perms = user.get_permissions()
 
-        # Check if user can upload to KBs
-        if not has_permission(user_perms, Permission.RAG_MANAGE):
-            # If not general RAG_MANAGE, check specific KB permission
-            if knowledge_base_id:
-                result = await db.execute(
-                    select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
-                )
-                kb = result.scalar_one_or_none()
-                if kb and not await check_kb_access(kb, user, "write", db):
-                    raise HTTPException(
-                        status_code=403,
-                        detail="No write access to this knowledge base"
-                    )
-            else:
+        # A named target KB must be one the caller may WRITE — whatever else
+        # the caller holds. ``rag.manage`` is "may upload and process
+        # documents", not "may write every KB": the KB owner is granted every
+        # document in the KB and becomes the new document's atom owner, so
+        # filing into a foreign KB hands the upload to that user. Only
+        # ``kb.all`` (inside check_kb_access) reaches every KB.
+        if knowledge_base_id:
+            result = await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
+            )
+            kb = result.scalar_one_or_none()
+            if kb is None:
+                raise HTTPException(status_code=404, detail="Knowledge base not found")
+            if not await check_kb_access(kb, user, "write", db):
                 raise HTTPException(
                     status_code=403,
-                    detail="Permission required: rag.manage"
+                    detail="No write access to this knowledge base"
                 )
+        elif not has_permission(user_perms, Permission.RAG_MANAGE):
+            # A KB-less upload has no KB to check: rag.manage only.
+            raise HTTPException(
+                status_code=403,
+                detail="Permission required: rag.manage"
+            )
     # Validation: file format -- 415 Unsupported Media Type is the semantic
     # match. Frontend reads the structured detail to render allowed-format
     # copy; legacy clients that only read status codes also get the right
