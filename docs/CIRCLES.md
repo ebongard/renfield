@@ -71,8 +71,9 @@ owner until the owner moves or re-owns them. With auth on, an anonymous chat upl
 would land in the ownerless KB with the first user (the admin) as atom owner.
 
 Pre-deploy check — read-only, counts only. Run it inside `BEGIN TRANSACTION READ ONLY; … ROLLBACK;` so the server
-enforces that. `chat_uploads` has no uploader column: the uploader is taken as the owner of the conversation the upload
-belongs to, so uploads in a conversation without an owner (or without a conversation row) are not counted.
+enforces that. `chat_uploads` had no uploader column when this check was written (`uploaded_by_user_id` exists since
+#1459, NULL on every older row): the uploader is taken as the owner of the conversation the upload belongs to, so
+uploads in a conversation without an owner (or without a conversation row) are not counted.
 
 ```sql
 -- KBs and documents per system-KB name, ownerless vs owned
@@ -109,9 +110,11 @@ Because the OWNER branch grants `kb.owner_id` every document in the KB, and `cre
 new document's atom owner from the KB owner, a caller-supplied `knowledge_base_id` hands the document to whoever owns
 that KB. Every endpoint that files into a caller-named KB therefore requires write access on it via
 `knowledge.check_kb_access(kb, user, "write", db)`: owner, `kb.all`, or an explicit `write`/`admin` share (a public
-KB is read-only). `rag.manage` does not stand in for it. `POST /api/chat/upload/{id}/index` additionally requires the
-upload to be the caller's own: the conversation's `user_id` (circle reach is enough to READ an attachment, not to
-file it). Sites checked: `/api/knowledge/upload`, `/api/chat/upload/{id}/index` (both fixed), `/documents/move`
+KB is read-only). `rag.manage` does not stand in for it. `POST /api/chat/upload/{id}/index` (and `/email`)
+additionally requires the upload to be the caller's own: its uploader (`chat_uploads.uploaded_by_user_id`, set
+server-side from the authenticated caller at upload, #1459) or the conversation's `user_id` (circle reach is enough to
+READ an attachment, not to file it). Rows from before the column have NULL there and keep the owner-only rule; the
+column is `ON DELETE SET NULL`, so a deleted uploader falls back to it too. Reach is still checked first. Sites checked: `/api/knowledge/upload`, `/api/chat/upload/{id}/index` (both fixed), `/documents/move`
 (already gated: target write + per-source `check_document_access`), the ingest paths (folder, email, meetings,
 PDF split, auto-index): server-resolved owner KBs, no caller KB id. Proof: `tests/backend/test_kb_write_gate.py`.
 
@@ -119,9 +122,9 @@ Attaching is a write on the conversation: `POST /api/chat/upload` applies the ch
 `session_id` (`chat_upload._may_write_session` → `ConversationService.reaches`, exactly as `save_message` with
 `enforce_ownership`). An existing conversation must be in reach, so a member may attach to a shared room thread they
 may post in. A session with no row yet is allowed: the browser mints the id and attaches before its first message
-creates the conversation. The turn's own read follows the same boundary: the client names upload ids in the WS frame (`attachment_ids`, sequential), and under auth `_fetch_document_context` reads only uploads whose `session_id` is the turn's boundary-checked session, so a foreign id never reaches the prompt. Proof: `tests/backend/test_chat_upload_session_gate.py`. Remaining by design: in a SHARED
-thread the conversation owner (not the member who attached) is who `/index` accepts, because `chat_uploads` records
-no uploader (needs a column + migration).
+creates the conversation. The turn's own read follows the same boundary: the client names upload ids in the WS frame (`attachment_ids`, sequential), and under auth `_fetch_document_context` reads only uploads whose `session_id` is the turn's boundary-checked session, so a foreign id never reaches the prompt. Proof: `tests/backend/test_chat_upload_session_gate.py`. In a SHARED thread both the member
+who attached and the conversation owner may file/forward the attachment; another member may not
+(`tests/backend/test_chat_upload_uploader.py`).
 
 Open owner decision: a write-sharee filing into a shared KB gets a document whose atom owner is the KB OWNER, and
 KB shares are per-document grants that are not extended to new documents, so the uploader's own retrieval returns it
