@@ -1197,20 +1197,39 @@ class RAGService(AtomOwnerResolverMixin):
     # Statistics
     # ==========================================================================
 
-    async def get_stats(self) -> dict[str, Any]:
-        """Return statistics about the RAG database"""
-        doc_count = await self.db.scalar(
-            select(func.count(Document.id))
-        )
+    async def get_stats(
+        self,
+        *,
+        asker_id: int | None,
+        enforce_circles: bool,
+        knowledge_base_ids: set[int] | None,
+    ) -> dict[str, Any]:
+        """Return statistics about the RAG database.
+
+        ``enforce_circles`` counts only the documents ``asker_id`` may reach (the
+        document filter of the list and the search gate) and their chunks;
+        ``knowledge_base_ids`` (the caller's readable KBs) then replaces the KB
+        count. No defaults on purpose: a caller that forgets the switch must
+        fail, not silently count every user's data."""
+        doc_stmt = select(func.count(Document.id))
+        chunk_stmt = select(func.count(DocumentChunk.id))
+        if enforce_circles:
+            from services.document_search import visible_document_ids
+
+            if knowledge_base_ids is None:
+                raise ValueError("enforce_circles needs the caller's knowledge_base_ids")
+            visible = visible_document_ids(asker_id)
+            doc_stmt = doc_stmt.where(Document.id.in_(visible))
+            chunk_stmt = chunk_stmt.where(DocumentChunk.document_id.in_(visible))
+        doc_count = await self.db.scalar(doc_stmt)
         completed_docs = await self.db.scalar(
-            select(func.count(Document.id)).where(Document.status == DOC_STATUS_COMPLETED)
+            doc_stmt.where(Document.status == DOC_STATUS_COMPLETED)
         )
-        chunk_count = await self.db.scalar(
-            select(func.count(DocumentChunk.id))
-        )
-        kb_count = await self.db.scalar(
-            select(func.count(KnowledgeBase.id))
-        )
+        chunk_count = await self.db.scalar(chunk_stmt)
+        if knowledge_base_ids is not None:
+            kb_count = len(knowledge_base_ids)
+        else:
+            kb_count = await self.db.scalar(select(func.count(KnowledgeBase.id)))
 
         return {
             "document_count": doc_count or 0,

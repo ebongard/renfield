@@ -1111,6 +1111,22 @@ async def create_knowledge_base(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _readable_knowledge_bases(
+    all_bases: list[KnowledgeBase], user: User, db: AsyncSession
+) -> list[KnowledgeBase]:
+    """The KBs a caller below ``kb.all`` sees in the KB list: own, public (with
+    ``kb.shared``), or shared to them (``kb_shares``). The single KB-list rule,
+    used by ``GET /bases`` and by the per-caller count of ``GET /stats``."""
+    from services.kb_shares_service import list_user_shared_kb_ids
+
+    shared_kb_ids: set[int] = await list_user_shared_kb_ids(db, user.id)
+    may_see_public = has_permission(user.get_permissions(), Permission.KB_SHARED)
+    return [
+        kb for kb in all_bases
+        if kb.owner_id == user.id or (kb.is_public and may_see_public) or kb.id in shared_kb_ids
+    ]
+
+
 @router.get("/bases", response_model=list[KnowledgeBaseResponse])
 async def list_knowledge_bases(
     rag: RAGService = Depends(get_rag_service),
@@ -1140,14 +1156,7 @@ async def list_knowledge_bases(
         elif holds_no_rung_above(user_perms, Permission.KB_NONE):
             return []
         else:
-            from services.kb_shares_service import list_user_shared_kb_ids
-            user_kb_ids: set[int] = await list_user_shared_kb_ids(db, user.id)
-
-            accessible_bases = []
-            for kb in all_bases:
-                # Own KB
-                if kb.owner_id == user.id or (kb.is_public and has_permission(user_perms, Permission.KB_SHARED)) or kb.id in user_kb_ids:
-                    accessible_bases.append(kb)
+            accessible_bases = await _readable_knowledge_bases(all_bases, user, db)
     elif settings.auth_enabled and not user:
         # Auth enabled but no user = no access
         return []
@@ -1417,16 +1426,29 @@ async def search_in_document(
 @router.get("/stats", response_model=StatsResponse)
 async def get_knowledge_stats(
     rag: RAGService = Depends(get_rag_service),
-    user: User | None = Depends(get_optional_user)
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Return statistics about the knowledge base."""
+    """Return statistics about the knowledge base -- counted per caller.
+
+    Auth on and below ``kb.all``: documents and chunks through the document
+    reach filter (the one of the document list), KBs through the KB-list rule.
+    ``kb.all`` and auth-off count everything."""
+    per_caller = False
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
         user_perms = user.get_permissions()
         if not has_permission(user_perms, Permission.KB_OWN):
             raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
-    stats = await rag.get_stats()
+        per_caller = not has_permission(user_perms, Permission.KB_ALL)
+    if per_caller:
+        bases = await _readable_knowledge_bases(await rag.list_knowledge_bases(), user, db)
+        stats = await rag.get_stats(
+            asker_id=user.id, enforce_circles=True, knowledge_base_ids={kb.id for kb in bases}
+        )
+    else:
+        stats = await rag.get_stats(asker_id=None, enforce_circles=False, knowledge_base_ids=None)
     return StatsResponse(**stats)
 
 
