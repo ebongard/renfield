@@ -231,6 +231,8 @@ ctx_vars = {"current_release": "Q2 Deploy (active)", "current_release_id": "1234
 
 Persistiert in DB, injiziert in naechsten Agent-Prompt als `<context_variables>`.
 
+**Stand Renfield (#1447):** Extraktion seit #313 (`services/context_extractor.py`, YAML-Regeln), aber bis #1447 nie gespeichert — der Prompt las eine Spalte, die nur `_active_domain` enthielt. Jetzt gespeichert nach jedem Agent-Zug (`ConversationService.save_turn_context_vars`), injiziert als `## Conversation Context`; der Hook `extract_context_vars` wird an derselben Stelle gefeuert.
+
 ### 12. Per-Prompt LLM Options
 
 **Quelle:** `reva/prompts/memory.yaml`

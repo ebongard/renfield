@@ -34,6 +34,7 @@ Renfield ist ein vollständig offline-fähiger, selbst-gehosteter **digitaler As
 - **Session Management**: Getrennte Gespräche mit Datumsgruppierung (Heute, Gestern, Letzte 7 Tage, Älter)
 - **Persistente Speicherung**: Alle Nachrichten in PostgreSQL
 - **Follow-up Kontext**: LLM erhält Konversationshistorie; versteht "Mach es aus" oder "Und dort?" ohne explizite Referenzen
+- **Gesprächsvariablen** (#1447, immer an): Aus Werkzeug-Ergebnissen gezogene Kennungen (letztes Paperless-Dokument, Jellyfin-Titel, n8n-Workflow, E-Mail — Regeln in `src/backend/config/context_extraction.yaml`, ohne LLM-Kosten) werden nach dem gespeicherten Zug in `conversations.context_vars` abgelegt und im nächsten Zug als `## Conversation Context` in den Agent-Prompt gegeben, damit „Zeig mehr Details" weiß, was gemeint ist. Alle Agent-Einstiege (Chat-WS Einzelrolle + Orchestrator, REST `/api/chat/send`); nur in die eigene bzw. erreichbare Konversation. Werte sind begrenzt (nur Skalare, Leerraum zusammengezogen, 200 Zeichen je Wert, 2000 je Zug, 16 Schlüssel je Gespräch) und laufen durch `neutralize_delimiters`. Plugins ergänzen über den Hook `extract_context_vars`. Satelliten-Sprachzüge laufen nicht durch den Agenten und tragen darum keine Variablen.
 - **Volltext-Suche**: Durchsuche frühere Konversationen
 - **Satellite-Sessions**: Tägliche Sessions für Voice-Commands
 
