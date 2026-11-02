@@ -24,7 +24,12 @@ from services.atom_service import AtomService
 from services.auth_service import get_optional_user
 from services.database import get_db
 from services.progress import DocumentProgress
-from services.rag_service import DuplicateDocumentError, RAGService
+from services.rag_service import (
+    DocumentBusyError,
+    DuplicateDocumentError,
+    RAGService,
+    move_changes_owner,
+)
 from services.redis_client import get_redis
 
 # Worker liveness moved to services/task_queue.py (document_worker_is_alive) —
@@ -107,6 +112,9 @@ def get_rag_service(db: AsyncSession = Depends(get_db)) -> RAGService:
     return RAGService(db)
 
 
+_SHARE_LEVELS = {"read": 1, "write": 2, "admin": 3}
+
+
 async def check_kb_access(
     kb: KnowledgeBase,
     user: User | None,
@@ -121,7 +129,11 @@ async def check_kb_access(
     2. kb.all permission → full access
     3. Owner → full access
     4. Public KB → read access for users with kb.shared
-    5. Explicit KBPermission → per-permission access
+    5. KB share (the kb_shares row only; a document grant does not count,
+       #1446) → read and write at that level; "delete" (documents) ONLY with
+       the share's `can_delete` switch, whatever the level; "delete_kb" (the
+       KB itself) never through a share — owner and kb.all only; an unknown
+       action is denied
     6. kb.own permission → access to own KBs only
     """
     # Auth disabled = full access
@@ -147,18 +159,28 @@ async def check_kb_access(
         if has_permission(user_perms, Permission.KB_SHARED):
             return True
 
-    # KB share: kb_shares row or legacy per-document grants (MAX level).
-    if db:
-        from services.kb_shares_service import get_user_kb_permission_level
-        level = await get_user_kb_permission_level(db, kb.id, user.id)
-        if level:
-            perm_levels = {"read": 1, "write": 2, "admin": 3}
-            required_level = perm_levels.get(required_action, 1)
-            user_level = perm_levels.get(level, 0)
-            if user_level >= required_level:
-                return True
+    if not db:
+        return False
 
-    return False
+    # Deleting (a document or the KB itself) destroys the owner's data, so it is
+    # NO level: the KB owner grants it per share as a separate switch
+    # (`kb_shares.can_delete`, pc20261102). An admin share without it may not
+    # delete; a read share with it may. Until #1462 "delete" fell through to the
+    # READ level (`.get(action, 1)`), so every grantee could delete.
+    from services.kb_shares_service import get_user_kb_permission_level, user_may_delete_in_kb
+    if required_action == "delete":
+        return await user_may_delete_in_kb(db, kb.id, user.id)
+    # Deleting the WHOLE KB is the owner's (and kb.all's, both handled above)
+    # alone: no level and no switch reaches it — the switch covers documents.
+    if required_action == "delete_kb":
+        return False
+
+    # KB share: the kb_shares row only (a document grant opens its document, #1446).
+    required_level = _SHARE_LEVELS.get(required_action)
+    if required_level is None:
+        return False  # an unknown action is denied, never read as "read"
+    level = await get_user_kb_permission_level(db, kb.id, user.id)
+    return bool(level) and _SHARE_LEVELS.get(level, 0) >= required_level
 
 
 async def check_document_access(
@@ -184,9 +206,14 @@ async def check_document_access(
     - the document **owner** → allow (covers KB-less docs). Ownership lives on the
       linked atoms row (``Document.atom_id`` → ``atoms.owner_user_id``), NOT on the
       documents table — circles v2 moved the access-control unit to the atom
-      (docs/design/atoms-granularity.md).
+      (docs/design/atoms-granularity.md). Only where the atom owner is the KB's
+      owner, or the KB has none / is gone: on a two-owner document (moved across
+      owners before #1460) the old atom owner falls to the KB rule.
     - a document with a resolvable KB row → delegate to :func:`check_kb_access`
-      (public / explicit grants / KB owner)
+      (public / explicit grants / KB owner). For "delete" that means the KB
+      owner or a share with `can_delete`: a legacy per-document grant has no
+      delete concept and never deletes, and a KB-less document is deleted only
+      by its atom owner or kb.all.
     - anything else (no resolvable owner atom **and** no resolvable KB, incl. an
       orphaned KB id or a doc with no atom) → **deny, fail-closed**
     """
@@ -197,25 +224,31 @@ async def check_document_access(
     user_perms = user.get_permissions()
     if has_permission(user_perms, Permission.KB_ALL):
         return True
-    # Owner always reaches their own document — the KB-less fallback. The owner
-    # is the linked atoms row's owner_user_id, reached via Document.atom_id.
-    if doc.atom_id:
-        owner_res = await db.execute(
-            select(AtomModel.owner_user_id).where(AtomModel.atom_id == doc.atom_id)
-        )
-        owner_id = owner_res.scalar_one_or_none()
-        if owner_id is not None and owner_id == user.id:
-            return True
-    # KB-backed: delegate to the KB ACL (shared / public / explicit grants).
+    kb: KnowledgeBase | None = None
     if doc.knowledge_base_id:
-        result = await db.execute(
+        kb = (await db.execute(
             select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
-        )
-        kb = result.scalar_one_or_none()
-        if kb is not None:
-            return await check_kb_access(kb, user, required_action, db)
-        # KB id set but the row is gone (orphaned) → fall through to deny.
-    # No resolvable owner atom and no resolvable KB → deny.
+        )).scalar_one_or_none()
+    # The atom owner reaches the document — the KB-less fallback. The owner is
+    # the linked atoms row's owner_user_id, reached via Document.atom_id. But
+    # only where the atom owner IS the owner the KB names (or there is no KB
+    # owner to name): a document moved across owners before #1460 still has the
+    # OLD owner on its atom, and that person must not delete, reindex or read
+    # through this gate what now sits in somebody else's KB. There the KB
+    # rule decides.
+    if doc.atom_id:
+        owner_id = (await db.execute(
+            select(AtomModel.owner_user_id).where(AtomModel.atom_id == doc.atom_id)
+        )).scalar_one_or_none()
+        if owner_id is not None and owner_id == user.id and (
+            kb is None or kb.owner_id is None or kb.owner_id == owner_id
+        ):
+            return True
+    # KB-backed: delegate to the KB ACL (owner / shared / public / grants).
+    if kb is not None:
+        return await check_kb_access(kb, user, required_action, db)
+    # No resolvable owner atom and no resolvable KB (incl. an orphaned KB id
+    # whose row is gone, unless its atom owner asks) → deny.
     return False
 
 
@@ -242,7 +275,7 @@ async def get_user_kb_permission(
     if kb.owner_id == user.id:
         return "owner"
 
-    # KB share: kb_shares row or legacy per-document grants (MAX level).
+    # KB share: the kb_shares row only (a document grant opens its document, #1446).
     from services.kb_shares_service import get_user_kb_permission_level
     level = await get_user_kb_permission_level(db, kb.id, user.id)
     if level:
@@ -515,6 +548,9 @@ async def list_documents(
     """List documents -- by recency, OR (with ``q``) as a ranked hybrid search
     (name + layer-A facts + content) that also finds documents beyond the
     100-most-recent window."""
+    # Without a KB id no KB read check scopes the recency list, so (auth on, no
+    # kb.all) it gets the per-document reach filter the `q` search gate applies.
+    recency_circles = False
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -530,6 +566,8 @@ async def list_documents(
             # If no KB filter, only users with kb.own+ can list
             elif not has_permission(user_perms, Permission.KB_OWN):
                 raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
+            else:
+                recency_circles = True
     if q and q.strip():
         from services.document_search import search_documents
         documents = await search_documents(
@@ -554,21 +592,76 @@ async def list_documents(
             offset=offset,
             sort_by=sort,
             order=order,
+            asker_id=(user.id if user else None),
+            enforce_circles=recency_circles,
         )
 
     # Batch-compute Simba-uploaded membership for the page (one query) so the
     # per-row status icon doesn't fan out N queries.
     simba_uploaded = await _simba_uploaded_ids(db, [d.id for d in documents])
 
+    delete_rights = await _document_delete_rights(db, user, documents)
+
     responses: list[DocumentResponse] = []
     for doc in documents:
         kwargs = _doc_to_response_kwargs(doc, in_simba=doc.id in simba_uploaded)
+        kwargs["can_delete"] = delete_rights[doc.id]
         # Queue position only meaningful on single-doc + batch polling
         # endpoints; the list view is a bulk screen and we don't want to
         # spam Redis with XPENDING on every listed row.
         await _augment_with_progress(doc, kwargs, include_queue_position=False)
         responses.append(DocumentResponse(**kwargs))
     return responses
+
+
+async def _document_delete_rights(
+    db: AsyncSession, user: User | None, documents: list[Document],
+) -> dict[int, bool]:
+    """Batch form of ``check_document_access(doc, user, "delete")`` for a page.
+
+    Same rule, three queries per page (atom owners, KB owners, delete
+    switches) instead of up to three per row: the atom owner where she
+    is the KB's owner (or there is no KB owner / no KB), else the KB rule —
+    the KB owner or a share with the delete switch. Auth off and kb.all may
+    delete everything."""
+    if not settings.auth_enabled or (
+        user is not None and has_permission(user.get_permissions(), Permission.KB_ALL)
+    ):
+        return {doc.id: True for doc in documents}
+    if user is None:
+        return {doc.id: False for doc in documents}
+    from services.kb_shares_service import get_user_kb_delete_switches
+
+    atom_ids = {doc.atom_id for doc in documents if doc.atom_id}
+    kb_ids = {doc.knowledge_base_id for doc in documents if doc.knowledge_base_id}
+    owners: dict = {}
+    if atom_ids:
+        rows = await db.execute(
+            select(AtomModel.atom_id, AtomModel.owner_user_id).where(AtomModel.atom_id.in_(atom_ids))
+        )
+        owners = {r.atom_id: r.owner_user_id for r in rows}
+    kb_owner: dict[int, int | None] = {}
+    if kb_ids:
+        rows = await db.execute(
+            select(KnowledgeBase.id, KnowledgeBase.owner_id).where(KnowledgeBase.id.in_(kb_ids))
+        )
+        kb_owner = {r.id: r.owner_id for r in rows}
+    switches = await get_user_kb_delete_switches(db, user.id, kb_owner.keys())
+
+    rights: dict[int, bool] = {}
+    for doc in documents:
+        has_kb = doc.knowledge_base_id in kb_owner
+        owner_of_kb = kb_owner.get(doc.knowledge_base_id) if has_kb else None
+        atom_owner = owners.get(doc.atom_id) if doc.atom_id else None
+        if atom_owner is not None and atom_owner == user.id and (
+            not has_kb or owner_of_kb is None or owner_of_kb == atom_owner
+        ):
+            rights[doc.id] = True
+        elif has_kb:
+            rights[doc.id] = owner_of_kb == user.id or doc.knowledge_base_id in switches
+        else:
+            rights[doc.id] = False
+    return rights
 
 
 def _sort_document_page(documents: list[Document], sort: str | None, order: str) -> list[Document]:
@@ -904,12 +997,32 @@ async def move_documents(
         src_res = await db.execute(
             select(Document).where(Document.id.in_(request.document_ids))
         )
-        for src_doc in src_res.scalars().all():
+        src_docs = list(src_res.scalars().all())
+        for src_doc in src_docs:
             if not await check_document_access(src_doc, user, "write", db):
                 raise HTTPException(
                     status_code=403,
                     detail="No access to one or more source documents",
                 )
+
+        # #1462: a move into a KB of ANOTHER owner hands the document to that
+        # owner (the filters read kb.owner_id, and the atom follows: #1460). A
+        # write share lets the grantee work inside the owner's KBs, not give the
+        # owner's documents away — least of all to himself, where he would keep
+        # reading them after the share is revoked. So a change of owner needs
+        # the document's owner (or kb.all); fail closed for the whole batch. Into
+        # an ownerless KB counts as a change too (nobody owns it there).
+        if target_kb and not has_permission(user_perms, Permission.KB_ALL):
+            owners = await rag.document_owners(src_docs)
+            for src_doc in src_docs:
+                if src_doc.knowledge_base_id == target_kb.id:
+                    continue
+                doc_owners = owners.get(src_doc.id, frozenset())
+                if move_changes_owner(doc_owners, target_kb.owner_id) and user.id not in doc_owners:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Only the owner may move a document to a knowledge base of another owner",
+                    )
 
     try:
         moved = await rag.move_documents(request.document_ids, request.target_knowledge_base_id)
@@ -918,6 +1031,8 @@ async def move_documents(
             "moved_count": moved,
             "target_knowledge_base_id": request.target_knowledge_base_id
         }
+    except DocumentBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1104,6 +1219,32 @@ async def create_knowledge_base(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _counts_per_caller(user: User | None) -> bool:
+    """Whether KB document counts go through the document reach filter: auth on
+    and the caller below ``kb.all``. ``kb.all`` and auth-off count globally."""
+    return bool(
+        settings.auth_enabled
+        and user is not None
+        and not has_permission(user.get_permissions(), Permission.KB_ALL)
+    )
+
+
+async def _readable_knowledge_bases(
+    all_bases: list[KnowledgeBase], user: User, db: AsyncSession
+) -> list[KnowledgeBase]:
+    """The KBs a caller below ``kb.all`` sees in the KB list: own, public (with
+    ``kb.shared``), or shared to them (``kb_shares``). The single KB-list rule,
+    used by ``GET /bases`` and by the per-caller count of ``GET /stats``."""
+    from services.kb_shares_service import list_user_shared_kb_ids
+
+    shared_kb_ids: set[int] = await list_user_shared_kb_ids(db, user.id)
+    may_see_public = has_permission(user.get_permissions(), Permission.KB_SHARED)
+    return [
+        kb for kb in all_bases
+        if kb.owner_id == user.id or (kb.is_public and may_see_public) or kb.id in shared_kb_ids
+    ]
+
+
 @router.get("/bases", response_model=list[KnowledgeBaseResponse])
 async def list_knowledge_bases(
     rag: RAGService = Depends(get_rag_service),
@@ -1118,8 +1259,11 @@ async def list_knowledge_bases(
     - kb.own: own + explicitly shared
     - kb.none (or no KB rung at all): none
     """
-    # Get all KBs first
-    all_bases = await rag.list_knowledge_bases()
+    # Get all KBs first. Below kb.all (auth on) each KB's document count runs
+    # through the document reach filter, like the document list and /stats.
+    all_bases = await rag.list_knowledge_bases(
+        asker_id=(user.id if user else None), enforce_circles=_counts_per_caller(user)
+    )
 
     # Filter by access if auth is enabled
     if settings.auth_enabled and user:
@@ -1133,14 +1277,7 @@ async def list_knowledge_bases(
         elif holds_no_rung_above(user_perms, Permission.KB_NONE):
             return []
         else:
-            from services.kb_shares_service import list_user_shared_kb_ids
-            user_kb_ids: set[int] = await list_user_shared_kb_ids(db, user.id)
-
-            accessible_bases = []
-            for kb in all_bases:
-                # Own KB
-                if kb.owner_id == user.id or (kb.is_public and has_permission(user_perms, Permission.KB_SHARED)) or kb.id in user_kb_ids:
-                    accessible_bases.append(kb)
+            accessible_bases = await _readable_knowledge_bases(all_bases, user, db)
     elif settings.auth_enabled and not user:
         # Auth enabled but no user = no access
         return []
@@ -1163,6 +1300,7 @@ async def list_knowledge_bases(
     # the permission rules (owner / kb.all / public+kb.shared) resolve from
     # data we already have in memory.
     grants_by_kb: dict[int, str] = {}
+    delete_switch_kbs: set[int] = set()
     user_has_kb_all = False
     user_has_kb_shared = False
     if settings.auth_enabled and user:
@@ -1171,10 +1309,28 @@ async def list_knowledge_bases(
         user_has_kb_shared = has_permission(user_perms, Permission.KB_SHARED)
         kb_ids_for_grants = [kb.id for kb in accessible_bases]
         if kb_ids_for_grants and not user_has_kb_all:
-            from services.kb_shares_service import get_user_kb_permission_levels
+            from services.kb_shares_service import (
+                get_user_kb_delete_switches,
+                get_user_kb_permission_levels,
+            )
             grants_by_kb = await get_user_kb_permission_levels(
                 db, user.id, kb_ids_for_grants
             )
+            delete_switch_kbs = await get_user_kb_delete_switches(
+                db, user.id, kb_ids_for_grants
+            )
+
+    def _resolve_can_delete_kb(kb: KnowledgeBase) -> bool:
+        """Same rule as check_kb_access(..., "delete_kb")."""
+        if not settings.auth_enabled or not user or user_has_kb_all:
+            return True
+        return kb.owner_id == user.id
+
+    def _resolve_can_delete(kb: KnowledgeBase) -> bool:
+        """Same rule as check_kb_access(..., "delete")."""
+        if not settings.auth_enabled or not user or user_has_kb_all:
+            return True
+        return kb.owner_id == user.id or kb.id in delete_switch_kbs
 
     def _resolve_permission(kb: KnowledgeBase) -> str | None:
         if not settings.auth_enabled or not user:
@@ -1207,7 +1363,9 @@ async def list_knowledge_bases(
             document_count=getattr(kb, '_document_count', 0),
             created_at=kb.created_at.isoformat() if kb.created_at else "",
             updated_at=kb.updated_at.isoformat() if kb.updated_at else "",
-            permission=perm
+            permission=perm,
+            can_delete=_resolve_can_delete(kb),
+            can_delete_kb=_resolve_can_delete_kb(kb),
         ))
 
     return response
@@ -1237,7 +1395,9 @@ async def get_knowledge_base(
         name=kb.name,
         description=kb.description,
         is_active=kb.is_active,
-        document_count=len(kb.documents) if kb.documents else 0,
+        document_count=await rag.count_kb_documents(
+            kb.id, asker_id=(user.id if user else None), enforce_circles=_counts_per_caller(user)
+        ),
         created_at=kb.created_at.isoformat() if kb.created_at else "",
         updated_at=kb.updated_at.isoformat() if kb.updated_at else ""
     )
@@ -1255,7 +1415,8 @@ async def delete_knowledge_base(
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
         kb = await rag.get_knowledge_base(kb_id)
-        if kb and not await check_kb_access(kb, user, "delete", db):
+        # The KB itself: owner or kb.all only (no share level, no switch).
+        if kb and not await check_kb_access(kb, user, "delete_kb", db):
             raise HTTPException(status_code=403, detail="No delete access to this knowledge base")
     success = await rag.delete_knowledge_base(kb_id)
 
@@ -1410,16 +1571,28 @@ async def search_in_document(
 @router.get("/stats", response_model=StatsResponse)
 async def get_knowledge_stats(
     rag: RAGService = Depends(get_rag_service),
-    user: User | None = Depends(get_optional_user)
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Return statistics about the knowledge base."""
+    """Return statistics about the knowledge base -- counted per caller.
+
+    Auth on and below ``kb.all``: documents and chunks through the document
+    reach filter (the one of the document list), KBs through the KB-list rule.
+    ``kb.all`` and auth-off count everything."""
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
         user_perms = user.get_permissions()
         if not has_permission(user_perms, Permission.KB_OWN):
             raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
-    stats = await rag.get_stats()
+    if _counts_per_caller(user):
+        all_bases = await rag.list_knowledge_bases(asker_id=user.id, enforce_circles=True)
+        bases = await _readable_knowledge_bases(all_bases, user, db)
+        stats = await rag.get_stats(
+            asker_id=user.id, enforce_circles=True, knowledge_base_ids={kb.id for kb in bases}
+        )
+    else:
+        stats = await rag.get_stats(asker_id=None, enforce_circles=False, knowledge_base_ids=None)
     return StatsResponse(**stats)
 
 
@@ -1528,8 +1701,10 @@ async def list_kb_permissions(
     """
     List all permissions for a knowledge base. Owner or admin only.
 
-    One row per grantee: the kb_shares row merged with any legacy
-    per-document grants (MAX level), see kb_shares_service.list_kb_shares.
+    One row per ``kb_shares`` grantee (``kind="kb_share"``), plus one per person
+    who holds only grants on documents of the KB (``kind="document_grants"``, no
+    KB level, a document count; #1446) -- they still read those documents, so the
+    owner must see and be able to revoke them (kb_shares_service.list_kb_shares).
     The `id` field in the response is the granted_to_user_id (same thing
     the revoke endpoint's {permission_id} path param now accepts).
     """
@@ -1568,12 +1743,24 @@ async def list_kb_permissions(
             id=s["user_id"],
             user_id=s["user_id"],
             username=perm_user.username if perm_user else "Unknown",
+            kind=s["kind"],
             permission=s["permission"],
+            documents=s["documents"],
             granted_by=s["granted_by"],
             granted_by_username=granter.username if granter else None,
             created_at=s["granted_at"].isoformat() if s["granted_at"] else "",
+            can_delete=s["can_delete"],
         ))
     return response
+
+
+def _may_set_delete_switch(kb: KnowledgeBase, user: User | None) -> bool:
+    """Who may set or clear a share's ``can_delete``: the KB owner or kb.all."""
+    if not settings.auth_enabled:
+        return True
+    if not user:
+        return False
+    return kb.owner_id == user.id or has_permission(user.get_permissions(), Permission.KB_ALL)
 
 
 @router.post("/bases/{kb_id}/share", response_model=KBPermissionResponse)
@@ -1597,6 +1784,17 @@ async def share_knowledge_base(
         if user_perm not in ("owner", "admin"):
             raise HTTPException(status_code=403, detail="Only owner or admin can share")
 
+    # The delete switch is the OWNER's (or kb.all's), not a share manager's:
+    # get_user_kb_permission() above says "admin" for kb.all AND for an admin
+    # grantee, so it cannot decide this. An admin grantee keeps managing shares;
+    # its upsert leaves the stored switch as it is (can_delete=None), and naming
+    # the switch at all is refused.
+    if data.can_delete is not None and not _may_set_delete_switch(kb, user):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner may grant or withdraw the right to delete",
+        )
+
     target_result = await db.execute(select(User).where(User.id == data.user_id))
     target_user = target_result.scalar_one_or_none()
     if not target_user:
@@ -1608,15 +1806,26 @@ async def share_knowledge_base(
     if kb.owner_id and target_user.id == kb.owner_id:
         raise HTTPException(status_code=400, detail="User is already the owner")
 
-    from services.kb_shares_service import list_kb_shares, share_kb
+    from services.kb_shares_service import list_kb_shares, share_kb, user_may_delete_in_kb
+    # A share that carries the switch is the owner's to change or replace: an
+    # admin grantee could otherwise downgrade it, or revoke and re-create it
+    # without the switch.
+    if not _may_set_delete_switch(kb, user) and await user_may_delete_in_kb(
+        db, kb_id, data.user_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner may change a share that carries the right to delete",
+        )
     await share_kb(
         db, kb_id,
         target_user_id=data.user_id,
         permission_level=data.permission,
         granted_by=user.id if user else None,
+        can_delete=data.can_delete,
     )
 
-    # Fetch the aggregated share row to echo back
+    # Fetch the share row to echo back
     shares = await list_kb_shares(db, kb_id)
     share_row = next((s for s in shares if s["user_id"] == data.user_id), None)
     granted_at = share_row["granted_at"].isoformat() if share_row and share_row["granted_at"] else ""
@@ -1625,10 +1834,12 @@ async def share_knowledge_base(
         id=data.user_id,
         user_id=data.user_id,
         username=target_user.username,
+        kind="kb_share",
         permission=data.permission,
         granted_by=user.id if user else None,
         granted_by_username=user.username if user else None,
         created_at=granted_at,
+        can_delete=bool(share_row and share_row["can_delete"]),
     )
 
 
@@ -1644,7 +1855,10 @@ async def revoke_kb_permission(
     Revoke a user's access to a knowledge base. Owner or admin only.
 
     Lane C: `permission_id` is now the `granted_to_user_id` (matches the
-    `id` field returned by the list endpoint).
+    `id` field returned by the list endpoint). Revokes both kinds of entry: the
+    kb_shares row and the person's grants on the KB's documents. A
+    ``document_grants`` entry has no delete switch, so the switch rule does not
+    apply; who may revoke is the same as for a share.
     """
     kb = await rag.get_knowledge_base(kb_id)
     if not kb:
@@ -1658,7 +1872,14 @@ async def revoke_kb_permission(
         if user_perm not in ("owner", "admin"):
             raise HTTPException(status_code=403, detail="Only owner or admin can revoke permissions")
 
-    from services.kb_shares_service import revoke_kb_share
+    from services.kb_shares_service import revoke_kb_share, user_may_delete_in_kb
+    if not _may_set_delete_switch(kb, user) and await user_may_delete_in_kb(
+        db, kb_id, permission_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner may revoke a share that carries the right to delete",
+        )
     removed = await revoke_kb_share(db, kb_id, target_user_id=permission_id)
     if removed == 0:
         raise HTTPException(status_code=404, detail="Permission not found")

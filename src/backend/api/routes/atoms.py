@@ -29,7 +29,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
+    ATOM_TYPE_DOCUMENT_FACT,
+    ATOM_TYPE_KB_DOCUMENT,
     OBLIGATION_MILESTONE_CONFIRMED,
+    TIER_PUBLIC,
+    TIER_SELF,
     Document,
     DocumentFact,
     KnowledgeBase,
@@ -87,6 +91,27 @@ async def load_owned_atom(
     if atom_orm is None or atom_orm.owner_user_id != user.id:
         raise HTTPException(status_code=404, detail=not_found_detail)
     return atom_orm
+
+
+_TIER_ONLY_ATOM_TYPES = frozenset({ATOM_TYPE_KB_DOCUMENT, ATOM_TYPE_DOCUMENT_FACT})
+
+
+def _assert_tier_only_policy(atom_type: str, policy: dict[str, Any]) -> None:
+    """Documents and their facts carry a ``tier``-only policy (422 otherwise).
+
+    ``CircleResolver.can_access_atom`` decides these atoms with the circle_sql
+    filter, which knows the tier dimension only (#1463). Another key here would
+    be stored and then never enforced.
+    """
+    if atom_type not in _TIER_ONLY_ATOM_TYPES:
+        return
+    tier = policy.get("tier")
+    if set(policy) != {"tier"} or isinstance(tier, bool) or not isinstance(tier, int) \
+            or not TIER_SELF <= tier <= TIER_PUBLIC:
+        raise HTTPException(
+            status_code=422,
+            detail="Documents and facts take a tier-only policy: {'tier': 0..4}",
+        )
 
 
 # =============================================================================
@@ -591,7 +616,8 @@ async def update_atom_tier(
     # SELECT FOR UPDATE locks the row from the ownership check through the
     # update_tier write (shared #445 guard); concurrent deletes/owner changes
     # block until we're done.
-    await load_owned_atom(db, atom_id, current_user, for_update=True)
+    atom_orm = await load_owned_atom(db, atom_id, current_user, for_update=True)
+    _assert_tier_only_policy(atom_orm.atom_type, body.policy)
 
     service = AtomService(db)
     await service.update_tier(atom_id, body.policy)
