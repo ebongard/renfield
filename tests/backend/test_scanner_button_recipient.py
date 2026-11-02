@@ -277,6 +277,39 @@ async def test_a_shared_conversation_of_the_owner_is_refused(
     assert any("is shared" in line and "scanner-hh" in line for line in logs), logs
 
 
+@pytest.mark.parametrize("drift", ["grant", "tier"])
+async def test_a_drifted_atom_the_read_path_honours_is_refused(
+    household, session_maker, monkeypatch, drift,
+):
+    """Review finding: the read path (`conversations_circles_filter`) finds a
+    conversation's atoms by ``source_table``/``source_id``, not by the
+    ``atom_id`` pointer. A second, drifted atom -- here with no pointer at all --
+    carrying a grant or a wider tier would share the thread unseen."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from models.database import Atom, AtomExplicitGrant, Conversation
+
+    monkeypatch.setenv(RECIPIENT_ENV, f"{OWNER}:{OWN_SESSION}")
+    async with session_maker() as db:
+        conversation = (await db.execute(
+            select(Conversation).where(Conversation.session_id == OWN_SESSION))).scalar_one()
+        assert conversation.atom_id is None
+        atom_id = str(uuid.uuid4())
+        db.add(Atom(atom_id=atom_id, atom_type="conversation_drift", source_table="conversations",
+                    source_id=str(conversation.id), owner_user_id=OWNER,
+                    policy={"tier": 2 if drift == "tier" else 0}))
+        await db.flush()
+        if drift == "grant":
+            db.add(AtomExplicitGrant(atom_id=atom_id, granted_to_user_id=STRANGER,
+                                     granted_by=OWNER))
+        await db.commit()
+    with patch("utils.hooks.run_hooks", _Hooks()):
+        assert await _deliver(session_maker, FakeRedis()) == "refused"
+    assert await _messages(session_maker, OWN_SESSION) == []
+
+
 async def test_a_recipient_the_client_does_not_file_for_is_refused(
     household, session_maker, monkeypatch,
 ):

@@ -526,32 +526,47 @@ def _unattended_room(client_id: str) -> int | None:
 
 
 async def _conversation_is_private(db: Any, conversation: Any) -> bool:
-    """Whether only its owner can read the conversation: tier 0 (`self`) on the
-    row AND on its atom (`atoms.policy` is canonical), and no explicit grant.
+    """Whether the conversation reaches no further than the document does: tier
+    0 (`self`) on the row AND on every atom of it (`atoms.policy` is
+    canonical), and no explicit grant.
+
+    Tier 0 is the document's own default reach; a circle member at depth 0
+    reaches both alike, so this is "not shared beyond the document", not
+    "owner-only".
 
     🛑 The completion message carries the document id, the target and a button
-    to the document; the owner decision (#1390) is that only the DOCUMENT owner
-    sees it. A shared thread -- a room history at tier 2, or one granted to a
-    single person -- would hand that to every member. Fail-closed: an atom
-    without a readable tier counts as shared."""
+    to the document; the owner decision (#1390) is that it does not go further
+    than the document. A shared thread -- a room history at tier 2, or one
+    granted to a single person -- would hand it to every member.
+
+    🛑 The atoms are found the way the READ path finds them
+    (`circle_sql.conversations_circles_filter`: ``source_table='conversations'
+    AND source_id = c.id``), plus ``conversations.atom_id``. Following only the
+    pointer would let a drifted second atom carry a grant the reader honours.
+    Fail-closed: an atom without a readable tier counts as shared."""
     if conversation.circle_tier != 0:
         return False
-    if conversation.atom_id is None:
-        return True
-    from sqlalchemy import func, select
+    from sqlalchemy import or_, select
 
     from models.database import Atom, AtomExplicitGrant
 
-    policy = (
-        await db.execute(select(Atom.policy).where(Atom.atom_id == conversation.atom_id))
+    match = (Atom.source_table == "conversations") & (Atom.source_id == str(conversation.id))
+    if conversation.atom_id is not None:
+        match = or_(match, Atom.atom_id == conversation.atom_id)
+    atoms = (await db.execute(select(Atom.atom_id, Atom.policy).where(match))).all()
+    for atom in atoms:
+        if not isinstance(atom.policy, dict) or atom.policy.get("tier") != 0:
+            return False
+    if not atoms:
+        return True
+    grant = (
+        await db.execute(
+            select(AtomExplicitGrant.atom_id)
+            .where(AtomExplicitGrant.atom_id.in_([a.atom_id for a in atoms]))
+            .limit(1)
+        )
     ).scalar_one_or_none()
-    if not isinstance(policy, dict) or policy.get("tier") != 0:
-        return False
-    grants = await db.scalar(
-        select(func.count()).select_from(AtomExplicitGrant)
-        .where(AtomExplicitGrant.atom_id == conversation.atom_id)
-    )
-    return not grants
+    return grant is None
 
 
 async def _unattended_requester(db: Any, ingest_client: Any, job_id: str) -> dict | str | None:
@@ -602,7 +617,8 @@ async def _unattended_requester(db: Any, ingest_client: Any, job_id: str) -> dic
         return "refused"
     conversation = (
         await db.execute(
-            select(Conversation.user_id, Conversation.circle_tier, Conversation.atom_id)
+            select(Conversation.id, Conversation.user_id, Conversation.circle_tier,
+                   Conversation.atom_id)
             .where(Conversation.session_id == session_id)
         )
     ).one_or_none()
