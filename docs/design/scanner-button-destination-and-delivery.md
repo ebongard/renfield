@@ -255,7 +255,69 @@ das Schneiden braucht, kam vorher nie bis dorthin.
 
 ## 10. Offen
 
-- Die Raum-Id für den Scanner-Standort ist noch nirgends konfiguriert.
+- Die Raum-Id für den Scanner-Standort ist noch nirgends konfiguriert
+  (`SCANNER_UNATTENDED_ROOM_<CLIENT_ID>`, §11).
 - Ob die zwei wartenden Ablagen vom 2026-10-04 über `route_scan` hereingeholt
   oder verworfen werden, entscheidet der Eigentümer — eine Datenaktion, die über
   den Chat läuft.
+
+## 11. Umsetzung Entwurf B (#1390, 2026-11-02)
+
+Entscheidungen des Eigentümers vom 2026-11-02, umgesetzt in
+`services/scanner_jobs.py` (`_unattended_requester`, `handle_job_event`) und
+`api/routes/scanner_jobs.py`:
+
+- **Empfänger = eine Konversation des DOKUMENT-Eigentümers**, fest je Mandant:
+  `SCANNER_UNATTENDED_RECIPIENT_<CLIENT_ID>=<user_id>:<session_id>`. Der
+  Mandant ist der, den das TOKEN authentifiziert hat (die Route reicht ihn als
+  `ingest_client` durch); `<CLIENT_ID>` ist seine Id in Großbuchstaben mit
+  `-` → `_`. Gelesen wird beim GEBRAUCH aus der Umgebung, nicht über ein
+  Pydantic-Feld — die Schlüssel sind je Mandant dynamisch.
+- **Prüfung beim Gebrauch, beide Hälften:** `<user_id>` muss gleich dem
+  Eigentümer sein, für den dieser Mandant ablegt (`resolve_owner_user_id(db,
+  ingest_client.owner)`, dieselbe Auflösung wie die Push-Route), UND die
+  Konversation muss existieren und genau diesem Nutzer gehören. Sonst
+  endgültig `refused` (2xx, der Scanner hört auf) + WARNING; nichts wird
+  geschrieben, keine Konversation angelegt. Eine eigentümerlose Ablage
+  (`resolve_owner_user_id` → None) passt zu keinem Nutzer und wird abgelehnt.
+- **Die Konversation muss PRIVAT sein** (Review 2026-11-02): `circle_tier = 0`
+  auf der Zeile UND im kanonischen `atoms.policy["tier"]` JEDES ihrer Atome,
+  und kein `atom_explicit_grants`-Eintrag. Die Atome werden gefunden wie im
+  Lesepfad (`conversations_circles_filter`: `source_table='conversations' AND
+  source_id = c.id`) plus `conversations.atom_id` — sonst trüge ein
+  abgedriftetes Zweitatom einen Grant, den der Leser beachtet. Sonst endgültig
+  `refused` + WARNING. Grund: die Nachricht trägt Dokument-Id, Ziel und einen
+  Knopf zum Dokument und soll nicht weiter reichen als das Dokument — eine
+  geteilte Konversation (Raumverlauf auf Stufe 2, ein Einzel-Grant) reichte sie
+  an jedes Mitglied weiter. „Privat“ heisst dabei Stufe 0 wie die Ablage selbst,
+  nicht „nur der Eigentümer“: ein Kreismitglied auf Tiefe 0 erreicht beide
+  gleich. Ein Atom ohne lesbare Stufe gilt als geteilt (fail-closed).
+- **Rückfall NUR bei `caller == "button"` und fehlendem Redis-Eintrag.**
+  `caller` steht im Rumpf und entscheidet damit nur, OB zurückgefallen wird,
+  nie WER empfängt. Ohne diese Bedingung würde ein schnell scheiternder
+  Chat-Scan, dessen Ereignis vor dem Eintrag eintrifft, beim festen Empfänger
+  landen — und der echte Anfragende erführe nie davon. Ein eingetragener
+  Anfragender gewinnt immer, auch bei `caller == "button"`.
+- **Dieselbe Zustellkette** (Marker, Lease, Advisory-Lock + Nachrichtenprüfung).
+  Die Nachricht kommt aus `render_completion_message` mit leerem Titel — der
+  Titel des Ereignisses wird nie verwendet.
+- **Raumansage** nur mit `SCANNER_UNATTENDED_ROOM_<CLIENT_ID>` (positive
+  Ganzzahl aus ASCII-Ziffern; sonst WARNING, keine Ansage — die Zustellung
+  selbst läuft weiter. `"²".isdigit()` ist wahr und `int("²")` wirft; weil der
+  Raum VOR der Zustellung aufgelöst wird, hätte ein Tippfehler jede
+  Knopf-Meldung in eine 24 h lang wiederholte 500 verwandelt): „Der Scan ist fertig, N Seite(n).“ für
+  `done`, sonst die bisherige gesprochene Kurzform. Nur die ZAHL kommt aus dem
+  Ereignis, als `int` geprüft; kein Titel, kein Dokumentdetail. Die Ansage für
+  Sprachanfragen bleibt byte-identisch.
+- **Ohne (gültigen) Empfänger** bleibt die endgültige 409
+  `no_recipient_for_caller`, jetzt mit einer WARNING, die den Mandanten nennt.
+  Ein fehlgeformter Wert gilt als nicht konfiguriert (eigene WARNING).
+- **Unkonfiguriert = byte-identisch** zu vorher, abgesehen von dieser WARNING.
+
+Belegt in `tests/backend/test_scanner_button_recipient.py` gegen echtes
+Postgres. Negativkontrolle: mit abgeschaltetem Rückfall werden genau die 14
+Rückfall-Tests rot; Chat-Scan, eingetragener Anfragender, fehlender Mandant und
+die bestehende Scanner-Suite bleiben grün.
+
+🛑 Live wirkt davon nichts, solange der Knopfwächter des Scanners aus ist
+(scanner #12): `caller == "button"` entsteht dann nicht von selbst.
