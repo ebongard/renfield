@@ -118,6 +118,9 @@ export interface DocumentRow {
   // (0 self … 4 public); atom_id is its atoms-row UUID (null on legacy docs).
   circle_tier?: number;
   atom_id?: string | null;
+  /** Whether the caller may delete this document (the document list computes
+   *  the backend's per-document rule); absent where an endpoint does not. */
+  can_delete?: boolean | null;
 }
 
 export type DocSortKey = 'name' | 'imported' | 'document_date';

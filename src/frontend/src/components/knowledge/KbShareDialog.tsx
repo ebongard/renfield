@@ -124,7 +124,7 @@ export default function KbShareDialog({ kb, isOpen, onClose }: KbShareDialogProp
               return (
                 <li key={share.user_id} className="py-2 flex flex-wrap items-center gap-2">
                   <span className="grow text-sm font-medium text-gray-900 dark:text-white">
-                    {share.username || `#${share.user_id}`}
+                    {share.username || t('knowledge.shares.unnamedUser', { id: share.user_id })}
                   </span>
                   {!isKbLevelShare(share) ? (
                     // Only per-document grants: no KB level, no switch — read-only.
@@ -171,7 +171,7 @@ export default function KbShareDialog({ kb, isOpen, onClose }: KbShareDialogProp
                     disabled={busy || locked}
                     aria-label={t('knowledge.shares.revokeFor', { name: share.username })}
                     title={locked ? t('knowledge.shares.lockedHint') : t('knowledge.shares.revoke')}
-                    className="p-2 rounded-lg text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="btn-icon btn-icon-danger disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Trash2 className="w-4 h-4" aria-hidden="true" />
                   </button>
@@ -197,7 +197,7 @@ export default function KbShareDialog({ kb, isOpen, onClose }: KbShareDialogProp
                   onChange={(e) => setAddUserId(e.target.value)}
                   required
                   className="input"
-                  placeholder="user_id"
+                  placeholder={t('knowledge.shares.userIdPlaceholder')}
                 />
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{t('knowledge.shares.userIdHint')}</p>
               </>
@@ -209,7 +209,7 @@ export default function KbShareDialog({ kb, isOpen, onClose }: KbShareDialogProp
                 required
                 className="input"
               >
-                <option value="">—</option>
+                <option value="">{t('knowledge.shares.pickUser')}</option>
                 {userOptions.map((u) => (
                   <option key={u.id} value={u.id}>{u.username}</option>
                 ))}

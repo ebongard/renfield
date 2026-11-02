@@ -730,7 +730,10 @@
       "switchHint": "Eliminare non è un livello: solo chi riceve “può eliminare” dal proprietario può eliminare documenti. Solo il proprietario elimina la base di conoscenza stessa.",
       "addButton": "Condividi",
       "documentGrants_one": "Accesso a {{count}} singolo documento",
-      "documentGrants_other": "Accesso a {{count}} singoli documenti"
+      "documentGrants_other": "Accesso a {{count}} singoli documenti",
+      "unnamedUser": "Persona #{{id}}",
+      "userIdPlaceholder": "ID utente",
+      "pickUser": "Scegli una persona …"
     }
   },
   "memory": {

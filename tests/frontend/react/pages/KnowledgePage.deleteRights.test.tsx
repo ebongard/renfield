@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { screen, fireEvent, within } from '@testing-library/react';
+import { screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { server } from '../mocks/server';
 import { renderWithProviders } from '../test-utils';
 import KnowledgePage from '../../../../src/frontend/src/pages/KnowledgePage';
@@ -109,5 +109,62 @@ describe('KnowledgePage — delete only where allowed', () => {
     expect(screen.queryByRole('checkbox', { name: 'darf löschen' })).toBeNull();
     fireEvent.keyDown(document, { key: 'Escape' });
     await screen.findByText('EigenesDok');
+  });
+});
+
+describe('KnowledgePage — the backend speaks', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+    wire();
+  });
+
+  it('follows the per-row can_delete of the document list over the KB fallback', async () => {
+    server.use(
+      http.get(`${BASE}/api/knowledge/documents`, () => HttpResponse.json([
+        // KB-less, reachable only through a circle: the row says no.
+        { ...doc(15, null, 'LosesDok'), can_delete: false },
+        // In a KB without the switch, but the row says yes (e.g. atom owner).
+        { ...doc(12, 2, 'GeteiltesDok'), can_delete: true },
+      ])),
+    );
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge' });
+    await screen.findByText('LosesDok');
+    await screen.findByRole('button', { name: /Freigaben verwalten: Eigene/ });
+
+    expect(within(rowOf('LosesDok')).queryByTitle('Löschen')).toBeNull();
+    expect(within(rowOf('GeteiltesDok')).queryByTitle('Löschen')).not.toBeNull();
+  });
+
+  it('shows the 409 detail of a refused move, not a generic error', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const detail = 'Still being processed, cannot be moved: EigenesDok.pdf';
+    server.use(
+      http.post(`${BASE}/api/knowledge/documents/move`, () =>
+        HttpResponse.json({ detail }, { status: 409 })),
+    );
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge' });
+    await screen.findByRole('button', { name: /Freigaben verwalten: Eigene/ });
+
+    fireEvent.click(within(rowOf('EigenesDok')).getByTitle('Verschieben'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Geteilt' }));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(detail));
+    alertSpy.mockRestore();
+  });
+
+  it('shows the refusal of a KB delete', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const detail = 'No permission to delete this knowledge base';
+    server.use(
+      http.delete(`${BASE}/api/knowledge/bases/1`, () =>
+        HttpResponse.json({ detail }, { status: 403 })),
+    );
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge' });
+    fireEvent.click(await screen.findByRole('button', { name: /Knowledge Base löschen: Eigene/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Bestätigen' }));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(detail));
+    alertSpy.mockRestore();
   });
 });

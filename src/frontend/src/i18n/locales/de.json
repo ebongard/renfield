@@ -1072,7 +1072,10 @@
       "switchHint": "Löschen ist keine Stufe: Dokumente löschen darf nur, wem der Eigentümer „darf löschen“ gibt. Die Wissensbasis selbst löscht nur der Eigentümer.",
       "addButton": "Freigeben",
       "documentGrants_one": "Zugriff auf {{count}} einzelnes Dokument",
-      "documentGrants_other": "Zugriff auf {{count}} einzelne Dokumente"
+      "documentGrants_other": "Zugriff auf {{count}} einzelne Dokumente",
+      "unnamedUser": "Person #{{id}}",
+      "userIdPlaceholder": "Benutzer-ID",
+      "pickUser": "Person wählen …"
     }
   },
   "memory": {

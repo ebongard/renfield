@@ -199,7 +199,7 @@ describe('KbShareDialog', () => {
     renderWithProviders(<KbShareDialog kb={ADMIN_GRANTEE_KB} isOpen onClose={() => {}} />);
     await screen.findByText('Diese Wissensbasis ist mit niemandem geteilt.');
 
-    const idField = await screen.findByPlaceholderText('user_id');
+    const idField = await screen.findByPlaceholderText('Benutzer-ID');
     expect(screen.getByText(/Benutzer-ID/)).toBeInTheDocument();
     fireEvent.change(idField, { target: { value: '3' } });
     fireEvent.click(screen.getByRole('button', { name: 'Freigeben' }));

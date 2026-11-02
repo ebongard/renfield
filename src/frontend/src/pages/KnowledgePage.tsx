@@ -203,12 +203,14 @@ export default function KnowledgePage() {
   const knowledgeBases = basesQuery.data ?? [];
   // The KB whose share dialog is open; null = closed.
   const [shareKb, setShareKb] = useState<KnowledgeBaseRow | null>(null);
-  // Delete rights come from the KB list (the backend's rule): a document in a
-  // KB may be deleted with `can_delete`; a KB-less document is its atom owner's,
-  // which the list does not carry — the button stays and the backend decides.
+  // Delete rights are the backend's rule: the document list carries it per row
+  // (`can_delete`). Rows from an endpoint without it fall back to the KB list's
+  // `can_delete`; a KB-less one keeps the button and the backend decides.
   const kbById = new Map(knowledgeBases.map((kb) => [kb.id, kb]));
-  const mayDeleteDocument = (doc: DocumentRow) =>
-    doc.knowledge_base_id == null || kbById.get(doc.knowledge_base_id)?.can_delete === true;
+  const mayDeleteDocument = (doc: DocumentRow) => {
+    if (typeof doc.can_delete === 'boolean') return doc.can_delete;
+    return doc.knowledge_base_id == null || kbById.get(doc.knowledge_base_id)?.can_delete === true;
+  };
   const stats = statsQuery.data ?? null;
   const loading = documentsQuery.isLoading || basesQuery.isLoading || statsQuery.isLoading;
 
@@ -356,8 +358,8 @@ export default function KnowledgePage() {
       await deleteDocMutation.mutateAsync(id);
       // D5: drop the deleted doc's cached facts.
       await queryClient.invalidateQueries({ queryKey: keys.brain.facts(id) });
-    } catch {
-      alert(t('knowledge.deleteFailed'));
+    } catch (err) {
+      alert(extractApiError(err, t('knowledge.deleteFailed')));
     }
   };
 
@@ -493,8 +495,8 @@ export default function KnowledgePage() {
     try {
       await deleteKbMutation.mutateAsync(id);
       if (selectedKnowledgeBase === id) setSelectedKnowledgeBase(null);
-    } catch {
-      alert(t('common.error'));
+    } catch (err) {
+      alert(extractApiError(err, t('common.error')));
     }
   };
 
@@ -678,7 +680,7 @@ export default function KnowledgePage() {
               <div key={kb.id} className="flex items-center gap-1">
                 <button
                   onClick={() => setSelectedKnowledgeBase(kb.id)}
-                  className={`px-4 py-2 ${mayShare || mayDeleteKb ? 'rounded-l-lg' : 'rounded-lg'} text-sm font-medium transition-colors ${
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                     selectedKnowledgeBase === kb.id
                       ? 'bg-primary-600 text-white'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
@@ -692,7 +694,7 @@ export default function KnowledgePage() {
                 {mayShare && (
                   <button
                     onClick={() => setShareKb(kb)}
-                    className={`px-2 py-2 ${mayDeleteKb ? '' : 'rounded-r-lg'} bg-gray-200 text-gray-500 hover:text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-600 transition-colors`}
+                    className="btn-icon btn-icon-ghost"
                     title={t('knowledge.shareKnowledgeBase')}
                     aria-label={`${t('knowledge.shareKnowledgeBase')}: ${kb.name}`}
                   >
@@ -702,7 +704,7 @@ export default function KnowledgePage() {
                 {mayDeleteKb && (
                   <button
                     onClick={() => handleDeleteKnowledgeBase(kb.id, kb.name)}
-                    className="px-2 py-2 rounded-r-lg bg-gray-200 text-gray-500 hover:text-red-500 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-600 transition-colors"
+                    className="btn-icon btn-icon-danger"
                     title={t('knowledge.deleteKnowledgeBase')}
                     aria-label={`${t('knowledge.deleteKnowledgeBase')}: ${kb.name}`}
                   >

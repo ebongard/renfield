@@ -1072,7 +1072,10 @@
       "switchHint": "Deleting is not a level: only those the owner gives “may delete” can delete documents. Only the owner deletes the knowledge base itself.",
       "addButton": "Share",
       "documentGrants_one": "Access to {{count}} single document",
-      "documentGrants_other": "Access to {{count}} single documents"
+      "documentGrants_other": "Access to {{count}} single documents",
+      "unnamedUser": "Person #{{id}}",
+      "userIdPlaceholder": "User ID",
+      "pickUser": "Choose a person …"
     }
   },
   "memory": {
