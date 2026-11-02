@@ -592,15 +592,67 @@ async def list_documents(
     # per-row status icon doesn't fan out N queries.
     simba_uploaded = await _simba_uploaded_ids(db, [d.id for d in documents])
 
+    delete_rights = await _document_delete_rights(db, user, documents)
+
     responses: list[DocumentResponse] = []
     for doc in documents:
         kwargs = _doc_to_response_kwargs(doc, in_simba=doc.id in simba_uploaded)
+        kwargs["can_delete"] = delete_rights[doc.id]
         # Queue position only meaningful on single-doc + batch polling
         # endpoints; the list view is a bulk screen and we don't want to
         # spam Redis with XPENDING on every listed row.
         await _augment_with_progress(doc, kwargs, include_queue_position=False)
         responses.append(DocumentResponse(**kwargs))
     return responses
+
+
+async def _document_delete_rights(
+    db: AsyncSession, user: User | None, documents: list[Document],
+) -> dict[int, bool]:
+    """Batch form of ``check_document_access(doc, user, "delete")`` for a page.
+
+    Same rule, two queries instead of three per row: the atom owner where she
+    is the KB's owner (or there is no KB owner / no KB), else the KB rule —
+    the KB owner or a share with the delete switch. Auth off and kb.all may
+    delete everything."""
+    if not settings.auth_enabled or (
+        user is not None and has_permission(user.get_permissions(), Permission.KB_ALL)
+    ):
+        return {doc.id: True for doc in documents}
+    if user is None:
+        return {doc.id: False for doc in documents}
+    from services.kb_shares_service import get_user_kb_delete_switches
+
+    atom_ids = {doc.atom_id for doc in documents if doc.atom_id}
+    kb_ids = {doc.knowledge_base_id for doc in documents if doc.knowledge_base_id}
+    owners: dict = {}
+    if atom_ids:
+        rows = await db.execute(
+            select(AtomModel.atom_id, AtomModel.owner_user_id).where(AtomModel.atom_id.in_(atom_ids))
+        )
+        owners = {r.atom_id: r.owner_user_id for r in rows}
+    kb_owner: dict[int, int | None] = {}
+    if kb_ids:
+        rows = await db.execute(
+            select(KnowledgeBase.id, KnowledgeBase.owner_id).where(KnowledgeBase.id.in_(kb_ids))
+        )
+        kb_owner = {r.id: r.owner_id for r in rows}
+    switches = await get_user_kb_delete_switches(db, user.id, kb_owner.keys())
+
+    rights: dict[int, bool] = {}
+    for doc in documents:
+        has_kb = doc.knowledge_base_id in kb_owner
+        owner_of_kb = kb_owner.get(doc.knowledge_base_id) if has_kb else None
+        atom_owner = owners.get(doc.atom_id) if doc.atom_id else None
+        if atom_owner is not None and atom_owner == user.id and (
+            not has_kb or owner_of_kb is None or owner_of_kb == atom_owner
+        ):
+            rights[doc.id] = True
+        elif has_kb:
+            rights[doc.id] = owner_of_kb == user.id or doc.knowledge_base_id in switches
+        else:
+            rights[doc.id] = False
+    return rights
 
 
 def _sort_document_page(documents: list[Document], sort: str | None, order: str) -> list[Document]:

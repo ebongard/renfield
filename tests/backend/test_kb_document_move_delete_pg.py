@@ -989,3 +989,98 @@ class TestTwoOwnerDocumentAccess:
             for d in (doc, loose):
                 assert await check_document_access(d, owner, "delete", db_session)
                 assert not await check_document_access(d, other, "delete", db_session)
+
+
+class TestFileRemovalFailure:
+    async def test_a_file_that_cannot_be_removed_is_an_error_with_id_and_path(
+        self, db_session, people, tmp_path, monkeypatch,
+    ):
+        import services.rag_service as rs
+
+        alice, _, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        stuck = tmp_path / "klemmt.pdf"
+        stuck.write_bytes(b"x")
+        doc = await _add_doc(db_session, haus, "klemmt", file_path=str(stuck))
+        doc_id = doc.id
+
+        errors: list[str] = []
+
+        class _Log:
+            def error(self, msg, *a, **k):
+                errors.append(msg)
+
+            def __getattr__(self, name):  # info, warning, debug, …: discarded
+                return lambda *a, **k: None
+
+        def refuse(path):
+            raise PermissionError("read-only volume")
+
+        monkeypatch.setattr(rs, "logger", _Log())
+        monkeypatch.setattr(rs.os, "remove", refuse)
+
+        assert await RAGService(db_session).delete_document(doc_id)
+        # The rows are gone (the delete held), the file stays — and is named.
+        assert await _kb_of(db_session, doc_id) is None
+        assert stuck.exists()
+        assert len(errors) == 1
+        assert str(doc_id) in errors[0] and str(stuck) in errors[0]
+
+
+class TestDocumentListDeleteRights:
+    """The document list's per-row ``can_delete`` is the batch form of
+    ``check_document_access(..., "delete")`` — compared row by row."""
+
+    async def _list(self, db, user):
+        from api.routes.knowledge import list_documents
+
+        return await list_documents(
+            knowledge_base_id=None, status=None, q=None, sort=None, order="desc",
+            limit=100, offset=0, rag=RAGService(db), user=user, db=db,
+        )
+
+    async def test_it_matches_the_per_document_gate(self, db_session, people):
+        from api.routes.knowledge import check_document_access
+
+        alice, bob, admin = people
+        carol = await _user(db_session, "carol", ["kb.own", "kb.shared"])
+        privat = await _kb(db_session, alice.id, "Privat")
+        bobs = await _kb(db_session, bob.id, "Bobs")
+        schalter = await _kb(db_session, bob.id, "Schalter")
+        geteilt = await _kb(db_session, None, "Geteilt")
+        await ks.share_kb(db_session, bobs, carol.id, "admin", granted_by=bob.id)
+        await ks.share_kb(db_session, schalter, carol.id, "read", granted_by=bob.id,
+                          can_delete=True)
+
+        docs = [
+            await _add_doc(db_session, privat, "eigen"),
+            await _add_doc(db_session, bobs, "fremd"),
+            await _add_doc(db_session, schalter, "geschaltet"),
+            await _add_doc(db_session, geteilt, "eigner-los"),
+        ]
+        two = await _add_doc(db_session, privat, "doppelt")
+        two.knowledge_base_id = bobs  # pre-#1460 move: atom owner Alice, KB owner Bob
+        loose = await _add_doc(db_session, privat, "lose")
+        loose.knowledge_base_id = None  # KB-less, atom owner Alice
+        await db_session.commit()
+        docs += [two, loose]
+
+        for user in (alice, bob, carol, admin):
+            rows = {r.id: r.can_delete for r in await self._list(db_session, user)}
+            for d in docs:
+                expected = await check_document_access(d, user, "delete", db_session)
+                assert rows[d.id] is expected, (user.username, d.filename)
+
+        # Spot checks of the rule itself.
+        carol_rows = {r.id: r.can_delete for r in await self._list(db_session, carol)}
+        assert carol_rows[docs[2].id] is True   # the switch
+        assert carol_rows[docs[1].id] is False  # admin share, no switch
+        alice_rows = {r.id: r.can_delete for r in await self._list(db_session, alice)}
+        assert alice_rows[two.id] is False and alice_rows[loose.id] is True
+
+    async def test_auth_off_deletes_everything(self, db_session, people, monkeypatch):
+        alice, _, _ = people
+        privat = await _kb(db_session, alice.id, "Privat")
+        await _add_doc(db_session, privat, "eigen")
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        assert all(r.can_delete for r in await self._list(db_session, None))

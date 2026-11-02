@@ -33,8 +33,9 @@ class KnowledgeBaseResponse(BaseModel):
     created_at: str
     updated_at: str
     permission: str | None = None  # User's permission level on this KB
-    # Whether the user may delete documents / the KB: owner, kb.all, or a share
-    # carrying the owner's delete switch. No level implies it.
+    # Whether the user may delete DOCUMENTS in this KB: owner, kb.all, or a share
+    # carrying the owner's delete switch. No level implies it. The KB itself is
+    # can_delete_kb.
     can_delete: bool = False
     # Whether the user may delete the KB itself: owner or kb.all only.
     can_delete_kb: bool = False
@@ -110,6 +111,10 @@ class DocumentResponse(BaseModel):
     # Both default so flag-off / legacy callers still serialize cleanly.
     circle_tier: int = 0
     atom_id: str | None = None
+    # Whether the caller may delete this document — the rule of
+    # check_document_access(..., "delete"), batch-computed by the document
+    # list. None where an endpoint does not compute it.
+    can_delete: bool | None = None
     # Live progress fields (#388). All three default to None so legacy
     # callers that don't augment the response (flag off path) still
     # serialize cleanly.
