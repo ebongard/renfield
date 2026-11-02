@@ -115,6 +115,15 @@ file it). Sites checked: `/api/knowledge/upload`, `/api/chat/upload/{id}/index` 
 (already gated: target write + per-source `check_document_access`), the ingest paths (folder, email, meetings,
 PDF split, auto-index): server-resolved owner KBs, no caller KB id. Proof: `tests/backend/test_kb_write_gate.py`.
 
+### Listing documents is a read through the document filter
+
+`GET /api/knowledge/documents` has three branches under auth: with `q` the search gate of `search_documents`; with a
+`knowledge_base_id` the KB-level `check_kb_access(kb, user, "read", db)`, after which the whole KB is listed; with
+neither (the recency list) the same document filter as the search gate, `document_search.visible_document_ids`, as an
+IN-subquery before `LIMIT`/`OFFSET` so pages stay full. `kb.all` and auth-off list everything. Until 2026-11-02 the
+recency list had no filter, so any `kb.own` holder listed every user's document rows. `RAGService.list_documents`
+takes `asker_id` + `enforce_circles` without defaults. Proof: `tests/backend/test_document_list_circles_pg.py`.
+
 Attaching is a write on the conversation: `POST /api/chat/upload` applies the chat's own message-write rule to its
 `session_id` (`chat_upload._may_write_session` → `ConversationService.reaches`, exactly as `save_message` with
 `enforce_ownership`). An existing conversation must be in reach, so a member may attach to a shared room thread they
