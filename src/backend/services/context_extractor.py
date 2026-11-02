@@ -70,10 +70,12 @@ def _bound_value(value: Any) -> Any:
 def bound_context_vars(raw: dict[str, Any]) -> dict[str, Any]:
     """Gate a turn's extracted variables before they are stored.
 
-    Drops keys that are not public identifiers (see ``_KEY_RE``) and values
-    that are not scalars or lists of scalars; collapses whitespace and caps
-    string length, list length and the turn's total size (``MAX_TURN_CHARS``,
-    first keys win).
+    Drops keys that are not public identifiers (see ``_KEY_RE``); collapses
+    whitespace and caps string length, list length and the turn's total size
+    (``MAX_TURN_CHARS``, first keys win). A value that is ``None`` or not a
+    scalar / list of scalars becomes ``None`` — the delete marker of
+    ``merge_context_vars``: the current item has no usable value for that
+    key, so an older item's value must not stand in for it.
     """
     bounded: dict[str, Any] = {}
     used = 0
@@ -82,6 +84,7 @@ def bound_context_vars(raw: dict[str, Any]) -> dict[str, Any]:
             continue
         clean = _bound_value(value)
         if clean is None:
+            bounded[key] = None
             continue
         size = len(key) + len(json.dumps(clean, ensure_ascii=False))
         if used + size > MAX_TURN_CHARS:
@@ -153,8 +156,15 @@ def extract_context_vars(tool_name: str, result: dict) -> dict[str, Any]:
         result: The MCP result dict {"success": bool, "message": str, "data": ...}
 
     Returns:
-        Dict of context variables to merge into conversation state.
-        Empty dict if no rules match or extraction fails.
+        Dict of context variables to merge into conversation state. Once a
+        tool's rule set applies (successful result, parsable JSON), EVERY key
+        of that rule set is returned: a path that does not resolve yields
+        ``None``, which the merge reads as "delete". The keys of one rule set
+        describe ONE item — without this, a second search whose hit has no
+        correspondent kept the first hit's correspondent next to the second
+        hit's title, and a search with zero hits kept the old item as "last".
+        Empty dict if no rules match or the result cannot be read (then
+        nothing is known about the current item, so nothing is cleared).
     """
     if not result.get("success"):
         return {}
@@ -189,15 +199,13 @@ def extract_context_vars(tool_name: str, result: dict) -> dict[str, Any]:
         if not key or not path:
             continue
 
-        value = _resolve_path(data, path)
-        if value is not None:
-            extracted[key] = value
+        extracted[key] = _resolve_path(data, path)
 
-    if extracted:
-        logger.debug(
-            f"Context vars extracted from {tool_name}: "
-            f"{list(extracted.keys())}"
-        )
+    logger.debug(
+        f"Context vars extracted from {tool_name}: "
+        f"{sorted(k for k, v in extracted.items() if v is not None)} "
+        f"(cleared: {sorted(k for k, v in extracted.items() if v is None)})"
+    )
 
     return extracted
 

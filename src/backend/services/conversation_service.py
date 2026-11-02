@@ -971,7 +971,12 @@ class ConversationService:
                 await self.db.rollback()
                 return False
 
-            current = merge_context_vars(conversation.context_vars or {}, vars_dict)
+            before = conversation.context_vars or {}
+            current = merge_context_vars(before, vars_dict)
+            if current == before:
+                # e.g. only delete markers for keys that are not there
+                await self.db.rollback()
+                return True
             conversation.context_vars = current
             await self.db.commit()
             logger.debug(f"Context vars updated for {session_id}: {list(current.keys())}")
@@ -1021,15 +1026,40 @@ class ConversationService:
         )
         return bounded if written else {}
 
-    async def load_context_vars(self, session_id: str) -> dict:
-        """Load conversation context variables. Returns empty dict if none."""
-        try:
-            result = await self.db.execute(
-                select(Conversation.context_vars).where(
-                    Conversation.session_id == session_id
-                )
+    async def _readable_column(
+        self, session_id: str, column, *, user_id: int | None, enforce_ownership: bool,
+    ):
+        """One column of the conversation — or None when ``enforce_ownership``
+        is set and the conversation is outside the caller's reach (no identity
+        reaches nothing). The read-side twin of the write guard."""
+        row = (await self.db.execute(
+            select(Conversation.id, column).where(Conversation.session_id == session_id)
+        )).first()
+        if row is None:
+            return None
+        if enforce_ownership and not await self.reaches(row[0], user_id):
+            logger.warning(
+                f"🚫 Refused conversation-state read outside the caller's reach: "
+                f"session={session_id} caller={user_id}"
             )
-            row = result.scalar_one_or_none()
+            return None
+        return row[1]
+
+    async def load_context_vars(
+        self, session_id: str, *, user_id: int | None = None, enforce_ownership: bool = False,
+    ) -> dict:
+        """Load conversation context variables. Returns empty dict if none.
+
+        ``enforce_ownership`` (from ``settings.auth_enabled``): only from a
+        conversation within the caller's reach. The vars carry tool results
+        (a document title, an email sender) — another person's must not reach
+        this caller's prompt.
+        """
+        try:
+            row = await self._readable_column(
+                session_id, Conversation.context_vars,
+                user_id=user_id, enforce_ownership=enforce_ownership,
+            )
             return dict(row) if row else {}
         except Exception as e:
             logger.warning(f"Failed to load context vars: {error_text_without_content(e)}")
@@ -1113,15 +1143,17 @@ class ConversationService:
             await self.db.rollback()
             return None
 
-    async def load_summary(self, session_id: str) -> str | None:
-        """Load the conversation summary. Returns None if none exists."""
+    async def load_summary(
+        self, session_id: str, *, user_id: int | None = None, enforce_ownership: bool = False,
+    ) -> str | None:
+        """Load the conversation summary. Returns None if none exists — or,
+        with ``enforce_ownership``, if the conversation is outside the
+        caller's reach (same rule as ``load_context_vars``)."""
         try:
-            result = await self.db.execute(
-                select(Conversation.summary).where(
-                    Conversation.session_id == session_id
-                )
+            return await self._readable_column(
+                session_id, Conversation.summary,
+                user_id=user_id, enforce_ownership=enforce_ownership,
             )
-            return result.scalar_one_or_none()
         except Exception as e:
             logger.warning(f"Failed to load summary: {error_text_without_content(e)}")
             return None

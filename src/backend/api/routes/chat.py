@@ -238,7 +238,10 @@ async def send_message(
                 from services.context_extractor import render_context_vars_text
                 conv_service = ConversationService(db)
                 context_vars_text = render_context_vars_text(
-                    await conv_service.load_context_vars(session_id)
+                    await conv_service.load_context_vars(
+                        session_id, user_id=user_id,
+                        enforce_ownership=settings.auth_enabled,
+                    )
                 )
                 turn_context_vars: dict = {}
                 tool_summaries: list = []

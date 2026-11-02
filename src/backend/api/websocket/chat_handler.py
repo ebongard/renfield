@@ -1764,10 +1764,25 @@ async def websocket_endpoint(
                         from services.conversation_service import ConversationService
                         async with AsyncSessionLocal() as _cv_db:
                             _cv_svc = ConversationService(_cv_db)
-                            _ctx_vars = await _cv_svc.load_context_vars(msg_session_id) or {}
+                            # Same identity and rule as the history load above:
+                            # the JWT caller, and only within its reach. Under
+                            # auth-on the session boundary lets a caller without
+                            # identity keep any session id; reach then gives it
+                            # nothing (#1447 review).
+                            _read_uid = (
+                                auth_result.get("user_id")
+                                if isinstance(auth_result, dict) else None
+                            )
+                            _ctx_vars = await _cv_svc.load_context_vars(
+                                msg_session_id, user_id=_read_uid,
+                                enforce_ownership=settings.auth_enabled,
+                            ) or {}
                             from services.context_extractor import render_context_vars_text
                             _context_vars_text = render_context_vars_text(_ctx_vars)
-                            _summary_text = await _cv_svc.load_summary(msg_session_id) or ""
+                            _summary_text = await _cv_svc.load_summary(
+                                msg_session_id, user_id=_read_uid,
+                                enforce_ownership=settings.auth_enabled,
+                            ) or ""
                     except Exception as _e:
                         logger.warning(f"Failed to load context vars/summary: {_e}")
 

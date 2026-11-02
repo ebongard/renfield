@@ -1727,9 +1727,18 @@ class AgentService:
         # content — context vars are harvested from tool results, the summary is
         # LLM-generated over prior turns — and re-enter the prompt here on later
         # turns, so neutralize their delimiters at this re-injection chokepoint.
+        # #1447: the vars carry values straight from tool results (an email's
+        # subject and sender, a document title) and come back on EVERY later
+        # turn, so they sit inside the <context_variables> fence the SECURITY
+        # NOTE declares as DATA; neutralize_delimiters keeps a value from
+        # closing it.
         conv_prefix = ""
         if context_vars_text:
-            conv_prefix += f"## Conversation Context\n{neutralize_delimiters(context_vars_text)}\n\n"
+            conv_prefix += (
+                "## Conversation Context\n<context_variables>\n"
+                f"{neutralize_delimiters(context_vars_text)}\n"
+                "</context_variables>\n\n"
+            )
         if summary_text:
             conv_prefix += f"## Earlier in this conversation\n{neutralize_delimiters(summary_text)}\n\n"
 

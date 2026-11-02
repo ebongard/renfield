@@ -14,7 +14,9 @@
 #
 # A path is resolved against the result AFTER mcp_compact.yaml has compacted
 # it, and against the tool's CURRENT response shape: a path into an older shape
-# extracts nothing, silently. Every rule here has a recorded response shape in
+# resolves to nothing, silently. A path that resolves to nothing CLEARS its key
+# in the conversation (the keys of one tool describe ONE item, #1447), so a
+# zero-hit search forgets the previous "last" item. Every rule here has a recorded response shape in
 # tests/backend/test_context_extractor.py (RECORDED_SHAPES), built from the
 # MCP source — add one with each new rule.
 
