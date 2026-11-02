@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ha_glue.services.satellite_manager import get_satellite_manager
 from ha_glue.services.satellite_update_service import get_satellite_update_service
@@ -84,6 +84,9 @@ class SatelliteResponse(BaseModel):
     update_stage: str | None = None  # downloading, verifying, backing_up, etc.
     update_progress: int = 0
     update_error: str | None = None
+    # True when this entry could not be built from the roster and is shown
+    # with placeholder values instead (#1279). The cause is in the backend log.
+    corrupt: bool = False
 
 
 class SatelliteListResponse(BaseModel):
@@ -196,6 +199,71 @@ def _satellite_to_response(sat_id: str, sat_data: dict[str, Any]) -> SatelliteRe
     )
 
 
+# Placeholder values of a corrupt entry. Deliberately implausible, so that a
+# flagged entry can never pass for a satellite that has just reported in.
+_NO_TIMESTAMP = datetime.fromtimestamp(0)
+_NO_DURATION = -1.0
+
+
+def _backend_timestamp(value: object) -> datetime:
+    """A roster timestamp (set by the backend itself, never by the device), or
+    the placeholder when even that is unusable."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(value)
+        except (OverflowError, OSError, ValueError):
+            pass
+    return _NO_TIMESTAMP
+
+
+def _corrupt_satellite_response(sat_id: object, sat_data: dict[str, Any]) -> SatelliteResponse:
+    """A placeholder entry for a satellite whose roster data cannot be served.
+
+    Built only from values that cannot fail validation: the id and room are
+    taken when they are strings, the connection timestamps when the backend's
+    own values are usable, everything else is a default. The durations are
+    never computed: ``-1`` says "unknown", where ``0`` would read as a
+    heartbeat that just arrived. The satellite stays VISIBLE (it is connected)
+    and is flagged, instead of vanishing.
+    """
+    data = sat_data if isinstance(sat_data, dict) else {}
+    room = data.get("room")
+    return SatelliteResponse(
+        satellite_id=sat_id if isinstance(sat_id, str) else str(sat_id),
+        room=room if isinstance(room, str) else "",
+        state="error",
+        connected_at=_backend_timestamp(data.get("connected_at")),
+        last_heartbeat=_backend_timestamp(data.get("last_heartbeat")),
+        uptime_seconds=_NO_DURATION,
+        heartbeat_ago_seconds=_NO_DURATION,
+        has_active_session=False,
+        capabilities=SatelliteCapabilitiesResponse(),
+        metrics=SatelliteMetricsResponse(),
+        corrupt=True,
+    )
+
+
+# What a bad roster VALUE raises while the response is built. Anything else —
+# a fault in the update service or the session store — is a backend error and
+# stays an honest 500 instead of being disguised as one corrupt satellite.
+_CORRUPT_ENTRY_ERRORS = (ValidationError, TypeError, ValueError, KeyError)
+
+
+def _satellite_to_response_guarded(sat_id: str, sat_data: dict[str, Any]) -> SatelliteResponse:
+    """`_satellite_to_response`, but ONE bad entry cannot fail the caller (#1279).
+
+    Without this guard a single satellite with a value of the wrong type turned
+    `GET /api/satellites` into a 500 for the WHOLE fleet — the admin view went
+    blind exactly when it was needed. The boundary in `satellite_manager`
+    types every device-supplied field; this is the second line behind it.
+    """
+    try:
+        return _satellite_to_response(sat_id, sat_data)
+    except _CORRUPT_ENTRY_ERRORS as e:
+        logger.error(f"Satellite '{sat_id}' cannot be rendered, shown as corrupt: {e!r}")
+        return _corrupt_satellite_response(sat_id, sat_data)
+
+
 # =============================================================================
 # API Endpoints
 # =============================================================================
@@ -215,9 +283,9 @@ async def list_satellites(_user: User = Depends(require_permission(Permission.AD
 
     for sat_data in satellites_data:
         sat_id = sat_data["satellite_id"]
-        response = _satellite_to_response(sat_id, sat_data)
+        response = _satellite_to_response_guarded(sat_id, sat_data)
         responses.append(response)
-        if sat_data["has_active_session"]:
+        if response.has_active_session:
             active_sessions += 1
 
     return SatelliteListResponse(
@@ -352,7 +420,7 @@ async def get_satellite(satellite_id: str, _user: User = Depends(require_permiss
             detail=f"Satellite '{satellite_id}' data not found"
         )
 
-    return _satellite_to_response(satellite_id, sat_data)
+    return _satellite_to_response_guarded(satellite_id, sat_data)
 
 
 @router.get("/{satellite_id}/metrics", response_model=SatelliteMetricsResponse)

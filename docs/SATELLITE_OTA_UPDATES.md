@@ -176,7 +176,7 @@ auf `in_progress`/`rolling_back` stehen, und weil der Fortschrittszweig keinen
 Fehler mitgab, wurde ein bereits gesetzter Grund dabei auf `null` überschrieben
 — ein hängendes Update ohne erkennbare Ursache.
 
-Zwei Regeln sichern das ab:
+Drei Regeln sichern das ab:
 
 1. **Ein beendeter Lauf wird nicht zurückgeholt.** Der Satellit plant seine
    Fortschrittsmeldungen abgesetzt ein, während er die Endmeldung abwartet —
@@ -184,7 +184,39 @@ Zwei Regeln sichern das ab:
    einen `completed`- oder `failed`-Lauf nicht wieder auf `in_progress` ziehen.
    Ein **neuer** Lauf kann jederzeit starten; die Sperre gilt nur für
    Fortschrittsmeldungen.
-2. **Zeitgrenze als Auffangnetz.** Meldet ein Lauf innerhalb von
+2. **Jeder Lauf trägt eine Kennung** (#1280). Das Backend vergibt beim
+   `update_request` eine `run_id`; der Satellit gibt sie in jeder
+   `update_progress`-, `update_complete`- und `update_failed`-Meldung zurück.
+   Eine Meldung mit **fremder** Kennung ist ein Nachzügler eines früheren Laufs
+   und wird verworfen — sie kann einen inzwischen neu gestarteten Lauf nicht
+   mehr beenden. Eine Meldung **ohne** Kennung stammt von älterer Firmware und
+   wird wie bisher angenommen, denn über genau diesen Weg aktualisiert sich die
+   Flotte; für solche Geräte bleibt die alte Grenze bestehen
+   (`test_a_stray_terminal_frame_without_run_id_still_ends_the_current_run`).
+
+   **Ein WS-Neuaufbau behält den Lauf.** Der Satellitenprozess behält seine
+   Kennung über eine neue Verbindung hinweg; das Backend trägt deshalb Kennung
+   und Laufzustand (Status, Stufe, Fortschritt, Fehler, Startzeit) auf den neuen
+   Eintrag über — beim schnellen Neuaufbau vom alten Eintrag, sonst aus dem beim
+   Abmelden bzw. bei der Heartbeat-Räumung geparkten Zustand. Kommt der Satellit
+   während eines laufenden Updates mit genau der **Zielversion** des Laufs
+   zurück, war die Installation erfolgreich und der Neustart hat die Endmeldung
+   verschluckt: der Lauf wird als `completed` geschlossen. Mit jeder anderen
+   Version (der alten nach einem Verbindungsabriss, einer dritten nach einer
+   Hand-Installation) bleibt er `in_progress`, bis eine Endmeldung oder die
+   Zeitgrenze ihn beendet. Auch ein **beendeter** Lauf (`completed`/`failed`)
+   wird übertragen: Fehlermeldung und Status bleiben in der Admin-Ansicht stehen,
+   bis der nächste Lauf beginnt — früher setzte jeder Neuaufbau sie auf `none`
+   zurück. **Ein Backend-Neustart verliert den
+   Lauf dagegen bewusst**: eine danach eintreffende Kennung gehört zu keinem
+   bekannten Lauf und wird verworfen.
+
+   Der Satellit setzt die Kennung erst, wenn er den Lauf tatsächlich
+   angenommen hat. Eine Anfrage, die auf einen noch laufenden Lauf trifft,
+   lehnt er unter IHRER Kennung mit `stage: "idle"` und
+   `error: "update already in progress"` ab — nicht mit Stufe und Fehler des
+   laufenden Laufs.
+3. **Zeitgrenze als Auffangnetz.** Meldet ein Lauf innerhalb von
    `SATELLITE_UPDATE_TIMEOUT` (900 s) keinen Endzustand — etwa weil die
    Verbindung mitten im Install abriss —, beendet ihn der Kehraus als
    `failed`. Eine vom Satelliten bereits gelieferte Begründung bleibt dabei
@@ -224,9 +256,14 @@ drei scharf, deshalb sind die beiden älteren dabei kalibriert worden:
   "target_version": "1.1.0",
   "package_url": "/api/satellites/update-package",
   "checksum": "sha256:abc123...",
-  "size_bytes": 108544
+  "size_bytes": 108544,
+  "run_id": "3f2a9c…"
 }
 ```
+
+`run_id` (#1280) gibt der Satellit in allen drei Rückmeldungen unverändert
+zurück. Ältere Firmware ignoriert das Feld und sendet keine Kennung; ein älteres
+Backend sendet keine, dann fehlt sie auch in den Rückmeldungen.
 
 ### Satellite → Server: Fortschritt
 
@@ -235,7 +272,8 @@ drei scharf, deshalb sind die beiden älteren dabei kalibriert worden:
   "type": "update_progress",
   "stage": "downloading",
   "progress": 45,
-  "message": "Downloading... (48KB / 106KB)"
+  "message": "Downloading... (48KB / 106KB)",
+  "run_id": "3f2a9c…"
 }
 ```
 
@@ -246,7 +284,8 @@ drei scharf, deshalb sind die beiden älteren dabei kalibriert worden:
   "type": "update_complete",
   "success": true,
   "old_version": "1.0.0",
-  "new_version": "1.1.0"
+  "new_version": "1.1.0",
+  "run_id": "3f2a9c…"
 }
 ```
 
@@ -257,9 +296,24 @@ drei scharf, deshalb sind die beiden älteren dabei kalibriert worden:
   "type": "update_failed",
   "stage": "installing",
   "error": "Permission denied",
-  "rolled_back": true
+  "rolled_back": true,
+  "run_id": "3f2a9c…"
 }
 ```
+
+Alle Felder dieser Meldungen kommen als JSON von einem Gerät im LAN. Das
+Backend bringt sie an EINER Stelle in den erwarteten Typ und kappt Texte
+(`device_text`/`device_int`/… in `satellite_manager`, #1279) — ebenso die Felder
+von `register` und `heartbeat`. Lässt sich ein Eintrag der Satellitenliste
+trotzdem nicht bauen, erscheint er mit Platzhalterwerten und `corrupt: true`,
+statt `GET /api/satellites` für die ganze Flotte scheitern zu lassen. Die
+Platzhalter sehen nie frisch aus: Laufzeit und Heartbeat-Alter stehen auf `-1`
+(„unbekannt“, die Admin-Seite zeigt „—“ und ein Abzeichen „Daten unlesbar“),
+die Zeitstempel sind die eigenen des Backends. Nur ein fehlerhafter WERT
+(`ValidationError`, `TypeError`, `ValueError`, `KeyError`) wird so abgefangen;
+ein Fehler im Backend selbst bleibt ein ehrlicher 500. Eine `satellite_id`, die
+keine nichtleere Zeichenkette von höchstens 128 Zeichen ist, weist schon die
+`register`-Behandlung ab (`invalid-satellite-id`).
 
 ## Manuelles Deployment
 

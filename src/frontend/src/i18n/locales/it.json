@@ -1096,6 +1096,7 @@
     "latestVersion": "Ultima versione",
     "updateAvailable": "Aggiorna",
     "updating": "Aggiornamento in corso...",
+    "corrupt": "Dati illeggibili",
     "updateNow": "Aggiorna ora",
     "upToDate": "Aggiornato",
     "updateInProgress": "Aggiornamento in corso...",

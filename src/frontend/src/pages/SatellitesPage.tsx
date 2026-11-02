@@ -101,13 +101,17 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
   const { t } = useTranslation();
   const [updating, setUpdating] = useState(false);
 
+  // A negative value is the backend's "unknown" (a corrupt entry) — shown as
+  // such, never as "0s" / "just now", which would read as fresh data.
   const formatDuration = (seconds: number): string => {
+    if (seconds < 0) return '—';
     if (seconds < 60) return `${Math.round(seconds)}s`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
     return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   };
 
   const formatAgo = (seconds: number): string => {
+    if (seconds < 0) return '—';
     if (seconds < 5) return t('satellites.justNow', { defaultValue: 'just now' });
     if (seconds < 60) return t('satellites.secondsAgo', { defaultValue: '{{count}}s ago', count: Math.round(seconds) });
     if (seconds < 3600) return t('satellites.minutesAgo', { defaultValue: '{{count}}m ago', count: Math.floor(seconds / 60) });
@@ -152,6 +156,13 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
         <div className="flex items-center gap-3">
           {/* Version badge */}
           <Badge color="gray">v{satellite.version || 'unknown'}</Badge>
+
+          {/* The backend could not build this entry; its values are placeholders */}
+          {satellite.corrupt && (
+            <Badge color="red" icon={AlertCircle}>
+              {t('satellites.corrupt', { defaultValue: 'Data unreadable' })}
+            </Badge>
+          )}
 
           {/* Update available indicator */}
           {hasUpdate && !isUpdating && (

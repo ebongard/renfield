@@ -372,24 +372,20 @@ def test_late_terminal_stage_does_not_resurrect_a_completed_run():
 
 @pytest.mark.backend
 @pytest.mark.unit
-def test_a_stray_terminal_frame_still_ends_the_current_run():
-    """A KNOWN LIMIT -- recorded here instead of passed over in silence.
+def test_a_stray_terminal_frame_without_run_id_still_ends_the_current_run():
+    """A KNOWN LIMIT of the LEGACY protocol -- recorded, not passed over.
 
-    The guard protects a run that has already ENDED. It cannot tell a straggler
-    from an old run apart from a genuine message of the run currently in
-    flight, because the protocol carries no run id: ``send_update_progress``
-    transmits only ``{type, stage, progress, message}``. A late
-    ``rolling_back`` that arrives AFTER a new run has started therefore ends
-    that new run.
+    Since #1280 the backend mints a run id per run and drops a frame that
+    carries another one (``test_satellite_ota_run_id.py``). A frame WITHOUT an
+    id comes from firmware that predates it, and for that firmware the old
+    limit stands: the guard protects a run that has already ENDED, but cannot
+    tell a straggler of an old run from a genuine message of the run in flight.
+    A late ``rolling_back`` that arrives AFTER a new run has started therefore
+    ends that new run.
 
-    Narrow in practice: the straggler is scheduled separately on the satellite
-    and arrives within milliseconds, while a new run needs an ADMIN click.
-    Closing it cleanly would take a run id in the protocol -- a change to the
-    satellite firmware, which does not belong here. A heuristic would be
-    guesswork and therefore worse than the documented limit.
-
-    This test records what IS. If the id is introduced, it has to be rewritten
-    to the expectation wanted then -- it is the place where that surfaces.
+    Refusing id-less frames is no option -- the fleet updates over exactly this
+    path. Narrow in practice: the straggler arrives within milliseconds, while
+    a new run needs an ADMIN click. The limit disappears with the firmware.
     """
     from ha_glue.services.satellite_manager import UpdateStatus as US
 
