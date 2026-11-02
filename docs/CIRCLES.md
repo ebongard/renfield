@@ -32,7 +32,7 @@ Ein Nutzer A sieht ein Atom mit Eigentümer O und Tier T wenn **eine** der folge
 4. **TIER-REACH** — über `circle_memberships` ist A in einem Circle von O, dessen Tier ≤ T ist (Leiter-Reichweite)
 5. **KB-SHARE** (nur Dokumente, Chunks, Fakten) — in `kb_shares` existiert `(kb_id = Wissensbasis des Dokuments, user_id = A)`. Zur Abfragezeit über `d.knowledge_base_id` ausgewertet: eine Freigabe deckt **jedes** Dokument der Wissensbasis, auch später hochgeladene oder hineinverschobene. Eigentümer des Dokument-Atoms bleibt der KB-Eigentümer.
 
-🛑 **Bis `pc20261101` gab es keine Freigabe-Zeile.** `share_kb` schrieb je *vorhandenem* Dokument einen Grant (Zweig 3), sonst nichts: eine leere KB zu teilen speicherte nichts, ein späteres Dokument war nie gedeckt (Bob konnte seinen eigenen Upload in Alices geteilte KB nicht lesen, weil der Upload Alice gehört), und mit dem letzten Dokument verschwand die Freigabe. Auch die KB-Routenrechte (wer hochladen darf) wurden aus denselben Grants abgeleitet. Diese Alt-Grants bleiben bestehen und zählen weiter (Zugriff = `kb_shares` ODER Grant, Stufe = Maximum aus beiden), bis der Eigentümer `bin/backfill_kb_shares.py` laufen lässt (Standard: Trockenlauf, `--commit` schreibt und protokolliert, `--revert --log` nimmt genau das zurück). `revoke_kb_share` löscht die Zeile UND die Alt-Grants des Nutzers auf den Dokumenten der KB; `move_documents` löscht die Grants der verschobenen Dokumente (sie wanderten sonst mit dem Atom aus der geteilten KB heraus). Beides ist nur korrekt, weil heute kein Code einen Einzeldokument-Grant schreibt — ein solches Feature braucht eine Markierungsspalte.
+🛑 **Bis `pc20261101` gab es keine Freigabe-Zeile.** `share_kb` schrieb je *vorhandenem* Dokument einen Grant (Zweig 3), sonst nichts: eine leere KB zu teilen speicherte nichts, ein späteres Dokument war nie gedeckt (Bob konnte seinen eigenen Upload in Alices geteilte KB nicht lesen, weil der Upload Alice gehört), und mit dem letzten Dokument verschwand die Freigabe. Auch die KB-Routenrechte (wer hochladen darf) wurden aus denselben Grants abgeleitet. Diese Alt-Grants bleiben bestehen und zählen weiter (Zugriff = `kb_shares` ODER Grant, Stufe = Maximum aus beiden), bis der Eigentümer `bin/backfill_kb_shares.py` laufen lässt (Standard: Trockenlauf, `--commit` schreibt und protokolliert, `--revert --log` nimmt genau das zurück). `revoke_kb_share` löscht die Zeile UND die Alt-Grants des Nutzers auf den Dokumenten der KB; `move_documents` löscht die Grants der verschobenen Dokumente (sie wanderten sonst mit dem Atom aus der geteilten KB heraus; zum Eigentümerwechsel beim Verschieben siehe „Moving and deleting documents"). Beides ist nur korrekt, weil heute kein Code einen Einzeldokument-Grant schreibt — ein solches Feature braucht eine Markierungsspalte.
 
 Die Zweig-Logik wird einmal zentral formuliert in `services/circle_sql.py` und in jedes Retrieval-Modul als SQL-`WHERE`-Klausel injiziert — kein Retrieval-Code schreibt die Policy selbst.
 
@@ -112,8 +112,45 @@ that KB. Every endpoint that files into a caller-named KB therefore requires wri
 KB is read-only). `rag.manage` does not stand in for it. `POST /api/chat/upload/{id}/index` additionally requires the
 upload to be the caller's own: the conversation's `user_id` (circle reach is enough to READ an attachment, not to
 file it). Sites checked: `/api/knowledge/upload`, `/api/chat/upload/{id}/index` (both fixed), `/documents/move`
-(already gated: target write + per-source `check_document_access`), the ingest paths (folder, email, meetings,
-PDF split, auto-index): server-resolved owner KBs, no caller KB id. Proof: `tests/backend/test_kb_write_gate.py`.
+(target write + per-source `check_document_access`, plus the owner gate below), the ingest paths (folder, email,
+meetings, PDF split, auto-index): server-resolved owner KBs, no caller KB id. Proof: `tests/backend/test_kb_write_gate.py`.
+
+### Moving and deleting documents (#1460, #1461, #1462)
+
+- **A move to another owner's KB needs the document's OWNER (or `kb.all`).** Write access on source and target is
+  not enough. A write share lets the grantee work INSIDE the owner's KBs; it does not let him give her documents
+  away, least of all to himself, because he would keep reading them as owner after the share is revoked (#1462).
+  "Owner" = the `kb_document` atom's owner, for a legacy atom-less row the KB owner (`RAGService.document_owners`).
+  One foreign document refuses the whole batch (403). Moves between KBs of the SAME owner keep the old rule.
+- **The atom follows the KB (#1460).** `owner_after_move`: the new owner is the target KB's owner; an ownerless KB
+  has nobody to hand it to, so the owner stays (atom-owner fallback). On a change of owner,
+  `AtomService.rehome_kb_document` sets the atom owner and the target KB's `default_circle_tier` (what a fresh filing
+  there gets) and cascades both to `documents.circle_tier`, chunks, facts and fact atoms. Per-fact tier overrides
+  are reset to the document tier: they were the previous owner's choice about her circles. Same owner: the tier
+  stays as it is (the owner's choice; filing elsewhere neither widens nor narrows it). Before, the old owner kept
+  reading the moved document through the atom-owner fallback, and it kept the source KB's tier.
+- **Deleting a document purges its atoms in the same transaction (#1461).** `RAGService._delete_document_rows`
+  purges the facts' atoms, deletes chunks and the row, then purges the `kb_document` atom (its grants go with it,
+  FK CASCADE). `delete_knowledge_base` runs every document through it: the `documents.knowledge_base_id` FK has
+  no ON DELETE action, so deleting a non-empty KB used to fail outright on Postgres. Atoms left behind by older
+  deletes: `bin/purge_orphan_document_atoms.py` (dry run by default, `--commit` purges and logs what it erased;
+  no `--revert`, it is the erasure the delete promised; `__pending__` placeholders are left to the reaper).
+- **Delete needs an admin share.** `check_kb_access` used to read the action `delete` as the READ level, so a read
+  grantee could delete the owner's documents and the KB. Now `delete` needs `admin` (owner and `kb.all` as before),
+  and an unknown action is denied. Proof for all four: `tests/backend/test_kb_document_move_delete_pg.py`.
+
+Count of orphans (read-only, numbers only):
+
+```sql
+SELECT a.atom_type, COUNT(*) AS atoms, COUNT(g.atom_id) AS grants
+FROM atoms a
+LEFT JOIN atom_explicit_grants g ON g.atom_id = a.atom_id
+WHERE (a.atom_type = 'kb_document'
+       AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.id::text = a.source_id))
+   OR (a.atom_type = 'document_fact'
+       AND NOT EXISTS (SELECT 1 FROM document_facts f WHERE f.id::text = a.source_id))
+GROUP BY a.atom_type;
+```
 
 Attaching is a write on the conversation: `POST /api/chat/upload` applies the chat's own message-write rule to its
 `session_id` (`chat_upload._may_write_session` → `ConversationService.reaches`, exactly as `save_message` with
