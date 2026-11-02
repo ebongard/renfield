@@ -1049,7 +1049,29 @@
     "statusSplitPending": "Splitting",
     "statusSplitReview": "Split review pending",
     "statusSplitArchived": "Split (original archived)",
-    "sendToSimba": "Send to Simba"
+    "sendToSimba": "Send to Simba",
+    "shareKnowledgeBase": "Manage shares",
+    "shares": {
+      "title": "Shares of “{{name}}”",
+      "list": "Shares",
+      "empty": "This knowledge base is not shared with anyone.",
+      "levelFor": "Level for {{name}}",
+      "levelLabel": "Level",
+      "level": {
+        "read": "Read",
+        "write": "Write",
+        "admin": "Manage"
+      },
+      "mayDelete": "may delete",
+      "revoke": "Revoke share",
+      "revokeFor": "Revoke share for {{name}}",
+      "lockedHint": "This share carries the right to delete; only the owner can change or revoke it.",
+      "add": "Add share",
+      "user": "Person",
+      "userIdHint": "The user list is not available to you; enter the user ID.",
+      "switchHint": "Deleting is not a level: only those the owner gives “may delete” can delete documents. Only the owner deletes the knowledge base itself.",
+      "addButton": "Share"
+    }
   },
   "memory": {
     "title": "Memories",

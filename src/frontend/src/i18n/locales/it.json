@@ -707,7 +707,29 @@
     "statusSplitPending": "Suddivisione in corso",
     "statusSplitReview": "Suddivisione da verificare",
     "statusSplitArchived": "Suddiviso (originale archiviato)",
-    "sendToSimba": "Invia a Simba"
+    "sendToSimba": "Invia a Simba",
+    "shareKnowledgeBase": "Gestisci condivisioni",
+    "shares": {
+      "title": "Condivisioni di “{{name}}”",
+      "list": "Condivisioni",
+      "empty": "Questa base di conoscenza non è condivisa con nessuno.",
+      "levelFor": "Livello per {{name}}",
+      "levelLabel": "Livello",
+      "level": {
+        "read": "Lettura",
+        "write": "Scrittura",
+        "admin": "Gestione"
+      },
+      "mayDelete": "può eliminare",
+      "revoke": "Revoca condivisione",
+      "revokeFor": "Revoca condivisione per {{name}}",
+      "lockedHint": "Questa condivisione include il diritto di eliminare; solo il proprietario può modificarla o revocarla.",
+      "add": "Aggiungi condivisione",
+      "user": "Persona",
+      "userIdHint": "L'elenco utenti non è disponibile per te; inserisci l'ID utente.",
+      "switchHint": "Eliminare non è un livello: solo chi riceve “può eliminare” dal proprietario può eliminare documenti. Solo il proprietario elimina la base di conoscenza stessa.",
+      "addButton": "Condividi"
+    }
   },
   "memory": {
     "title": "Memorie",

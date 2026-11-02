@@ -23,6 +23,7 @@ import {
   Archive,
   ArrowUp,
   ArrowDown,
+  Users,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { formatDateTime } from '../utils/datetime';
@@ -35,6 +36,7 @@ import Badge from '../components/Badge';
 import StatusBadge from '../components/knowledge/StatusBadge';
 import FaktenPanel from '../components/knowledge/FaktenPanel';
 import DuplicateDialog from '../components/knowledge/DuplicateDialog';
+import KbShareDialog from '../components/knowledge/KbShareDialog';
 import type { ExistingDocument } from '../components/knowledge/DuplicateDialog';
 import { useDocumentPolling } from '../hooks/useDocumentPolling';
 import type { KbDocument } from '../hooks/useDocumentPolling';
@@ -55,6 +57,7 @@ import {
   type StatusFilter,
   type SearchResultChunk,
   type DocumentRow,
+  type KnowledgeBaseRow,
   type DocSortKey,
   type SortOrder,
 } from '../api/resources/knowledge';
@@ -198,6 +201,14 @@ export default function KnowledgePage() {
   const statsQuery = useKnowledgeStatsQuery();
   const documents = documentsQuery.data ?? [];
   const knowledgeBases = basesQuery.data ?? [];
+  // The KB whose share dialog is open; null = closed.
+  const [shareKb, setShareKb] = useState<KnowledgeBaseRow | null>(null);
+  // Delete rights come from the KB list (the backend's rule): a document in a
+  // KB may be deleted with `can_delete`; a KB-less document is its atom owner's,
+  // which the list does not carry — the button stays and the backend decides.
+  const kbById = new Map(knowledgeBases.map((kb) => [kb.id, kb]));
+  const mayDeleteDocument = (doc: DocumentRow) =>
+    doc.knowledge_base_id == null || kbById.get(doc.knowledge_base_id)?.can_delete === true;
   const stats = statsQuery.data ?? null;
   const loading = documentsQuery.isLoading || basesQuery.isLoading || statsQuery.isLoading;
 
@@ -658,11 +669,16 @@ export default function KnowledgePage() {
             >
               {t('common.all')}
             </button>
-            {knowledgeBases.map((kb) => (
+            {knowledgeBases.map((kb) => {
+              // Shares are managed by the owner and admin grantees (kb.all reads
+              // as "admin"); the KB itself is deleted by the owner / kb.all only.
+              const mayShare = kb.permission === 'owner' || kb.permission === 'admin';
+              const mayDeleteKb = kb.can_delete_kb === true;
+              return (
               <div key={kb.id} className="flex items-center gap-1">
                 <button
                   onClick={() => setSelectedKnowledgeBase(kb.id)}
-                  className={`px-4 py-2 rounded-l-lg text-sm font-medium transition-colors ${
+                  className={`px-4 py-2 ${mayShare || mayDeleteKb ? 'rounded-l-lg' : 'rounded-lg'} text-sm font-medium transition-colors ${
                     selectedKnowledgeBase === kb.id
                       ? 'bg-primary-600 text-white'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
@@ -673,15 +689,29 @@ export default function KnowledgePage() {
                     ({kb.document_count || 0})
                   </span>
                 </button>
-                <button
-                  onClick={() => handleDeleteKnowledgeBase(kb.id, kb.name)}
-                  className="px-2 py-2 rounded-r-lg bg-gray-200 text-gray-500 hover:text-red-500 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-600 transition-colors"
-                  title={t('knowledge.deleteKnowledgeBase')}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {mayShare && (
+                  <button
+                    onClick={() => setShareKb(kb)}
+                    className={`px-2 py-2 ${mayDeleteKb ? '' : 'rounded-r-lg'} bg-gray-200 text-gray-500 hover:text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-600 transition-colors`}
+                    title={t('knowledge.shareKnowledgeBase')}
+                    aria-label={`${t('knowledge.shareKnowledgeBase')}: ${kb.name}`}
+                  >
+                    <Users className="w-4 h-4" />
+                  </button>
+                )}
+                {mayDeleteKb && (
+                  <button
+                    onClick={() => handleDeleteKnowledgeBase(kb.id, kb.name)}
+                    className="px-2 py-2 rounded-r-lg bg-gray-200 text-gray-500 hover:text-red-500 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-600 transition-colors"
+                    title={t('knowledge.deleteKnowledgeBase')}
+                    aria-label={`${t('knowledge.deleteKnowledgeBase')}: ${kb.name}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1102,13 +1132,15 @@ export default function KnowledgePage() {
                       >
                         <RefreshCw className="w-4 h-4" />
                       </button>
-                      <button
-                        onClick={() => handleDeleteDocument(doc.id, doc.filename)}
-                        className="btn-icon btn-icon-danger"
-                        title={t('common.delete')}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {mayDeleteDocument(doc) && (
+                        <button
+                          onClick={() => handleDeleteDocument(doc.id, doc.filename)}
+                          className="btn-icon btn-icon-danger"
+                          title={t('common.delete')}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1120,6 +1152,9 @@ export default function KnowledgePage() {
       </div>
 
       {ConfirmDialogComponent}
+      {shareKb && (
+        <KbShareDialog kb={shareKb} isOpen onClose={() => setShareKb(null)} />
+      )}
       {simbaEnabled && (
         <SimbaSendModal
           documentId={simbaSendDoc?.id ?? null}

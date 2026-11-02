@@ -15,11 +15,35 @@ export type DocStatus =
   | 'split_archived';
 export type StatusFilter = DocStatus | 'all';
 
+/** The caller's standing on a KB: `owner`, a share level, or null (public read). */
+export type KbPermission = 'owner' | KbShareLevel;
+
 export interface KnowledgeBaseRow {
   id: number;
   name: string;
   description?: string | null;
   document_count?: number;
+  owner_id?: number | null;
+  owner_username?: string | null;
+  permission?: KbPermission | null;
+  /** May delete DOCUMENTS here: owner, kb.all, or a share with the delete switch. */
+  can_delete?: boolean;
+  /** May delete the KB itself (and set the delete switch): owner or kb.all only. */
+  can_delete_kb?: boolean;
+}
+
+export type KbShareLevel = 'read' | 'write' | 'admin';
+
+/** One share of a KB (`GET /bases/{id}/permissions`); `id` is the grantee's user id. */
+export interface KbShare {
+  id: number;
+  user_id: number;
+  username: string;
+  permission: KbShareLevel;
+  granted_by: number | null;
+  granted_by_username: string | null;
+  created_at: string;
+  can_delete: boolean;
 }
 
 export interface KnowledgeStats {
@@ -184,6 +208,71 @@ async function bulkSetDocumentTierRequest(
     tier,
   });
   return response.data;
+}
+
+async function fetchKbShares(kbId: number): Promise<KbShare[]> {
+  const response = await apiClient.get<KbShare[]>(`/api/knowledge/bases/${kbId}/permissions`);
+  return response.data ?? [];
+}
+
+export interface ShareKbInput {
+  kbId: number;
+  userId: number;
+  permission: KbShareLevel;
+  /** Omitted = keep the stored switch. Only the owner / kb.all may send it. */
+  canDelete?: boolean;
+}
+
+async function shareKbRequest({ kbId, userId, permission, canDelete }: ShareKbInput): Promise<KbShare> {
+  const body: { user_id: number; permission: KbShareLevel; can_delete?: boolean } = {
+    user_id: userId,
+    permission,
+  };
+  if (canDelete !== undefined) body.can_delete = canDelete;
+  const response = await apiClient.post<KbShare>(`/api/knowledge/bases/${kbId}/share`, body);
+  return response.data;
+}
+
+async function revokeKbShareRequest({ kbId, userId }: { kbId: number; userId: number }): Promise<void> {
+  await apiClient.delete(`/api/knowledge/bases/${kbId}/permissions/${userId}`);
+}
+
+export function useKbSharesQuery(kbId: number, enabled = true) {
+  return useApiQuery(
+    {
+      queryKey: keys.knowledge.permissions(kbId),
+      queryFn: () => fetchKbShares(kbId),
+      staleTime: STALE.DEFAULT,
+      enabled,
+    },
+    'common.error',
+  );
+}
+
+export function useShareKnowledgeBase() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: shareKbRequest,
+      onSuccess: (_data, vars) => {
+        queryClient.invalidateQueries({ queryKey: keys.knowledge.permissions(vars.kbId) });
+      },
+    },
+    'common.error',
+  );
+}
+
+export function useRevokeKbShare() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: revokeKbShareRequest,
+      onSuccess: (_data, vars) => {
+        queryClient.invalidateQueries({ queryKey: keys.knowledge.permissions(vars.kbId) });
+      },
+    },
+    'common.error',
+  );
 }
 
 export function useKnowledgeDocumentsQuery(filter: DocsFilter, enabled = true) {
