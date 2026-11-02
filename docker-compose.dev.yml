@@ -87,6 +87,7 @@ services:
       N8N_MCP_TELEMETRY_DISABLED: "true"
     volumes:
       - ./src/backend:/app
+      - ./src/satellite:/app/satellite  # For OTA update package building
       - ./tests:/tests
       - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro  # MCP server configuration
       - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro  # Agent role definitions

@@ -105,8 +105,7 @@ if [[ $SKIP_BACKEND == 0 ]]; then
   # wakeword models + satellite source (bundled into the backend image). The
   # commands come from bin/lib/backend-build-extras.sh, shared with the compose
   # stager bin/stage-backend-build.sh (#1359). The list is read on FD 3, not
-  # stdin: a remote rsync spawns ssh, which reads stdin and would swallow the
-  # remaining commands.
+  # stdin, so a command that reads stdin cannot swallow the rest of the list.
   while IFS= read -r -u 3 _extras_cmd; do
     run "$_extras_cmd"
   done 3< <(backend_extras_rsync_cmds "$REPO_ROOT" "$BUILD_HOST:$STAGING/src/backend")
