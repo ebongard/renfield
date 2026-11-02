@@ -27,8 +27,8 @@ gains no document it cannot already read. That also flags every legacy share
 whose KB received uploads since (the gap #1464 closed) -- adopt those after a
 look at ``kb_docs`` / ``docs_after_grant``. Not detectable: documents moved by
 their own owner, without split_batch, into a KB older than the grant that holds
-nothing but them; converting such a pair shares only what is uploaded there
-LATER. The dry run therefore lists every CLEAN pair too: read it before
+nothing but them; converting such a pair shares only the documents uploaded
+OR MOVED into that KB later. The dry run therefore lists every CLEAN pair too: read it before
 ``--commit``.
 
 - Default is a DRY RUN: counts only, no writes.

@@ -88,7 +88,9 @@ _LEGACY_GRANTS_FROM = (
 #   partial          a document of the KB that existed when the grant was given
 #                    (created_at <= granted_at, or no created_at) carries no
 #                    grant for the user -- the old share_kb granted EVERY
-#                    document of the KB in one statement;
+#                    document of the KB in one statement; a document without
+#                    an atom counts (it could never be granted, a kb_shares
+#                    row opens it);
 #   added_after_grant  a document added to the KB after the grant carries no
 #                    grant for the user (the private uploads after a move; but
 #                    also every upload into a genuinely shared KB since, the gap
@@ -102,7 +104,7 @@ _LEGACY_GRANTS_FROM = (
 # A clean pair therefore gains NO document it cannot already read. Not
 # detectable: documents moved (by their own owner, leaving no trace a-c) into a
 # KB that is older than the grant and holds nothing but them -- converting that
-# pair shares only the documents UPLOADED LATER into that KB.
+# pair shares only the documents uploaded OR MOVED into that KB later.
 UNCOVERED_PAIRS_SQL = (
     "WITH legacy AS ("
     "  SELECT d.knowledge_base_id AS kb_id, g.granted_to_user_id AS user_id, "
@@ -121,7 +123,10 @@ UNCOVERED_PAIRS_SQL = (
     "       BOOL_OR(u.granted_by IS DISTINCT FROM kb.owner_id) AS foreign_granter, "
     "       BOOL_OR(EXISTS ("
     "         SELECT 1 FROM documents d2 "
-    "         JOIN atoms a2 ON a2.source_table = 'documents' AND a2.source_id = d2.id::text "
+    # LEFT: a document without an atom can carry no grant, yet a kb_shares
+    # row opens it (the share branch has no atom condition) -- so it counts.
+    "         LEFT JOIN atoms a2 ON a2.source_table = 'documents' "
+    "                           AND a2.source_id = d2.id::text "
     "         WHERE d2.knowledge_base_id = u.kb_id "
     "           AND (d2.created_at IS NULL OR d2.created_at <= u.granted_at) "
     "           AND NOT EXISTS (SELECT 1 FROM atom_explicit_grants g2 "

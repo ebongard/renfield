@@ -169,6 +169,9 @@ class TestDocumentGrantScope:
         assert not await _sees_doc(db_session, bob.id, other)
 
     async def test_kb_share_behaves_as_before(self, db_session, people):
+        """Unchanged by #1446 (also green on the base): a kb_shares row lists
+        the KB at its level, gives its rights, appears in the share list at that
+        level and opens the documents."""
         alice, bob, _ = people
         haus = await _kb(db_session, alice.id, "Haus")
         brief = await _doc(db_session, haus, "brief")
@@ -176,10 +179,20 @@ class TestDocumentGrantScope:
 
         assert (await _listed_kbs(db_session, bob))[haus.id] == "write"
         assert await _kb_rights(db_session, haus, bob) == (True, True)
+        assert [(s["user_id"], s["permission"])
+                for s in await ks.list_kb_shares(db_session, haus.id)] == [(bob.id, "write")]
+        assert await _sees_doc(db_session, bob.id, brief)
+
+    async def test_a_kb_share_row_is_marked_as_such(self, db_session, people):
+        """New with #1446: every share-list row says its kind; a kb_share row
+        carries no document count."""
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        await ks.share_kb(db_session, haus.id, bob.id, "write", granted_by=alice.id)
+
         assert [(s["kind"], s["permission"], s["documents"])
                 for s in await ks.list_kb_shares(db_session, haus.id)] == [
             ("kb_share", "write", None)]
-        assert await _sees_doc(db_session, bob.id, brief)
 
 
     async def test_owner_sees_and_revokes_a_document_grant_only_person(
@@ -437,6 +450,46 @@ class TestBackfillCarriesLegacySharesOver:
         assert (pair.kb_docs, pair.docs_after_grant) == (3, 1)
         await self._assert_never_converted(db_session, privat, bob)
         assert not await _sees_doc(db_session, bob.id, geheim)
+
+    @pytest.mark.parametrize("created", ["before_the_grant", "unknown"])
+    async def test_an_atomless_document_from_before_the_grant_is_partial(
+        self, db_session, people, created,
+    ):
+        """A legacy document without an atom (atom_id NULL, no atoms row) could
+        never be granted, yet a kb_shares row opens it (the share branch has no
+        atom condition): converting the pair would expose it, so it is partial."""
+        from services.circle_sql import document_chunks_circles_filter
+
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(90))
+        # Two granted documents: no other flag (single_grant before #1446 r4)
+        # may catch the pair -- only the atom-less one gives it away.
+        for label in ("gewaehrt-1", "gewaehrt-2"):
+            await _doc(db_session, haus, label, created_at=_t(80))
+        alt = await _doc(db_session, haus, "ohne-atom", created_at=_t(80))
+        atom_id = alt.atom_id
+        await db_session.execute(text(
+            "UPDATE documents SET atom_id = NULL, created_at = :at WHERE id = :d"),
+            {"at": _t(80) if created == "before_the_grant" else None, "d": alt.id})
+        await db_session.execute(text("DELETE FROM atoms WHERE atom_id = :a"), {"a": atom_id})
+        await db_session.commit()
+        await _old_share_kb(db_session, haus, bob.id, alice.id, "read", _t(70))
+
+        async def bob_reads_alt() -> bool:
+            clause, params = document_chunks_circles_filter(bob.id)
+            return (await db_session.execute(
+                text("SELECT 1 FROM document_chunks dc JOIN documents d ON d.id = dc.document_id "
+                     "LEFT JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id "
+                     f"WHERE d.id = :id AND ({clause}) LIMIT 1"),
+                {**params, "id": alt.id})).first() is not None
+
+        flags = await self._flags(db_session)
+        assert flags[(haus.id, bob.id)] == {"partial"}
+        await self._assert_never_converted(db_session, haus, bob)
+        assert not await bob_reads_alt()
+        # The exposure the flag prevents is real: a share row opens it.
+        await ks.adopt_kb_share_pairs(db_session, [(haus.id, bob.id)], dry_run=False)
+        assert await bob_reads_alt()
 
     async def test_the_remaining_blind_spot_converts_only_what_is_readable(
         self, db_session, people,
