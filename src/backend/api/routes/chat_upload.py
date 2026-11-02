@@ -139,6 +139,8 @@ async def upload_chat_document(
         error_message=None,
         knowledge_base_id=knowledge_base_id,
         file_path=str(file_path),
+        # From the authenticated caller only — never from a form field (#1459).
+        uploaded_by_user_id=user.id if user else None,
     )
     db.add(upload)
     await db.commit()
@@ -308,12 +310,17 @@ async def _may_write_session(db: AsyncSession, session_id: str, user) -> bool:
 
 
 async def _caller_owns_upload(db: AsyncSession, upload: ChatUpload, user) -> bool:
-    """True when the upload hangs in a conversation the caller OWNS.
+    """True when the upload is the caller's own: they UPLOADED it, or it hangs
+    in a conversation they OWN.
 
-    ``chat_uploads`` has no uploader column; the owning conversation is the
-    only record of whose upload it is. A conversation without an owner
-    (legacy row) belongs to nobody here — fail-closed.
+    ``uploaded_by_user_id`` (#1459) lets a member of a shared room thread file
+    or forward their own attachment, which the thread owner (e.g. the kitchen
+    device account) still may as well. A row from before the column existed
+    has NULL there and keeps the owner-only rule — nobody is guessed. A
+    conversation without an owner belongs to nobody here — fail-closed.
     """
+    if upload.uploaded_by_user_id == user.id:  # NULL never matches
+        return True
     owner_id = (await db.execute(
         select(Conversation.user_id)
         .where(Conversation.session_id == upload.session_id)
@@ -356,10 +363,11 @@ async def index_chat_upload(
 
     Under auth this is a WRITE twice over, and both halves are checked:
 
-    - the upload must be the caller's own: reaching it through a shared
-      conversation (circle reach) is enough to read it, not to file it — the
-      filed document gets an owner, and that must not become somebody else's
-      content;
+    - the upload must be the caller's own — they uploaded it, or they own the
+      conversation it hangs in (``_caller_owns_upload``): reaching it through
+      a shared conversation (circle reach) is enough to read it, not to file
+      it — the filed document gets an owner, and that must not become
+      somebody else's content;
     - the target KB must be one the caller may write (``check_kb_access``:
       owner, ``kb.all``, or an explicit write/admin share). The KB owner is
       granted every document in the KB and becomes the document's atom owner,
@@ -722,11 +730,12 @@ async def forward_via_email(
 ):
     """Forward a chat upload via Email MCP.
 
-    Under auth only the upload's OWNER may forward it (the same rule as
-    ``/index``): the original file leaves the house to any address the caller
-    names. Reaching the upload through a shared conversation is enough to read
-    its preview, not to send the file on. Paperless and Simba stay reach-based
-    (they file inside the household's own systems).
+    Under auth only the upload's OWNER — its uploader or the conversation's
+    owner — may forward it (the same rule as ``/index``): the original file
+    leaves the house to any address the caller names. Reaching the upload
+    through a shared conversation is enough to read its preview, not to send
+    the file on. Paperless and Simba stay reach-based (they file inside the
+    household's own systems).
     """
     # Fetch upload (scoped to the authenticated user's conversations)
     upload = await _get_owned_upload(db, upload_id, user)

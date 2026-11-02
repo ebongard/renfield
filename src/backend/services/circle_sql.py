@@ -438,6 +438,27 @@ def document_chunks_circles_filter(
     )
 
 
+def documents_circles_filter(
+    asker_id: int,
+    *,
+    doc_alias: str = "d",
+    kb_alias: str = "kb",
+    peer: PeerScope | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Returns (clause, params) for circle-filtering ``documents`` themselves.
+
+    The same branches as :func:`document_chunks_circles_filter`, with the tier
+    read from ``d.circle_tier`` (which the chunks mirror). Used wherever a
+    DOCUMENT, not a chunk, is the unit: the document-search gate, the title
+    lookup for fact provenance and ``CircleResolver.can_access_atom`` for
+    ``kb_document`` atoms -- so a document is reachable by exactly the rule its
+    chunks are. Callers MUST LEFT JOIN knowledge_bases under ``kb_alias``.
+    """
+    return document_chunks_circles_filter(
+        asker_id, chunk_alias=doc_alias, doc_alias=doc_alias, kb_alias=kb_alias, peer=peer,
+    )
+
+
 def document_facts_circles_filter(
     asker_id: int,
     *,

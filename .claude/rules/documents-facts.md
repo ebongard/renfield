@@ -42,7 +42,7 @@ commit, gated by `schicht_a_extraction_enabled`. `display_name = generated_title
 
 ## Document search (`GET /api/knowledge/documents?q=`, always-on) — `services/document_search.py::search_documents`
 Three signals — NAME (`documents.search_vector` FTS + ILIKE), FACTS, CHUNKS — RRF-fused (`rag_hybrid_rrf_k`), then
-**ONE circle gate on the fused ids** (`document_chunks_circles_filter`). **The NAME signal is NOT circle-filtered on
+**ONE circle gate on the fused ids** (`documents_circles_filter`, the document-level form of the chunk filter). **The NAME signal is NOT circle-filtered on
 its own**: its safety rests on that gate, which is Postgres-only — hence `gate_available = not enforce_circles or
 postgres`. FACTS/CHUNKS are filtered in-service. A failing signal degrades to the others; blank `q` → the recency
 list. Migration `pc20260829_documents_fts` (GENERATED `search_vector`, GIN `CONCURRENTLY`).
