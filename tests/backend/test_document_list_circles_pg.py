@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import update
+from sqlalchemy import text, update
 
 from models.database import CircleMembership, Document, KnowledgeBase, Role, User
 from services.auth_service import get_optional_user
+from services.document_search import search_documents, visible_document_ids
 from services.kb_shares_service import share_kb
 from services.rag_service import RAGService
 from utils.config import settings
@@ -69,6 +70,30 @@ async def _doc(db, kb: KnowledgeBase, label: str) -> Document:
     await db.execute(update(Document).where(Document.id == doc.id).values(status="completed"))
     await db.commit()
     return doc
+
+
+async def _kbless_doc(db, owner: User, label: str) -> Document:
+    """A document with no KB (global RAG / ingest): ``kb.owner_id`` is NULL, so
+    only the atom-owner fallback of the owner branch reaches it."""
+    doc = await RAGService(db).create_document_record(
+        file_path=f"/tmp/{label}.pdf", knowledge_base_id=None,
+        filename=f"{label}.pdf", file_hash=f"h-{label}",
+        owner_user_id_override=owner.id, circle_tier_override=TIER_SELF,
+    )
+    await db.execute(update(Document).where(Document.id == doc.id).values(status="completed"))
+    await db.commit()
+    return doc
+
+
+async def _grant(db, doc: Document, to_user: User, by_user: User) -> None:
+    """A per-document explicit grant (branch 3), as the legacy share wrote it."""
+    await db.execute(
+        text("INSERT INTO atom_explicit_grants "
+             "(atom_id, granted_to_user_id, permission_level, granted_by, granted_at) "
+             "VALUES (:a, :to, 'read', :by, NOW())"),
+        {"a": doc.atom_id, "to": to_user.id, "by": by_user.id},
+    )
+    await db.commit()
 
 
 @pytest.fixture
@@ -205,3 +230,59 @@ async def test_pagination_and_sort_run_after_the_filter(
 
     by_name = await _listed(async_client, sort="name", order="asc", limit=3)
     assert by_name == [visible[0], visible[1], visible[2]]  # vis-0 < vis-1 < vis-2
+
+
+async def test_kbless_document_reaches_only_its_atom_owner(
+    async_client, db_session, people, auth_on
+):
+    doc = await _kbless_doc(db_session, people["alice"], "alice-ohne-kb")
+
+    _as(people["alice"])
+    assert doc.id in await _listed(async_client)
+    _as(people["carol"])
+    assert doc.id not in await _listed(async_client)
+
+
+async def test_explicit_grant_opens_the_list(async_client, db_session, people, auth_on):
+    kb = await _kb(db_session, people["alice"], "Alice Einzelgrant")
+    granted = await _doc(db_session, kb, "alice-grant")
+    other = await _doc(db_session, kb, "alice-kein-grant")
+    await _grant(db_session, granted, people["carol"], people["alice"])
+
+    _as(people["carol"])
+    ids = await _listed(async_client)
+    assert granted.id in ids
+    assert other.id not in ids  # the grant covers its one document, not the KB
+
+
+async def test_recency_set_equals_the_search_gate_set(
+    async_client, db_session, people, auth_on
+):
+    """Parity: one predicate for both branches. Every reach branch plus hidden
+    rows; all filenames carry the token the search matches by name."""
+    alice, carol = people["alice"], people["carol"]
+    private_kb = await _kb(db_session, alice, "P privat")
+    await _doc(db_session, private_kb, "parity-hidden")
+    await _kbless_doc(db_session, alice, "parity-hidden-kbless")
+    shared_kb = await _kb(db_session, alice, "P geteilt")
+    await _doc(db_session, shared_kb, "parity-shared")
+    await share_kb(db_session, shared_kb.id, carol.id, "read", granted_by=alice.id)
+    house_kb = await _kb(db_session, alice, "P Haushalt", tier=TIER_HOUSEHOLD)
+    await _doc(db_session, house_kb, "parity-house")
+    db_session.add(CircleMembership(
+        circle_owner_id=alice.id, member_user_id=carol.id,
+        dimension="tier", value=TIER_HOUSEHOLD, granted_by=alice.id,
+    ))
+    grant_kb = await _kb(db_session, alice, "P Grant")
+    await _grant(db_session, await _doc(db_session, grant_kb, "parity-grant"), carol, alice)
+    await _doc(db_session, await _kb(db_session, carol, "P eigen"), "parity-own")
+    await db_session.commit()
+
+    _as(carol)
+    listed = set(await _listed(async_client, limit=500))
+    gate = {r[0] for r in (await db_session.execute(visible_document_ids(carol.id))).all()}
+    searched = {d.id for d in await search_documents(
+        db_session, "parity", asker_id=carol.id, enforce_circles=True, limit=500,
+    )}
+    assert len(listed) == 4  # shared, house, grant, own
+    assert listed == gate == searched
