@@ -854,6 +854,13 @@ class ChatUpload(Base):
     error_message = Column(Text, nullable=True)
     knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=True)
     file_path = Column(String(512), nullable=True)
+    # Who attached the file (#1459): set server-side from the authenticated
+    # caller, never from a request field. NULL on rows from before the column
+    # existed and under auth off without a user — those keep the owner-only
+    # rule for filing (/index, /email).
+    uploaded_by_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
     created_at = Column(DateTime, default=_utcnow)
 
 
