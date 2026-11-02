@@ -16,7 +16,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select, update
 
-from models.database import Document, DocumentChunk, KnowledgeBase, Role, User
+from models.database import TIER_PUBLIC, Document, DocumentChunk, KnowledgeBase, Role, User
 from services.auth_service import get_optional_user
 from services.kb_shares_service import share_kb
 from services.rag_service import RAGService
@@ -211,11 +211,12 @@ async def test_kb_document_count_rises_with_reach(async_client, db_session, worl
     on the public tier, dave's count follows -- the filter counts reach, it
     does not just zero foreign KBs."""
     await db_session.execute(
-        update(Document).where(Document.filename == "a-public.pdf").values(circle_tier=4)
+        update(Document).where(Document.filename == "a-public.pdf").values(circle_tier=TIER_PUBLIC)
     )
     await db_session.commit()
     _as(world["dave"])
     assert await _kb_counts(async_client) == {"Alice oeffentlich": 1}
+    assert await _one_kb_count(async_client, db_session, "Alice oeffentlich") == 1
 
 
 async def test_owner_and_share_counts_are_whole(async_client, db_session, world, auth_on):
@@ -239,3 +240,22 @@ async def test_kb_all_and_auth_off_count_kb_documents_globally(
     _as(None)
     assert await _kb_counts(async_client) == expected
     assert await _one_kb_count(async_client, db_session, "Alice privat") == 2
+
+
+
+async def test_get_knowledge_base_loads_documents_only_on_request(db_session, world):
+    """``get_knowledge_base`` no longer eager-loads documents by default (the
+    detail route counts per caller instead); the KB delete asks for them with
+    ``with_documents=True`` because it removes their files."""
+    kb = await _kb(db_session, world["carol"], "Carol weg")
+    doc = await _doc(db_session, "c-weg", kb=kb)
+    kb_id, doc_id = kb.id, doc.id
+    db_session.expunge_all()
+
+    rag = RAGService(db_session)
+    loaded = await rag.get_knowledge_base(kb_id, with_documents=True)
+    assert [d.id for d in loaded.documents] == [doc_id]
+    db_session.expunge_all()
+    bare = await rag.get_knowledge_base(kb_id)
+    assert bare.id == kb_id
+    assert "documents" not in bare.__dict__  # not loaded

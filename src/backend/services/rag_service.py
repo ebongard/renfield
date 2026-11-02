@@ -1125,13 +1125,16 @@ class RAGService(AtomOwnerResolverMixin):
             kbs.append(kb)
         return kbs
 
-    async def get_knowledge_base(self, kb_id: int) -> KnowledgeBase | None:
-        """Fetch a knowledge base by id"""
-        stmt = (
-            select(KnowledgeBase)
-            .options(selectinload(KnowledgeBase.documents))
-            .where(KnowledgeBase.id == kb_id)
-        )
+    async def get_knowledge_base(
+        self, kb_id: int, *, with_documents: bool = False
+    ) -> KnowledgeBase | None:
+        """Fetch a knowledge base by id. ``with_documents`` eager-loads its
+        documents -- only the KB delete needs them (it removes their files);
+        every other caller reads KB columns only, and a document count goes
+        through ``count_kb_documents`` (per caller), never ``len(kb.documents)``."""
+        stmt = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+        if with_documents:
+            stmt = stmt.options(selectinload(KnowledgeBase.documents))
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -1205,7 +1208,7 @@ class RAGService(AtomOwnerResolverMixin):
 
     async def delete_knowledge_base(self, kb_id: int) -> bool:
         """Delete a knowledge base with all of its documents"""
-        kb = await self.get_knowledge_base(kb_id)
+        kb = await self.get_knowledge_base(kb_id, with_documents=True)
         if not kb:
             return False
 
