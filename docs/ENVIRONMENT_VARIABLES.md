@@ -251,7 +251,11 @@ Segmente zu `{id}` (Kardinalitätsschutz).
 - `renfield_voice_empty_turn_total{source,kind}`: Sprachdurchläufe ohne Text,
   nach Grund (`no_audio`, `stt_error`, `vad_floor`, `vad_heard_speech`,
   `cap_reached`, `button`, `unknown_end`; #1386, Bedeutung in
-  `ha_glue/services/voice_empty_turn.py`)
+  `ha_glue/services/voice_empty_turn.py`). `vad_floor` gegen
+  `vad_heard_speech` entscheidet ab Satellit v1.4.13 dessen eigene Meldung
+  `vad_speech_seen` in `audio_end`, bei älteren Satelliten die Aufnahmelänge;
+  nur `vad_heard_speech` löst am Satelliten ein kurzes LED-Signal aus
+  (`feedback_cue`, kein Ton)
 - Beide mit 0 vorbelegt, damit `increase()` auch das erste Ereignis sieht
 - Circuit Breaker State + Failures
 

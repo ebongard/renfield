@@ -25,7 +25,12 @@ from ha_glue.services.opus_transport import (
     parse_audio_frame,
 )
 from ha_glue.services.satellite_manager import MAX_DEVICE_TEXT_CHARS, device_text
-from ha_glue.services.voice_empty_turn import SATELLITE_VAD_FLOOR_SECONDS, record_empty_turn
+from ha_glue.services.voice_empty_turn import (
+    SATELLITE_VAD_FLOOR_SECONDS,
+    feedback_cue_for,
+    record_empty_turn,
+    vad_speech_seen_from,
+)
 from ha_glue.utils.config import ha_glue_settings
 from models.websocket_messages import WSErrorCode
 from services.database import AsyncSessionLocal
@@ -622,6 +627,24 @@ async def _end_empty_turn(manager, websocket, session_id: str, detail: dict) -> 
             pass  # The satellite may have disconnected
 
 
+async def _send_feedback_cue(websocket, detail: dict | None) -> None:
+    """Tell the satellite to show the LED cue for this empty turn, if it has
+    one (#1386: speech heard, nothing understood; a false wake gets none).
+
+    Sent AFTER the session ended, i.e. after `state: idle`: the satellite
+    shows the cue only while idle and then returns to the idle pattern. A
+    satellite before v1.4.13 ignores the unknown message type. Never raises:
+    a lost cue must not cost the connection.
+    """
+    cue = feedback_cue_for(detail)
+    if cue is None:
+        return
+    try:
+        await websocket.send_json({"type": "feedback_cue", "cue": cue})
+    except Exception as e:
+        logger.warning(f"⚠️ Could not send feedback cue: {e!r}")
+
+
 @router.websocket("/ws/satellite")
 async def satellite_websocket(
     websocket: WebSocket,
@@ -1084,6 +1107,9 @@ async def satellite_websocket(
                     turn_end_reason=reason,
                     audio_seconds=satellite_manager.recorded_audio_seconds(session_id),
                     floor_seconds=SATELLITE_VAD_FLOOR_SECONDS,
+                    # v1.4.13+: the device's own VAD verdict; absent on older
+                    # satellites, which keep the length rule.
+                    vad_speech_seen=vad_speech_seen_from(data.get("vad_speech_seen")),
                 )
 
                 if opus_blob is None and not audio_bytes:
@@ -1211,9 +1237,11 @@ async def satellite_websocket(
                 # Outside the STT try: the turn is counted exactly once, here,
                 # and a fault while ending it is handled on the spot.
                 if not transcribed:
+                    detail = empty_turn()
                     await _end_empty_turn(
-                        satellite_manager, websocket, session_id, empty_turn(),
+                        satellite_manager, websocket, session_id, detail,
                     )
+                    await _send_feedback_cue(websocket, detail)
                     continue
 
                 # Process with Ollama (intent extraction + action)

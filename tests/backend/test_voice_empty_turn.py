@@ -22,9 +22,11 @@ from ha_glue.services.voice_empty_turn import (
     EMPTY_TURN_KINDS,
     SATELLITE_VAD_FLOOR_SECONDS,
     classify_empty_turn,
+    feedback_cue_for,
     record_empty_turn,
     recorded_seconds,
     vad_floor_seconds,
+    vad_speech_seen_from,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.backend]
@@ -81,6 +83,75 @@ _CLASSIFICATION_TABLE = [
 ]
 
 
+# The satellite's own VAD report (v1.4.13+, `vad_speech_seen`) decides a
+# silence end, whatever the length says. (reason, seconds, seen, floor, kind)
+_REPORTED_TABLE = [
+    # A short command spoken entirely inside the grace period ends AT the
+    # floor: the length rule calls it a false wake, the report does not.
+    ("silence", FLOOR, True, FLOOR, "vad_heard_speech"),
+    ("silence", 7.5, True, FLOOR, "vad_heard_speech"),
+    ("silence", FLOOR, False, FLOOR, "vad_floor"),
+    # Longer than the floor without any speech cannot happen on the device;
+    # if it is ever reported, the report still wins over the length.
+    ("silence", FLOOR + 0.08, False, FLOOR, "vad_floor"),
+    # A source without a known floor (/ws/device) can be split by the report.
+    ("silence", 4.0, True, None, "vad_heard_speech"),
+    ("silence", 4.0, False, None, "vad_floor"),
+    # Only a silence end is split; the other ends keep their kinds.
+    ("timeout", 60.08, True, FLOOR, "cap_reached"),
+    ("button", 1.0, False, FLOOR, "button"),
+    (None, 4.0, True, FLOOR, "unknown_end"),
+    ("silence", 0.0, True, FLOOR, "no_audio"),
+]
+
+
+@pytest.mark.parametrize("reason,seconds,seen,floor,kind", _REPORTED_TABLE)
+def test_the_reported_vad_verdict_decides_a_silence_end(reason, seconds, seen, floor, kind):
+    assert classify_empty_turn(
+        turn_end_reason=reason, audio_seconds=seconds,
+        floor_seconds=floor, vad_speech_seen=seen,
+    ) == kind
+
+
+def test_a_failed_stt_call_wins_over_the_report():
+    assert classify_empty_turn(
+        turn_end_reason="silence", audio_seconds=FLOOR, stt_failed=True,
+        floor_seconds=FLOOR, vad_speech_seen=True,
+    ) == "stt_error"
+
+
+@pytest.mark.parametrize("value,expected", [
+    (True, True),
+    (False, False),
+    (None, None),
+    # Not a JSON boolean: the old satellite's length rule applies, never a
+    # truthy reading ("false" is truthy).
+    ("false", None),
+    ("true", None),
+    (0, None),
+    (1, None),
+    ({}, None),
+])
+def test_only_a_real_boolean_counts_as_a_report(value, expected):
+    assert vad_speech_seen_from(value) is expected
+
+
+@pytest.mark.parametrize("detail,cue", [
+    ({"empty_kind": "vad_heard_speech", "audio_seconds": 5.0}, "not_understood"),
+    # A false wake gets NO cue: 92 empty turns a week, most of them false wakes.
+    ({"empty_kind": "vad_floor", "audio_seconds": 3.12}, None),
+    ({"empty_kind": "no_audio"}, None),
+    ({"empty_kind": "stt_error"}, None),
+    ({"empty_kind": "cap_reached"}, None),
+    ({"empty_kind": "button"}, None),
+    ({"empty_kind": "unknown_end"}, None),
+    ({}, None),
+    (None, None),
+])
+def test_only_heard_speech_earns_a_cue(detail, cue):
+    assert feedback_cue_for(detail) == cue
+
+
 @pytest.mark.parametrize("reason,seconds,stt_failed,floor,kind", _CLASSIFICATION_TABLE)
 def test_classification(reason, seconds, stt_failed, floor, kind):
     assert classify_empty_turn(
@@ -134,6 +205,25 @@ def test_record_logs_counts_and_returns_the_detail(monkeypatch):
     assert "room=Kinderbad" in lines[0]
     assert "turn_end=silence" in lines[0]
     assert "audio=3.12s" in lines[0]
+    assert "vad_speech=-" in lines[0], "an unreported verdict is shown as unknown"
+
+
+@pytest.mark.parametrize("seen,text", [(True, "vad_speech=true"), (False, "vad_speech=false")])
+def test_record_logs_the_reported_verdict(monkeypatch, seen, text):
+    """The log line carries the device's report, so turns that saw speech only
+    inside the grace period (report true, length at the floor) can be counted."""
+    monkeypatch.setattr("utils.metrics.record_voice_empty_turn", lambda s, k: None)
+    lines, done = _capture_warnings()
+    try:
+        detail = record_empty_turn(
+            source="satellite", session_id="sat-1", room="Kinderbad",
+            turn_end_reason="silence", audio_seconds=3.12, floor_seconds=FLOOR,
+            vad_speech_seen=seen,
+        )
+    finally:
+        done()
+    assert detail["empty_kind"] == ("vad_heard_speech" if seen else "vad_floor")
+    assert text in lines[0]
 
 
 def test_a_metrics_fault_never_raises(monkeypatch):
@@ -313,9 +403,21 @@ def satellite_env(monkeypatch):
     return handler, mgr, whisper, counted
 
 
-async def _run_turn(handler, mgr, *, audio_seconds: float, reason: str = "silence"):
-    """Register a satellite, open session s1, buffer PCM, send audio_end."""
-    ws = _FakeSatelliteSocket([{"type": "audio_end", "session_id": "s1", "reason": reason}])
+_ABSENT = object()
+
+
+async def _run_turn(
+    handler, mgr, *, audio_seconds: float, reason: str = "silence",
+    vad_speech_seen: object = _ABSENT, sent: list | None = None,
+):
+    """Register a satellite, open session s1, buffer PCM, send audio_end.
+
+    ``vad_speech_seen`` left out = a satellite before v1.4.13 (no field).
+    ``sent``, if given, receives every frame sent to the satellite."""
+    frame = {"type": "audio_end", "session_id": "s1", "reason": reason}
+    if vad_speech_seen is not _ABSENT:
+        frame["vad_speech_seen"] = vad_speech_seen
+    ws = _FakeSatelliteSocket([frame])
     await mgr.register(satellite_id="sat-bad", room="Kinderbad", websocket=ws, capabilities={})
     await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
     n_bytes = round(audio_seconds * 32000)
@@ -325,8 +427,16 @@ async def _run_turn(handler, mgr, *, audio_seconds: float, reason: str = "silenc
     ends = [e["details"] for e in mgr._satellite_history["sat-bad"] if e["type"] == "session_end"]
     assert len(ends) == 1
     assert "s1" not in mgr.sessions
-    assert ws.sent[-1] == {"type": "state", "state": "idle"}, "the satellite must return to idle"
+    # The satellite returns to idle; a feedback cue, if any, comes after it.
+    trailing = [m for m in ws.sent if m.get("type") != "feedback_cue"]
+    assert trailing[-1] == {"type": "state", "state": "idle"}, "the satellite must return to idle"
+    if sent is not None:
+        sent.extend(ws.sent)
     return ends[0]
+
+
+def _cues(sent: list) -> list:
+    return [m for m in sent if m.get("type") == "feedback_cue"]
 
 
 async def test_satellite_no_audio(satellite_env):
@@ -339,15 +449,126 @@ async def test_satellite_no_audio(satellite_env):
 
 
 async def test_satellite_empty_text_at_the_floor(satellite_env):
+    """An old satellite (no field): the length rule. A false wake: no cue."""
     handler, mgr, whisper, counted = satellite_env
     whisper.transcribe_bytes = AsyncMock(return_value="")
-    end = await _run_turn(handler, mgr, audio_seconds=3.12)
+    sent: list = []
+    end = await _run_turn(handler, mgr, audio_seconds=3.12, sent=sent)
     assert end["reason"] == "empty_transcription"
     assert end["turn_end_reason"] == "silence"
     assert end["empty_kind"] == "vad_floor"
     assert end["audio_seconds"] == 3.12
     assert counted == [("satellite", "vad_floor")]
     assert whisper.transcribe_bytes.call_args.kwargs["raise_stt_errors"] is True
+    assert _cues(sent) == [], "a false wake must get no cue"
+
+
+async def test_satellite_old_satellite_after_speech_gets_the_cue(satellite_env):
+    """An old satellite (no field) past the floor: the length rule says speech
+    was heard, so the cue goes out — after `state: idle`. A satellite before
+    v1.4.13 ignores the unknown message type."""
+    handler, mgr, whisper, counted = satellite_env
+    whisper.transcribe_bytes = AsyncMock(return_value="")
+    sent: list = []
+    end = await _run_turn(handler, mgr, audio_seconds=5.0, sent=sent)
+    assert end["empty_kind"] == "vad_heard_speech"
+    assert counted == [("satellite", "vad_heard_speech")]
+    assert sent[-2:] == [
+        {"type": "state", "state": "idle"},
+        {"type": "feedback_cue", "cue": "not_understood"},
+    ]
+
+
+async def test_satellite_report_true_at_the_floor_is_heard_speech(satellite_env):
+    """v1.4.13+: speech only inside the grace period ends at the floor; the
+    length rule would call it a false wake, the report keeps it apart."""
+    handler, mgr, whisper, counted = satellite_env
+    whisper.transcribe_bytes = AsyncMock(return_value="")
+    sent: list = []
+    end = await _run_turn(handler, mgr, audio_seconds=3.12, vad_speech_seen=True, sent=sent)
+    assert end["empty_kind"] == "vad_heard_speech"
+    assert counted == [("satellite", "vad_heard_speech")]
+    assert _cues(sent) == [{"type": "feedback_cue", "cue": "not_understood"}]
+    assert sent[-1]["type"] == "feedback_cue", "the cue comes after `state: idle`"
+
+
+async def test_satellite_report_false_is_a_false_wake_without_cue(satellite_env):
+    """v1.4.13+: the VAD saw no speech. Whatever the length, a false wake:
+    no cue."""
+    handler, mgr, whisper, counted = satellite_env
+    whisper.transcribe_bytes = AsyncMock(return_value="")
+    sent: list = []
+    end = await _run_turn(handler, mgr, audio_seconds=5.0, vad_speech_seen=False, sent=sent)
+    assert end["empty_kind"] == "vad_floor"
+    assert counted == [("satellite", "vad_floor")]
+    assert _cues(sent) == []
+
+
+async def test_satellite_garbage_report_falls_back_to_the_length_rule(satellite_env):
+    """A non-boolean field is no report: the length rule decides (here: the
+    floor -> false wake), and the string "true" never means speech."""
+    handler, mgr, whisper, counted = satellite_env
+    whisper.transcribe_bytes = AsyncMock(return_value="")
+    sent: list = []
+    end = await _run_turn(handler, mgr, audio_seconds=3.12, vad_speech_seen="true", sent=sent)
+    assert end["empty_kind"] == "vad_floor"
+    assert counted == [("satellite", "vad_floor")]
+    assert _cues(sent) == []
+
+
+@pytest.mark.parametrize("case", ["no_audio", "stt_error", "cap_reached"])
+async def test_satellite_no_cue_without_an_empty_turn_of_heard_speech(satellite_env, case):
+    """No audio, an STT error and a cut-off turn get no cue, even with a
+    report of speech: only `vad_heard_speech` earns one."""
+    from services.voice_server_client import VoiceServerError
+
+    handler, mgr, whisper, _counted = satellite_env
+    seconds, reason = 5.0, "silence"
+    if case == "no_audio":
+        seconds = 0
+    elif case == "stt_error":
+        whisper.transcribe_bytes = AsyncMock(side_effect=VoiceServerError("down", status_code=503))
+    else:
+        whisper.transcribe_bytes = AsyncMock(return_value="")
+        seconds, reason = 60.08, "timeout"
+    sent: list = []
+    end = await _run_turn(
+        handler, mgr, audio_seconds=seconds, reason=reason, vad_speech_seen=True, sent=sent,
+    )
+    assert end["empty_kind"] == case
+    assert _cues(sent) == []
+
+
+async def test_satellite_a_failing_cue_send_keeps_the_connection(satellite_env):
+    """The cue is decoration: a socket fault while sending it is logged, the
+    turn stays ended once and the connection is not dropped by the outer
+    handler."""
+    handler, mgr, whisper, counted = satellite_env
+    whisper.transcribe_bytes = AsyncMock(return_value="")
+    ws = _FakeSatelliteSocket([
+        {"type": "audio_end", "session_id": "s1", "reason": "silence", "vad_speech_seen": True},
+    ])
+    real_send = ws.send_json
+
+    async def send_json(data):
+        if data.get("type") == "feedback_cue":
+            raise RuntimeError("socket gone")
+        await real_send(data)
+
+    ws.send_json = send_json
+    await mgr.register(satellite_id="sat-bad", room="Kinderbad", websocket=ws, capabilities={})
+    await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
+    mgr.buffer_audio_bytes("s1", b"\0" * 99840, 1)
+    lines, done = _capture_warnings()
+    try:
+        await handler.satellite_websocket(ws, token=None)
+    finally:
+        done()
+    assert any("Could not send feedback cue" in m for m in lines)
+    assert not any("Satellite WebSocket error" in m for m in lines)
+    assert counted == [("satellite", "vad_heard_speech")]
+    ends = [e["details"] for e in mgr._satellite_history["sat-bad"] if e["type"] == "session_end"]
+    assert [e["reason"] for e in ends] == ["empty_transcription"]
 
 
 async def test_satellite_empty_text_after_speech_with_speaker_path(satellite_env, monkeypatch):

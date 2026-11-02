@@ -54,6 +54,10 @@ class SatelliteState(str, Enum):
 # Error text for an OTA request refused because another run is in flight.
 UPDATE_ALREADY_IN_PROGRESS = "update already in progress"
 
+#: How long the "not understood" LED cue stays before IDLE returns (#1386).
+#: Covers the two blinks (~0.6 s) plus a short dark pause.
+NOT_UNDERSTOOD_CUE_SECONDS = 1.2
+
 
 class Satellite:
     """
@@ -87,6 +91,14 @@ class Satellite:
         # clock: its length stopped growing at the cap, so any limit above 40s silently
         # never fired. Do not derive a duration from a bounded container again.
         self._recorded_chunks: int = 0
+        # Whether the VAD saw speech in ANY chunk of the current turn, the grace
+        # period included (#1386). Sent in `audio_end` so the backend can tell a
+        # false wake (never any speech) from speech it could not understand.
+        # Reset at every LISTENING entry, like `_recorded_chunks`.
+        self._vad_speech_seen: bool = False
+        # Bumped by every feedback cue, so a stale cue end cannot restore IDLE
+        # over a newer cue.
+        self._cue_generation: int = 0
         self._listening_start: Optional[float] = None  # When listening state began
         self._processing_start: Optional[float] = None  # Track when processing started
         self._processing_timeout: float = 60.0  # Max time to wait for server response (vision models need more time)
@@ -342,6 +354,8 @@ class Satellite:
         self.ws_client.on_ble_irks(self._on_ble_irks_received)
         # Backend-pushed LED brightness (night-dimming)
         self.ws_client.on_led_config(self._on_led_config_update)
+        # Backend-pushed feedback cue ("not_understood", #1386)
+        self.ws_client.on_feedback_cue(self._on_feedback_cue)
         # On-demand camera snapshot (backend occupancy check for private announcements)
         self.ws_client._capture_snapshot = self._capture_snapshot_for_request
         # On-demand Bluetooth discovery scan ("scan all bluetooth devices")
@@ -878,6 +892,8 @@ class Satellite:
             silence_chunks_needed = int(self.config.vad.silence_duration_ms / chunk_duration_ms)
 
             is_speech = self.vad.is_speech(audio_bytes)  # Use raw audio for VAD (normalizer would equalize levels)
+            if is_speech:
+                self._vad_speech_seen = True
             if not is_speech and self._recorded_chunks >= grace_chunks:
                 self._silence_chunks += 1
                 if self._silence_chunks >= silence_chunks_needed:
@@ -958,15 +974,20 @@ class Satellite:
         if self.camera and self.camera.available:
             self._pending_snapshot = asyncio.create_task(self.camera.capture())
 
-        # Start listening - flag will be cleared in _reset_session when done
-        self._set_state(SatelliteState.LISTENING)
+        # Start listening - flag will be cleared in _reset_session when done.
+        # Reset the turn state BEFORE entering LISTENING: `_set_state` can block
+        # the loop (stopping the LED animation thread joins it for up to 0.5 s)
+        # while the audio thread already streams LISTENING chunks; a reset after
+        # it would wipe their count and their speech verdict (the grace period).
         self._silence_chunks = 0
         self._recorded_chunks = 0
+        self._vad_speech_seen = False
         # The VAD is a streaming model; without gating it only runs while
         # listening, so its state would otherwise carry over from the END of the
         # previous turn, minutes ago.
         self.vad.reset()
         self._listening_start = time.time()
+        self._set_state(SatelliteState.LISTENING)
 
         # Notify server
         self._session_id = await self.ws_client.send_wakeword_detected(keyword, confidence)
@@ -1000,7 +1021,10 @@ class Satellite:
 
         # Notify server
         if self._session_id:
-            await self.ws_client.send_audio_end(self._session_id, reason, image_b64=image_b64)
+            await self.ws_client.send_audio_end(
+                self._session_id, reason, image_b64=image_b64,
+                vad_speech_seen=self._vad_speech_seen,
+            )
 
     async def _reset_session(self, reason: str = "reset"):
         """Reset session state and return to idle"""
@@ -1082,6 +1106,7 @@ class Satellite:
                 # here would inherit the previous count and be cut off at once.
                 self._silence_chunks = 0
                 self._recorded_chunks = 0
+                self._vad_speech_seen = False
                 self.vad.reset()
             self._set_state(new_state)
 
@@ -1400,6 +1425,35 @@ class Satellite:
                 print(f"Failed to set XVF3800 LED brightness: {e}")
 
         print(f"LED brightness updated: {old} -> {clamped}")
+
+    def _on_feedback_cue(self, cue: str):
+        """Show a backend-pushed feedback cue on the LEDs (#1386).
+
+        ``not_understood``: the last turn heard speech but produced no text.
+        Shown only while idle (a new turn has priority), for
+        ``NOT_UNDERSTOOD_CUE_SECONDS``, then back to the IDLE pattern. No sound:
+        a spoken hint on a misclassified false wake would be noise the house
+        makes itself. Brightness is the controller's, so night dimming applies.
+        """
+        if cue != "not_understood":
+            print(f"Unknown feedback cue ignored: {cue!r}")
+            return
+        if self._state != SatelliteState.IDLE:
+            return
+        self._cue_generation += 1
+        self.leds.set_pattern(LEDPattern.NOT_UNDERSTOOD)
+        self._schedule_async(self._end_feedback_cue(self._cue_generation))
+
+    async def _end_feedback_cue(self, generation: int):
+        """Return from the cue to IDLE, unless something else took the LEDs."""
+        await asyncio.sleep(NOT_UNDERSTOOD_CUE_SECONDS)
+        if generation != self._cue_generation:
+            return
+        if (
+            self._state == SatelliteState.IDLE
+            and self.leds.current_pattern == LEDPattern.NOT_UNDERSTOOD
+        ):
+            self.leds.set_pattern(LEDPattern.IDLE)
 
     @staticmethod
     def _parse_irks(irks_hex: dict) -> dict:

@@ -292,11 +292,19 @@ Commissioning is not once-forever. Re-run steps 3-6 when:
 
 **Detection signal.** Since #1386 every turn without text is classified. The
 fingerprint of a false positive is `kind=vad_floor`: the device stopped on
-silence at the earliest moment its VAD allows (2.0 s grace + 1.2 s silence =
-3.12 s with the fleet values), i.e. its VAD saw no speech after the grace
-period. `vad_heard_speech` is the other case — the VAD kept the turn open,
-STT returned nothing (unintelligible speech, or a loud non-speech sound) —
-and `stt_error` is a failed STT call, not a wake at all. Watch it per room:
+silence and its VAD saw no speech. `vad_heard_speech` is the other case — the
+VAD saw speech, STT returned nothing (unintelligible speech, or a loud
+non-speech sound) — and `stt_error` is a failed STT call, not a wake at all.
+From satellite v1.4.13 on the device itself reports in `audio_end` whether its
+VAD saw speech in any chunk of the turn (`vad_speech_seen`), and that report
+decides. An older satellite sends no such field; for it the length decides:
+a stop at the earliest moment the VAD allows (2.0 s grace + 1.2 s silence =
+3.12 s with the fleet values) counts as `vad_floor`. The log line shows which
+rule applied (`vad_speech=true|false`, or `-` for the length rule). A
+`vad_heard_speech` turn gets a short LED cue on the satellite (two magenta
+blinks, solid magenta on the XVF3800 — a colour outside the selectable
+`led.idle_color` set; no sound, night-dimmed like every pattern); a
+`vad_floor` gets none. Watch it per room:
 
 ```bash
 kubectl --context renfield-private -n renfield logs deploy/backend --since=12h \
@@ -306,8 +314,23 @@ kubectl --context renfield-private -n renfield logs deploy/backend --since=12h \
 
 or as a rate: `renfield_voice_empty_turn_total{source="satellite",kind="vad_floor"}`
 (the counter has no room label; the log line and the `session_end` event in the
-satellite history carry the room and the length). A `vad_floor` is not proof:
-a short command spoken entirely inside the grace period ends at the floor too.
+satellite history carry the room and the length). On a satellite before
+v1.4.13 a `vad_floor` is not proof: a short command spoken entirely inside the
+grace period ends at the floor too. With the report (`vad_speech=true` at
+`audio=3.12s`) that case is a `vad_heard_speech`. If such turns pile up, check
+whether the tail of the wake word itself reaches the first listening chunk —
+the report counts the grace period, and a wake-word tail there would turn
+false wakes into cues.
+
+**Post-rollout watch (v1.4.13).** Before the fleet updates, note per room the
+share of `vad_floor` vs `vad_heard_speech` among the empty turns (the log
+command above, over a week); repeat it a week after the room's satellite runs
+v1.4.13. Some shift from `vad_floor` to `vad_heard_speech` is expected (short
+commands inside the grace period). A room whose `vad_floor` share collapses
+while its wake-event count stays the same — many `vad_speech=true` at
+`audio=3.12s` — points at the wake-word tail, not at more real speech: those
+false wakes now light the cue. Then the first listening chunk(s) must be left
+out of the report before the cue stays on.
 
 A room that dominates the `vad_floor` count and has near-zero successful
 sessions is not commissioned, whatever its provisioning status says. The floor
