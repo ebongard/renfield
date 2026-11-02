@@ -42,6 +42,10 @@ if [ -d .git ]; then
     echo ""
 fi
 
+# Re-stage satellite source + wakeword models AFTER the pull, so the rebuild
+# bundles the pulled versions, not a stale copy (#1359).
+./bin/stage-backend-build.sh
+
 # Rebuild the containers
 echo "🔨 Rebuilding containers..."
 docker-compose build

@@ -184,7 +184,16 @@ HOME_ASSISTANT_TOKEN=dein_long_lived_access_token
 MCP_ENABLED=true
 ```
 
-3. **System starten**
+3. **Secrets erzeugen und Build-Kontext vorbereiten**
+```bash
+bin/generate-secrets.sh      # legt secrets/* an — ohne diese Dateien startet compose nicht
+bin/stage-backend-build.sh   # kopiert Satelliten-Quellen + Wakeword-Modelle in den Backend-Build-Kontext
+```
+`bin/stage-backend-build.sh` vor jedem Backend-Neubau erneut ausführen, wenn sich `src/satellite/` oder
+`data/wakeword-models/` geändert haben. Fehlt `config/mail_accounts.yaml`, legt das Skript sie aus der
+mitgelieferten Vorgabe an (eine vorhandene Datei bleibt unangetastet).
+
+4. **System starten**
 ```bash
 # Entwicklung auf Mac
 docker compose -f docker-compose.dev.yml up -d
@@ -199,7 +208,7 @@ docker compose -f docker-compose.prod-cpu.yml up -d
 docker compose up -d
 ```
 
-4. **Ollama Modell laden**
+5. **Ollama Modell laden**
 ```bash
 docker exec -it renfield-ollama ollama pull qwen3:8b
 ```

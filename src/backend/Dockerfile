@@ -100,6 +100,32 @@ RUN cd /opt/venv/lib/python3.11/site-packages \
 
 
 # ============================================================================
+# Stage 1b: SearXNG MCP fork (vendor/mcp-server-searxng) — TypeScript build
+# ============================================================================
+# The fork's dist/ is gitignored (its own .gitignore), so a fresh checkout has
+# no prebuilt entrypoint (#1359). This stage is the ONLY source of dist/: the
+# backend .dockerignore keeps any locally prebuilt dist/ and node_modules/ out
+# of the context, so a dev box and the production build ship the same output.
+# Pinned by exact version; the runtime runs the result under Node 20 too.
+FROM node:20.18.1-bookworm-slim AS searxng-build
+
+WORKDIR /opt/mcp-server-searxng
+COPY vendor/mcp-server-searxng/package.json vendor/mcp-server-searxng/package-lock.json ./
+# Full install (devDependencies carry tsc + shx for `npm run build`).
+RUN npm ci --no-audit --no-fund
+COPY vendor/mcp-server-searxng/tsconfig.json ./
+COPY vendor/mcp-server-searxng/src ./src
+# Build, then drop the devDependencies so only the runtime deps
+# (node-fetch, @modelcontextprotocol/sdk) are carried into the runtime stage.
+RUN npm run build \
+    && npm prune --omit=dev --no-audit --no-fund \
+    && test -x dist/src/index.js \
+    && test -d node_modules/node-fetch \
+    && test -d node_modules/@modelcontextprotocol/sdk \
+    && rm -rf src tsconfig.json
+
+
+# ============================================================================
 # Stage 2: Runtime
 # ============================================================================
 FROM python:3.11-slim AS runtime
@@ -206,32 +232,30 @@ COPY . .
 # Vendored SearXNG MCP fork (@x-idra/mcp-server-searxng) — carries the unreleased
 # upstream 0.3.11 fix that stops mislabelling a reachable-but-0-results SearXNG
 # instance as "All SearXNG instances failed" (#1161). npm's latest is the buggy
-# 0.3.9, so we install our fork globally instead of `npx @kevinwatt/...`. dist is
-# prebuilt and the `prepare` script removed, so --omit=dev needs no toolchain.
-# Local (not -g) install so node-fetch/@modelcontextprotocol/sdk land in the
-# fork's own node_modules — `npm install -g <localdir>` only symlinks the source
-# dir, leaving the runtime imports unresolvable (ERR_MODULE_NOT_FOUND). Then put
-# the prebuilt entrypoint on PATH via a symlink (dist is prebuilt, no toolchain).
-RUN cd /app/vendor/mcp-server-searxng \
-    && npm install --omit=dev --no-audit --no-fund \
-    && test -d node_modules/node-fetch \
-    && chmod +x dist/src/index.js \
-    && ln -sf /app/vendor/mcp-server-searxng/dist/src/index.js /usr/local/bin/mcp-server-searxng \
+# 0.3.9, so we ship our fork instead of `npx @kevinwatt/...`. Built in the
+# `searxng-build` stage above (dist/ + runtime-only node_modules) and installed
+# OUTSIDE /app: the compose stacks bind-mount ./src/backend over /app, which
+# would hide a dist/ and node_modules/ living under /app/vendor (#1359). The
+# entrypoint goes on PATH via a symlink; config/mcp_servers.yaml calls it by name.
+COPY --from=searxng-build /opt/mcp-server-searxng /opt/mcp-server-searxng
+RUN ln -sf /opt/mcp-server-searxng/dist/src/index.js /usr/local/bin/mcp-server-searxng \
     && command -v mcp-server-searxng >/dev/null \
     || (echo "ERROR: mcp-server-searxng not runnable (deps missing or bin not on PATH)" && exit 1)
 
 # Wake word models — TFLite/ONNX files served to satellites via
 # /api/settings/wakeword/models/{id}. On docker-compose these were bind-mounted
 # from ./data/wakeword-models; in the image build context they must sit next to
-# the backend sources (synced from the repo's data/wakeword-models/ at build time).
+# the backend sources. Staged from the repo's data/wakeword-models/ by
+# bin/stage-backend-build.sh (compose) or bin/deploy-production.sh (deploy) —
+# both use bin/lib/backend-build-extras.sh (#1359).
 COPY wakeword-models /app/wakeword-models
 
 # Satellite source — bundled so the OTA update service can build update packages
 # (SatelliteUpdateService.build_update_package reads /app/satellite, and
 # get_latest_version reads its __version__). Without this the
 # /api/satellites/update-package endpoint 503s and the UI can't push updates.
-# Synced into the backend build context from the repo's src/satellite/ at build
-# time (the build context is src/backend/, like wakeword-models above).
+# Staged into the backend build context from the repo's src/satellite/ by the
+# same helper as wakeword-models above (the build context is src/backend/).
 COPY satellite /app/satellite
 
 # Fail the build LOUDLY if the bundled source is missing or truncated (a partial
@@ -240,7 +264,7 @@ COPY satellite /app/satellite
 # the package entrypoint exists and carries a parseable __version__.
 RUN test -f /app/satellite/renfield_satellite/__init__.py \
     && grep -Eq '^__version__\s*=\s*["'"'"'][0-9]+(\.[0-9]+)*["'"'"']' /app/satellite/renfield_satellite/__init__.py \
-    || (echo "ERROR: /app/satellite missing or has no parseable __version__ — was src/satellite/ rsynced into the build context?" && exit 1)
+    || (echo "ERROR: /app/satellite missing or has no parseable __version__ — run bin/stage-backend-build.sh first (stages src/satellite/ into the build context)" && exit 1)
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser \
