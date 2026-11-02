@@ -167,7 +167,9 @@ class AgentContext:
     # to a summary early.
     invalid_tool_attempts: dict[str, int] = field(default_factory=dict)
 
-    # Extracted context variables from tool results (for follow-up queries)
+    # Extracted context variables from tool results (for follow-up queries).
+    # run() binds this to the caller's `context_vars_out` dict, which the
+    # caller persists after the turn (#1447).
     extracted_vars: dict[str, Any] = field(default_factory=dict)
 
     # How the loop ended, for renfield_agent_outcome_total. Set by the exit
@@ -1085,6 +1087,23 @@ def preselect_tool_line(name: str, tool) -> str:
     return f"{desc_line} {hint}" if hint else desc_line
 
 
+
+def _record_context_vars(context: AgentContext, tool: str, result: dict) -> None:
+    """Collect the context variables of one (compacted) tool result into the turn.
+
+    The one place both tool paths (sequential and parallel) extract — the
+    parallel path once skipped it. A failing extractor must not cost the turn.
+    """
+    from services.context_extractor import extract_context_vars
+
+    try:
+        extracted = extract_context_vars(tool, result)
+    except Exception as e:
+        logger.warning(f"Context var extraction failed for {tool}: {error_text_without_content(e)}")
+        return
+    if extracted:
+        context.extracted_vars.update(extracted)
+
 class AgentService:
     """
     ReAct Agent Loop — iteratively calls tools until a final answer is produced.
@@ -1939,8 +1958,16 @@ class AgentService:
         progress_sink=None,
         session_id: str | None = None,
         corrected_intent: str | None = None,
+        context_vars_out: dict[str, Any] | None = None,
     ) -> AsyncGenerator[AgentStep, None]:
         """Thin wrapper around _run_impl.
+
+        ``context_vars_out``: when given, the turn's extracted context
+        variables (``context_extractor.extract_context_vars`` over each tool
+        result) are collected INTO this dict as the tools run. The caller
+        persists them after the turn was saved
+        (``ConversationService.save_turn_context_vars``) — the agent itself
+        never writes conversation state.
 
         Resets plugin-observable ContextVars at the start of each request and
         publishes the final per-request token usage via `token_usage_info`
@@ -1962,6 +1989,8 @@ class AgentService:
         token_usage_info.set(None)
 
         context = AgentContext(original_message=message)
+        if context_vars_out is not None:
+            context.extracted_vars = context_vars_out
         last_step: AgentStep | None = None
         try:
             async for step in self._run_impl(
@@ -2441,6 +2470,11 @@ class AgentService:
                         if _hook_res:
                             res = _hook_res[0]
 
+                        # Context variables, as in the sequential path — a
+                        # parallel step used to skip this, so a lookup run
+                        # alongside another tool was never remembered.
+                        _record_context_vars(context, act["action"], res)
+
                         result_msg = _truncate(
                             res.get("message", no_result),
                             max_length=settings.agent_response_truncation,
@@ -2627,10 +2661,7 @@ class AgentService:
                 result = _hook_results[0]
 
             # Extract context variables from tool results (for follow-up queries)
-            from services.context_extractor import extract_context_vars
-            extracted = extract_context_vars(action, result)
-            if extracted:
-                context.extracted_vars.update(extracted)
+            _record_context_vars(context, action, result)
 
             # Extract large binary blobs before building LLM summary
             result_data = result.get("data")

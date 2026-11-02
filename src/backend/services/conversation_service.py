@@ -933,31 +933,93 @@ class ConversationService:
         self,
         session_id: str,
         vars_dict: dict,
-    ) -> None:
+        *,
+        user_id: int | None = None,
+        enforce_ownership: bool = False,
+    ) -> bool:
         """Merge-update conversation context variables (pinned state).
 
-        Existing keys are preserved; new keys are added; keys set to None are removed.
+        Per-key merge (``context_extractor.merge_context_vars``): existing keys
+        are preserved, given keys overwrite, keys set to None are removed, and
+        beyond the public-key cap the oldest public keys go. Returns True when
+        the row was written.
+
+        ``enforce_ownership`` (callers derive it from ``settings.auth_enabled``,
+        like ``save_message``): a conversation outside the caller's reach is
+        not written. A missing conversation is not created here — the vars
+        belong to a turn whose messages are saved by their own path.
         """
+        from services.context_extractor import merge_context_vars
+
         try:
+            # FOR UPDATE: read-modify-write of one JSON column. Two writers
+            # (the router's `_active_domain` and a turn's extracted vars, or
+            # two parallel turns) would otherwise lose one update.
             result = await self.db.execute(
-                select(Conversation).where(Conversation.session_id == session_id)
+                select(Conversation)
+                .where(Conversation.session_id == session_id)
+                .with_for_update()
             )
             conversation = result.scalar_one_or_none()
             if not conversation:
-                return
+                return False
+            if enforce_ownership and not await self.reaches(conversation.id, user_id):
+                logger.warning(
+                    f"🚫 Refused context-vars write into a foreign conversation: "
+                    f"session={session_id} owner={conversation.user_id} caller={user_id}"
+                )
+                await self.db.rollback()
+                return False
 
-            current = dict(conversation.context_vars or {})
-            for k, v in vars_dict.items():
-                if v is None:
-                    current.pop(k, None)
-                else:
-                    current[k] = v
+            current = merge_context_vars(conversation.context_vars or {}, vars_dict)
             conversation.context_vars = current
             await self.db.commit()
             logger.debug(f"Context vars updated for {session_id}: {list(current.keys())}")
+            return True
         except Exception as e:
             logger.warning(f"Failed to save context vars: {error_text_without_content(e)}")
             await self.db.rollback()
+            return False
+
+    async def save_turn_context_vars(
+        self,
+        session_id: str,
+        extracted: dict,
+        *,
+        tool_summaries: list | None = None,
+        user_id: int | None = None,
+        enforce_ownership: bool = False,
+    ) -> dict:
+        """Persist one agent turn's extracted variables into its conversation.
+
+        Called by every agent entry point AFTER the turn's messages were saved
+        (so the conversation exists and its ownership was already enforced by
+        that write); ``session_id`` and ``user_id`` are the server's, never the
+        model's. Fires the ``extract_context_vars`` plugin hook first — a
+        handler returns a dict of further variables (or None), merged over the
+        YAML-extracted ones. Everything passes ``bound_context_vars`` before it
+        is stored. Returns what was written (``{}`` when nothing was).
+        """
+        from services.context_extractor import bound_context_vars
+        from utils.hooks import run_hooks
+
+        merged = dict(extracted or {})
+        if tool_summaries or merged:
+            for hook_vars in await run_hooks(
+                "extract_context_vars",
+                tool_summaries=list(tool_summaries or []),
+                session_id=session_id,
+                user_id=user_id,
+            ):
+                if isinstance(hook_vars, dict):
+                    merged.update(hook_vars)
+        bounded = bound_context_vars(merged)
+        if not bounded:
+            return {}
+        written = await self.save_context_vars(
+            session_id, bounded, user_id=user_id, enforce_ownership=enforce_ownership,
+        )
+        return bounded if written else {}
 
     async def load_context_vars(self, session_id: str) -> dict:
         """Load conversation context variables. Returns empty dict if none."""

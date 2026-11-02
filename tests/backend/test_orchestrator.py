@@ -1339,7 +1339,7 @@ class TestParallelExecution:
         assert result == {
             "role": "release", "query": "test",
             "answer": "", "steps": [], "plugin_data": {}, "error": None,
-            "has_data": False,
+            "has_data": False, "context_vars": {},
         }
 
 
