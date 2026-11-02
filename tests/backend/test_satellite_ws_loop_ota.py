@@ -106,8 +106,12 @@ async def test_ota_frames_are_gated_by_the_run_id_in_the_loop(loop_env):
             seen[label] = (sat.update_status, sat.update_stage, sat.version)
         return _take
 
+    def _room():
+        seen["room"] = mgr.get_satellite("sat-loop").room
+
     ws = _FakeSocket([
         _register_frame(room={"name": "Flur"}),
+        _room,
         _start_run,
         # A straggler of an older run on every one of the three branches.
         {"type": "update_progress", "stage": "rolling_back", "progress": 0,
@@ -136,8 +140,9 @@ async def test_ota_frames_are_gated_by_the_run_id_in_the_loop(loop_env):
     assert seen["after_stragglers"] == (US.IN_PROGRESS, "initiating", "1.4.6")
     assert seen["after_progress"] == (US.IN_PROGRESS, "installing", "1.4.6")
     assert seen["after_complete"] == (US.COMPLETED, "completed", "1.5.0")
-    # _register_fields typed the room on its way in.
+    # _register_fields replaced the dict room by the default on its way in.
     assert ws.sent[0]["type"] == "register_ack"
+    assert seen["room"] == "Unknown Room"
 
 
 @pytest.mark.backend
@@ -180,3 +185,27 @@ async def test_register_with_a_non_string_id_is_refused(loop_env, bad_id):
     assert "invalid-satellite-id" in json.dumps(ws.sent[0])
     ws.close.assert_awaited()
     assert ws.close.await_args.kwargs.get("reason") == "invalid-satellite-id"
+
+
+@pytest.mark.backend
+async def test_a_bad_id_in_a_second_register_still_releases_the_first(loop_env):
+    """The refused frame must not overwrite the id the connection holds: the
+    cleanup releases the limiter slot and the roster entry under that id."""
+    import ha_glue.api.websocket.satellite_handler as sh
+    from ha_glue.api.websocket.satellite_handler import satellite_websocket
+
+    mgr = loop_env
+    limiter = sh.get_connection_limiter()
+    seen = {}
+    ws = _FakeSocket([
+        _register_frame(),
+        lambda: seen.update(registered="sat-loop" in mgr.satellites),
+        _register_frame(satellite_id=7),
+    ])
+
+    await satellite_websocket(ws, token=None)
+
+    assert seen["registered"] is True
+    assert ws.close.await_args.kwargs.get("reason") == "invalid-satellite-id"
+    limiter.remove_connection.assert_called_once_with("192.0.2.50", "sat-loop")
+    assert "sat-loop" not in mgr.satellites

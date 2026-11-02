@@ -207,6 +207,7 @@ async def test_update_request_carries_the_minted_run_id(monkeypatch):
     assert sent["type"] == "update_request"
     assert sent["run_id"] == mgr.get_satellite("sat-1").update_run_id
     assert sent["run_id"]
+    assert mgr.get_satellite("sat-1").update_target_version == "9.9.9"
 
 
 # ==========================================================================
@@ -274,9 +275,37 @@ async def test_disconnect_then_register_keeps_the_run():
 
 @pytest.mark.backend
 @pytest.mark.unit
-async def test_coming_back_on_a_new_version_completes_the_run():
-    """The restart into the new code swallowed the final frames. Left running,
-    the stuck-run sweep would fail a SUCCESSFUL update later."""
+@pytest.mark.parametrize(
+    ("comes_back_on", "expected"),
+    [
+        # The run's target: installed, the restart swallowed the final frames.
+        # Left running, the sweep would fail a SUCCESSFUL update later.
+        ("1.5.0", "completed"),
+        # The old version: a WS blip, the run goes on.
+        ("1.4.6", "in_progress"),
+        # A third version (manual reinstall, SD swap): not this run's doing.
+        ("1.4.9", "in_progress"),
+    ],
+)
+async def test_reconnect_completes_the_run_only_on_its_target_version(comes_back_on, expected):
+    from ha_glue.services.satellite_manager import SatelliteManager
+
+    mgr = SatelliteManager()
+    ws = AsyncMock()
+    await _register(mgr, ws=ws)
+    mgr.begin_update_run("sat-1", target_version="1.5.0")
+    await mgr.unregister("sat-1", websocket=ws)
+
+    await _register(mgr, version=comes_back_on)
+
+    sat = mgr.get_satellite("sat-1")
+    assert sat.update_status.value == expected
+    assert (sat.update_started_at is None) is (expected == "completed")
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+async def test_a_run_without_a_known_target_is_never_auto_completed():
     from ha_glue.services.satellite_manager import SatelliteManager
     from ha_glue.services.satellite_manager import UpdateStatus as US
 
@@ -288,9 +317,7 @@ async def test_coming_back_on_a_new_version_completes_the_run():
 
     await _register(mgr, version="1.5.0")
 
-    sat = mgr.get_satellite("sat-1")
-    assert sat.update_status == US.COMPLETED
-    assert sat.update_started_at is None
+    assert mgr.get_satellite("sat-1").update_status == US.IN_PROGRESS
 
 
 @pytest.mark.backend

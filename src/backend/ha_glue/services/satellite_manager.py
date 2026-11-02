@@ -157,6 +157,9 @@ class SatelliteInfo:
     # recorded as the run's real outcome. Survives a WS reconnect (see
     # `_RUN_STATE_FIELDS`); a backend restart loses it by design.
     update_run_id: str | None = None
+    # The version the current run installs. Only a satellite that comes back
+    # on exactly THIS version after a reconnect has finished the run.
+    update_target_version: str | None = None
 
 
 @dataclass
@@ -1090,6 +1093,7 @@ class SatelliteManager:
         "update_progress",
         "update_error",
         "update_started_at",
+        "update_target_version",
     )
 
     @classmethod
@@ -1106,25 +1110,32 @@ class SatelliteManager:
     ) -> None:
         """Put a carried-over run onto a freshly registered entry.
 
-        A run still IN_PROGRESS whose satellite comes back on a DIFFERENT
+        A run still IN_PROGRESS whose satellite comes back on the run's TARGET
         version was installed: the restart into the new code swallowed the
         final frames. It is closed as COMPLETED — left running, the stuck-run
-        sweep would fail a successful update 15 minutes later. Back on the SAME
-        version the run simply continues (a WS blip); the sweep remains the net
-        for a run that never ends.
+        sweep would fail a successful update 15 minutes later. On any other
+        version (the old one after a WS blip, or a third one from a manual
+        reinstall) the run stays IN_PROGRESS; the sweep remains the net for a
+        run that never ends.
         """
         for name in self._RUN_STATE_FIELDS:
             setattr(sat, name, state[name])
         if (
             sat.update_status == UpdateStatus.IN_PROGRESS
-            and new_version not in ("unknown", state["version"])
+            and sat.update_target_version is not None
+            and new_version == sat.update_target_version
         ):
             self.set_update_status(
                 sat.satellite_id, UpdateStatus.COMPLETED, stage="completed", progress=100
             )
 
-    def begin_update_run(self, satellite_id: str) -> str | None:
+    def begin_update_run(
+        self, satellite_id: str, target_version: str | None = None
+    ) -> str | None:
         """Start a new OTA run: mint its id and mark it IN_PROGRESS (#1280).
+
+        `target_version` is the version the run installs; it decides whether a
+        satellite that reconnects mid-run has finished it.
 
         Returns the id to send in the `update_request`, or None when the
         satellite is not registered.
@@ -1133,6 +1144,7 @@ class SatelliteManager:
         if sat is None:
             return None
         sat.update_run_id = uuid.uuid4().hex
+        sat.update_target_version = target_version
         self.set_update_status(
             satellite_id, UpdateStatus.IN_PROGRESS, stage="initiating", progress=0
         )

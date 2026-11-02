@@ -23,7 +23,7 @@ from ha_glue.services.opus_transport import (
     BinaryFrameError,
     parse_audio_frame,
 )
-from ha_glue.services.satellite_manager import device_text
+from ha_glue.services.satellite_manager import MAX_DEVICE_TEXT_CHARS, device_text
 from ha_glue.utils.config import ha_glue_settings
 from models.websocket_messages import WSErrorCode
 from services.database import AsyncSessionLocal
@@ -362,12 +362,20 @@ def _register_fields(data: dict) -> tuple[str, dict, str, str]:
     them as `str` / a capabilities object — a dict for a room or a list for
     the capabilities used to reach those models unchanged.
     """
-    room = device_text(data.get("room")) or "Unknown Room"
+    def _text(key: str, cap: int, default: str) -> str:
+        # A value of the wrong type is replaced by the default, never turned
+        # into text: `str({...})` would become a room the DB then auto-creates.
+        value = data.get(key)
+        if not isinstance(value, str):
+            return default
+        return device_text(value, cap) or default
+
+    room = _text("room", MAX_DEVICE_TEXT_CHARS, "Unknown Room")
     capabilities = data.get("capabilities")
     if not isinstance(capabilities, dict):
         capabilities = {}
-    language = device_text(data.get("language"), 16) or settings.default_language
-    version = device_text(data.get("version")) or "unknown"
+    language = _text("language", 16, settings.default_language)
+    version = _text("version", MAX_DEVICE_TEXT_CHARS, "unknown")
     return room, capabilities, language, version
 
 
@@ -727,8 +735,12 @@ async def satellite_websocket(
 
             # Handle registration
             if msg_type == "register":
-                satellite_id = _register_satellite_id(data)
-                if satellite_id is None:
+                # Validated into a local first: a bad id in a SECOND register
+                # frame must not overwrite the id this connection already
+                # holds — the `finally` below releases the limiter slot and
+                # the roster entry under that id.
+                claimed_id = _register_satellite_id(data)
+                if claimed_id is None:
                     # The id is the identity every later check binds to (the
                     # handshake identity, the enrollment row, the roster key).
                     # Coercing a non-string would invent an identity the device
@@ -741,6 +753,7 @@ async def satellite_websocket(
                         code=WSAuthError.UNAUTHORIZED, reason="invalid-satellite-id"
                     )
                     return
+                satellite_id = claimed_id
                 room, capabilities, language, version = _register_fields(data)
                 enrollment_psk = data.get("token")
 

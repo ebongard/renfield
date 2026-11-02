@@ -127,10 +127,17 @@ def test_register_fields_types_the_frame():
         "language": ["de"],
         "version": 147,
     })
-    assert room == "{'name': 'Küche'}"
+    # Wrong types become the DEFAULT, never text: `str({...})` would turn
+    # into a room the DB then auto-creates.
+    assert room == "Unknown Room"
     assert caps == {}
-    assert language == "['de']"
-    assert version == "147"
+    assert language == settings.default_language
+    assert version == "unknown"
+
+    # Over-long strings are bounded.
+    room, _caps, language, _version = _register_fields({"room": "R" * 500, "language": "x" * 50})
+    assert room == "R" * 64
+    assert language == "x" * 16
 
     # Absent fields fall back to the same defaults as before.
     room, caps, language, version = _register_fields({})

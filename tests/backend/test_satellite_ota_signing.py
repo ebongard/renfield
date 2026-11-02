@@ -38,7 +38,7 @@ def _fake_manager(sat):
     return SimpleNamespace(
         get_satellite=lambda sid: sat,
         set_update_status=lambda *a, **k: None,
-        begin_update_run=lambda sid: "run-x",
+        begin_update_run=lambda sid, target=None: "run-x",
     )
 
 

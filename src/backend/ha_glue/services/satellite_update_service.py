@@ -340,7 +340,7 @@ class SatelliteUpdateService:
         # progress/complete/failed frames, so a straggler from an earlier run
         # can no longer end this one. Firmware that predates the id ignores the
         # extra key and keeps the legacy behaviour.
-        run_id = manager.begin_update_run(satellite_id)
+        run_id = manager.begin_update_run(satellite_id, package_info["version"])
 
         # Send update request to satellite
         try:
