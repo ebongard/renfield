@@ -40,6 +40,8 @@ REGISTRY="${RENFIELD_REGISTRY:?set RENFIELD_REGISTRY, e.g. export RENFIELD_REGIS
 KCTX="${RENFIELD_KCTX:-renfield-private}"
 NS="${RENFIELD_NS:-renfield}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/backend-build-extras.sh
+. "$REPO_ROOT/bin/lib/backend-build-extras.sh"
 
 # --- args -------------------------------------------------------------------
 BACKEND_TAG="" FRONTEND_TAG="" DO_MIGRATE=0 DRY_RUN=0 SKIP_BACKEND=0 SKIP_FRONTEND=0 SKIP_MIGRATION_GATE=0
@@ -100,11 +102,14 @@ if [[ $SKIP_BACKEND == 0 ]]; then
     --exclude='.coverage' --exclude='htmlcov' --exclude='.env' --exclude='.env.local' \
     --exclude='secrets/' --exclude='Users/' \
     $REPO_ROOT/src/backend/ $BUILD_HOST:$STAGING/src/backend/"
-  # wakeword models + satellite source (bundled into the backend image)
-  run "rsync -az $REPO_ROOT/data/wakeword-models/ $BUILD_HOST:$STAGING/src/backend/wakeword-models/"
-  run "$RSYNC --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' \
-    --exclude='provisioning' --exclude='tests' \
-    $REPO_ROOT/src/satellite/ $BUILD_HOST:$STAGING/src/backend/satellite/"
+  # wakeword models + satellite source (bundled into the backend image). The
+  # commands come from bin/lib/backend-build-extras.sh, shared with the compose
+  # stager bin/stage-backend-build.sh (#1359). The list is read on FD 3, not
+  # stdin: a remote rsync spawns ssh, which reads stdin and would swallow the
+  # remaining commands.
+  while IFS= read -r -u 3 _extras_cmd; do
+    run "$_extras_cmd"
+  done 3< <(backend_extras_rsync_cmds "$REPO_ROOT" "$BUILD_HOST:$STAGING/src/backend")
   # Extra top-level Python packages from OUTSIDE this repo (e.g. a private
   # plugin named in PLUGIN_MODULES). Colon-separated package DIRECTORIES; each
   # lands at src/backend/<basename> → /app/<basename>, importable. Staging from

@@ -171,3 +171,8 @@ site/
 
 # Real prod-guard substrings for memory_v1_baseline (real infra names) — NEVER public.
 bin/prod_url_patterns.private
+
+# Staged into the backend build context by bin/stage-backend-build.sh (#1359);
+# the sources are data/wakeword-models/ and src/satellite/.
+src/backend/wakeword-models/
+src/backend/satellite/

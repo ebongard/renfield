@@ -54,4 +54,8 @@ venv
 # image regardless of what the rsync left in the context.
 satellite/provisioning
 satellite/tests
+# The SearXNG MCP fork is built in the Dockerfile's `searxng-build` stage; that
+# stage is the ONLY source of its dist/ (#1359). A locally prebuilt dist/ or
+# node_modules/ must never reach the image.
 vendor/mcp-server-searxng/node_modules/
+vendor/mcp-server-searxng/dist/
