@@ -202,6 +202,81 @@ async def test_a_malformed_room_is_named_and_skipped(household, session_maker, m
     assert any("scanner-hh" in line and "not a room id" in line for line in logs), logs
 
 
+@pytest.mark.parametrize("value", ["²", "٣", "0", "-3", "3.0", "kueche"])
+async def test_any_malformed_room_only_skips_the_announcement(
+    household, session_maker, monkeypatch, value,
+):
+    """Review finding: `"²".isdigit()` is True and `int("²")` raises -- the room
+    is resolved BEFORE the delivery, so it turned every button scan into a 500."""
+    monkeypatch.setenv(RECIPIENT_ENV, f"{OWNER}:{OWN_SESSION}")
+    monkeypatch.setenv(ROOM_ENV, value)
+    hooks = _Hooks()
+    with _captured_logs("WARNING") as logs, patch("utils.hooks.run_hooks", hooks):
+        assert await _deliver(session_maker, FakeRedis()) == "delivered"
+    assert hooks.announcements == []
+    assert len(await _messages(session_maker, OWN_SESSION)) == 1
+    assert any("not a room id" in line for line in logs), logs
+
+
+async def _own_conversation_with_atom(session_maker):
+    """Give the owner's conversation its atom, as `save_message` does in production."""
+    from sqlalchemy import select
+
+    from models.database import Conversation
+    from services.conversation_service import ConversationService
+
+    async with session_maker() as db:
+        conversation = (await db.execute(
+            select(Conversation).where(Conversation.session_id == OWN_SESSION))).scalar_one()
+        await ConversationService(db).ensure_atom(conversation)
+        await db.commit()
+        assert conversation.atom_id is not None
+        return conversation.atom_id
+
+
+async def test_a_private_conversation_with_its_atom_is_delivered(
+    household, session_maker, monkeypatch,
+):
+    monkeypatch.setenv(RECIPIENT_ENV, f"{OWNER}:{OWN_SESSION}")
+    await _own_conversation_with_atom(session_maker)
+    with patch("utils.hooks.run_hooks", _Hooks()):
+        assert await _deliver(session_maker, FakeRedis()) == "delivered"
+    assert len(await _messages(session_maker, OWN_SESSION)) == 1
+
+
+@pytest.mark.parametrize("sharing", ["row_tier", "atom_tier", "grant"])
+async def test_a_shared_conversation_of_the_owner_is_refused(
+    household, session_maker, monkeypatch, sharing,
+):
+    """The notice carries the document id and a button to it; only the document
+    owner may see it. A thread the owner shares -- by tier or by an explicit
+    grant -- would hand it to every member."""
+    from sqlalchemy import update
+
+    from models.database import Atom, AtomExplicitGrant, Conversation
+
+    monkeypatch.setenv(RECIPIENT_ENV, f"{OWNER}:{OWN_SESSION}")
+    atom_id = await _own_conversation_with_atom(session_maker)
+    async with session_maker() as db:
+        if sharing == "row_tier":
+            await db.execute(update(Conversation).where(Conversation.session_id == OWN_SESSION)
+                             .values(circle_tier=2))
+        elif sharing == "atom_tier":
+            # The row says private, the canonical policy says household.
+            await db.execute(update(Atom).where(Atom.atom_id == atom_id)
+                             .values(policy={"tier": 2}))
+        else:
+            db.add(AtomExplicitGrant(atom_id=atom_id, granted_to_user_id=STRANGER,
+                                     granted_by=OWNER))
+        await db.commit()
+    redis, hooks = FakeRedis(), _Hooks()
+    with _captured_logs("WARNING") as logs, patch("utils.hooks.run_hooks", hooks):
+        assert await _deliver(session_maker, redis) == "refused"
+    assert await _messages(session_maker, OWN_SESSION) == []
+    assert redis.published == [] and hooks.announcements == []
+    assert any("is shared" in line and "scanner-hh" in line for line in logs), logs
+
+
 async def test_a_recipient_the_client_does_not_file_for_is_refused(
     household, session_maker, monkeypatch,
 ):

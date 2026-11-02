@@ -513,13 +513,45 @@ def _unattended_room(client_id: str) -> int | None:
     raw = _client_env(UNATTENDED_ROOM_ENV, client_id)
     if not raw:
         return None
-    if raw.isdigit() and int(raw) > 0:
+    # 🛑 ASCII digits only, and never an exception: `"²".isdigit()` is True and
+    # `int("²")` raises. This runs BEFORE the delivery, so a typo here must only
+    # skip the announcement, never turn every button scan into a retried 500.
+    if raw.isascii() and raw.isdecimal() and int(raw) > 0:
         return int(raw)
     logger.warning(
         f"scanner: {UNATTENDED_ROOM_ENV.format(client='<CLIENT_ID>')} for ingest client "
         f"{client_id!r} is not a room id — no announcement"
     )
     return None
+
+
+async def _conversation_is_private(db: Any, conversation: Any) -> bool:
+    """Whether only its owner can read the conversation: tier 0 (`self`) on the
+    row AND on its atom (`atoms.policy` is canonical), and no explicit grant.
+
+    🛑 The completion message carries the document id, the target and a button
+    to the document; the owner decision (#1390) is that only the DOCUMENT owner
+    sees it. A shared thread -- a room history at tier 2, or one granted to a
+    single person -- would hand that to every member. Fail-closed: an atom
+    without a readable tier counts as shared."""
+    if conversation.circle_tier != 0:
+        return False
+    if conversation.atom_id is None:
+        return True
+    from sqlalchemy import func, select
+
+    from models.database import Atom, AtomExplicitGrant
+
+    policy = (
+        await db.execute(select(Atom.policy).where(Atom.atom_id == conversation.atom_id))
+    ).scalar_one_or_none()
+    if not isinstance(policy, dict) or policy.get("tier") != 0:
+        return False
+    grants = await db.scalar(
+        select(func.count()).select_from(AtomExplicitGrant)
+        .where(AtomExplicitGrant.atom_id == conversation.atom_id)
+    )
+    return not grants
 
 
 async def _unattended_requester(db: Any, ingest_client: Any, job_id: str) -> dict | str | None:
@@ -533,8 +565,9 @@ async def _unattended_requester(db: Any, ingest_client: Any, job_id: str) -> dic
     🛑 WHO is never read from the event. The client id is the one the TOKEN
     authenticated, and the configured user must be the owner this client files
     documents for (`resolve_owner_user_id`, exactly as the push route resolves
-    it) AND own the conversation. Otherwise even the title-free notice would
-    tell somebody that a document exists which they may not see.
+    it) AND own the conversation, which must be PRIVATE
+    (`_conversation_is_private`). Otherwise the notice -- document id, target,
+    a button to it -- would reach somebody who may not see the document.
     """
     client_id = str(getattr(ingest_client, "client_id", "") or "")
     raw = _client_env(UNATTENDED_RECIPIENT_ENV, client_id)
@@ -567,13 +600,22 @@ async def _unattended_requester(db: Any, ingest_client: Any, job_id: str) -> dic
             f"{owner_user_id}"
         )
         return "refused"
-    conversation_owner = (
-        await db.execute(select(Conversation.user_id).where(Conversation.session_id == session_id))
-    ).scalar_one_or_none()
-    if conversation_owner != user_id:
+    conversation = (
+        await db.execute(
+            select(Conversation.user_id, Conversation.circle_tier, Conversation.atom_id)
+            .where(Conversation.session_id == session_id)
+        )
+    ).one_or_none()
+    if conversation is None or conversation.user_id != user_id:
         logger.warning(
             f"scanner: button scan {job_id} refused — the conversation in {env_name} of "
             f"ingest client {client_id!r} does not exist or is not owned by user {user_id}"
+        )
+        return "refused"
+    if not await _conversation_is_private(db, conversation):
+        logger.warning(
+            f"scanner: button scan {job_id} refused — the conversation in {env_name} of "
+            f"ingest client {client_id!r} is shared (tier above 0 or an explicit grant)"
         )
         return "refused"
     return {
