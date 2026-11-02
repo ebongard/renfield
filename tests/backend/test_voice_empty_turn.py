@@ -440,6 +440,55 @@ async def test_satellite_empty_turn_whose_every_end_fails_still_goes_idle(satell
     assert mgr.end_session.await_count == 2
     assert ws.sent[-1] == {"type": "state", "state": "idle"}
 
+    # Not deaf: the session is released, and the next wake word starts one.
+    assert "s1" not in mgr.sessions
+    assert mgr.satellites["sat-bad"].current_session_id is None
+    ends = [e["details"] for e in mgr._satellite_history["sat-bad"] if e["type"] == "session_end"]
+    assert [(e["reason"], e["success"]) for e in ends] == [("end_failed", False)]
+    assert await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s2") == "s2"
+
+
+def test_force_release_unknown_session_is_a_no_op():
+    mgr = _manager_with_session()
+    mgr.force_release("unknown", reason="end_failed")  # must not raise
+    assert "s1" in mgr.sessions
+
+
+def test_force_release_survives_a_failing_history(monkeypatch):
+    mgr = _manager_with_session()
+
+    def boom(*_a, **_k):
+        raise RuntimeError("history store gone")
+
+    monkeypatch.setattr(mgr, "_add_event", boom)
+    mgr.force_release("s1", reason="end_failed")  # must not raise
+    assert "s1" not in mgr.sessions
+
+
+async def test_a_retried_end_writes_no_second_session_end(monkeypatch):
+    """An end that failed AFTER writing its record, then the fallback end:
+    one `session_end`, not two (review side note)."""
+    mgr = _manager_with_session()
+    real_stats = mgr._update_stats
+    failures = iter([RuntimeError("stats store gone")])
+
+    def stats_once_failing(*a, **k):
+        err = next(failures, None)
+        if err:
+            raise err
+        return real_stats(*a, **k)
+
+    monkeypatch.setattr(mgr, "_update_stats", stats_once_failing)
+    with pytest.raises(RuntimeError):
+        await mgr.end_session("s1", reason="empty_transcription", detail={"empty_kind": "vad_floor"})
+    assert "s1" in mgr.sessions
+    await mgr.end_session("s1", reason="end_failed")
+
+    ends = [e["details"] for e in mgr._satellite_history["sat-a"] if e["type"] == "session_end"]
+    assert len(ends) == 1
+    assert ends[0]["empty_kind"] == "vad_floor"
+    assert "s1" not in mgr.sessions
+
 
 # ---------------------------------------------------------------------------
 # The /ws/device handler, driven for real

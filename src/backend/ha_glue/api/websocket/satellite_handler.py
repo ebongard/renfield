@@ -548,7 +548,8 @@ async def _end_empty_turn(manager, websocket, session_id: str, detail: dict) -> 
     the connection, and `unregister` then ends the open session as
     `completed` — the history would show a successful turn. Instead: log,
     end the session as `end_failed` (not a success) and, should that fail
-    too, at least return the satellite to idle and keep the connection.
+    too, force-release the session (otherwise the satellite would refuse
+    every later wake word) and return it to idle, keeping the connection.
     Nothing is counted a second time.
     """
     try:
@@ -560,6 +561,7 @@ async def _end_empty_turn(manager, websocket, session_id: str, detail: dict) -> 
         await manager.end_session(session_id, reason="end_failed", detail=detail)
     except Exception as e:
         logger.error(f"❌ Fallback end of {session_id} failed: {e!r}")
+        manager.force_release(session_id, reason="end_failed")
         try:
             await websocket.send_json({"type": "state", "state": "idle"})
         except Exception:

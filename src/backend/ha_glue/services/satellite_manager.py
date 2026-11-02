@@ -134,6 +134,9 @@ class SatelliteSession:
     # logged and never read again -- an utterance truncated at
     # `max_recording_seconds` was indistinguishable from a finished sentence.
     turn_end_reason: str | None = None
+    # Set once the `session_end` history record is written, so a retried end
+    # (after an attempt that failed past that point) does not write a second.
+    end_recorded: bool = False
 
 
 class SatelliteManager:
@@ -742,26 +745,59 @@ class SatelliteManager:
         # Calculate duration
         duration = time.time() - session.started_at
 
-        # Track event and stats
+        # Track event and stats. A retried end (an earlier attempt failed
+        # after writing its record) writes no second `session_end`.
         success = reason in ["completed", "silence"]
-        self._add_event(session.satellite_id, "session_end", {
-            "session_id": session_id,
-            "reason": reason,
-            # The DEVICE's reason, kept apart from the backend's reason: only
-            # this way does the satellite history show that an utterance was
-            # truncated (`timeout`) and not simply spoken to the end.
-            "turn_end_reason": session.turn_end_reason,
-            "duration": duration,
-            "success": success,
-            "transcription": session.transcription,
-            **(detail or {}),
-        })
-        self._update_stats(session.satellite_id, duration, success)
+        if not session.end_recorded:
+            self._add_event(session.satellite_id, "session_end", {
+                "session_id": session_id,
+                "reason": reason,
+                # The DEVICE's reason, kept apart from the backend's reason: only
+                # this way does the satellite history show that an utterance was
+                # truncated (`timeout`) and not simply spoken to the end.
+                "turn_end_reason": session.turn_end_reason,
+                "duration": duration,
+                "success": success,
+                "transcription": session.transcription,
+                **(detail or {}),
+            })
+            session.end_recorded = True
+            self._update_stats(session.satellite_id, duration, success)
 
         # Remove session
         del self.sessions[session_id]
 
         logger.info(f"✅ Session ended: {session_id} ({reason}, {duration:.1f}s)")
+
+    def force_release(self, session_id: str, reason: str) -> None:
+        """Release a session when every regular end has failed. Never raises.
+
+        The last resort after `end_session` itself raised: without it the
+        session stays registered, `current_session_id` stays set, and
+        `start_session` refuses every later wake word — the satellite looks
+        idle but is deaf until it reconnects (and the cleanup sweep frees
+        neither a PROCESSING session nor a registered satellite). Only
+        operations that cannot fail free it: no lock, no socket, no
+        broadcast. The history entry (`success: False`) is best effort.
+        """
+        session = self.sessions.pop(session_id, None)
+        if session is None:
+            return
+        sat = self.satellites.get(session.satellite_id)
+        if sat is not None and sat.current_session_id == session_id:
+            sat.current_session_id = None
+            sat.state = SatelliteState.IDLE
+        if not session.end_recorded:
+            try:
+                self._add_event(session.satellite_id, "session_end", {
+                    "session_id": session_id,
+                    "reason": reason,
+                    "turn_end_reason": session.turn_end_reason,
+                    "success": False,
+                })
+            except Exception:
+                pass  # The release itself must not fail on the history
+        logger.warning(f"⚠️ Session force-released: {session_id} ({reason})")
 
     def update_heartbeat(self, satellite_id: str, metrics: dict[str, Any] | None = None, version: str | None = None):
         """
