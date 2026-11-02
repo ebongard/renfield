@@ -32,7 +32,33 @@ Ein Nutzer A sieht ein Atom mit Eigentümer O und Tier T wenn **eine** der folge
 4. **TIER-REACH** — über `circle_memberships` ist A in einem Circle von O, dessen Tier ≤ T ist (Leiter-Reichweite)
 5. **KB-SHARE** (nur Dokumente, Chunks, Fakten) — in `kb_shares` existiert `(kb_id = Wissensbasis des Dokuments, user_id = A)`. Zur Abfragezeit über `d.knowledge_base_id` ausgewertet: eine Freigabe deckt **jedes** Dokument der Wissensbasis, auch später hochgeladene oder hineinverschobene. Eigentümer des Dokument-Atoms bleibt der KB-Eigentümer.
 
-🛑 **Bis `pc20261101` gab es keine Freigabe-Zeile.** `share_kb` schrieb je *vorhandenem* Dokument einen Grant (Zweig 3), sonst nichts: eine leere KB zu teilen speicherte nichts, ein späteres Dokument war nie gedeckt (Bob konnte seinen eigenen Upload in Alices geteilte KB nicht lesen, weil der Upload Alice gehört), und mit dem letzten Dokument verschwand die Freigabe. Auch die KB-Routenrechte (wer hochladen darf) wurden aus denselben Grants abgeleitet. Diese Alt-Grants bleiben bestehen und zählen weiter (Zugriff = `kb_shares` ODER Grant, Stufe = Maximum aus beiden), bis der Eigentümer `bin/backfill_kb_shares.py` laufen lässt (Standard: Trockenlauf, `--commit` schreibt und protokolliert, `--revert --log` nimmt genau das zurück). `revoke_kb_share` löscht die Zeile UND die Alt-Grants des Nutzers auf den Dokumenten der KB; `move_documents` löscht die Grants der verschobenen Dokumente (sie wanderten sonst mit dem Atom aus der geteilten KB heraus; zum Eigentümerwechsel beim Verschieben siehe „Moving and deleting documents"). Beides ist nur korrekt, weil heute kein Code einen Einzeldokument-Grant schreibt — ein solches Feature braucht eine Markierungsspalte.
+🛑 **Bis `pc20261101` gab es keine Freigabe-Zeile.** `share_kb` schrieb je *vorhandenem* Dokument einen Grant (Zweig 3), sonst nichts: eine leere KB zu teilen speicherte nichts, ein späteres Dokument war nie gedeckt (Bob konnte seinen eigenen Upload in Alices geteilte KB nicht lesen, weil der Upload Alice gehört), und mit dem letzten Dokument verschwand die Freigabe. Auch die KB-Routenrechte (wer hochladen darf) wurden aus denselben Grants abgeleitet. Diese Alt-Grants bleiben bestehen und öffnen weiter ihre Dokumente (Zweig 3), geben seit #1446 aber **keine KB-Stufe** mehr (siehe unten „Eine KB-Freigabe kommt NUR aus `kb_shares`“). `revoke_kb_share` löscht die Zeile UND die Alt-Grants des Nutzers auf den Dokumenten der KB; `move_documents` löscht die Grants der verschobenen Dokumente (sie wanderten sonst mit dem Atom aus der geteilten KB heraus; zum Eigentümerwechsel beim Verschieben siehe „Moving and deleting documents"). Beides ist nur korrekt, weil heute kein Code einen Einzeldokument-Grant schreibt — ein solches Feature braucht eine Markierungsspalte.
+
+### Eine KB-Freigabe kommt NUR aus `kb_shares` (#1446)
+
+Eigentümerentscheidung (a): ein Grant auf ein Dokument öffnet **dieses** Dokument und seine Fakten (Zweig 3, `circle_sql` und `can_access_atom`), aber nie die KB. `get_user_kb_permission_level(s)`, `list_user_shared_kb_ids`, `list_kb_shares` und darüber `check_kb_access` sowie die KB-Liste (`GET /api/knowledge/bases`, die einzige Datenquelle der Oberfläche) lesen nur noch `kb_shares`. Vorher setzte EIN Grant auf ein Dokument die ganze KB mit der Stufe des Grants (bis `admin`) in die Liste der Person.
+
+🛑 **Vorbedingung des Deploys: `bin/backfill_kb_shares.py` ist gelaufen und meldet `clean: 0`.** Sonst verlieren Alt-Freigaben, die nur als Grants existieren, die KB in der Liste und jedes KB-Recht (Hochladen, Schreiben) — sie behalten die Dokumente, das Verhalten schliesst also, ist aber falsch. Beim Start schreibt das Backend eine WARNUNG mit den Zahlen (`_warn_uncovered_kb_shares`, nur Zahlen, nie eine Aktion). Lesende Zählabfrage (alle Paare ohne `kb_shares`-Zeile):
+
+```sql
+SELECT COUNT(*) FROM (
+  SELECT DISTINCT d.knowledge_base_id, g.granted_to_user_id
+  FROM atom_explicit_grants g
+  JOIN atoms a ON a.atom_id = g.atom_id
+  JOIN documents d ON a.source_table = 'documents' AND a.source_id = d.id::text
+  WHERE d.knowledge_base_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM kb_shares ks
+                    WHERE ks.kb_id = d.knowledge_base_id AND ks.user_id = g.granted_to_user_id)
+) p;
+```
+
+Sie muss vor dem Deploy **gleich der Zahl der verdächtigen Paare** des Trockenlaufs sein (dort `suspicious: N`), d. h. `clean: 0`. Verdächtige Paare zählen nicht gegen die Vorbedingung, sie warten auf den Eigentümer.
+
+🛑 **Verdächtige Paare wandelt der Backfill NIE um.** Vor #1464 behielt eine Dokumentverschiebung ihre Grants; ein Grant kann also mit seinem Dokument in eine andere KB gewandert sein, und ihn umzuwandeln teilte die ganze Ziel-KB (Alice teilt „Haus“ mit Bob, verschiebt ein Dokument nach „Privat“ — nach dem Backfill sähe Bob ganz „Privat“). Eine Verschiebespur gibt es nicht, darum drei indirekte Merkmale (`kb_shares_service.UNCOVERED_PAIRS_SQL`; Fehlalarm vor falscher Freigabe): `foreign_granter` (ein Grant stammt nicht vom heutigen KB-Eigentümer — trifft auch Freigaben durch einen Admin), `partial` (ein Dokument der KB, das beim Grant schon existierte, trägt keinen Grant der Person; das alte `share_kb` gewährte JEDES Dokument in einer Anweisung), `split_batch` (dieselbe Freigabe-Anweisung — Person, Gewährender, `granted_at` — hat Grants auf Dokumenten, die heute in einer ANDEREN KB liegen). Nicht erkennbar: ein verschobener Grant aus einer KB, die nur dieses eine Dokument hatte, durch ihren eigenen Eigentümer in eine damals leere KB. Der Trockenlauf listet verdächtige Paare mit Ids, Zahlen, Stufe und Gründen (keine Titel), `--commit` überspringt sie; der Eigentümer übernimmt ein Paar ausdrücklich mit `--adopt KB_ID:USER_ID --commit --log f.json` (protokolliert, `--revert --log f.json` nimmt es zurück).
+
+🛑 **Nach einem `pc20261101`-Downgrade → Upgrade muss der Backfill erneut laufen.** Der Downgrade schreibt jede Freigabe als Grants je Dokument zurück, der erneute Upgrade legt nur die leere Tabelle an (die Migration bleibt unverändert und leitet bewusst NICHTS selbst ab — die Verdachtsprüfung braucht die Entscheidung des Eigentümers). Bis dahin fehlt allen Freigaben die KB-Stufe.
+
+`revoke_kb_share` löscht weiter die Grants der Person auf den Dokumenten der KB (sonst blieben die alten Dokumente nach dem Entzug lesbar); `share_kb` fasst Grants nicht mehr an.
 
 Die Zweig-Logik wird einmal zentral formuliert in `services/circle_sql.py` und in jedes Retrieval-Modul als SQL-`WHERE`-Klausel injiziert — kein Retrieval-Code schreibt die Policy selbst.
 
@@ -262,7 +288,7 @@ Die Review-Schlange wird **je Namens-Cluster** entschieden, nicht je Paar (`POST
 | `atom_explicit_grants` | Ausnahme-Grants: `(atom_id, granted_to_user_id, permission_level)` |
 | `circles` | Pro-User Tier-Konfiguration (optionale Anpassung der 5 Standard-Stufen) |
 | `circle_memberships` | Wer ist in welchem Tier-Ring welches Eigentümers |
-| `kb_shares` | Knowledge-Base-Freigabe `(kb_id, user_id, permission_level, can_delete)` — `can_delete` ist der getrennte Löschschalter des Eigentümers (`pc20261102`, Standard false); eine Zeile je Freigabe, zur Abfragezeit ausgewertet (seit `pc20261101`; vorher nur Grants je damals vorhandenem Dokument, die als Alt-Grants weiter zählen) |
+| `kb_shares` | Knowledge-Base-Freigabe `(kb_id, user_id, permission_level, can_delete)` — `can_delete` ist der getrennte Löschschalter des Eigentümers (`pc20261102`, Standard false); eine Zeile je Freigabe, zur Abfragezeit ausgewertet (seit `pc20261101`; vorher nur Grants je damals vorhandenem Dokument; diese Alt-Grants öffnen ihr Dokument, geben aber keine KB-Stufe, #1446) |
 
 **Denormalisierte Spalten**: `document_chunks.circle_tier`, `document_chunks.atom_id`, dasselbe Paar auf `kg_entities`, `kg_relations`, `conversation_memories`.
 
@@ -289,7 +315,7 @@ Jedes Subsystem, das Inhalte dem LLM präsentiert, wendet den Circle-Filter an:
 
 `services/circle_resolver.py` hält einen `PolicyEvaluator` mit In-Memory-Cache der Circle-Memberships pro Eigentümer. Der Cache wird bei Membership-Änderungen (`POST /api/circles/me/members`) invalidiert. Resolver-Aufrufe außerhalb der SQL-Filter-Pfade (z.B. einzelner `can_access_atom`-Check vor einer Schreiboperation) gehen durch diesen Cache.
 
-🛑 **Dokumente und Fakten entscheidet `can_access_atom` NICHT selbst** (#1463). Bei aktiver Auth prüft der Resolver `kb_document`- und `document_fact`-Atome mit demselben `circle_sql`-Prädikat wie die Retrieval-Pfade (`documents_circles_filter` bzw. `document_facts_circles_filter`, eine Abfrage je Atom über `d.atom_id` / `df.atom_id`, ungecacht). Vorher las er das Atom: Eigentümer des Fakt-Atoms, Grants auf dem FAKT-Atom, KB-Freigabe nur für Dokumente — die SQL-Filter lesen dagegen den KB-Eigentümer (mit Atom-Eigentümer als Rückfall), Grants auf dem ELTERN-Dokument und die KB-Freigabe. Ein Empfänger einer geteilten KB fand einen Fakt per Suche und bekam bei `GET /api/atoms/{id}` 404. Folgen der einen Regel: ein Atom ohne Quellzeile ist unerreichbar; bei einem Dokument ohne KB greift die Mitgliedschaft nicht (sie hängt an `kb.owner_id`), in beiden Pfaden gleich. Die Policies dieser Atome tragen nur die `tier`-Dimension, die der SQL-Filter abdeckt. Auth aus: die bisherige Zweiglogik, unverändert. Gleichlauf-Test: `tests/backend/test_document_atom_reach_parity_pg.py`. Die Dokument-Ebene hat dafür einen eigenen Wrapper `documents_circles_filter` (Dokumentsuche, Titel-Nachschlagen in `knowledge_tool`, Resolver) statt dreier Handkopien.
+🛑 **Dokumente und Fakten entscheidet `can_access_atom` NICHT selbst** (#1463). Bei aktiver Auth prüft der Resolver `kb_document`- und `document_fact`-Atome mit demselben `circle_sql`-Prädikat wie die Retrieval-Pfade (`documents_circles_filter` bzw. `document_facts_circles_filter`, eine Abfrage je Atom über `d.atom_id` / `df.atom_id`, ungecacht). Vorher las er das Atom: Eigentümer des Fakt-Atoms, Grants auf dem FAKT-Atom, KB-Freigabe nur für Dokumente — die SQL-Filter lesen dagegen den KB-Eigentümer (mit Atom-Eigentümer als Rückfall), Grants auf dem ELTERN-Dokument und die KB-Freigabe. Ein Empfänger einer geteilten KB fand einen Fakt per Suche und bekam bei `GET /api/atoms/{id}` 404. Folgen der einen Regel: ein Atom ohne Quellzeile ist unerreichbar; bei einem Dokument ohne KB greift die Mitgliedschaft nicht (sie hängt an `kb.owner_id`), in beiden Pfaden gleich. Die Policies dieser Atome tragen nur die `tier`-Dimension, die der SQL-Filter abdeckt. Auth aus: die bisherige Zweiglogik, unverändert. Gleichlauf-Test: `tests/backend/test_document_atom_reach_parity_pg.py`. Ersetzte Dokumente (`superseded_by_document_id`) blendet der Resolver bewusst NICHT aus: das ist ein Lebenszyklus-Filter der Faktenlisten (`DocumentFactRetrieval.is_visible`), keine Zugriffsregel. Die PATCH-Route `/api/atoms/{id}/tier` weist für diese Atomtypen jede Policy ausser `{'tier': 0..4}` mit 422 ab, damit die Aussage „nur `tier`“ eine Regel ist und kein Befund. Die Dokument-Ebene hat dafür einen eigenen Wrapper `documents_circles_filter` (Dokumentsuche, Titel-Nachschlagen in `knowledge_tool`, Resolver) statt dreier Handkopien.
 
 ---
 
@@ -301,7 +327,7 @@ Jedes Subsystem, das Inhalte dem LLM präsentiert, wendet den Circle-Filter an:
 | `services/circle_resolver.py` | `PolicyEvaluator` + Cache, Access-Checks außerhalb von SQL |
 | `services/circle_sql.py` | `build_filter(user_id)` — die zentrale WHERE-Klausel-Factory |
 | `services/polymorphic_atom_store.py` | Cross-Source-Retrieval mit RRF für `/api/atoms` |
-| `services/kb_shares_service.py` | KB-Freigabe: `kb_shares`-Zeile schreiben/entziehen, KB-Rechtestufe = Maximum aus `kb_shares` und Alt-Grants, Backfill aus Alt-Grants |
+| `services/kb_shares_service.py` | KB-Freigabe: `kb_shares`-Zeile schreiben/entziehen, KB-Rechtestufe NUR aus `kb_shares` (#1446), Backfill aus Alt-Grants mit Verdachtsprüfung + `--adopt` |
 
 ---
 
