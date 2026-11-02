@@ -63,6 +63,9 @@ async def _add_doc(db: AsyncSession, kb_id: int, label: str) -> Document:
              "VALUES (:d, :c, 0, :t)"),
         {"d": doc.id, "c": f"Inhalt {label}", "t": doc.circle_tier},
     )
+    # The state the worker leaves it in: a move refuses a document still in
+    # processing (the record starts `pending`).
+    doc.status = "completed"
     await db.commit()
     return doc
 

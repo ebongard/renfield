@@ -11,11 +11,12 @@ atoms). Those atoms keep a dangling ``source_id`` together with their
 - Default is a DRY RUN: counts only (atoms per type, grants on them), no writes.
 - ``--commit`` purges them through ``AtomPurgeService`` in one transaction and
   writes a log with every purged atom (id, type, source id, owner, tier,
-  created_at, grantees + level — no content).
+  created_at, grantees + level — no content). The full list is written BEFORE
+  the purge commits (``complete: false``) and marked ``complete: true`` after.
 - Idempotent: a second run finds nothing.
 - There is no ``--revert``: this is the erasure the document delete promised (an
   atom of a document that no longer exists guards nothing). The log is the record
-  of what was erased; it is claimed BEFORE the purge commits.
+  of what was erased.
 - ``__pending__`` placeholders (in-flight creates) are never touched.
 
 Usage:
@@ -100,8 +101,16 @@ async def _run(args: argparse.Namespace) -> int:
         except OSError as err:
             logger.error("Log not writable (%s): %s; nothing purged.", log_path, err)
             return 2
+    def _write_pending(entries: list[dict]) -> None:
+        # Runs inside the purge transaction, before its commit: if the commit then
+        # fails, the log names what was attempted (complete: false).
+        assert log_path is not None
+        log_path.write_text(json.dumps({"purged": entries, "complete": False}, indent=2))
+
     async with AsyncSessionLocal() as session:
-        result = await purge_orphan_document_atoms(session, dry_run=dry_run)
+        result = await purge_orphan_document_atoms(
+            session, dry_run=dry_run, on_before_commit=None if dry_run else _write_pending,
+        )
     logger.info("%s | orphaned kb_document atoms: %d | orphaned document_fact atoms: %d "
                 "| grants on them: %d", mode, result.document_atoms, result.fact_atoms,
                 result.grants)

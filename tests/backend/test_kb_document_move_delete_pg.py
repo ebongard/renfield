@@ -11,6 +11,8 @@
 - #1461: deleting a document left its ``kb_document`` atom (and the grants on
   it) behind. It is purged in the same transaction now; existing orphans are
   found and purged by ``services.orphan_document_atoms`` (owner-run script).
+- Delete in a shared KB is the owner's separate switch ``kb_shares.can_delete``
+  (pc20261102), never a level; only the KB owner or kb.all sets it.
 
 Real Postgres: the filters and the cascades are Postgres SQL.
 """
@@ -62,10 +64,13 @@ async def _kb(db: AsyncSession, owner_id: int | None, name: str, tier: int = TIE
     return kb.id
 
 
-async def _add_doc(db: AsyncSession, kb_id: int, label: str) -> Document:
-    """The real create path: atom owner = KB owner, tier = KB default; one chunk."""
+async def _add_doc(db: AsyncSession, kb_id: int, label: str, *,
+                   status: str = "completed", file_path: str | None = None) -> Document:
+    """The real create path: atom owner = KB owner, tier = KB default; one chunk.
+    Then the state the worker leaves it in (``completed``) — the record starts
+    ``pending``, and a move refuses a document still in processing."""
     doc = await RAGService(db).create_document_record(
-        file_path=f"/tmp/{label}.pdf", knowledge_base_id=kb_id,
+        file_path=file_path or f"/tmp/{label}.pdf", knowledge_base_id=kb_id,
         filename=f"{label}.pdf", file_hash=f"h-{label}",
     )
     await db.execute(
@@ -73,6 +78,7 @@ async def _add_doc(db: AsyncSession, kb_id: int, label: str) -> Document:
              "VALUES (:d, :c, 0, :t)"),
         {"d": doc.id, "c": f"Inhalt {label}", "t": doc.circle_tier},
     )
+    doc.status = status
     await db.commit()
     return doc
 
@@ -361,39 +367,229 @@ class TestDeleteDocumentPurgesItsAtom:
         assert await _atom(db_session, fact.atom_id) is None
 
 
-class TestDeleteNeedsMoreThanRead:
-    """``check_kb_access`` mapped the action "delete" to the READ level, so a read
-    grantee could delete the owner's documents and the whole KB."""
+class TestDeleteIsTheOwnersSwitch:
+    """Delete in a shared KB = the share's ``can_delete``, whatever the level.
 
-    async def test_read_and_write_grantees_cannot_delete(self, db_session, people):
-        from api.routes.knowledge import check_document_access, check_kb_access
+    ``check_kb_access`` used to map "delete" to the READ level: every grantee could
+    delete the owner's documents and the whole KB."""
 
+    async def _route_delete_doc(self, db, user, doc_id):
+        from api.routes.knowledge import delete_document
+
+        return await delete_document(doc_id, rag=RAGService(db), user=user, db=db)
+
+    async def _route_delete_kb(self, db, user, kb_id):
+        from api.routes.knowledge import delete_knowledge_base
+
+        return await delete_knowledge_base(kb_id, rag=RAGService(db), user=user, db=db)
+
+    async def test_owner_deletes(self, db_session, people):
+        alice, _, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        doc = await _add_doc(db_session, haus, "eigen")
+        await self._route_delete_doc(db_session, alice, doc.id)
+        await self._route_delete_kb(db_session, alice, haus)
+        assert await _kb_of(db_session, doc.id) is None
+
+    async def test_kb_all_deletes(self, db_session, people):
+        alice, _, admin = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        doc = await _add_doc(db_session, haus, "fremd")
+        await self._route_delete_doc(db_session, admin, doc.id)
+        await self._route_delete_kb(db_session, admin, haus)
+        assert await _atom(db_session, doc.atom_id) is None
+
+    @pytest.mark.parametrize("level", ["read", "write", "admin"])
+    async def test_no_level_without_the_switch_deletes(self, db_session, people, level):
         alice, bob, _ = people
         haus = await _kb(db_session, alice.id, "Haus")
         doc = await _add_doc(db_session, haus, "bleibt")
-        kb = (await db_session.execute(
-            select(KnowledgeBase).where(KnowledgeBase.id == haus))).scalar_one()
+        await ks.share_kb(db_session, haus, bob.id, level, granted_by=alice.id)
 
-        for level in ("read", "write"):
-            await ks.share_kb(db_session, haus, bob.id, level, granted_by=alice.id)
-            assert not await check_document_access(doc, bob, "delete", db_session), level
-            assert not await check_kb_access(kb, bob, "delete", db_session), level
+        with pytest.raises(HTTPException) as exc:
+            await self._route_delete_doc(db_session, bob, doc.id)
+        assert exc.value.status_code == 403
+        with pytest.raises(HTTPException) as exc:
+            await self._route_delete_kb(db_session, bob, haus)
+        assert exc.value.status_code == 403
+        assert await _kb_of(db_session, doc.id) == haus
 
-        await ks.share_kb(db_session, haus, bob.id, "admin", granted_by=alice.id)
-        assert await check_document_access(doc, bob, "delete", db_session)
-        assert await check_kb_access(kb, bob, "delete", db_session)
-        assert await check_document_access(doc, alice, "delete", db_session)
+    async def test_read_share_with_the_switch_deletes(self, db_session, people):
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        doc = await _add_doc(db_session, haus, "darf")
+        await ks.share_kb(db_session, haus, bob.id, "read", granted_by=alice.id,
+                          can_delete=True)
+
+        await self._route_delete_doc(db_session, bob, doc.id)
+        assert await _atom(db_session, doc.atom_id) is None
+        await self._route_delete_kb(db_session, bob, haus)
+
+    async def test_a_legacy_document_grant_never_deletes(self, db_session, people):
+        """Atom grants have no delete concept: an admin-level legacy grant opens
+        the KB ACL at admin, but not delete."""
+        from api.routes.knowledge import check_document_access
+
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        doc = await _add_doc(db_session, haus, "alt")
+        await db_session.execute(text(
+            "INSERT INTO atom_explicit_grants (atom_id, granted_to_user_id, permission_level, "
+            "granted_by, granted_at) VALUES (:a, :to, 'admin', :by, NOW())"),
+            {"a": doc.atom_id, "to": bob.id, "by": alice.id})
+        await db_session.commit()
+
+        assert await check_document_access(doc, bob, "write", db_session)
+        assert not await check_document_access(doc, bob, "delete", db_session)
 
     async def test_unknown_action_is_denied(self, db_session, people):
         from api.routes.knowledge import check_kb_access
 
         alice, bob, _ = people
         haus = await _kb(db_session, alice.id, "Haus")
-        await ks.share_kb(db_session, haus, bob.id, "admin", granted_by=alice.id)
+        await ks.share_kb(db_session, haus, bob.id, "admin", granted_by=alice.id,
+                          can_delete=True)
         kb = (await db_session.execute(
             select(KnowledgeBase).where(KnowledgeBase.id == haus))).scalar_one()
 
         assert not await check_kb_access(kb, bob, "purge", db_session)
+
+    async def test_kb_list_reports_the_delete_right(self, db_session, people):
+        from api.routes.knowledge import list_knowledge_bases
+
+        alice, bob, admin = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        werk = await _kb(db_session, alice.id, "Werkstatt")
+        await ks.share_kb(db_session, haus, bob.id, "read", granted_by=alice.id, can_delete=True)
+        await ks.share_kb(db_session, werk, bob.id, "admin", granted_by=alice.id)
+
+        def flags(rows):
+            return {r.id: r.can_delete for r in rows if r.id in (haus, werk)}
+
+        assert flags(await list_knowledge_bases(
+            rag=RAGService(db_session), user=bob, db=db_session)) == {haus: True, werk: False}
+        assert flags(await list_knowledge_bases(
+            rag=RAGService(db_session), user=alice, db=db_session)) == {haus: True, werk: True}
+        assert flags(await list_knowledge_bases(
+            rag=RAGService(db_session), user=admin, db=db_session)) == {haus: True, werk: True}
+
+
+class TestWhoSetsTheDeleteSwitch:
+    async def _share(self, db, actor, kb_id, target, level, can_delete=None):
+        from api.routes.knowledge import share_knowledge_base
+        from api.routes.knowledge_schemas import KBPermissionCreate
+
+        body = {"user_id": target, "permission": level}
+        if can_delete is not None:
+            body["can_delete"] = can_delete
+        return await share_knowledge_base(
+            kb_id, KBPermissionCreate(**body), rag=RAGService(db), user=actor, db=db)
+
+    async def _switch(self, db, kb_id, user_id):
+        return (await db.execute(text(
+            "SELECT can_delete FROM kb_shares WHERE kb_id = :k AND user_id = :u"),
+            {"k": kb_id, "u": user_id})).scalar()
+
+    async def test_owner_sets_and_clears_it(self, db_session, people):
+        from api.routes.knowledge import list_kb_permissions
+
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+
+        resp = await self._share(db_session, alice, haus, bob.id, "read", can_delete=True)
+        assert resp.can_delete is True
+        assert await self._switch(db_session, haus, bob.id) is True
+        listed = await list_kb_permissions(haus, rag=RAGService(db_session), user=alice,
+                                           db=db_session)
+        assert [(p.user_id, p.can_delete) for p in listed] == [(bob.id, True)]
+
+        await self._share(db_session, alice, haus, bob.id, "read", can_delete=False)
+        assert await self._switch(db_session, haus, bob.id) is False
+
+    async def test_new_share_without_the_field_has_it_off(self, db_session, people):
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        resp = await self._share(db_session, alice, haus, bob.id, "admin")
+        assert resp.can_delete is False
+        assert await self._switch(db_session, haus, bob.id) is False
+
+    async def test_kb_all_sets_it(self, db_session, people):
+        alice, bob, admin = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        await self._share(db_session, admin, haus, bob.id, "write", can_delete=True)
+        assert await self._switch(db_session, haus, bob.id) is True
+
+    @pytest.mark.parametrize("value", [True, False])
+    async def test_admin_grantee_may_not_name_the_switch(self, db_session, people, value):
+        alice, bob, _ = people
+        carol = await _user(db_session, "carol", ["kb.own", "kb.shared"])
+        haus = await _kb(db_session, alice.id, "Haus")
+        await ks.share_kb(db_session, haus, bob.id, "admin", granted_by=alice.id)
+        await ks.share_kb(db_session, haus, carol.id, "read", granted_by=alice.id,
+                          can_delete=True)
+
+        for target in (bob.id, carol.id):  # neither for itself nor for others
+            with pytest.raises(HTTPException) as exc:
+                await self._share(db_session, bob, haus, target, "read", can_delete=value)
+            assert exc.value.status_code == 403
+        assert await self._switch(db_session, haus, bob.id) is False
+        assert await self._switch(db_session, haus, carol.id) is True
+
+    async def test_admin_grantee_upsert_keeps_the_switch(self, db_session, people):
+        """Managing shares stays the admin grantee's job; the switch is untouched."""
+        alice, bob, _ = people
+        carol = await _user(db_session, "carol", ["kb.own", "kb.shared"])
+        dave = await _user(db_session, "dave", ["kb.own", "kb.shared"])
+        haus = await _kb(db_session, alice.id, "Haus")
+        await ks.share_kb(db_session, haus, bob.id, "admin", granted_by=alice.id)
+        await ks.share_kb(db_session, haus, carol.id, "read", granted_by=alice.id,
+                          can_delete=True)
+
+        resp = await self._share(db_session, bob, haus, carol.id, "write")
+        assert resp.permission == "write" and resp.can_delete is True
+        assert await self._switch(db_session, haus, carol.id) is True
+        await self._share(db_session, bob, haus, dave.id, "read")
+        assert await self._switch(db_session, haus, dave.id) is False
+
+    async def test_revoke_takes_the_switch_with_it(self, db_session, people):
+        from api.routes.knowledge import revoke_kb_permission
+
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        await ks.share_kb(db_session, haus, bob.id, "read", granted_by=alice.id, can_delete=True)
+        await revoke_kb_permission(haus, bob.id, rag=RAGService(db_session), user=alice,
+                                   db=db_session)
+        await ks.share_kb(db_session, haus, bob.id, "read", granted_by=alice.id)
+        assert await self._switch(db_session, haus, bob.id) is False
+
+    async def test_backfill_writes_it_off_and_revert_spares_a_switched_row(
+        self, db_session, people,
+    ):
+        alice, bob, _ = people
+        carol = await _user(db_session, "carol", ["kb.own", "kb.shared"])
+        haus = await _kb(db_session, alice.id, "Haus")
+        doc = await _add_doc(db_session, haus, "alt")
+        for grantee in (bob.id, carol.id):
+            await db_session.execute(text(
+                "INSERT INTO atom_explicit_grants (atom_id, granted_to_user_id, "
+                "permission_level, granted_by, granted_at) "
+                "VALUES (:a, :to, 'admin', :by, '2026-10-01')"),
+                {"a": doc.atom_id, "to": grantee, "by": alice.id})
+        await db_session.commit()
+
+        run = await ks.backfill_kb_shares(db_session, dry_run=False)
+        assert len(run.inserted) == 2
+        assert await self._switch(db_session, haus, bob.id) is False
+        assert await self._switch(db_session, haus, carol.id) is False
+        # The owner gives Carol the switch by SQL that keeps granted_at (the route
+        # would bump it): the revert must still spare her row.
+        await db_session.execute(text(
+            "UPDATE kb_shares SET can_delete = TRUE WHERE user_id = :u"), {"u": carol.id})
+        await db_session.commit()
+
+        assert await ks.revert_kb_share_backfill(db_session, run.inserted) == 1
+        assert await self._switch(db_session, haus, bob.id) is None
+        assert await self._switch(db_session, haus, carol.id) is True
 
 
 class TestOrphanDocumentAtomCleanup:
@@ -456,3 +652,230 @@ class TestOrphanDocumentAtomCleanup:
 
         assert run.document_atoms == 0
         assert await _atom(db_session, pending) is not None
+
+    async def test_an_atom_a_live_document_still_uses_is_never_purged(self, db_session, people):
+        """Negative control: a mismatched ``source_id`` alone is not an orphan —
+        the atom is still the access unit of a living document."""
+        from services.orphan_document_atoms import purge_orphan_document_atoms
+
+        alice, _, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        doc = await _add_doc(db_session, haus, "schief")
+        fact = await _add_fact(db_session, doc, "issuer")
+        await db_session.execute(text(
+            "UPDATE atoms SET source_id = '999999999' WHERE atom_id IN (:a, :f)"),
+            {"a": doc.atom_id, "f": fact.atom_id})
+        await db_session.commit()
+
+        run = await purge_orphan_document_atoms(db_session, dry_run=False)
+
+        assert (run.document_atoms, run.fact_atoms) == (0, 0)
+        assert await _atom(db_session, doc.atom_id) is not None
+        assert await _atom(db_session, fact.atom_id) is not None
+
+    async def test_the_list_is_handed_over_before_the_commit(self, db_session, people, monkeypatch):
+        """The log callback runs BEFORE the commit: when the commit fails, the
+        attempted erasure is already named, and nothing was purged."""
+        from services.orphan_document_atoms import purge_orphan_document_atoms
+
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        gone, _ = await self._orphan(db_session, haus, "verwaist", bob.id, alice.id)
+        gone_atom = gone.atom_id  # read now: the rollback below expires the object
+        seen: list[list[dict]] = []
+
+        async def failing_commit():
+            raise RuntimeError("commit failed")
+
+        def record(entries):
+            seen.append(entries)
+            monkeypatch.setattr(db_session, "commit", failing_commit)
+
+        with pytest.raises(RuntimeError):
+            await purge_orphan_document_atoms(db_session, dry_run=False, on_before_commit=record)
+        await db_session.rollback()
+        monkeypatch.undo()
+
+        assert gone_atom in {e["atom_id"] for e in seen[0]}
+        assert await _atom(db_session, gone_atom) is not None  # rolled back
+
+    async def test_script_log_lists_the_purge_before_the_commit(self, tmp_path, monkeypatch):
+        """bin/purge_orphan_document_atoms.py: when the commit fails after the
+        callback, the log already holds the full list, marked incomplete."""
+        import argparse
+        import importlib.util
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[2] / "bin" / "purge_orphan_document_atoms.py"
+        spec = importlib.util.spec_from_file_location("_purge_script_under_test", path)
+        script = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script)
+
+        class _Session:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        async def fake_purge(session, *, dry_run, on_before_commit):
+            assert not dry_run
+            on_before_commit([{"atom_id": "a-1", "atom_type": "kb_document", "grants": []}])
+            raise RuntimeError("commit failed")
+
+        monkeypatch.setattr(script, "AsyncSessionLocal", _Session)
+        monkeypatch.setattr(script, "purge_orphan_document_atoms", fake_purge)
+        log = tmp_path / "purge.json"
+
+        with pytest.raises(RuntimeError):
+            await script._run(argparse.Namespace(commit=True, log=str(log)))
+
+        data = json.loads(log.read_text())
+        assert data["complete"] is False
+        assert [e["atom_id"] for e in data["purged"]] == ["a-1"]
+
+
+# --------------------------------------------------------------------------- review
+class TestMoveEdgeCases:
+    async def test_into_an_ownerless_kb_needs_the_owner(self, db_session, people):
+        """Nobody owns it there: the content leaves the owner's hands, so the gate
+        treats it as a change of owner."""
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        geteilt = await _kb(db_session, None, "Geteilt")
+        await ks.share_kb(db_session, haus, bob.id, "write", granted_by=alice.id)
+        await ks.share_kb(db_session, geteilt, bob.id, "write", granted_by=alice.id)
+        await ks.share_kb(db_session, geteilt, alice.id, "write", granted_by=bob.id)
+        doc = await _add_doc(db_session, haus, "hinaus")
+
+        with pytest.raises(HTTPException) as exc:
+            await _route_move(db_session, bob, [doc.id], geteilt)
+        assert exc.value.status_code == 403
+
+        assert (await _route_move(db_session, alice, [doc.id], geteilt))["moved_count"] == 1
+        assert await _atom(db_session, doc.atom_id) == (alice.id, TIER_SELF)
+
+    @pytest.mark.parametrize("status", ["pending", "processing", "split_review"])
+    async def test_a_document_in_processing_is_not_moved(self, db_session, people, status):
+        alice, _, _ = people
+        privat = await _kb(db_session, alice.id, "Privat")
+        werk = await _kb(db_session, alice.id, "Werkstatt")
+        doc = await _add_doc(db_session, privat, "laeuft", status=status)
+
+        with pytest.raises(HTTPException) as exc:
+            await _route_move(db_session, alice, [doc.id], werk)
+
+        assert exc.value.status_code == 409
+        assert str(doc.id) in exc.value.detail
+        assert await _kb_of(db_session, doc.id) == privat
+
+    async def test_a_failed_document_may_be_moved(self, db_session, people):
+        alice, _, _ = people
+        privat = await _kb(db_session, alice.id, "Privat")
+        werk = await _kb(db_session, alice.id, "Werkstatt")
+        doc = await _add_doc(db_session, privat, "kaputt", status="failed")
+        assert (await _route_move(db_session, alice, [doc.id], werk))["moved_count"] == 1
+
+    async def test_atom_less_document_across_owners_takes_the_tier(self, db_session, people):
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus", tier=TIER_SELF)
+        bobs = await _kb(db_session, bob.id, "Bobs", tier=TIER_HOUSEHOLD)
+        legacy = Document(filename="alt.pdf", file_path="/tmp/alt.pdf", status="completed",
+                          knowledge_base_id=haus, circle_tier=TIER_SELF)
+        db_session.add(legacy)
+        await db_session.commit()
+        await db_session.execute(text(
+            "INSERT INTO document_chunks (document_id, content, chunk_index, circle_tier) "
+            "VALUES (:d, 'alt', 0, 0)"), {"d": legacy.id})
+        await db_session.commit()
+
+        assert await RAGService(db_session).move_documents([legacy.id], bobs) == 1
+
+        row = (await db_session.execute(text(
+            "SELECT d.circle_tier, (SELECT array_agg(circle_tier) FROM document_chunks "
+            "WHERE document_id = d.id) FROM documents d WHERE d.id = :d"),
+            {"d": legacy.id})).one()
+        assert (row[0], row[1]) == (TIER_HOUSEHOLD, [TIER_HOUSEHOLD])
+
+    async def test_a_document_with_two_owners(self, db_session, people):
+        """Moved across owners before #1460: atom owner Alice in Bob's KB — both
+        read it as owner (the SQL owner branch is an OR). The gate sees both as
+        owners and does not pick one; a move into one owner's KB settles it."""
+        alice, bob, _ = people
+        carol = await _user(db_session, "carol", ["kb.own", "kb.shared"])
+        privat = await _kb(db_session, alice.id, "Privat")
+        bobs = await _kb(db_session, bob.id, "Bobs")
+        bobs_archiv = await _kb(db_session, bob.id, "Bobs-Archiv", tier=TIER_HOUSEHOLD)
+        doc = await _add_doc(db_session, privat, "doppelt")
+        # The pre-#1460 move: only the KB changes.
+        doc.knowledge_base_id = bobs
+        await db_session.commit()
+        await ks.share_kb(db_session, bobs, carol.id, "write", granted_by=bob.id)
+        await ks.share_kb(db_session, bobs_archiv, carol.id, "write", granted_by=bob.id)
+        assert doc.id in await _visible_docs(db_session, alice.id)
+        assert doc.id in await _visible_docs(db_session, bob.id)
+
+        owners = await RAGService(db_session).document_owners([doc])
+        assert owners[doc.id] == frozenset({alice.id, bob.id})
+        # A write grantee of Bob cannot move it, even within Bob's KBs: it would
+        # take it away from Alice.
+        with pytest.raises(HTTPException) as exc:
+            await _route_move(db_session, carol, [doc.id], bobs_archiv)
+        assert exc.value.status_code == 403
+        # Bob (one of its owners) can; the atom then follows his KB.
+        assert (await _route_move(db_session, bob, [doc.id], bobs_archiv))["moved_count"] == 1
+        assert await _atom(db_session, doc.atom_id) == (bob.id, TIER_HOUSEHOLD)
+        assert doc.id not in await _visible_docs(db_session, alice.id)
+
+
+class TestKbDeleteAndFiles:
+    async def test_kb_with_an_indexed_chat_upload_is_deleted(self, db_session, people):
+        from models.database import ChatUpload
+
+        alice, _, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        doc = await _add_doc(db_session, haus, "anhang")
+        upload = ChatUpload(session_id="s-1", filename="anhang.pdf", document_id=doc.id,
+                            knowledge_base_id=haus, status="completed")
+        db_session.add(upload)
+        await db_session.commit()
+
+        assert await RAGService(db_session).delete_knowledge_base(haus)
+
+        row = (await db_session.execute(text(
+            "SELECT document_id, knowledge_base_id FROM chat_uploads WHERE id = :u"),
+            {"u": upload.id})).one()
+        assert tuple(row) == (None, None)  # the upload stays, it names no KB/document
+        assert await _atom(db_session, doc.atom_id) is None
+
+    async def test_files_go_only_after_the_commit(self, db_session, people, tmp_path, monkeypatch):
+        alice, _, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        kept = tmp_path / "bleibt.pdf"
+        kept.write_bytes(b"x")
+        doc = await _add_doc(db_session, haus, "bleibt", file_path=str(kept))
+        doc_id = doc.id  # read now: the rollbacks below expire the object
+
+        async def failing_commit():
+            raise RuntimeError("commit failed")
+
+        monkeypatch.setattr(db_session, "commit", failing_commit)
+        with pytest.raises(RuntimeError):
+            await RAGService(db_session).delete_document(doc_id)
+        assert kept.exists()  # the rows stayed, so does the file
+        await db_session.rollback()
+        with pytest.raises(RuntimeError):
+            await RAGService(db_session).delete_knowledge_base(haus)
+        assert kept.exists()
+        monkeypatch.undo()
+        await db_session.rollback()
+
+        assert await RAGService(db_session).delete_document(doc_id)
+        assert not kept.exists()
+
+        gone = tmp_path / "weg.pdf"
+        gone.write_bytes(b"x")
+        await _add_doc(db_session, haus, "weg", file_path=str(gone))
+        assert await RAGService(db_session).delete_knowledge_base(haus)
+        assert not gone.exists()

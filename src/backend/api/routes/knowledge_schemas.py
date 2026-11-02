@@ -33,6 +33,9 @@ class KnowledgeBaseResponse(BaseModel):
     created_at: str
     updated_at: str
     permission: str | None = None  # User's permission level on this KB
+    # Whether the user may delete documents / the KB: owner, kb.all, or a share
+    # carrying the owner's delete switch. No level implies it.
+    can_delete: bool = False
 
 
 # --- Permission Models ---
@@ -40,6 +43,9 @@ class KnowledgeBaseResponse(BaseModel):
 class KBPermissionCreate(BaseModel):
     user_id: int
     permission: str = Field(..., pattern="^(read|write|admin)$")
+    # The owner's separate delete switch. Omitted (None) = keep the stored value
+    # (FALSE for a new share). Only the KB owner or kb.all may send it.
+    can_delete: bool | None = None
 
 
 class KBPermissionResponse(BaseModel):
@@ -50,6 +56,7 @@ class KBPermissionResponse(BaseModel):
     granted_by: int | None
     granted_by_username: str | None
     created_at: str
+    can_delete: bool = False
 
 
 # --- Document Models ---

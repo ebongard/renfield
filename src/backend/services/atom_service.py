@@ -410,34 +410,39 @@ class AtomService:
         ]
         return fact_atom_ids
 
-    async def rehome_kb_document(
-        self, atom_id: str, *, owner_user_id: int, tier: int,
+    async def rehome_document(
+        self, doc_id: int, *, atom_id: str | None, owner_user_id: int, tier: int,
     ) -> list[str]:
-        """Hand a ``kb_document`` atom to another owner at ``tier`` (no commit).
+        """Hand a document to another owner at ``tier`` (no commit).
 
         Used when a document moves into a KB of another owner (#1460): the document
-        filters read the owner from ``kb.owner_id`` with the atom owner as fallback,
-        and ``CircleResolver.can_access_atom`` reads the atom owner, so the atom
-        must follow the KB or both owners would read it. Owner and tier cascade to
-        the document row, its chunks, its facts and the facts' atoms.
+        filters read the owner from ``kb.owner_id`` OR the atom owner, and
+        ``CircleResolver.can_access_atom`` reads the atom owner, so the atom must
+        follow the KB or both owners would read it. Owner and tier cascade to the
+        document row, its chunks, its facts and the facts' atoms. A legacy
+        atom-less document (``atom_id=None``) has no atom to re-own; its tier still
+        cascades, so its chunks do not keep the previous KB's reach.
 
         A per-fact tier override is RESET here: it was the previous owner's choice
         about the reach of her circles, which says nothing about the new owner's.
         The fact falls back to the document tier (never more visible than the parent).
 
         Returns every atom id whose cached access decision is now stale (the
-        document atom first); the caller invalidates them after its commit.
+        document atom first, when there is one); the caller invalidates them after
+        its commit.
         """
-        atom_orm = (await self.db.execute(
-            select(AtomModel).where(AtomModel.atom_id == atom_id)
-        )).scalar_one_or_none()
-        if atom_orm is None or atom_orm.atom_type != ATOM_TYPE_KB_DOCUMENT:
-            raise ValueError(f"rehome_kb_document: {atom_id} is no kb_document atom")
-        doc_id = int(atom_orm.source_id)
-        atom_orm.owner_user_id = int(owner_user_id)
-        atom_orm.policy = {"tier": int(tier)}
-        atom_orm.updated_at = datetime.now(UTC).replace(tzinfo=None)
-        await self.db.flush()
+        stale: list[str] = []
+        if atom_id is not None:
+            atom_orm = (await self.db.execute(
+                select(AtomModel).where(AtomModel.atom_id == atom_id)
+            )).scalar_one_or_none()
+            if atom_orm is None or atom_orm.atom_type != ATOM_TYPE_KB_DOCUMENT:
+                raise ValueError(f"rehome_document: {atom_id} is no kb_document atom")
+            atom_orm.owner_user_id = int(owner_user_id)
+            atom_orm.policy = {"tier": int(tier)}
+            atom_orm.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            await self.db.flush()
+            stale.append(atom_id)
 
         await self.db.execute(
             text("UPDATE documents SET circle_tier = :tier WHERE id = :doc_id"),
@@ -455,8 +460,8 @@ class AtomService:
             ),
             {"owner": int(owner_user_id), "doc_id": doc_id},
         )
-        fact_atom_ids = await self._cascade_kb_document_tier(doc_id, int(tier))
-        return [atom_id, *fact_atom_ids]
+        stale += await self._cascade_kb_document_tier(doc_id, int(tier))
+        return stale
 
     async def reset_fact_tier(self, fact_id: int) -> int | None:
         """Clear a document_fact's per-fact tier override, restoring it to the

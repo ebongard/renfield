@@ -62,8 +62,8 @@ class AtomPurgeService:
         transaction with the deletion of the source rows it belongs to (document
         delete: the facts' atoms, the document row and its own atom go together).
 
-        Returns the count of provenance rows moved to the archive.
-        Raises if the atom doesn't exist (caller's bug, not ours to mask).
+        Returns the count of provenance rows moved to the archive. An atom that
+        does not exist is not an error: nothing is archived or deleted (returns 0).
         """
         if not atom_id:
             raise ValueError("atom_id is required")

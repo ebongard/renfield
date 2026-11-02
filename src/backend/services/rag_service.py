@@ -97,15 +97,39 @@ class DuplicateDocumentError(Exception):
         super().__init__("duplicate document")
 
 
-def owner_after_move(current_owner: int | None, target_kb_owner: int | None) -> int | None:
-    """Who owns a document once it is filed into a KB owned by ``target_kb_owner``.
+def _remove_file(path: str | None) -> None:
+    """Best-effort removal of a document's file (after its rows are committed)."""
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+            logger.info(f"File deleted: {path}")
+    except Exception as e:
+        logger.warning(f"Could not delete file: {e}")
 
-    The KB owner, as for every document filed there (the document filters read
-    ``kb.owner_id``). An ownerless KB has nobody to hand it to, so the document
-    keeps its owner (reached through the atom-owner fallback). The move route's
-    gate (#1462) and ``RAGService.move_documents`` (#1460) both decide by this.
+
+class DocumentBusyError(ValueError):
+    """A document that is still being processed (or is part of a PDF split) cannot
+    be moved: the worker writes its chunks and facts at the tier and owner it read
+    at the start, so a move in between would be overwritten or half-applied."""
+
+
+# A document may be moved only in a settled state.
+MOVABLE_STATUSES = frozenset({DOC_STATUS_COMPLETED, DOC_STATUS_FAILED})
+
+
+def move_changes_owner(owners: frozenset[int], target_kb_owner: int | None) -> bool:
+    """Whether filing a document with these ``owners`` into a KB owned by
+    ``target_kb_owner`` changes who reads it as owner.
+
+    ``owners`` = every user the document filters treat as owner (the atom owner
+    AND the KB owner — ``circle_sql``'s owner branch is an OR; see
+    :meth:`RAGService.document_owners`). After the move exactly the target KB's
+    owner is owner, so anything else is a change. An ownerless target KB counts as
+    a change as well: nobody reads it as KB owner afterwards, and the content
+    leaves the KB owner's hands. The move route's gate (#1462) and
+    ``RAGService.move_documents`` (#1460) both decide by this.
     """
-    return target_kb_owner if target_kb_owner is not None else current_owner
+    return target_kb_owner is None or owners != frozenset({target_kb_owner})
 
 
 class RAGService(AtomOwnerResolverMixin):
@@ -1033,16 +1057,12 @@ class RAGService(AtomOwnerResolverMixin):
         except Exception:
             _deleted_owner = None
 
-        # Delete the file as well
-        try:
-            if doc.file_path and os.path.exists(doc.file_path):
-                os.remove(doc.file_path)
-                logger.info(f"File deleted: {doc.file_path}")
-        except Exception as e:
-            logger.warning(f"Could not delete file: {e}")
-
+        file_path = doc.file_path
         deleted = await self._delete_document_rows(doc)
         await self.db.commit()
+        # The file only after the commit: a failed transaction must not leave a
+        # row that points at a file already gone.
+        _remove_file(file_path)
 
         logger.info(f"Document deleted: ID={document_id}")
         if deleted:
@@ -1119,10 +1139,16 @@ class RAGService(AtomOwnerResolverMixin):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def document_owners(self, docs: list[Document]) -> dict[int, int | None]:
-        """The owner of each document, as the document filters see it: the owner
-        of its ``kb_document`` atom, else (a legacy atom-less row) the owner of its
-        KB. ``None`` = nobody (atom-less in an ownerless KB, or KB-less)."""
+    async def document_owners(self, docs: list[Document]) -> dict[int, frozenset[int]]:
+        """Everyone the document filters treat as OWNER of each document: the
+        owner of its ``kb_document`` atom and the owner of its KB.
+
+        ``circle_sql``'s owner branch is ``kb.owner_id = asker OR atom owner =
+        asker``. Normally the two are one person; a document moved across owners
+        before #1460 has two, and BOTH read it as owner. Naming only one of them
+        here would make the move gate disagree with the filters, so this returns
+        the set and decides nothing about who the rightful owner is. Empty = nobody
+        (atom-less in an ownerless KB, or KB-less without an atom)."""
         if not docs:
             return {}
         rows = (await self.db.execute(
@@ -1132,7 +1158,7 @@ class RAGService(AtomOwnerResolverMixin):
             .where(Document.id.in_([d.id for d in docs]))
         )).all()
         return {
-            doc_id: atom_owner if atom_owner is not None else kb_owner
+            doc_id: frozenset(o for o in (atom_owner, kb_owner) if o is not None)
             for doc_id, atom_owner, kb_owner in rows
         }
 
@@ -1153,6 +1179,7 @@ class RAGService(AtomOwnerResolverMixin):
 
         Raises:
             ValueError: when the target knowledge base does not exist or is inactive
+            DocumentBusyError: when a document to move is not completed or failed
         """
         # Validate the target knowledge base
         target_kb = await self.get_knowledge_base(target_kb_id)
@@ -1171,29 +1198,37 @@ class RAGService(AtomOwnerResolverMixin):
 
         # Move only documents that are not already in the target knowledge base
         to_move = [doc for doc in docs if doc.knowledge_base_id != target_kb_id]
+        busy = sorted(doc.id for doc in to_move if doc.status not in MOVABLE_STATUSES)
+        if busy:
+            raise DocumentBusyError(
+                "Dokument(e) werden noch verarbeitet und können erst danach "
+                f"verschoben werden: {', '.join(map(str, busy))}"
+            )
         owners = await self.document_owners(to_move)
+        target_owner = target_kb.owner_id
+        target_tier = int(target_kb.default_circle_tier or 0)
         atom_svc = self._atom_service()
         moved = 0
         moved_atom_ids: list[str] = []
         stale_atom_ids: list[str] = []
         for doc in to_move:
+            doc_owners = owners.get(doc.id, frozenset())
             doc.knowledge_base_id = target_kb_id
             moved += 1
-            if not doc.atom_id:
-                continue
-            moved_atom_ids.append(doc.atom_id)
-            current_owner = owners.get(doc.id)
-            new_owner = owner_after_move(current_owner, target_kb.owner_id)
-            if new_owner is not None and new_owner != current_owner:
-                # Filing into another owner's KB hands the document to that
-                # owner (the filters read kb.owner_id); the atom follows (#1460),
-                # at the tier a fresh filing there would get. Same owner: the
-                # tier stays the owner's choice.
-                stale_atom_ids += await atom_svc.rehome_kb_document(
-                    doc.atom_id, owner_user_id=new_owner,
-                    tier=int(target_kb.default_circle_tier or 0),
+            if doc.atom_id:
+                moved_atom_ids.append(doc.atom_id)
+            if target_owner is not None and move_changes_owner(doc_owners, target_owner):
+                # Filing into another owner's KB hands the document to that owner
+                # (the filters read kb.owner_id); the atom follows (#1460), at the
+                # tier a fresh filing there would get. An atom-less legacy row
+                # still takes the tier. Same owner: the tier stays the owner's
+                # choice. An ownerless target has nobody to hand it to: the atom
+                # owner stays (atom-owner fallback).
+                stale_atom_ids += await atom_svc.rehome_document(
+                    doc.id, atom_id=doc.atom_id, owner_user_id=target_owner,
+                    tier=target_tier,
                 )
-                doc.circle_tier = int(target_kb.default_circle_tier or 0)
+                doc.circle_tier = target_tier
 
         if moved_atom_ids:
             # Access through a KB share follows the document's CURRENT KB at query
@@ -1226,22 +1261,29 @@ class RAGService(AtomOwnerResolverMixin):
         if not kb:
             return False
 
-        # Delete the files of all documents
-        for doc in kb.documents:
-            try:
-                if doc.file_path and os.path.exists(doc.file_path):
-                    os.remove(doc.file_path)
-            except Exception as e:
-                logger.warning(f"Could not delete file: {e}")
+        docs = list(kb.documents)
+        file_paths = [doc.file_path for doc in docs]
 
         # Each document through the document delete path: the DB foreign key on
         # documents.knowledge_base_id has no ON DELETE action, and the atoms of the
         # documents (and their grants) do not cascade from the documents (#1461).
-        for doc in list(kb.documents):
+        for doc in docs:
             await self._delete_document_rows(doc)
+        # chat_uploads.knowledge_base_id has no ON DELETE action either: an upload
+        # indexed into this KB would block the delete. The upload stays (it belongs
+        # to its conversation), it just no longer names a KB.
+        await self.db.execute(
+            text("UPDATE chat_uploads SET knowledge_base_id = NULL WHERE knowledge_base_id = :kb"),
+            {"kb": kb_id},
+        )
         stmt = delete(KnowledgeBase).where(KnowledgeBase.id == kb_id)
         result = await self.db.execute(stmt)
         await self.db.commit()
+
+        # Files only after the commit: a failed transaction must not leave rows
+        # that point at files already gone.
+        for path in file_paths:
+            _remove_file(path)
 
         logger.info(f"Knowledge base deleted: ID={kb_id}")
         return result.rowcount > 0
