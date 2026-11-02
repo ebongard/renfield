@@ -289,6 +289,8 @@ Jedes Subsystem, das Inhalte dem LLM präsentiert, wendet den Circle-Filter an:
 
 `services/circle_resolver.py` hält einen `PolicyEvaluator` mit In-Memory-Cache der Circle-Memberships pro Eigentümer. Der Cache wird bei Membership-Änderungen (`POST /api/circles/me/members`) invalidiert. Resolver-Aufrufe außerhalb der SQL-Filter-Pfade (z.B. einzelner `can_access_atom`-Check vor einer Schreiboperation) gehen durch diesen Cache.
 
+🛑 **Dokumente und Fakten entscheidet `can_access_atom` NICHT selbst** (#1463). Bei aktiver Auth prüft der Resolver `kb_document`- und `document_fact`-Atome mit demselben `circle_sql`-Prädikat wie die Retrieval-Pfade (`documents_circles_filter` bzw. `document_facts_circles_filter`, eine Abfrage je Atom über `d.atom_id` / `df.atom_id`, ungecacht). Vorher las er das Atom: Eigentümer des Fakt-Atoms, Grants auf dem FAKT-Atom, KB-Freigabe nur für Dokumente — die SQL-Filter lesen dagegen den KB-Eigentümer (mit Atom-Eigentümer als Rückfall), Grants auf dem ELTERN-Dokument und die KB-Freigabe. Ein Empfänger einer geteilten KB fand einen Fakt per Suche und bekam bei `GET /api/atoms/{id}` 404. Folgen der einen Regel: ein Atom ohne Quellzeile ist unerreichbar; bei einem Dokument ohne KB greift die Mitgliedschaft nicht (sie hängt an `kb.owner_id`), in beiden Pfaden gleich. Die Policies dieser Atome tragen nur die `tier`-Dimension, die der SQL-Filter abdeckt. Auth aus: die bisherige Zweiglogik, unverändert. Gleichlauf-Test: `tests/backend/test_document_atom_reach_parity_pg.py`. Die Dokument-Ebene hat dafür einen eigenen Wrapper `documents_circles_filter` (Dokumentsuche, Titel-Nachschlagen in `knowledge_tool`, Resolver) statt dreier Handkopien.
+
 ---
 
 ## Services
