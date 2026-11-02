@@ -58,6 +58,7 @@ from models.database import (
     DOC_STATUS_PENDING,
     DOC_STATUS_PROCESSING,
     EMBEDDING_DIMENSION,
+    Atom,
     Document,
     DocumentChunk,
     DocumentFact,
@@ -94,6 +95,17 @@ class DuplicateDocumentError(Exception):
     def __init__(self, winner: "Document | None"):
         self.winner = winner
         super().__init__("duplicate document")
+
+
+def owner_after_move(current_owner: int | None, target_kb_owner: int | None) -> int | None:
+    """Who owns a document once it is filed into a KB owned by ``target_kb_owner``.
+
+    The KB owner, as for every document filed there (the document filters read
+    ``kb.owner_id``). An ownerless KB has nobody to hand it to, so the document
+    keeps its owner (reached through the atom-owner fallback). The move route's
+    gate (#1462) and ``RAGService.move_documents`` (#1460) both decide by this.
+    """
+    return target_kb_owner if target_kb_owner is not None else current_owner
 
 
 class RAGService(AtomOwnerResolverMixin):
@@ -959,6 +971,51 @@ class RAGService(AtomOwnerResolverMixin):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def _delete_document_rows(self, doc: Document) -> bool:
+        """Delete one document with everything hanging off it — NO commit.
+
+        The caller commits, so a document and its atoms go in one transaction
+        (single delete, and every document of a deleted KB). Returns whether the
+        document row was deleted.
+
+        Atoms are the access-control unit and do not cascade from their source
+        rows (the FK runs atom → source), so each is purged explicitly through
+        ``AtomPurgeService`` (the sanctioned path, ``test_no_direct_atom_delete``):
+        the facts' atoms first (that cascades the fact rows), the document's own
+        ``kb_document`` atom LAST — its purge would otherwise cascade the document
+        row away before the delete below can count it. Purging the document atom
+        also removes its ``atom_explicit_grants`` (FK CASCADE); left behind, they
+        were a dangling ``source_id`` row plus grants (#1461).
+        """
+        from services.atom_purge_service import AtomPurgeService
+
+        # Unlink the chat uploads that point at the document.
+        await self.db.execute(
+            text("UPDATE chat_uploads SET document_id = NULL WHERE document_id = :doc_id"),
+            {"doc_id": doc.id}
+        )
+        fact_atom_ids = (await self.db.execute(
+            select(DocumentFact.atom_id).where(DocumentFact.document_id == doc.id)
+        )).scalars().all()
+        for aid in fact_atom_ids:
+            if aid:
+                await AtomPurgeService.purge(
+                    self.db, atom_id=aid, reason="document_deleted", commit=False,
+                )
+
+        # Delete the chunks first (explicitly, in case CASCADE does not apply)
+        await self.db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc.id))
+        result = await self.db.execute(delete(Document).where(Document.id == doc.id))
+
+        if doc.atom_id:
+            await AtomPurgeService.purge(
+                self.db, atom_id=doc.atom_id, reason="document_deleted", commit=False,
+            )
+            from services.circle_resolver import CircleResolver
+
+            CircleResolver.invalidate_for_atom(doc.atom_id)
+        return result.rowcount > 0
+
     async def delete_document(self, document_id: int) -> bool:
         """Delete a document and all chunks belonging to it"""
         # Check whether the document exists
@@ -984,38 +1041,10 @@ class RAGService(AtomOwnerResolverMixin):
         except Exception as e:
             logger.warning(f"Could not delete file: {e}")
 
-        # Delete the foreign-key references in chat_uploads
-        await self.db.execute(
-            text("UPDATE chat_uploads SET document_id = NULL WHERE document_id = :doc_id"),
-            {"doc_id": document_id}
-        )
-
-        # Purge Schicht A fact atoms FIRST. The document_facts rows cascade-delete
-        # with the document (FK ON DELETE CASCADE), but the atoms each fact is
-        # wrapped in do NOT (the cascade runs the other way: atom→fact). Without
-        # this, deleting a document leaves orphan document_fact atoms with a
-        # dangling source_id — a retrieval/GDPR gap. AtomPurgeService is the
-        # sanctioned delete path (test_no_direct_atom_delete lint); purging the
-        # atom cascades the fact row away.
-        from services.atom_purge_service import AtomPurgeService
-        fact_atom_ids = (await self.db.execute(
-            select(DocumentFact.atom_id).where(DocumentFact.document_id == document_id)
-        )).scalars().all()
-        for aid in fact_atom_ids:
-            if aid:
-                await AtomPurgeService.purge(self.db, atom_id=aid, reason="document_deleted")
-
-        # Delete the chunks first (explicitly, in case CASCADE does not apply)
-        chunk_stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
-        await self.db.execute(chunk_stmt)
-
-        # Then delete the document
-        stmt = delete(Document).where(Document.id == document_id)
-        result = await self.db.execute(stmt)
+        deleted = await self._delete_document_rows(doc)
         await self.db.commit()
 
         logger.info(f"Document deleted: ID={document_id}")
-        deleted = result.rowcount > 0
         if deleted:
             try:
                 from services.redis_client import get_redis
@@ -1090,6 +1119,23 @@ class RAGService(AtomOwnerResolverMixin):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def document_owners(self, docs: list[Document]) -> dict[int, int | None]:
+        """The owner of each document, as the document filters see it: the owner
+        of its ``kb_document`` atom, else (a legacy atom-less row) the owner of its
+        KB. ``None`` = nobody (atom-less in an ownerless KB, or KB-less)."""
+        if not docs:
+            return {}
+        rows = (await self.db.execute(
+            select(Document.id, Atom.owner_user_id, KnowledgeBase.owner_id)
+            .outerjoin(Atom, Atom.atom_id == Document.atom_id)
+            .outerjoin(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+            .where(Document.id.in_([d.id for d in docs]))
+        )).all()
+        return {
+            doc_id: atom_owner if atom_owner is not None else kb_owner
+            for doc_id, atom_owner, kb_owner in rows
+        }
+
     async def move_documents(
         self,
         document_ids: list[int],
@@ -1124,14 +1170,30 @@ class RAGService(AtomOwnerResolverMixin):
             raise ValueError("Keine der angegebenen Dokumente gefunden")
 
         # Move only documents that are not already in the target knowledge base
+        to_move = [doc for doc in docs if doc.knowledge_base_id != target_kb_id]
+        owners = await self.document_owners(to_move)
+        atom_svc = self._atom_service()
         moved = 0
         moved_atom_ids: list[str] = []
-        for doc in docs:
-            if doc.knowledge_base_id != target_kb_id:
-                doc.knowledge_base_id = target_kb_id
-                moved += 1
-                if doc.atom_id:
-                    moved_atom_ids.append(doc.atom_id)
+        stale_atom_ids: list[str] = []
+        for doc in to_move:
+            doc.knowledge_base_id = target_kb_id
+            moved += 1
+            if not doc.atom_id:
+                continue
+            moved_atom_ids.append(doc.atom_id)
+            current_owner = owners.get(doc.id)
+            new_owner = owner_after_move(current_owner, target_kb.owner_id)
+            if new_owner is not None and new_owner != current_owner:
+                # Filing into another owner's KB hands the document to that
+                # owner (the filters read kb.owner_id); the atom follows (#1460),
+                # at the tier a fresh filing there would get. Same owner: the
+                # tier stays the owner's choice.
+                stale_atom_ids += await atom_svc.rehome_kb_document(
+                    doc.atom_id, owner_user_id=new_owner,
+                    tier=int(target_kb.default_circle_tier or 0),
+                )
+                doc.circle_tier = int(target_kb.default_circle_tier or 0)
 
         if moved_atom_ids:
             # Access through a KB share follows the document's CURRENT KB at query
@@ -1148,9 +1210,9 @@ class RAGService(AtomOwnerResolverMixin):
 
         if moved > 0:
             await self.db.commit()
-            if moved_atom_ids:
+            if moved_atom_ids or stale_atom_ids:
                 from services.circle_resolver import CircleResolver
-                for atom_id in moved_atom_ids:
+                for atom_id in {*moved_atom_ids, *stale_atom_ids}:
                     CircleResolver.invalidate_for_atom(atom_id)
             logger.info(
                 f"📦 {moved} document(s) moved to KB '{target_kb.name}' (ID={target_kb_id})"
@@ -1172,7 +1234,11 @@ class RAGService(AtomOwnerResolverMixin):
             except Exception as e:
                 logger.warning(f"Could not delete file: {e}")
 
-        # Delete from the database (documents + chunks go via cascade)
+        # Each document through the document delete path: the DB foreign key on
+        # documents.knowledge_base_id has no ON DELETE action, and the atoms of the
+        # documents (and their grants) do not cascade from the documents (#1461).
+        for doc in list(kb.documents):
+            await self._delete_document_rows(doc)
         stmt = delete(KnowledgeBase).where(KnowledgeBase.id == kb_id)
         result = await self.db.execute(stmt)
         await self.db.commit()

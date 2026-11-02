@@ -24,7 +24,7 @@ from services.atom_service import AtomService
 from services.auth_service import get_optional_user
 from services.database import get_db
 from services.progress import DocumentProgress
-from services.rag_service import DuplicateDocumentError, RAGService
+from services.rag_service import DuplicateDocumentError, RAGService, owner_after_move
 from services.redis_client import get_redis
 
 # Worker liveness moved to services/task_queue.py (document_worker_is_alive) —
@@ -121,7 +121,8 @@ async def check_kb_access(
     2. kb.all permission → full access
     3. Owner → full access
     4. Public KB → read access for users with kb.shared
-    5. Explicit KBPermission → per-permission access
+    5. KB share (kb_shares / legacy grants) → read and write at that level,
+       delete only with an admin share; an unknown action is denied
     6. kb.own permission → access to own KBs only
     """
     # Auth disabled = full access
@@ -153,7 +154,13 @@ async def check_kb_access(
         level = await get_user_kb_permission_level(db, kb.id, user.id)
         if level:
             perm_levels = {"read": 1, "write": 2, "admin": 3}
-            required_level = perm_levels.get(required_action, 1)
+            # Deleting (a document or the KB itself) destroys the owner's data:
+            # it needs an admin share. It used to fall through to the READ level
+            # (`.get(action, 1)`), so a read grantee could delete. An unknown
+            # action is denied instead of being read as "read".
+            required_level = {**perm_levels, "delete": 3}.get(required_action)
+            if required_level is None:
+                return False
             user_level = perm_levels.get(level, 0)
             if user_level >= required_level:
                 return True
@@ -904,12 +911,32 @@ async def move_documents(
         src_res = await db.execute(
             select(Document).where(Document.id.in_(request.document_ids))
         )
-        for src_doc in src_res.scalars().all():
+        src_docs = list(src_res.scalars().all())
+        for src_doc in src_docs:
             if not await check_document_access(src_doc, user, "write", db):
                 raise HTTPException(
                     status_code=403,
                     detail="No access to one or more source documents",
                 )
+
+        # #1462: a move into a KB of ANOTHER owner hands the document to that
+        # owner (the filters read kb.owner_id, and the atom follows: #1460). A
+        # write share lets the grantee work inside the owner's KBs, not give the
+        # owner's documents away — least of all to himself, where he would keep
+        # reading them after the share is revoked. So a change of owner needs
+        # the document's owner (or kb.all); fail closed for the whole batch.
+        if target_kb and not has_permission(user_perms, Permission.KB_ALL):
+            owners = await rag.document_owners(src_docs)
+            for src_doc in src_docs:
+                if src_doc.knowledge_base_id == target_kb.id:
+                    continue
+                current_owner = owners.get(src_doc.id)
+                new_owner = owner_after_move(current_owner, target_kb.owner_id)
+                if new_owner != current_owner and current_owner != user.id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Only the owner may move a document to a knowledge base of another owner",
+                    )
 
     try:
         moved = await rag.move_documents(request.document_ids, request.target_knowledge_base_id)
