@@ -235,8 +235,6 @@ describe('KbShareDialog against the backend row shape', () => {
   it('tells the two kinds apart with isKbLevelShare', () => {
     expect(isKbLevelShare(BACKEND_KB_SHARE)).toBe(true);
     expect(isKbLevelShare(BACKEND_DOCUMENT_GRANTS)).toBe(false);
-    // `documents` is absent from a share, not null.
-    expect('documents' in BACKEND_KB_SHARE).toBe(false);
   });
 
   it('renders a kb_share row as before and a document_grants row without level or switch, revocable', async () => {
@@ -255,5 +253,22 @@ describe('KbShareDialog against the backend row shape', () => {
     expect(within(dave).queryByRole('checkbox')).toBeNull();
     fireEvent.click(within(dave).getByRole('button', { name: 'Freigabe für dave entziehen' }));
     await waitFor(() => expect(captured.deletes).toEqual(['4']));
+  });
+
+  it('shows a kb_share with a level the backend does not know neutrally, revocable', async () => {
+    // The backend serves an unknown stored level as `permission: null` on a
+    // kb_share row (no `documents`): it grants nothing.
+    const odd: KbShare = { ...BACKEND_KB_SHARE, id: 3, user_id: 3, username: 'carol', permission: null };
+    const captured = wire([odd]);
+    renderWithProviders(<KbShareDialog kb={OWNER_KB} isOpen onClose={() => {}} />);
+    await screen.findByText('carol', { selector: 'span' });
+
+    const row = rowOf('carol');
+    expect(within(row).getByText('unbekannte Stufe')).toBeInTheDocument();
+    expect(within(row).queryByText(/einzelne Dokument/)).toBeNull();
+    expect(within(row).queryByRole('combobox')).toBeNull();
+    expect(within(row).queryByRole('checkbox')).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: 'Freigabe für carol entziehen' }));
+    await waitFor(() => expect(captured.deletes).toEqual(['3']));
   });
 });

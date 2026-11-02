@@ -1073,6 +1073,7 @@
       "addButton": "Share",
       "documentGrants_one": "Access to {{count}} single document",
       "documentGrants_other": "Access to {{count}} single documents",
+      "unknownLevel": "unknown level",
       "unnamedUser": "Person #{{id}}",
       "userIdPlaceholder": "User ID",
       "pickUser": "Choose a person …"
