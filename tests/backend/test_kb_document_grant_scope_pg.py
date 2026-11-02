@@ -270,7 +270,6 @@ class TestBackfillCarriesLegacySharesOver:
         d1 = await _doc(db_session, haus, "a", created_at=_t(30))
         d2 = await _doc(db_session, haus, "b", created_at=_t(20))
         await _old_share_kb(db_session, haus, bob.id, alice.id, "write", _t(10))
-        later = await _doc(db_session, haus, "spaeter")  # after the grant: not partial
 
         before = await ks.uncovered_legacy_pairs(db_session)
         assert [(p.kb_id, p.user_id, p.reasons) for p in before.clean] == [(haus.id, bob.id, [])]
@@ -278,7 +277,8 @@ class TestBackfillCarriesLegacySharesOver:
         # The dry run shows the owner every clean pair before --commit converts it.
         dry = await ks.backfill_kb_shares(db_session, dry_run=True)
         assert dry.clean == [{"kb_id": haus.id, "user_id": bob.id, "grants": 2,
-                              "permission": "write", "reasons": []}]
+                              "permission": "write", "reasons": [],
+                              "kb_docs": 2, "docs_after_grant": 0}]
         assert haus.id not in await _listed_kbs(db_session, bob)  # the precondition gap
 
         run = await ks.backfill_kb_shares(db_session, dry_run=False)
@@ -286,6 +286,7 @@ class TestBackfillCarriesLegacySharesOver:
         assert [(r["kb_id"], r["user_id"]) for r in run.inserted] == [(haus.id, bob.id)]
         assert (await _listed_kbs(db_session, bob))[haus.id] == "write"
         assert await _kb_rights(db_session, haus, bob) == (True, True)
+        later = await _doc(db_session, haus, "spaeter")  # the share covers it now
         for doc in (d1, d2, later):
             assert await _sees_doc(db_session, bob.id, doc)
         after = await ks.uncovered_legacy_pairs(db_session)
@@ -312,7 +313,8 @@ class TestBackfillCarriesLegacySharesOver:
         # owner resolves — preferred over a false share.
         assert "split_batch" in flagged[(haus.id, bob.id)]
         assert dry.clean_missing == 0
-        assert set(dry.suspicious[0]) == {"kb_id", "user_id", "grants", "permission", "reasons"}
+        assert set(dry.suspicious[0]) == {"kb_id", "user_id", "grants", "permission", "reasons",
+                                          "kb_docs", "docs_after_grant"}
 
         run = await ks.backfill_kb_shares(db_session, dry_run=False)
 
@@ -396,7 +398,9 @@ class TestBackfillCarriesLegacySharesOver:
         assert "kb_younger_than_grant" in flags[(privat.id, bob.id)]
         await self._assert_never_converted(db_session, privat, bob)
 
-    async def test_one_grant_in_a_kb_that_holds_more_is_suspicious(self, db_session, people):
+    async def test_one_moved_document_with_uploads_after_it_is_suspicious(
+        self, db_session, people,
+    ):
         """The typical shape even into an OLDER, then empty KB: one moved document
         and private uploads after it (partial does not see those)."""
         alice, bob, _ = people
@@ -408,8 +412,51 @@ class TestBackfillCarriesLegacySharesOver:
         await _doc(db_session, privat, "geheim")
 
         flags = await self._flags(db_session)
-        assert flags[(privat.id, bob.id)] == {"single_grant"}
+        assert flags[(privat.id, bob.id)] == {"added_after_grant"}
         await self._assert_never_converted(db_session, privat, bob)
+
+    async def test_whole_kb_moved_into_an_older_empty_kb_with_uploads_after(
+        self, db_session, people,
+    ):
+        """The review's counter-example: several documents moved together into an
+        OLDER, then empty "Privat", private uploads only after the grant. No
+        split_batch, no partial, not younger, more than one grant -- only the
+        ungranted later upload gives it away (the move itself left no trace)."""
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(90))
+        docs = [await _doc(db_session, haus, f"d{i}", created_at=_t(80)) for i in range(2)]
+        await _old_share_kb(db_session, haus, bob.id, alice.id, "read", _t(70))
+        privat = await _kb(db_session, alice.id, "Privat", created_at=_t(100))
+        for doc in docs:
+            await _move_pre_1464(db_session, doc, privat)
+        geheim = await _doc(db_session, privat, "geheim")
+
+        pairs = await ks.uncovered_legacy_pairs(db_session)
+        [pair] = [p for p in pairs.suspicious if (p.kb_id, p.user_id) == (privat.id, bob.id)]
+        assert pair.reasons == ["added_after_grant"]
+        assert (pair.kb_docs, pair.docs_after_grant) == (3, 1)
+        await self._assert_never_converted(db_session, privat, bob)
+        assert not await _sees_doc(db_session, bob.id, geheim)
+
+    async def test_the_remaining_blind_spot_converts_only_what_is_readable(
+        self, db_session, people,
+    ):
+        """What stays undetectable, pinned: the same move WITHOUT a later upload is
+        clean -- converting it gives Bob no document he could not already read
+        (the exposure is only what is uploaded there later). Documented in
+        docs/CIRCLES.md; the dry run lists it as CLEAN with its counts."""
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(90))
+        docs = [await _doc(db_session, haus, f"d{i}", created_at=_t(80)) for i in range(2)]
+        await _old_share_kb(db_session, haus, bob.id, alice.id, "read", _t(70))
+        privat = await _kb(db_session, alice.id, "Privat", created_at=_t(100))
+        for doc in docs:
+            await _move_pre_1464(db_session, doc, privat)
+
+        dry = await ks.backfill_kb_shares(db_session, dry_run=True)
+        assert dry.clean == [{"kb_id": privat.id, "user_id": bob.id, "grants": 2,
+                              "permission": "read", "reasons": [],
+                              "kb_docs": 2, "docs_after_grant": 0}]
 
     async def test_a_share_made_by_someone_else_than_the_owner_is_suspicious(
         self, db_session, people,

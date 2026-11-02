@@ -20,12 +20,16 @@ its grants, so a grant may have travelled into another KB; converting it would
 share the whole destination KB. The dry run lists these pairs as SUSPICIOUS
 (ids, counts, level, reasons — see ``UNCOVERED_PAIRS_SQL``); the owner adopts one
 explicitly with ``--adopt KB_ID:USER_ID --commit`` (logged, revertible). The
-owner moving between her own KBs leaves no trace when (a) the source KB was
-shared again after the move, (b) the siblings or the source KB were deleted
-since, or (c) every document moved together; the flags for a destination KB
-younger than the grant and for a single grant in a KB that now holds more
-documents catch the usual shape. They cannot catch everything, so the dry run
-also lists every CLEAN pair it would convert: read it before ``--commit``.
+old move left NO trace (it set ``documents.knowledge_base_id`` only), so the
+guard bounds the exposure instead: a pair is suspicious as soon as the KB holds
+a document the person has no grant on, whenever it arrived. A clean pair thus
+gains no document it cannot already read. That also flags every legacy share
+whose KB received uploads since (the gap #1464 closed) -- adopt those after a
+look at ``kb_docs`` / ``docs_after_grant``. Not detectable: documents moved by
+their own owner, without split_batch, into a KB older than the grant that holds
+nothing but them; converting such a pair shares only what is uploaded there
+LATER. The dry run therefore lists every CLEAN pair too: read it before
+``--commit``.
 
 - Default is a DRY RUN: counts only, no writes.
 - Idempotent: an existing kb_shares row is never touched (ON CONFLICT DO NOTHING),
@@ -134,14 +138,16 @@ def _build_parser() -> argparse.ArgumentParser:
 def _report_suspicious(suspicious: list[dict]) -> None:
     for s in suspicious:
         logger.info("  SUSPICIOUS (owner decides) | kb_id=%s user_id=%s | grants=%s | "
-                    "level=%s | reasons=%s", s["kb_id"], s["user_id"], s["grants"],
-                    s["permission"], ",".join(s["reasons"]))
+                    "level=%s | reasons=%s | kb_docs=%s docs_after_grant=%s",
+                    s["kb_id"], s["user_id"], s["grants"], s["permission"],
+                    ",".join(s["reasons"]), s.get("kb_docs"), s.get("docs_after_grant"))
 
 
 def _report_clean(clean: list[dict]) -> None:
     for c in clean:
         logger.info("  CLEAN (converted by --commit) | kb_id=%s user_id=%s | grants=%s | "
-                    "level=%s", c["kb_id"], c["user_id"], c["grants"], c["permission"])
+                    "level=%s | kb_docs=%s docs_after_grant=%s", c["kb_id"], c["user_id"],
+                    c["grants"], c["permission"], c.get("kb_docs"), c.get("docs_after_grant"))
 
 
 def _claim_log(path_arg: str | None, prefix: str) -> Path | None:

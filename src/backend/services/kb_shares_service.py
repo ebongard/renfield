@@ -69,37 +69,40 @@ _LEGACY_GRANTS_FROM = (
 # One row per (kb_id, user_id) that holds a legacy grant on a document of the KB
 # and has NO kb_shares row: the pairs whose KB level the code no longer derives
 # (#1446). Columns: kb_id, user_id, grants, rank (MAX level), granted_by and
-# granted_at of the most recent grant, and the suspicion flags.
+# granted_at of the most recent grant, the suspicion flags, and two counts for
+# the owner (kb_docs, docs_after_grant).
 #
 # A grant may have moved with its document into ANOTHER KB before #1464 (the
-# move did not delete grants then). The data model has no move trace, so the
-# flags are indirect -- false alarms are preferred over false shares. The owner
-# moving between her own KBs never sets foreign_granter, and these moves leave
-# no trace in the source KB:
-#   (a) the source KB was shared again after the move (the old share_kb gave
-#       the remaining documents a new granted_at, so split_batch is false);
-#   (b) the sibling documents or the source KB were deleted since;
-#   (c) every document of the source KB moved together into the destination.
-# The destination is then typically a newer KB ("Privat": one document moved
-# in, private uploads after it, which partial does not see), hence the last two
-# flags. All timestamps are naive UTC (models._utcnow); a NULL created_at sets
-# no flag.
+# move did not delete grants then). The move left NO trace: it set
+# documents.knowledge_base_id and nothing else (documents has no updated_at, the
+# atom was not touched, no audit row). So the flags are indirect -- false alarms
+# are preferred over false shares, and the decisive ones bound what a conversion
+# EXPOSES: a kb_shares row adds exactly the KB documents the person holds no
+# grant on, so every such document makes the pair suspicious, whenever it
+# arrived. The owner moving between her own KBs never sets foreign_granter, and
+# (a) re-sharing the source, (b) deleting the siblings or the source, (c) moving
+# every document together leave no split_batch either. All timestamps are naive
+# UTC (models._utcnow); a NULL created_at counts as "existed at grant time".
 #   foreign_granter  a grant was given by someone other than the CURRENT KB
 #                    owner (also flags shares an admin made: owner decides);
 #   partial          a document of the KB that existed when the grant was given
 #                    (created_at <= granted_at, or no created_at) carries no
 #                    grant for the user -- the old share_kb granted EVERY
 #                    document of the KB in one statement;
+#   added_after_grant  a document added to the KB after the grant carries no
+#                    grant for the user (the private uploads after a move; but
+#                    also every upload into a genuinely shared KB since, the gap
+#                    #1464 closed -- a false alarm the owner settles with
+#                    --adopt, guided by kb_docs / docs_after_grant);
 #   split_batch      the same share statement (same user, granter and
 #                    granted_at) also produced grants on documents that are now
 #                    in a DIFFERENT KB, so a document left its share's KB;
 #   kb_younger_than_grant  the KB was created after one of the grants: the
-#                    grant cannot stem from a share of THIS KB (cases a-c);
-#   single_grant     one grant in a KB that now holds more documents -- the
-#                    shape of one moved document (also flags a legacy share of a
-#                    one-document KB that grew since: a false alarm).
-# Not detectable: a single moved document, by its own owner, into a KB older
-# than the grant that still holds only that document.
+#                    grant cannot stem from a share of THIS KB (cases a-c).
+# A clean pair therefore gains NO document it cannot already read. Not
+# detectable: documents moved (by their own owner, leaving no trace a-c) into a
+# KB that is older than the grant and holds nothing but them -- converting that
+# pair shares only the documents UPLOADED LATER into that KB.
 UNCOVERED_PAIRS_SQL = (
     "WITH legacy AS ("
     "  SELECT d.knowledge_base_id AS kb_id, g.granted_to_user_id AS user_id, "
@@ -132,8 +135,18 @@ UNCOVERED_PAIRS_SQL = (
     "           AND l2.granted_by IS NOT DISTINCT FROM u.granted_by"
     "       )) AS split_batch, "
     "       BOOL_OR(kb.created_at > u.granted_at) AS kb_younger_than_grant, "
-    "       (COUNT(*) = 1 AND (SELECT COUNT(*) FROM documents d3 "
-    "                          WHERE d3.knowledge_base_id = u.kb_id) > 1) AS single_grant "
+    "       BOOL_OR(EXISTS ("
+    "         SELECT 1 FROM documents d3 "
+    "         LEFT JOIN atoms a3 ON a3.source_table = 'documents' "
+    "                           AND a3.source_id = d3.id::text "
+    "         WHERE d3.knowledge_base_id = u.kb_id AND d3.created_at > u.granted_at "
+    "           AND NOT EXISTS (SELECT 1 FROM atom_explicit_grants g3 "
+    "                           WHERE g3.atom_id = a3.atom_id "
+    "                             AND g3.granted_to_user_id = u.user_id)"
+    "       )) AS added_after_grant, "
+    "       (SELECT COUNT(*) FROM documents d4 WHERE d4.knowledge_base_id = u.kb_id) AS kb_docs, "
+    "       (SELECT COUNT(*) FROM documents d5 WHERE d5.knowledge_base_id = u.kb_id "
+    "          AND d5.created_at > MAX(u.granted_at)) AS docs_after_grant "
     "FROM uncovered u JOIN knowledge_bases kb ON kb.id = u.kb_id "
     "GROUP BY u.kb_id, u.user_id "
     "ORDER BY u.kb_id, u.user_id"
@@ -375,7 +388,7 @@ async def get_user_kb_permission_levels(
 
 
 _SUSPICION_FLAGS = (
-    "foreign_granter", "partial", "split_batch", "kb_younger_than_grant", "single_grant",
+    "foreign_granter", "partial", "added_after_grant", "split_batch", "kb_younger_than_grant",
 )
 
 
@@ -391,10 +404,13 @@ class LegacyPair:
     granted_by: int | None
     granted_at: datetime | None
     reasons: list[str]
+    kb_docs: int = 0           # documents in the KB now
+    docs_after_grant: int = 0  # of those, added after the most recent grant
 
     def as_log(self) -> dict[str, Any]:
         return {"kb_id": self.kb_id, "user_id": self.user_id, "grants": self.grants,
-                "permission": self.permission, "reasons": self.reasons}
+                "permission": self.permission, "reasons": self.reasons,
+                "kb_docs": self.kb_docs, "docs_after_grant": self.docs_after_grant}
 
 
 @dataclass
@@ -415,6 +431,7 @@ async def uncovered_legacy_pairs(db: AsyncSession) -> LegacyPairs:
             kb_id=int(row.kb_id), user_id=int(row.user_id), grants=int(row.grants),
             permission=_RANK_TO_PERM[int(row.rank)], granted_by=row.granted_by,
             granted_at=row.granted_at, reasons=reasons,
+            kb_docs=int(row.kb_docs), docs_after_grant=int(row.docs_after_grant),
         )
         (out.suspicious if reasons else out.clean).append(pair)
     return out
