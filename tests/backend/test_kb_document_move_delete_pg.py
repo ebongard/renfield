@@ -1065,18 +1065,30 @@ class TestDocumentListDeleteRights:
         await db_session.commit()
         docs += [two, loose]
 
+        from api.routes.knowledge import _document_delete_rights
+
         for user in (alice, bob, carol, admin):
-            rows = {r.id: r.can_delete for r in await self._list(db_session, user)}
+            # The batch helper, on EVERY case — including documents this user
+            # does not get listed (which rows the list returns is the
+            # visibility filter's business, not the delete rule's).
+            rights = await _document_delete_rights(db_session, user, docs)
             for d in docs:
                 expected = await check_document_access(d, user, "delete", db_session)
-                assert rows[d.id] is expected, (user.username, d.filename)
+                assert rights[d.id] is expected, (user.username, d.filename)
+            # The list carries exactly that value on the rows it returns.
+            listed = await self._list(db_session, user)
+            for r in listed:
+                assert r.can_delete is rights[r.id], (user.username, r.filename)
 
         # Spot checks of the rule itself.
-        carol_rows = {r.id: r.can_delete for r in await self._list(db_session, carol)}
-        assert carol_rows[docs[2].id] is True   # the switch
-        assert carol_rows[docs[1].id] is False  # admin share, no switch
-        alice_rows = {r.id: r.can_delete for r in await self._list(db_session, alice)}
-        assert alice_rows[two.id] is False and alice_rows[loose.id] is True
+        carol_rights = await _document_delete_rights(db_session, carol, docs)
+        assert carol_rights[docs[2].id] is True   # the switch
+        assert carol_rights[docs[1].id] is False  # admin share, no switch
+        alice_rights = await _document_delete_rights(db_session, alice, docs)
+        assert alice_rights[two.id] is False and alice_rights[loose.id] is True
+        # The list reaches the rows through it: Alice's own KB is listed for her.
+        own = await self._list(db_session, alice)
+        assert any(r.id == docs[0].id and r.can_delete is True for r in own)
 
     async def test_auth_off_deletes_everything(self, db_session, people, monkeypatch):
         alice, _, _ = people

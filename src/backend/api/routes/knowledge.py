@@ -611,7 +611,8 @@ async def _document_delete_rights(
 ) -> dict[int, bool]:
     """Batch form of ``check_document_access(doc, user, "delete")`` for a page.
 
-    Same rule, two queries instead of three per row: the atom owner where she
+    Same rule, three queries per page (atom owners, KB owners, delete
+    switches) instead of up to three per row: the atom owner where she
     is the KB's owner (or there is no KB owner / no KB), else the KB rule —
     the KB owner or a share with the delete switch. Auth off and kb.all may
     delete everything."""
