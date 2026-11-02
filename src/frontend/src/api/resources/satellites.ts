@@ -64,6 +64,9 @@ export interface SatelliteData {
   update_stage?: string;
   update_progress?: number;
   update_error?: string;
+  /** The backend could not build this entry from its roster and serves
+   *  placeholder values (durations are -1). The cause is in the backend log. */
+  corrupt?: boolean;
 }
 
 interface SatellitesResponse {

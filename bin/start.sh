@@ -39,6 +39,10 @@ if [ "$POSTGRES_PASSWORD" = "changeme" ]; then
     echo -e "${YELLOW}⚠️  Please change POSTGRES_PASSWORD in .env!${NC}"
 fi
 
+# Stage satellite source + wakeword models into the backend build context;
+# without it the backend build fails on `COPY satellite` (#1359).
+./bin/stage-backend-build.sh
+
 # Start the containers
 echo "📦 Starting Docker containers..."
 docker-compose up -d

@@ -208,9 +208,10 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "deliver_notification",
     # ---------- Router / orchestrator uplift events ----------
     # These events are declared here so plugins (e.g. Reva) can register
-    # handlers without register_hook() raising ValueError. Renfield does
-    # not yet fire them — the call-site wiring is the "router / orchestrator
-    # uplift" tracked in the Reva project notes. Declaring the event names
+    # handlers without register_hook() raising ValueError. They were
+    # declared before Renfield fired them (the "router / orchestrator
+    # uplift" tracked in the Reva project notes); since #1447 every one of
+    # them has a call site. Declaring the event names
     # up-front decouples the plugin-side registration from the platform-side
     # firing, so plugins can ship forward-looking handlers safely.
     #
@@ -248,11 +249,17 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     #       `run_hooks_with_errors` instead of `run_hooks` to surface
     #       failures, then choose a fail-closed response.
     #   extract_context_vars: (tool_summaries: list, session_id, user_id)
-    #       Fired fire-and-forget after persistence to extract
-    #       per-conversation state (e.g. current_release_id) from tool
-    #       results. Reva's transport.py uses an inline equivalent today;
-    #       this hook will be wired in chat_handler in Phase 2 of the
-    #       orchestrator-uplift project.
+    #       -> dict | None
+    #       Fired (awaited) by ConversationService.save_turn_context_vars
+    #       after an agent turn was saved, on every agent entry point (chat
+    #       WS single-role + orchestrated, REST /api/chat/send).
+    #       `tool_summaries` is the turn's successful tool results as
+    #       `(tool_name, data)` pairs. A handler returns further
+    #       per-conversation variables (e.g. current_release_id), merged over
+    #       the YAML-extracted ones (config/context_extraction.yaml) and then
+    #       bounded (public keys only, scalar values, size caps — see
+    #       services/context_extractor.bound_context_vars) before they are
+    #       stored and shown to the agent on the next turn.
     #   build_synthesis_context: (message, sub_results, lang) -> str | None
     #       Fired inside QueryOrchestrator._synthesize before the synth
     #       prompt is templated. Plugins return a text block that gets

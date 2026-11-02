@@ -305,6 +305,14 @@ http {
 
 ## Schritt 7: Renfield starten
 
+Vor dem ersten Start (und vor jedem Backend-Neubau nach Änderungen an `src/satellite/` oder
+`data/wakeword-models/`) den Build-Kontext vorbereiten und die Secrets anlegen:
+
+```bash
+./bin/generate-secrets.sh      # secrets/* — ohne diese Dateien startet compose nicht
+./bin/stage-backend-build.sh   # Satelliten-Quellen + Wakeword-Modelle nach src/backend/ (#1359)
+```
+
 ### 7.1 Mit lokalem Ollama (GPU)
 
 ```bash

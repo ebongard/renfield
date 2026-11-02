@@ -102,6 +102,9 @@ rsync -avz --delete \
   --exclude='.cache' --exclude='.env' --exclude='.env.local' \
   src/frontend/ evdb@192.168.1.159:/tmp/renfield-build-vX.Y.Z/src/frontend/
 
+# The next two rsyncs are defined ONCE in bin/lib/backend-build-extras.sh — deploy-production.sh
+# and the compose stager bin/stage-backend-build.sh both run them from there (#1359). Change
+# them in that file, not here; this block only mirrors it for a manual run.
 # Rsync wakeword models INTO the backend build context (Dockerfile COPYs ./wakeword-models)
 rsync -avz \
   data/wakeword-models/ evdb@192.168.1.159:/tmp/renfield-build-vX.Y.Z/src/backend/wakeword-models/

@@ -55,7 +55,7 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
 - Create a source row via `AtomService.create_with_source`, **never a direct INSERT** (the denormalized columns and
   `atoms.policy` drift apart otherwise). Change a tier only through `AtomService` — it owns the **tier cascade**
   (entity → incident relations; `kb_document` → its facts `WHERE NOT tier_overridden`).
-- A KB-level share is a `kb_shares` row, evaluated at QUERY time (document filters + `can_access_atom`), so it covers later documents; legacy per-document grants still count (`docs/CIRCLES.md`, branch 5).
+- A KB-level share is a `kb_shares` row, evaluated at QUERY time, so it covers later documents; KB level comes ONLY from `kb_shares` — a document grant opens that document, not the KB (#1446; backfill precondition in `docs/CIRCLES.md`, branch 5). 🛑 With auth on, `can_access_atom` decides `kb_document`/`document_fact` atoms through the SAME `circle_sql` predicate (#1463) — never a second Python copy of the document rule.
 - **A membership has a DIRECTION.** `cm.circle_owner_id` keys on the ROW's owner, `cm.member_user_id` on the asker —
   so "A is in B's circle" lets A read B's atoms, never the reverse. A shared artifact owned by a DEVICE account
   (a satellite room history, `chat-branching.md`) therefore needs members inside the DEVICE's circle; the

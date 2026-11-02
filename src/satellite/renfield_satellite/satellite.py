@@ -51,6 +51,10 @@ class SatelliteState(str, Enum):
     ERROR = "error"
 
 
+# Error text for an OTA request refused because another run is in flight.
+UPDATE_ALREADY_IN_PROGRESS = "update already in progress"
+
+
 class Satellite:
     """
     Main satellite controller.
@@ -70,6 +74,9 @@ class Satellite:
         self._state = SatelliteState.BOOT
         self._running = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None  # Main event loop
+
+        # Run id of the OTA run in flight (#1280), echoed in its progress frames.
+        self._ota_run_id: str | None = None
 
         # Current session
         self._session_id: Optional[str] = None
@@ -1502,6 +1509,7 @@ class Satellite:
         size_bytes: int,
         manifest: str | None = None,
         signature: str | None = None,
+        run_id: str | None = None,
     ):
         """
         Handle OTA update request from server.
@@ -1512,6 +1520,7 @@ class Satellite:
             checksum: Expected checksum (sha256:hexdigest)
             size_bytes: Expected package size
             manifest/signature: signed release manifest (H6), verified before install
+            run_id: the backend's id for this run (#1280); None from an older backend
         """
         print(f"📦 OTA Update requested: v{target_version}")
 
@@ -1528,7 +1537,8 @@ class Satellite:
         # Start update asynchronously
         self._schedule_async(
             self._start_update(
-                target_version, package_url, checksum, size_bytes, base_url, manifest, signature
+                target_version, package_url, checksum, size_bytes, base_url, manifest, signature,
+                run_id=run_id,
             )
         )
 
@@ -1541,10 +1551,29 @@ class Satellite:
         base_url: str,
         manifest: str | None = None,
         signature: str | None = None,
+        run_id: str | None = None,
     ):
         """Start the OTA update process"""
         from . import __version__
         old_version = __version__
+
+        # A run is already in flight: refuse THIS request under its own id, with
+        # its own reason. Reporting the running run's stage and error here
+        # would make the backend record that run's state as this one's (#1280).
+        if self.update_manager.is_updating:
+            print("⚠️ Update request refused: an update is already in progress")
+            await self.ws_client.send_update_failed(
+                stage=UpdateStage.IDLE.value,
+                error=UPDATE_ALREADY_IN_PROGRESS,
+                rolled_back=False,
+                run_id=run_id,
+            )
+            return
+
+        # Accepted. No await lies between the check above and start_update
+        # marking itself busy, so the id is set exactly for the run that starts
+        # here — the progress frames of that run carry it.
+        self._ota_run_id = run_id
 
         print(f"🚀 Starting update: {old_version} → {target_version}")
 
@@ -1563,7 +1592,8 @@ class Satellite:
             await self.ws_client.send_update_complete(
                 success=True,
                 old_version=old_version,
-                new_version=target_version
+                new_version=target_version,
+                run_id=run_id,
             )
         else:
             # Send the REAL failure reason (e.g. "release manifest signature does
@@ -1573,6 +1603,7 @@ class Satellite:
                 stage=self.update_manager.current_stage.value,
                 error=self.update_manager.last_error or "Update failed - check satellite logs",
                 rolled_back=self.update_manager.rolled_back,
+                run_id=run_id,
             )
 
     def _on_update_progress(self, stage: UpdateStage, progress: int, message: str):
@@ -1581,7 +1612,10 @@ class Satellite:
 
         Sends progress to server via WebSocket.
         """
-        # Send progress to server asynchronously
+        # Send progress to server asynchronously. The run id is read NOW, while
+        # the run reports, not when the scheduled send finally executes.
         self._schedule_async(
-            self.ws_client.send_update_progress(stage.value, progress, message)
+            self.ws_client.send_update_progress(
+                stage.value, progress, message, run_id=self._ota_run_id
+            )
         )

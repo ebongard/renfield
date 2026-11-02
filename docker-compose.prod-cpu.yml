@@ -103,7 +103,6 @@ services:
       - ./src/backend:/app
       - ./src/satellite:/app/satellite
       - ./tests:/tests
-      - ./pytest.ini:/pytest.ini
       - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro
       - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro
       - ./config/mail_accounts.yaml:/config/mail_accounts.yaml:ro
