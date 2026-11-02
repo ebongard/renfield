@@ -179,8 +179,13 @@ meetings, PDF split, auto-index): server-resolved owner KBs, no caller KB id. Pr
   (`components/knowledge/KbShareDialog.tsx`: list, level, add, revoke; the "darf löschen" switch is operable only
   with `can_delete_kb`, shown read-only otherwise, and a switched share's level and revoke are disabled for an admin
   grantee; a row of `kind: "document_grants"` — a grantee with only per-document grants — shows "Zugriff auf n
-  einzelne Dokumente" without level or switch and can only be revoked). The KB delete button appears only with `can_delete_kb`, a document's only with `can_delete` on its KB
-  (a KB-less document keeps the button; the backend decides).
+  einzelne Dokumente" without level or switch and can only be revoked). The KB delete button appears only with `can_delete_kb`. A document's delete button follows the per-row
+  `can_delete` of `GET /documents` (`_document_delete_rights`, the batch form of
+  `check_document_access(..., "delete")`, proven row by row against it); rows from an endpoint without the field
+  fall back to the KB list's `can_delete`. 🛑 The `document_grants` row is rendered only when the API sends
+  `kind`; without it a legacy-only grantee would show as a KB share, and changing its level or switch would create
+  a real `kb_shares` row (the whole KB). This branch is therefore merged only together with `fix/1463-1446`,
+  which delivers `kind`/`documents`.
   Proof for all of the above: `tests/backend/test_kb_document_move_delete_pg.py`,
   `tests/backend/test_pc20261102_kb_share_can_delete_migration.py`,
   `tests/frontend/react/components/KbShareDialog.test.tsx`,
