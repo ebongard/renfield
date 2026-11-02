@@ -374,8 +374,8 @@ documents.
 | Endpoint | Methode | Beschreibung |
 |----------|---------|--------------|
 | `/api/knowledge/bases/{id}/share` | POST | KB mit Benutzer teilen |
-| `/api/knowledge/bases/{id}/permissions` | GET | Alle Berechtigungen auflisten |
-| `/api/knowledge/bases/{id}/permissions/{perm_id}` | DELETE | Berechtigung entziehen |
+| `/api/knowledge/bases/{id}/permissions` | GET | Alle Berechtigungen auflisten: `kind: "kb_share"` (Stufe, `can_delete`) und `kind: "document_grants"` (nur Grants auf Dokumenten der KB, `permission: null`, `documents: n`; #1446) |
+| `/api/knowledge/bases/{id}/permissions/{perm_id}` | DELETE | Berechtigung entziehen (beide Arten; `perm_id` = `user_id`) |
 | `/api/knowledge/bases/{id}/public` | PATCH | Öffentlich/Privat setzen |
 
 ### Öffentliche Knowledge Bases
