@@ -16,14 +16,14 @@ attachment, and a row whose uploader is gone falls back to the owner-only rule
 -- the narrower one.
 
 Revision ID: pc20261101_upload_uploader
-Revises: pc20261101_kb_shares
+Revises: pc20261102_kb_share_can_delete
 Create Date: 2026-11-01
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision: str = "pc20261101_upload_uploader"
-down_revision: str | None = "pc20261101_kb_shares"
+down_revision: str | None = "pc20261102_kb_share_can_delete"
 branch_labels: None = None
 depends_on: None = None
 
