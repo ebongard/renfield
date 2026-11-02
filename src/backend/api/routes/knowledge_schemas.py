@@ -36,6 +36,8 @@ class KnowledgeBaseResponse(BaseModel):
     # Whether the user may delete documents / the KB: owner, kb.all, or a share
     # carrying the owner's delete switch. No level implies it.
     can_delete: bool = False
+    # Whether the user may delete the KB itself: owner or kb.all only.
+    can_delete_kb: bool = False
 
 
 # --- Permission Models ---

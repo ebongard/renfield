@@ -57,6 +57,7 @@ from models.database import (
     DOC_STATUS_FAILED,
     DOC_STATUS_PENDING,
     DOC_STATUS_PROCESSING,
+    DOC_STATUS_SPLIT_ARCHIVED,
     EMBEDDING_DIMENSION,
     Atom,
     Document,
@@ -97,14 +98,20 @@ class DuplicateDocumentError(Exception):
         super().__init__("duplicate document")
 
 
-def _remove_file(path: str | None) -> None:
-    """Best-effort removal of a document's file (after its rows are committed)."""
+def _remove_file(path: str | None, document_id: int) -> None:
+    """Removal of a document's file once its rows are committed.
+
+    The rows are gone at this point, so a file that cannot be removed is an
+    orphan on the volume that nothing references any more: ERROR, with the
+    document id and the path, so it can be found and removed by hand."""
     try:
         if path and os.path.exists(path):
             os.remove(path)
             logger.info(f"File deleted: {path}")
     except Exception as e:
-        logger.warning(f"Could not delete file: {e}")
+        logger.error(
+            f"Could not delete the file of deleted document {document_id}: {path} ({e})"
+        )
 
 
 class DocumentBusyError(ValueError):
@@ -113,8 +120,11 @@ class DocumentBusyError(ValueError):
     at the start, so a move in between would be overwritten or half-applied."""
 
 
-# A document may be moved only in a settled state.
-MOVABLE_STATUSES = frozenset({DOC_STATUS_COMPLETED, DOC_STATUS_FAILED})
+# A document may be moved only in a terminal state: completed, failed, or the
+# archived combined original of an executed PDF split.
+MOVABLE_STATUSES = frozenset(
+    {DOC_STATUS_COMPLETED, DOC_STATUS_FAILED, DOC_STATUS_SPLIT_ARCHIVED}
+)
 
 
 def move_changes_owner(owners: frozenset[int], target_kb_owner: int | None) -> bool:
@@ -1062,7 +1072,7 @@ class RAGService(AtomOwnerResolverMixin):
         await self.db.commit()
         # The file only after the commit: a failed transaction must not leave a
         # row that points at a file already gone.
-        _remove_file(file_path)
+        _remove_file(file_path, document_id)
 
         logger.info(f"Document deleted: ID={document_id}")
         if deleted:
@@ -1262,7 +1272,7 @@ class RAGService(AtomOwnerResolverMixin):
             return False
 
         docs = list(kb.documents)
-        file_paths = [doc.file_path for doc in docs]
+        file_paths = [(doc.id, doc.file_path) for doc in docs]
 
         # Each document through the document delete path: the DB foreign key on
         # documents.knowledge_base_id has no ON DELETE action, and the atoms of the
@@ -1282,8 +1292,8 @@ class RAGService(AtomOwnerResolverMixin):
 
         # Files only after the commit: a failed transaction must not leave rows
         # that point at files already gone.
-        for path in file_paths:
-            _remove_file(path)
+        for doc_id, path in file_paths:
+            _remove_file(path, doc_id)
 
         logger.info(f"Knowledge base deleted: ID={kb_id}")
         return result.rowcount > 0

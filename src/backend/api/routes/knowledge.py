@@ -130,8 +130,9 @@ async def check_kb_access(
     3. Owner → full access
     4. Public KB → read access for users with kb.shared
     5. KB share (kb_shares / legacy grants) → read and write at that level;
-       delete ONLY with the share's `can_delete` switch, whatever the level;
-       an unknown action is denied
+       "delete" (documents) ONLY with the share's `can_delete` switch, whatever
+       the level; "delete_kb" (the KB itself) never through a share — owner and
+       kb.all only; an unknown action is denied
     6. kb.own permission → access to own KBs only
     """
     # Auth disabled = full access
@@ -168,6 +169,10 @@ async def check_kb_access(
     from services.kb_shares_service import get_user_kb_permission_level, user_may_delete_in_kb
     if required_action == "delete":
         return await user_may_delete_in_kb(db, kb.id, user.id)
+    # Deleting the WHOLE KB is the owner's (and kb.all's, both handled above)
+    # alone: no level and no switch reaches it — the switch covers documents.
+    if required_action == "delete_kb":
+        return False
 
     # KB share: kb_shares row or legacy per-document grants (MAX level).
     required_level = _SHARE_LEVELS.get(required_action)
@@ -200,7 +205,9 @@ async def check_document_access(
     - the document **owner** → allow (covers KB-less docs). Ownership lives on the
       linked atoms row (``Document.atom_id`` → ``atoms.owner_user_id``), NOT on the
       documents table — circles v2 moved the access-control unit to the atom
-      (docs/design/atoms-granularity.md).
+      (docs/design/atoms-granularity.md). Only where the atom owner is the KB's
+      owner, or the KB has none / is gone: on a two-owner document (moved across
+      owners before #1460) the old atom owner falls to the KB rule.
     - a document with a resolvable KB row → delegate to :func:`check_kb_access`
       (public / explicit grants / KB owner). For "delete" that means the KB
       owner or a share with `can_delete`: a legacy per-document grant has no
@@ -216,25 +223,31 @@ async def check_document_access(
     user_perms = user.get_permissions()
     if has_permission(user_perms, Permission.KB_ALL):
         return True
-    # Owner always reaches their own document — the KB-less fallback. The owner
-    # is the linked atoms row's owner_user_id, reached via Document.atom_id.
-    if doc.atom_id:
-        owner_res = await db.execute(
-            select(AtomModel.owner_user_id).where(AtomModel.atom_id == doc.atom_id)
-        )
-        owner_id = owner_res.scalar_one_or_none()
-        if owner_id is not None and owner_id == user.id:
-            return True
-    # KB-backed: delegate to the KB ACL (shared / public / explicit grants).
+    kb: KnowledgeBase | None = None
     if doc.knowledge_base_id:
-        result = await db.execute(
+        kb = (await db.execute(
             select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
-        )
-        kb = result.scalar_one_or_none()
-        if kb is not None:
-            return await check_kb_access(kb, user, required_action, db)
-        # KB id set but the row is gone (orphaned) → fall through to deny.
-    # No resolvable owner atom and no resolvable KB → deny.
+        )).scalar_one_or_none()
+    # The atom owner reaches the document — the KB-less fallback. The owner is
+    # the linked atoms row's owner_user_id, reached via Document.atom_id. But
+    # only where the atom owner IS the owner the KB names (or there is no KB
+    # owner to name): a document moved across owners before #1460 still has the
+    # OLD owner on its atom, and that person must not delete, reindex or read
+    # through this gate what now sits in somebody else's KB. There the KB
+    # rule decides.
+    if doc.atom_id:
+        owner_id = (await db.execute(
+            select(AtomModel.owner_user_id).where(AtomModel.atom_id == doc.atom_id)
+        )).scalar_one_or_none()
+        if owner_id is not None and owner_id == user.id and (
+            kb is None or kb.owner_id is None or kb.owner_id == owner_id
+        ):
+            return True
+    # KB-backed: delegate to the KB ACL (owner / shared / public / grants).
+    if kb is not None:
+        return await check_kb_access(kb, user, required_action, db)
+    # No resolvable owner atom and no resolvable KB (incl. an orphaned KB id
+    # whose row is gone, unless its atom owner asks) → deny.
     return False
 
 
@@ -1224,6 +1237,12 @@ async def list_knowledge_bases(
                 db, user.id, kb_ids_for_grants
             )
 
+    def _resolve_can_delete_kb(kb: KnowledgeBase) -> bool:
+        """Same rule as check_kb_access(..., "delete_kb")."""
+        if not settings.auth_enabled or not user or user_has_kb_all:
+            return True
+        return kb.owner_id == user.id
+
     def _resolve_can_delete(kb: KnowledgeBase) -> bool:
         """Same rule as check_kb_access(..., "delete")."""
         if not settings.auth_enabled or not user or user_has_kb_all:
@@ -1263,6 +1282,7 @@ async def list_knowledge_bases(
             updated_at=kb.updated_at.isoformat() if kb.updated_at else "",
             permission=perm,
             can_delete=_resolve_can_delete(kb),
+            can_delete_kb=_resolve_can_delete_kb(kb),
         ))
 
     return response
@@ -1310,7 +1330,8 @@ async def delete_knowledge_base(
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
         kb = await rag.get_knowledge_base(kb_id)
-        if kb and not await check_kb_access(kb, user, "delete", db):
+        # The KB itself: owner or kb.all only (no share level, no switch).
+        if kb and not await check_kb_access(kb, user, "delete_kb", db):
             raise HTTPException(status_code=403, detail="No delete access to this knowledge base")
     success = await rag.delete_knowledge_base(kb_id)
 
@@ -1684,7 +1705,17 @@ async def share_knowledge_base(
     if kb.owner_id and target_user.id == kb.owner_id:
         raise HTTPException(status_code=400, detail="User is already the owner")
 
-    from services.kb_shares_service import list_kb_shares, share_kb
+    from services.kb_shares_service import list_kb_shares, share_kb, user_may_delete_in_kb
+    # A share that carries the switch is the owner's to change or replace: an
+    # admin grantee could otherwise downgrade it, or revoke and re-create it
+    # without the switch.
+    if not _may_set_delete_switch(kb, user) and await user_may_delete_in_kb(
+        db, kb_id, data.user_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner may change a share that carries the right to delete",
+        )
     await share_kb(
         db, kb_id,
         target_user_id=data.user_id,
@@ -1736,7 +1767,14 @@ async def revoke_kb_permission(
         if user_perm not in ("owner", "admin"):
             raise HTTPException(status_code=403, detail="Only owner or admin can revoke permissions")
 
-    from services.kb_shares_service import revoke_kb_share
+    from services.kb_shares_service import revoke_kb_share, user_may_delete_in_kb
+    if not _may_set_delete_switch(kb, user) and await user_may_delete_in_kb(
+        db, kb_id, permission_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner may revoke a share that carries the right to delete",
+        )
     removed = await revoke_kb_share(db, kb_id, target_user_id=permission_id)
     if removed == 0:
         raise HTTPException(status_code=404, detail="Permission not found")
