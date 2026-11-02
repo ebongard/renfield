@@ -561,7 +561,7 @@ async def _end_empty_turn(manager, websocket, session_id: str, detail: dict) -> 
         await manager.end_session(session_id, reason="end_failed", detail=detail)
     except Exception as e:
         logger.error(f"❌ Fallback end of {session_id} failed: {e!r}")
-        manager.force_release(session_id, reason="end_failed")
+        manager.force_release(session_id, reason="end_failed", detail=detail)
         try:
             await websocket.send_json({"type": "state", "state": "idle"})
         except Exception:

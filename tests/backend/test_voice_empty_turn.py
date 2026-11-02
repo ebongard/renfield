@@ -445,6 +445,8 @@ async def test_satellite_empty_turn_whose_every_end_fails_still_goes_idle(satell
     assert mgr.satellites["sat-bad"].current_session_id is None
     ends = [e["details"] for e in mgr._satellite_history["sat-bad"] if e["type"] == "session_end"]
     assert [(e["reason"], e["success"]) for e in ends] == [("end_failed", False)]
+    assert ends[0]["empty_kind"] == "vad_floor"
+    assert ends[0]["audio_seconds"] == 3.12
     assert await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s2") == "s2"
 
 
@@ -452,6 +454,61 @@ def test_force_release_unknown_session_is_a_no_op():
     mgr = _manager_with_session()
     mgr.force_release("unknown", reason="end_failed")  # must not raise
     assert "s1" in mgr.sessions
+
+
+async def _registered_with_session(monkeypatch, broadcast):
+    """A real manager with a registered satellite (room_id 7) in a turn."""
+    from ha_glue.services.satellite_manager import SatelliteManager
+    from ha_glue.utils.config import ha_glue_settings
+
+    monkeypatch.setattr(ha_glue_settings, "duck_on_listen_enabled", True)
+    monkeypatch.setattr("api.websocket.kiosk_handler.broadcast_kiosk_event", broadcast)
+    mgr = SatelliteManager()
+    ducks: list[tuple] = []
+    monkeypatch.setattr(mgr, "_spawn_duck", lambda rid, room, duck: ducks.append((rid, duck)))
+    await mgr.register(satellite_id="sat-bad", room="Kinderbad", websocket=_FakeSatelliteSocket([]), capabilities={})
+    mgr.set_room_id("sat-bad", 7)
+    await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
+    ducks.clear()
+    return mgr, ducks
+
+
+async def test_force_release_runs_the_state_funnel(monkeypatch):
+    """Kiosk delta and un-ducking happen as on a regular end (review P3)."""
+    import asyncio
+
+    deltas: list[dict] = []
+
+    async def broadcast(event):
+        deltas.append(event)
+
+    mgr, ducks = await _registered_with_session(monkeypatch, broadcast)
+    deltas.clear()
+    mgr.force_release("s1", reason="end_failed", detail={"empty_kind": "vad_floor"})
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert ducks == [(7, False)]
+    idle = [d for d in deltas if d.get("type") == "satellite_state"]
+    assert [d["state"] for d in idle] == ["idle"]
+    ends = [e["details"] for e in mgr._satellite_history["sat-bad"] if e["type"] == "session_end"]
+    assert len(ends) == 1
+    assert ends[0]["empty_kind"] == "vad_floor"
+    assert ends[0]["success"] is False
+
+
+async def test_force_release_survives_a_failing_broadcast(monkeypatch):
+    import asyncio
+
+    async def broadcast(_event):
+        raise RuntimeError("hub gone")
+
+    mgr, ducks = await _registered_with_session(monkeypatch, broadcast)
+    mgr.force_release("s1", reason="end_failed")  # must not raise
+    tasks = list(mgr._duck_bg_tasks)
+    await asyncio.gather(*tasks)  # the background task must not raise either
+    assert "s1" not in mgr.sessions
+    assert ducks == [(7, False)]
 
 
 def test_force_release_survives_a_failing_history(monkeypatch):

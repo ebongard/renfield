@@ -765,20 +765,22 @@ class SatelliteManager:
             self._update_stats(session.satellite_id, duration, success)
 
         # Remove session
-        del self.sessions[session_id]
+        self.sessions.pop(session_id, None)
 
         logger.info(f"✅ Session ended: {session_id} ({reason}, {duration:.1f}s)")
 
-    def force_release(self, session_id: str, reason: str) -> None:
+    def force_release(self, session_id: str, reason: str, detail: dict | None = None) -> None:
         """Release a session when every regular end has failed. Never raises.
 
         The last resort after `end_session` itself raised: without it the
         session stays registered, `current_session_id` stays set, and
         `start_session` refuses every later wake word — the satellite looks
         idle but is deaf until it reconnects (and the cleanup sweep frees
-        neither a PROCESSING session nor a registered satellite). Only
-        operations that cannot fail free it: no lock, no socket, no
-        broadcast. The history entry (`success: False`) is best effort.
+        neither a PROCESSING session nor a registered satellite). The release
+        itself uses only operations that cannot fail: no lock, no socket.
+        The state funnel's side effects (kiosk delta, un-ducking the room's
+        media) run as a background task, and the history entry
+        (`success: False`, with `detail`) is best effort.
         """
         session = self.sessions.pop(session_id, None)
         if session is None:
@@ -787,6 +789,12 @@ class SatelliteManager:
         if sat is not None and sat.current_session_id == session_id:
             sat.current_session_id = None
             sat.state = SatelliteState.IDLE
+            try:
+                task = asyncio.create_task(self._set_satellite_state(sat, SatelliteState.IDLE))
+                self._duck_bg_tasks.add(task)
+                task.add_done_callback(self._duck_bg_tasks.discard)
+            except Exception as e:
+                logger.debug(f"force_release: state funnel not scheduled: {e!r}")
         if not session.end_recorded:
             try:
                 self._add_event(session.satellite_id, "session_end", {
@@ -794,6 +802,7 @@ class SatelliteManager:
                     "reason": reason,
                     "turn_end_reason": session.turn_end_reason,
                     "success": False,
+                    **(detail or {}),
                 })
             except Exception:
                 pass  # The release itself must not fail on the history
