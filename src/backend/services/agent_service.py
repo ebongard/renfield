@@ -897,21 +897,29 @@ def _parse_agent_json(raw: str) -> dict | None:
 #: never carry a word of the answer itself.
 _AGENT_SCHEMA_KEYS = ("action", "actions", "answer", "parameters", "reason", "thought")
 
+#: The only keys a final answer without ``action`` may carry (#1381).
+_BARE_ANSWER_KEYS = frozenset({"answer", "reason"})
+
 
 def _answer_without_action(parsed: dict) -> dict | None:
     """Turn ``{"answer": "<text>"}`` without ``action`` into a final answer (#1381).
 
     The model sometimes drops the ``action`` key from an otherwise valid final
     answer. The intent is unambiguous, yet the loop discarded a usable answer
-    and paid an extra summary LLM call for it. Accepted only when the shape
-    cannot be a tool call that lost its name: ``answer`` is a non-empty string,
-    and neither ``parameters`` nor ``actions`` is present.
+    and paid an extra summary LLM call for it. Accepted only when the object
+    carries NOTHING but ``answer`` (a non-empty string) and optionally
+    ``reason``. Any further key can mean a tool call in another dialect
+    (``tool``, ``name``, ``function``) or an interim note before a call
+    (``thought`` + "Moment, ich suche …"); ending the loop there would skip
+    the tool, so those shapes keep the retry nudge. ``thought`` is not part
+    of the agent prompts' schema (`prompts/agent.yaml`), so it gets no
+    exception.
 
     The result goes through the ordinary ``final_answer`` branch and therefore
     through the same output guard as every other answer — the text stays
     untrusted.
     """
-    if "action" in parsed or "actions" in parsed or "parameters" in parsed:
+    if not set(parsed) <= _BARE_ANSWER_KEYS:
         return None
     answer = parsed.get("answer")
     if not isinstance(answer, str) or not answer.strip():

@@ -2962,6 +2962,12 @@ class TestAnswerWithoutAction:
         {"action": "final_answer", "answer": "a"},   # not repaired: already valid
         {"answer": "a", "parameters": {"q": 1}},      # a tool call that lost its name
         {"answer": "a", "actions": []},                # a parallel call
+        # Tool calls in another dialect: ending the loop would skip the tool.
+        {"answer": "Ich schalte das Licht ein", "tool": "ha.turn_on"},
+        {"answer": "a", "name": "mcp.homeassistant.turn_on"},
+        {"answer": "a", "function": {"name": "turn_on", "arguments": {}}},
+        # An interim note before a call; `thought` is not in the prompt schema.
+        {"answer": "Moment, ich suche …", "thought": "erst suchen"},
         {"answer": ""},
         {"answer": "   "},
         {"answer": {"text": "a"}},
@@ -3094,6 +3100,23 @@ class TestAgentLoopAnswerWithoutAction:
 
         assert steps[-1].content == "Nach dem Nachstupser."
         assert repairs == ["answer_without_action"]
+
+    @pytest.mark.unit
+    async def test_answer_with_a_tool_key_still_goes_to_the_retry(self, monkeypatch):
+        """The review's case: `{"tool": …, "answer": …}` must not end the loop
+        with the tool never run."""
+        repairs: list[str] = []
+        monkeypatch.setattr("utils.metrics.record_agent_schema_repair", repairs.append)
+        ollama = self._ollama([
+            '{"tool": "ha.turn_on", "answer": "Ich schalte das Licht ein"}',
+            '{"action": "final_answer", "answer": "Nach Retry", "reason": "ok"}',
+        ])
+
+        agent = AgentService(self._registry(), max_steps=5)
+        steps = await collect_steps(agent, message="x", ollama=ollama, executor=AsyncMock())
+
+        assert steps[-1].content == "Nach Retry"
+        assert repairs == []
 
     @pytest.mark.unit
     async def test_parameters_only_still_goes_to_the_retry(self, monkeypatch):
