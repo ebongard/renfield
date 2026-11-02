@@ -618,7 +618,7 @@ den späteren MCP-Server, der dieselbe PDF-Assemblierung vornimmt:
 - **ReSpeaker 4-Mic Array** — 4-Kanal-Erfassung mit arecord-Isolation (siehe [AUDIO_CAPTURE_4MIC.md](AUDIO_CAPTURE_4MIC.md))
 - **Ansible Provisioning** — Automatisierte Einrichtung via Playbook (`src/satellite/provisioning/`)
 - **Lokale Wake-Word-Erkennung** — OpenWakeWord mit ONNX Runtime (~20% CPU)
-- **LED-Feedback** — Visuelles Feedback: Idle (Blau), Listening (Grün), Processing (Gelb), Speaking (Cyan), Error (Rot); „gehört, aber nicht verstanden" (zweimal kurz Violett, ab v1.4.13, kein Ton — ein Fehlweckruf bleibt ohne Signal, #1386)
+- **LED-Feedback** — Visuelles Feedback: Idle (Blau), Listening (Grün), Processing (Gelb), Speaking (Cyan), Error (Rot); „gehört, aber nicht verstanden" (zweimal kurz Magenta, ab v1.4.13, kein Ton — ein Fehlweckruf bleibt ohne Signal, #1386)
 - **Hardware-Button** — Manuelle Aktivierung
 - **Auto-Discovery** — Backend-Erkennung via Zeroconf/mDNS
 - **OTA-Updates** — Version-Tracking und Update-Pakete

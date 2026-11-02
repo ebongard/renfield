@@ -301,9 +301,10 @@ decides. An older satellite sends no such field; for it the length decides:
 a stop at the earliest moment the VAD allows (2.0 s grace + 1.2 s silence =
 3.12 s with the fleet values) counts as `vad_floor`. The log line shows which
 rule applied (`vad_speech=true|false`, or `-` for the length rule). A
-`vad_heard_speech` turn gets a short LED cue on the satellite (two purple
-blinks, solid purple on the XVF3800, no sound, night-dimmed like every
-pattern); a `vad_floor` gets none. Watch it per room:
+`vad_heard_speech` turn gets a short LED cue on the satellite (two magenta
+blinks, solid magenta on the XVF3800 — a colour outside the selectable
+`led.idle_color` set; no sound, night-dimmed like every pattern); a
+`vad_floor` gets none. Watch it per room:
 
 ```bash
 kubectl --context renfield-private -n renfield logs deploy/backend --since=12h \
@@ -320,6 +321,16 @@ grace period ends at the floor too. With the report (`vad_speech=true` at
 whether the tail of the wake word itself reaches the first listening chunk —
 the report counts the grace period, and a wake-word tail there would turn
 false wakes into cues.
+
+**Post-rollout watch (v1.4.13).** Before the fleet updates, note per room the
+share of `vad_floor` vs `vad_heard_speech` among the empty turns (the log
+command above, over a week); repeat it a week after the room's satellite runs
+v1.4.13. Some shift from `vad_floor` to `vad_heard_speech` is expected (short
+commands inside the grace period). A room whose `vad_floor` share collapses
+while its wake-event count stays the same — many `vad_speech=true` at
+`audio=3.12s` — points at the wake-word tail, not at more real speech: those
+false wakes now light the cue. Then the first listening chunk(s) must be left
+out of the report before the cue stays on.
 
 A room that dominates the `vad_floor` count and has near-zero successful
 sessions is not commissioned, whatever its provisioning status says. The floor
