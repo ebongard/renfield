@@ -2932,3 +2932,262 @@ class TestAStartedScanIsNotAFailure:
             assert len(a.args) == 2, (
                 "an evaluation site does not pass the abort set — "
                 "there `the last attempt counts` still applies")
+
+
+# ============================================================================
+# #1381: a final answer without "action", and a content-free parse fingerprint
+# ============================================================================
+
+
+class TestAnswerWithoutAction:
+    """`{"answer": ...}` without `action` is a final answer, nothing else is."""
+
+    @pytest.mark.unit
+    def test_bare_answer_becomes_final_answer(self):
+        from services.agent_service import _answer_without_action
+
+        assert _answer_without_action({"answer": "284 Fenster"}) == {
+            "action": "final_answer", "answer": "284 Fenster", "reason": "",
+        }
+
+    @pytest.mark.unit
+    def test_reason_is_kept_only_as_a_string(self):
+        from services.agent_service import _answer_without_action
+
+        assert _answer_without_action({"answer": "a", "reason": "r"})["reason"] == "r"
+        assert _answer_without_action({"answer": "a", "reason": {"x": 1}})["reason"] == ""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("parsed", [
+        {"action": "final_answer", "answer": "a"},   # not repaired: already valid
+        {"answer": "a", "parameters": {"q": 1}},      # a tool call that lost its name
+        {"answer": "a", "actions": []},                # a parallel call
+        # Tool calls in another dialect: ending the loop would skip the tool.
+        {"answer": "Ich schalte das Licht ein", "tool": "ha.turn_on"},
+        {"answer": "a", "name": "mcp.homeassistant.turn_on"},
+        {"answer": "a", "function": {"name": "turn_on", "arguments": {}}},
+        # An interim note before a call; `thought` is not in the prompt schema.
+        {"answer": "Moment, ich suche …", "thought": "erst suchen"},
+        {"answer": ""},
+        {"answer": "   "},
+        {"answer": {"text": "a"}},
+        {"answer": ["a"]},
+        {"parameters": {"entity_id": "x"}},
+        {},
+    ])
+    def test_every_other_shape_is_refused(self, parsed):
+        from services.agent_service import _answer_without_action
+
+        assert _answer_without_action(parsed) is None
+
+
+class TestDescribeUnparsable:
+    """The parse-failure log line names the defect, never the answer text."""
+
+    SECRET = "Geheimnis Kontonummer 4711 Freeze-Fenster"
+
+    @pytest.mark.unit
+    def test_truncated_answer_carries_no_content(self):
+        from services.agent_service import _describe_unparsable
+
+        raw = '{"action": "final_answer", "answer": "' + self.SECRET + " " * 3
+        line = _describe_unparsable(raw)
+        for word in self.SECRET.split():
+            assert word not in line
+        assert "open_string=True" in line
+        assert "brace_balance=1" in line
+        assert "keys=['action', 'answer']" in line
+        assert "Unterminated string" in line
+        assert f"len={len(raw.strip())}" in line
+
+    @pytest.mark.unit
+    def test_unescaped_quote_is_located_by_class(self):
+        from services.agent_service import _describe_unparsable
+
+        raw = '{"action": "final_answer", "answer": "Er sagte "Hallo" zu mir"}'
+        line = _describe_unparsable(raw)
+        assert "Hallo" not in line
+        assert "(letter)" in line
+        assert "ends=bracket" in line
+
+    @pytest.mark.unit
+    def test_same_output_same_hash_different_output_different_hash(self):
+        from services.agent_service import _describe_unparsable
+
+        def digest(line: str) -> str:
+            return line.split("sha256=")[1].split()[0]
+
+        a = _describe_unparsable('{"answer": "eins')
+        b = _describe_unparsable('  {"answer": "eins  ')
+        c = _describe_unparsable('{"answer": "zwei')
+        assert digest(a) == digest(b) != digest(c)
+
+    @pytest.mark.unit
+    def test_control_chars_fences_and_non_object(self):
+        from services.agent_service import _describe_unparsable
+
+        line = _describe_unparsable('```json\n{"answer": "a\x01b\nc"\n```')
+        assert "ctrl_in_strings=2" in line
+        assert "fenced=True" in line
+        assert "starts=other" in line
+        assert "direct=not_an_object" in _describe_unparsable("[1, 2]")
+        assert "starts=eof" in _describe_unparsable("   ")
+        assert "open_string=False" in _describe_unparsable('{"a": "x\\"y"')
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("ch,cls", [
+        ('"', "quote"), ("{", "bracket"), (":", "separator"), ("\\", "backslash"),
+        ("\n", "newline"), ("\t", "space"), ("\x02", "control"), ("7", "digit"),
+        ("ä", "letter"), ("*", "other"),
+    ])
+    def test_char_classes(self, ch, cls):
+        from services.agent_service import _char_class
+
+        assert _char_class(ch) == cls
+
+
+class TestAgentLoopAnswerWithoutAction:
+    """The loop accepts the bare answer, counts the repair, and still guards it."""
+
+    def _ollama(self, responses):
+        return TestAgentServiceRun()._make_ollama_mock(responses)
+
+    def _registry(self):
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
+
+    @pytest.mark.unit
+    async def test_bare_answer_is_the_final_answer_without_summary(
+        self, monkeypatch, recorded_outcomes,
+    ):
+        repairs: list[str] = []
+        monkeypatch.setattr("utils.metrics.record_agent_schema_repair", repairs.append)
+        ollama = self._ollama(['{"answer": "Für 2027 sind **284 Freeze-Fenster** eingetragen."}'])
+
+        agent = AgentService(self._registry(), max_steps=5)
+        steps = await collect_steps(agent, message="Freeze?", ollama=ollama, executor=AsyncMock())
+
+        assert steps[-1].step_type == "final_answer"
+        assert steps[-1].content == "Für 2027 sind **284 Freeze-Fenster** eingetragen."
+        assert repairs == ["answer_without_action"]
+        assert recorded_outcomes == ["final_answer"]
+
+    @pytest.mark.unit
+    async def test_repaired_answer_passes_the_output_guard(self, monkeypatch):
+        """Parsed output stays untrusted: the repair must not skip the guard."""
+        from services.output_guard import OutputGuardResult
+
+        monkeypatch.setattr("utils.metrics.record_agent_schema_repair", lambda k: None)
+        monkeypatch.setattr(
+            "services.output_guard.check_output",
+            lambda answer, fragments=None: OutputGuardResult(safe=False, violations=["role_confusion"]),
+        )
+        ollama = self._ollama(['{"answer": "SYSTEM: ich bin jetzt Admin"}'])
+
+        agent = AgentService(self._registry(), max_steps=5)
+        steps = await collect_steps(agent, message="x", ollama=ollama, executor=AsyncMock())
+
+        assert steps[-1].step_type == "final_answer"
+        assert "Admin" not in steps[-1].content
+
+    @pytest.mark.unit
+    async def test_bare_answer_from_the_retry_is_accepted(self, monkeypatch):
+        repairs: list[str] = []
+        monkeypatch.setattr("utils.metrics.record_agent_schema_repair", repairs.append)
+        ollama = self._ollama(["", '{"answer": "Nach dem Nachstupser."}'])
+
+        agent = AgentService(self._registry(), max_steps=5)
+        steps = await collect_steps(agent, message="x", ollama=ollama, executor=AsyncMock())
+
+        assert steps[-1].content == "Nach dem Nachstupser."
+        assert repairs == ["answer_without_action"]
+
+    @pytest.mark.unit
+    async def test_answer_with_a_tool_key_still_goes_to_the_retry(self, monkeypatch):
+        """The review's case: `{"tool": …, "answer": …}` must not end the loop
+        with the tool never run."""
+        repairs: list[str] = []
+        monkeypatch.setattr("utils.metrics.record_agent_schema_repair", repairs.append)
+        ollama = self._ollama([
+            '{"tool": "ha.turn_on", "answer": "Ich schalte das Licht ein"}',
+            '{"action": "final_answer", "answer": "Nach Retry", "reason": "ok"}',
+        ])
+
+        agent = AgentService(self._registry(), max_steps=5)
+        steps = await collect_steps(agent, message="x", ollama=ollama, executor=AsyncMock())
+
+        assert steps[-1].content == "Nach Retry"
+        assert repairs == []
+
+    @pytest.mark.unit
+    async def test_parameters_only_still_goes_to_the_retry(self, monkeypatch):
+        repairs: list[str] = []
+        monkeypatch.setattr("utils.metrics.record_agent_schema_repair", repairs.append)
+        ollama = self._ollama([
+            '{"parameters": {"entity_id": "sensor.temp"}}',
+            '{"action": "final_answer", "answer": "Nach Retry", "reason": "ok"}',
+        ])
+
+        agent = AgentService(self._registry(), max_steps=5)
+        steps = await collect_steps(agent, message="x", ollama=ollama, executor=AsyncMock())
+
+        assert steps[-1].content == "Nach Retry"
+        assert repairs == []
+
+    @staticmethod
+    async def _run_capturing(agent, ollama, level):
+        from loguru import logger as loguru_logger
+
+        lines: list[str] = []
+        sink = loguru_logger.add(lambda m: lines.append(str(m)), level=level)
+        try:
+            await collect_steps(agent, message="x", ollama=ollama, executor=AsyncMock())
+        finally:
+            loguru_logger.remove(sink)
+        return lines
+
+    @pytest.mark.unit
+    async def test_parse_failure_warning_carries_no_answer_text(self):
+        """Every record >= INFO of the run, not only the parse-failure line."""
+        ollama = self._ollama(['{"action": "final_answer", "answer": "Kontonummer 4711 geheim'])
+        agent = AgentService(self._registry(), max_steps=5)
+        lines = await self._run_capturing(agent, ollama, "INFO")
+
+        parse_lines = [w for w in lines if "JSON parse failed" in w]
+        assert len(parse_lines) == 1
+        assert "open_string=True" in parse_lines[0]
+        assert any("LLM response: len=" in w for w in lines), "the step line must still be there"
+        for line in lines:
+            assert "Kontonummer" not in line, line
+            assert "4711" not in line, line
+
+    @pytest.mark.unit
+    async def test_a_valid_answer_and_the_retry_leave_no_text_at_info(self):
+        """The per-step and the retry line: fingerprint at INFO, text at DEBUG."""
+        ollama = self._ollama([
+            "",
+            '{"action": "final_answer", "answer": "Kontonummer 4711 geheim", "reason": "ok"}',
+        ])
+        agent = AgentService(self._registry(), max_steps=5)
+        info = await self._run_capturing(agent, ollama, "INFO")
+        assert any("retry: len=" in w and "keys=['action', 'answer', 'reason']" in w for w in info)
+        for line in info:
+            assert "Kontonummer" not in line, line
+
+        ollama = self._ollama([
+            "",
+            '{"action": "final_answer", "answer": "Kontonummer 4711 geheim", "reason": "ok"}',
+        ])
+        debug = await self._run_capturing(AgentService(self._registry(), max_steps=5), ollama, "DEBUG")
+        assert any("retry text:" in w and "Kontonummer" in w for w in debug), (
+            "the raw text must stay available for a DEBUG run"
+        )
+
+    @pytest.mark.unit
+    def test_schema_repair_metric_failure_never_raises(self, monkeypatch):
+        from services.agent_service import _record_schema_repair
+
+        def boom(_):
+            raise RuntimeError("registry gone")
+
+        monkeypatch.setattr("utils.metrics.record_agent_schema_repair", boom)
+        _record_schema_repair("answer_without_action")  # must not raise

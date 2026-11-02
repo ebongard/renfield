@@ -185,6 +185,9 @@ class SatelliteSession:
     # logged and never read again -- an utterance truncated at
     # `max_recording_seconds` was indistinguishable from a finished sentence.
     turn_end_reason: str | None = None
+    # Set once the `session_end` history record is written, so a retried end
+    # (after an attempt that failed past that point) does not write a second.
+    end_recorded: bool = False
 
 
 class SatelliteManager:
@@ -540,6 +543,23 @@ class SatelliteManager:
         """
         return session_id in self.sessions
 
+    def recorded_audio_seconds(self, session_id: str) -> float:
+        """Length of the audio buffered for a session (0.0 when unknown).
+
+        Counted from the buffer, not the wall clock: Opus packets at 40 ms
+        each, PCM at 16 kHz mono S16_LE. Read by the empty-turn classifier
+        (#1386), whose VAD floor is a recording length.
+        """
+        from ha_glue.services.voice_empty_turn import recorded_seconds
+
+        session = self.sessions.get(session_id)
+        if not session:
+            return 0.0
+        return recorded_seconds(
+            opus_packets=len(session.opus_packets),
+            pcm_bytes=sum(len(c) for c in session.audio_chunks),
+        )
+
     def get_audio_buffer(self, session_id: str) -> bytes | None:
         """
         Get the complete audio buffer for a session.
@@ -758,18 +778,24 @@ class SatelliteManager:
             except Exception as e:
                 logger.error(f"❌ Failed to send TTS audio: {e}")
 
-    async def end_session(self, session_id: str, reason: str = "completed"):
+    async def end_session(
+        self, session_id: str, reason: str = "completed", detail: dict | None = None,
+    ):
         """
         End an active session.
 
         Args:
             session_id: Session to end
             reason: Reason for ending (completed, timeout, error)
+            detail: Extra content-free fields for the `session_end` event,
+                e.g. why an empty turn produced no text (#1386)
         """
         async with self._lock:
-            await self._end_session_internal(session_id, reason)
+            await self._end_session_internal(session_id, reason, detail)
 
-    async def _end_session_internal(self, session_id: str, reason: str = "completed"):
+    async def _end_session_internal(
+        self, session_id: str, reason: str = "completed", detail: dict | None = None,
+    ):
         """Internal session end without lock"""
         if session_id not in self.sessions:
             return
@@ -794,25 +820,68 @@ class SatelliteManager:
         # Calculate duration
         duration = time.time() - session.started_at
 
-        # Track event and stats
+        # Track event and stats. A retried end (an earlier attempt failed
+        # after writing its record) writes no second `session_end`.
         success = reason in ["completed", "silence"]
-        self._add_event(session.satellite_id, "session_end", {
-            "session_id": session_id,
-            "reason": reason,
-            # The DEVICE's reason, kept apart from the backend's reason: only
-            # this way does the satellite history show that an utterance was
-            # truncated (`timeout`) and not simply spoken to the end.
-            "turn_end_reason": session.turn_end_reason,
-            "duration": duration,
-            "success": success,
-            "transcription": session.transcription
-        })
-        self._update_stats(session.satellite_id, duration, success)
+        if not session.end_recorded:
+            self._add_event(session.satellite_id, "session_end", {
+                "session_id": session_id,
+                "reason": reason,
+                # The DEVICE's reason, kept apart from the backend's reason: only
+                # this way does the satellite history show that an utterance was
+                # truncated (`timeout`) and not simply spoken to the end.
+                "turn_end_reason": session.turn_end_reason,
+                "duration": duration,
+                "success": success,
+                "transcription": session.transcription,
+                **(detail or {}),
+            })
+            session.end_recorded = True
+            self._update_stats(session.satellite_id, duration, success)
 
         # Remove session
-        del self.sessions[session_id]
+        self.sessions.pop(session_id, None)
 
         logger.info(f"✅ Session ended: {session_id} ({reason}, {duration:.1f}s)")
+
+    def force_release(self, session_id: str, reason: str, detail: dict | None = None) -> None:
+        """Release a session when every regular end has failed. Never raises.
+
+        The last resort after `end_session` itself raised: without it the
+        session stays registered, `current_session_id` stays set, and
+        `start_session` refuses every later wake word — the satellite looks
+        idle but is deaf until it reconnects (and the cleanup sweep frees
+        neither a PROCESSING session nor a registered satellite). The release
+        itself uses only operations that cannot fail: no lock, no socket.
+        The state funnel's side effects (kiosk delta, un-ducking the room's
+        media) run as a background task, and the history entry
+        (`success: False`, with `detail`) is best effort.
+        """
+        session = self.sessions.pop(session_id, None)
+        if session is None:
+            return
+        sat = self.satellites.get(session.satellite_id)
+        if sat is not None and sat.current_session_id == session_id:
+            sat.current_session_id = None
+            sat.state = SatelliteState.IDLE
+            try:
+                task = asyncio.create_task(self._set_satellite_state(sat, SatelliteState.IDLE))
+                self._duck_bg_tasks.add(task)
+                task.add_done_callback(self._duck_bg_tasks.discard)
+            except Exception as e:
+                logger.debug(f"force_release: state funnel not scheduled: {e!r}")
+        if not session.end_recorded:
+            try:
+                self._add_event(session.satellite_id, "session_end", {
+                    "session_id": session_id,
+                    "reason": reason,
+                    "turn_end_reason": session.turn_end_reason,
+                    "success": False,
+                    **(detail or {}),
+                })
+            except Exception:
+                pass  # The release itself must not fail on the history
+        logger.warning(f"⚠️ Session force-released: {session_id} ({reason})")
 
     def update_heartbeat(self, satellite_id: str, metrics: dict[str, Any] | None = None, version: str | None = None):
         """

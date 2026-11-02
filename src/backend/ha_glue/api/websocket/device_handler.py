@@ -9,6 +9,7 @@ This module handles:
 - Session management
 """
 
+import functools
 
 from fastapi import APIRouter, FastAPI, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
@@ -16,6 +17,7 @@ from pydantic import ValidationError
 
 from api.websocket.shared import get_whisper_service, send_ws_error
 from ha_glue.services.device_manager import DeviceManager, DeviceState, get_device_manager
+from ha_glue.services.voice_empty_turn import record_empty_turn, recorded_seconds
 from models.database import DEFAULT_CAPABILITIES, DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPES
 from models.websocket_messages import WSAudioMessage, WSErrorCode, WSRegisterMessage
 from services.database import AsyncSessionLocal
@@ -92,7 +94,12 @@ async def _route_tts_output(
             await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
 
 
-async def _process_device_session(app: FastAPI, device_manager: DeviceManager, session_id: str):
+async def _process_device_session(
+    app: FastAPI,
+    device_manager: DeviceManager,
+    session_id: str,
+    turn_end_reason: str | None = None,
+):
     """Process audio from a device session (STT → Intent → Action → Response → TTS)"""
 
     # Update state to processing
@@ -101,12 +108,29 @@ async def _process_device_session(app: FastAPI, device_manager: DeviceManager, s
     # Get audio buffer
     audio_bytes = device_manager.get_audio_buffer(session_id)
 
+    # An empty turn is classified, not just logged (#1386). A device has no
+    # known VAD floor, so a silence end is not split by length.
+    _session = device_manager.get_session(session_id)
+    empty_turn = functools.partial(
+        record_empty_turn,
+        source="device",
+        session_id=session_id,
+        room=_session.room if _session else None,
+        turn_end_reason=turn_end_reason,
+        audio_seconds=recorded_seconds(pcm_bytes=len(audio_bytes or b"")),
+    )
+
     if not audio_bytes:
-        logger.warning(f"⚠️ No audio buffered for session {session_id}")
+        empty_turn()
         await device_manager.end_session(session_id, reason="no_audio")
         return
 
     logger.info(f"🎵 Processing {len(audio_bytes)} bytes of audio")
+
+    # What STT produced: None until it returned. A failure while it is still
+    # None is an stt_error; after "empty" the turn was already counted, after
+    # "text" it is a processing error and no empty turn at all.
+    stt_outcome: str | None = None
 
     # Transcribe with Whisper
     try:
@@ -151,6 +175,7 @@ async def _process_device_session(app: FastAPI, device_manager: DeviceManager, s
                     filename="device_audio.wav",
                     db_session=db_session,
                     initial_prompt=initial_prompt,
+                    raise_stt_errors=True,
                 )
                 text = result.get("text", "")
                 speaker_name = result.get("speaker_name")
@@ -171,13 +196,16 @@ async def _process_device_session(app: FastAPI, device_manager: DeviceManager, s
                 wav_bytes,
                 "device_audio.wav",
                 initial_prompt=initial_prompt,
+                raise_stt_errors=True,
             )
 
         if not text or not text.strip():
-            logger.warning(f"⚠️ Empty transcription for session {session_id}")
+            stt_outcome = "empty"
+            empty_turn()
             await device_manager.end_session(session_id, reason="empty_transcription")
             return
 
+        stt_outcome = "text"
         logger.info(f"📝 Transcription: '{text}'")
         await device_manager.send_transcription(session_id, text, speaker_name, speaker_alias)
 
@@ -188,6 +216,8 @@ async def _process_device_session(app: FastAPI, device_manager: DeviceManager, s
         logger.error(f"❌ Audio processing failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
+        if stt_outcome is None:
+            empty_turn(stt_failed=True)
         await device_manager.end_session(session_id, reason="processing_error")
 
 
@@ -552,7 +582,9 @@ async def device_websocket(
                     continue
 
                 logger.info(f"🔚 Audio ended for session {session_id} (reason: {reason})")
-                await _process_device_session(app, device_manager, session_id)
+                await _process_device_session(
+                    app, device_manager, session_id, turn_end_reason=reason,
+                )
 
             # === TEXT INPUT (web clients) ===
             elif msg_type == "text":

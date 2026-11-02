@@ -260,7 +260,7 @@ class WhisperService:
             logger.warning(f"⚠️ Preprocessing failed, using original audio: {e}")
             return None
 
-    async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav", language: str = None, initial_prompt: str | None = None, is_opus: bool = False) -> str:
+    async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav", language: str = None, initial_prompt: str | None = None, is_opus: bool = False, raise_stt_errors: bool = False) -> str:
         """
         Transcribe audio from bytes.
 
@@ -269,6 +269,9 @@ class WhisperService:
             filename: Original filename (used for extension)
             language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
             initial_prompt: Per-request bias string (overrides whisper_initial_prompt default).
+            raise_stt_errors: Re-raise a voice-server failure instead of
+                returning "". A caller that must tell a failed STT call from
+                silence sets it (#1386); the default keeps the old contract.
 
         B.4.c.2: when settings.voice_server_url is configured, delegate to
         the voice-server pod over HTTP. `initial_prompt` is dropped on
@@ -279,7 +282,8 @@ class WhisperService:
         """
         if settings.voice_server_url:
             return await self._transcribe_bytes_via_voice_server(
-                audio_bytes, filename=filename, language=language, is_opus=is_opus
+                audio_bytes, filename=filename, language=language, is_opus=is_opus,
+                raise_stt_errors=raise_stt_errors,
             )
 
         if is_opus:
@@ -304,6 +308,7 @@ class WhisperService:
         filename: str = "audio.wav",
         language: str = None,
         is_opus: bool = False,
+        raise_stt_errors: bool = False,
     ) -> str:
         """Delegate STT to the voice-server pod (B.4.c thin-client path).
 
@@ -330,6 +335,8 @@ class WhisperService:
                 )
         except VoiceServerError as e:
             logger.error(f"voice-server STT failed: {e}")
+            if raise_stt_errors:
+                raise
             return ""
         return result.get("text", "") or ""
 
@@ -628,6 +635,7 @@ class WhisperService:
         language: str = None,
         initial_prompt: str | None = None,
         is_opus: bool = False,
+        raise_stt_errors: bool = False,
     ) -> dict:
         """
         Transcribe audio bytes and identify speaker.
@@ -642,6 +650,8 @@ class WhisperService:
             is_opus: The bytes are raw Opus packets → route to the voice-server's
                 /stt-opus (opuslib decode there, design D6). Requires a
                 voice-server; there is no in-process opus decode path.
+            raise_stt_errors: Re-raise a voice-server failure instead of
+                returning an empty result (see `transcribe_bytes`).
 
         Returns:
             Same as transcribe_with_speaker
@@ -653,6 +663,7 @@ class WhisperService:
                 db_session=db_session,
                 language=language,
                 is_opus=is_opus,
+                raise_stt_errors=raise_stt_errors,
             )
 
         if is_opus:
@@ -679,6 +690,7 @@ class WhisperService:
         db_session=None,
         language: str = None,
         is_opus: bool = False,
+        raise_stt_errors: bool = False,
     ) -> dict:
         """Delegate STT + resolve speaker via wire embedding (B.4.c).
 
@@ -705,6 +717,8 @@ class WhisperService:
                 )
         except VoiceServerError as e:
             logger.error(f"voice-server STT failed: {e}")
+            if raise_stt_errors:
+                raise
             return {
                 "text": "",
                 "speaker_id": None,

@@ -11,6 +11,7 @@ This module handles:
 """
 
 import asyncio
+import functools
 import json
 from datetime import date
 from typing import NamedTuple
@@ -24,6 +25,7 @@ from ha_glue.services.opus_transport import (
     parse_audio_frame,
 )
 from ha_glue.services.satellite_manager import MAX_DEVICE_TEXT_CHARS, device_text
+from ha_glue.services.voice_empty_turn import SATELLITE_VAD_FLOOR_SECONDS, record_empty_turn
 from ha_glue.utils.config import ha_glue_settings
 from models.websocket_messages import WSErrorCode
 from services.database import AsyncSessionLocal
@@ -593,6 +595,33 @@ def _handshake_satisfies_enrollment(auth_result: dict | None, register_token: st
     )
 
 
+async def _end_empty_turn(manager, websocket, session_id: str, detail: dict) -> None:
+    """End a turn that produced no text; the caller has already counted it.
+
+    A fault here must not reach the connection's outer handler: that drops
+    the connection, and `unregister` then ends the open session as
+    `completed` — the history would show a successful turn. Instead: log,
+    end the session as `end_failed` (not a success) and, should that fail
+    too, force-release the session (otherwise the satellite would refuse
+    every later wake word) and return it to idle, keeping the connection.
+    Nothing is counted a second time.
+    """
+    try:
+        await manager.end_session(session_id, reason="empty_transcription", detail=detail)
+        return
+    except Exception as e:
+        logger.error(f"❌ Ending empty turn {session_id} failed: {e!r}")
+    try:
+        await manager.end_session(session_id, reason="end_failed", detail=detail)
+    except Exception as e:
+        logger.error(f"❌ Fallback end of {session_id} failed: {e!r}")
+        manager.force_release(session_id, reason="end_failed", detail=detail)
+        try:
+            await websocket.send_json({"type": "state", "state": "idle"})
+        except Exception:
+            pass  # The satellite may have disconnected
+
+
 @router.websocket("/ws/satellite")
 async def satellite_websocket(
     websocket: WebSocket,
@@ -1042,10 +1071,25 @@ async def satellite_websocket(
                 # packets → forward the packet blob; else it's legacy PCM.
                 opus_blob = satellite_manager.get_opus_blob(session_id) if opus_mode else None
                 audio_bytes = None if opus_blob is not None else satellite_manager.get_audio_buffer(session_id)
+                satellite_info = satellite_manager.get_satellite_by_session(session_id)
+
+                # A turn that ends without text is CLASSIFIED, not just logged
+                # (#1386): a false wake and unintelligible speech need opposite
+                # repairs and looked the same. Content-free: kind, length, room.
+                empty_turn = functools.partial(
+                    record_empty_turn,
+                    source="satellite",
+                    session_id=session_id,
+                    room=satellite_info.room if satellite_info else None,
+                    turn_end_reason=reason,
+                    audio_seconds=satellite_manager.recorded_audio_seconds(session_id),
+                    floor_seconds=SATELLITE_VAD_FLOOR_SECONDS,
+                )
 
                 if opus_blob is None and not audio_bytes:
-                    logger.warning(f"⚠️ No audio buffered for session {session_id}")
-                    await satellite_manager.end_session(session_id, reason="no_audio")
+                    await satellite_manager.end_session(
+                        session_id, reason="no_audio", detail=empty_turn(),
+                    )
                     continue
 
                 _size = len(opus_blob) if opus_blob is not None else len(audio_bytes)
@@ -1053,12 +1097,12 @@ async def satellite_websocket(
                 logger.info(f"🎵 Processing {_size} bytes of {_kind}")
 
                 # Get satellite's configured language + room context
-                satellite_info = satellite_manager.get_satellite_by_session(session_id)
                 satellite_language = satellite_info.language if satellite_info else settings.default_language
                 satellite_room_id = satellite_info.room_id if satellite_info else None
                 logger.info(f"🌐 Using language: {satellite_language}")
 
                 # Transcribe with Whisper (with speaker recognition)
+                transcribed = False
                 try:
                     whisper = get_whisper_service()
                     await asyncio.to_thread(whisper.load_model)  # No-op if already loaded
@@ -1119,6 +1163,7 @@ async def satellite_websocket(
                                 language=satellite_language,
                                 initial_prompt=initial_prompt,
                                 is_opus=stt_is_opus,
+                                raise_stt_errors=True,
                             )
                             text = result.get("text", "")
                             speaker_name = result.get("speaker_name")
@@ -1143,21 +1188,32 @@ async def satellite_websocket(
                             language=satellite_language,
                             initial_prompt=initial_prompt,
                             is_opus=stt_is_opus,
+                            raise_stt_errors=True,
                         )
 
-                    if not text or not text.strip():
-                        logger.warning(f"⚠️ Empty transcription for session {session_id}")
-                        await satellite_manager.end_session(session_id, reason="empty_transcription")
-                        continue
-
-                    logger.info(f"📝 Transcription: '{text}'")
-                    await satellite_manager.send_transcription(session_id, text)
+                    if text and text.strip():
+                        transcribed = True
+                        logger.info(f"📝 Transcription: '{text}'")
+                        await satellite_manager.send_transcription(session_id, text)
 
                 except Exception as e:
                     logger.error(f"❌ Whisper transcription failed: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
-                    await satellite_manager.end_session(session_id, reason="transcription_error")
+                    # A fault AFTER the text arrived is not a turn without
+                    # text: it is neither counted nor called an stt_error.
+                    await satellite_manager.end_session(
+                        session_id, reason="transcription_error",
+                        detail=None if transcribed else empty_turn(stt_failed=True),
+                    )
+                    continue
+
+                # Outside the STT try: the turn is counted exactly once, here,
+                # and a fault while ending it is handled on the spot.
+                if not transcribed:
+                    await _end_empty_turn(
+                        satellite_manager, websocket, session_id, empty_turn(),
+                    )
                     continue
 
                 # Process with Ollama (intent extraction + action)

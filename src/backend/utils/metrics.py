@@ -36,6 +36,8 @@ _memory_cleanup_total = None
 _mcp_tool_duration_seconds = None
 _mcp_tool_errors_total = None
 _agent_outcome_total = None
+_agent_schema_repairs_total = None
+_voice_empty_turn_total = None
 _injection_attempts_total = None
 _budget_reductions_total = None
 _output_guard_violations_total = None
@@ -64,7 +66,8 @@ def _init_metrics():
     global _circuit_breaker_state, _circuit_breaker_failures_total
     global _memory_total, _memory_cleanup_total
     global _mcp_tool_duration_seconds, _mcp_tool_errors_total
-    global _agent_outcome_total, _injection_attempts_total
+    global _agent_outcome_total, _agent_schema_repairs_total, _injection_attempts_total
+    global _voice_empty_turn_total
     global _budget_reductions_total, _output_guard_violations_total
     global _llm_response_truncated_total
     global _router_fallback_total, _embedding_errors_total
@@ -164,6 +167,26 @@ def _init_metrics():
             "Agent run outcomes, one per AgentService.run() — an orchestrated "
             "turn counts once per sub-agent, so this is NOT a request count",
             ["outcome"],
+        )
+
+        # Agent responses accepted only after repairing their shape (#1381),
+        # e.g. a final answer without its "action" key. The run itself counts
+        # as an ordinary final_answer; this counter keeps visible how often
+        # the model breaks the schema. Primed at startup.
+        _agent_schema_repairs_total = Counter(
+            "renfield_agent_schema_repairs_total",
+            "Agent responses accepted after repairing their JSON shape",
+            ["kind"],
+        )
+
+        # Voice turns that produced no text, by WHY (#1386; kinds in
+        # ha_glue/services/voice_empty_turn.py). They used to end silently,
+        # and a false wake was indistinguishable from unintelligible speech.
+        # Primed at startup.
+        _voice_empty_turn_total = Counter(
+            "renfield_voice_empty_turn_total",
+            "Voice turns that ended without text, by source and kind",
+            ["source", "kind"],
         )
 
         _injection_attempts_total = Counter(
@@ -443,6 +466,53 @@ def record_agent_outcome(outcome: str):
     _agent_outcome_total.labels(outcome=outcome).inc()
 
 
+#: Every kind `record_agent_schema_repair` is called with. Primed at startup
+#: so the first repair of a process is an increase from 0, not a new series.
+AGENT_SCHEMA_REPAIR_KINDS = ("answer_without_action",)
+
+
+def record_agent_schema_repair(kind: str):
+    """Record an agent response accepted after repairing its JSON shape (#1381)."""
+    if not _metrics_initialized:
+        return
+    _agent_schema_repairs_total.labels(kind=kind).inc()
+
+
+def _prime_agent_schema_repairs() -> None:
+    """Export a 0 sample per repair kind (see `_prime_llm_response_truncated`)."""
+    for kind in AGENT_SCHEMA_REPAIR_KINDS:
+        _agent_schema_repairs_total.labels(kind=kind)
+
+
+#: Label values of renfield_voice_empty_turn_total. Their meaning is
+#: documented where they are decided, `ha_glue/services/voice_empty_turn.py`;
+#: the vocabulary lives here because platform code must not import ha_glue.
+VOICE_EMPTY_TURN_KINDS = (
+    "no_audio",
+    "stt_error",
+    "vad_floor",
+    "vad_heard_speech",
+    "cap_reached",
+    "button",
+    "unknown_end",
+)
+VOICE_EMPTY_TURN_SOURCES = ("satellite", "device")
+
+
+def record_voice_empty_turn(source: str, kind: str):
+    """Record a voice turn that ended without text (#1386)."""
+    if not _metrics_initialized:
+        return
+    _voice_empty_turn_total.labels(source=source, kind=kind).inc()
+
+
+def _prime_voice_empty_turn() -> None:
+    """Export a 0 sample per source and kind (see `_prime_llm_response_truncated`)."""
+    for source in VOICE_EMPTY_TURN_SOURCES:
+        for kind in VOICE_EMPTY_TURN_KINDS:
+            _voice_empty_turn_total.labels(source=source, kind=kind)
+
+
 def record_injection_attempt(category: str):
     """Record a prompt injection attempt detection."""
     if not _metrics_initialized:
@@ -608,6 +678,9 @@ def setup_metrics(app: "FastAPI"):
         # Priming must never block startup. WARNING, not debug: a silently
         # unprimed counter is exactly the blind spot the priming exists to close.
         logger.warning(f"Could not prime renfield_llm_response_truncated_total: {e!r}")
+
+    _prime_agent_schema_repairs()
+    _prime_voice_empty_turn()
 
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request
