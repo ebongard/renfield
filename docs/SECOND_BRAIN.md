@@ -237,7 +237,8 @@ history, the tooling and the frontend wiring.
 
 - `GET /api/knowledge/documents` takes `sort` (`name`|`imported`|`document_date`) + `order`. The recency branch sorts
   the full set in SQL (`rag_service.list_documents`, `NULLS LAST`); the `q`-search branch page-sorts the returned
-  relevance page.
+  relevance page. Under auth without `kb.all` and without a KB id the recency branch lists only the documents the
+  caller may reach (the search gate's document filter, applied before pagination; `docs/CIRCLES.md`).
 - The response also carries `document_date` and `in_paperless` (`paperless_document_id` present OR
   `paperless_state='done'`).
 - Frontend `/wissen/dokumente` (`pages/KnowledgePage.tsx`): a sort-button bar (Name / Importdatum / Dokumentdatum; the
