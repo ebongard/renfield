@@ -45,7 +45,9 @@ dedup / tier / PDF-Split / Paperless are unchanged.
   der Scanner deshalb gegen eine Antwort, die sich nicht ändern konnte. Das Ereignis führt jetzt `caller` mit, und
   nur bei `caller == "button"` trägt die 409 `{"reason": "no_recipient_for_caller"}`. Jede andere 409 bleibt blank
   und damit wiederholbar — die Unterscheidung gehört der Anwendung, nie dem Statuscode. Das DOKUMENT ist davon
-  unberührt: es kommt über den getrennten Ingest-Weg. WEM eine Knopf-Meldung gälte, ist offen (#1390).
+  unberührt: es kommt über den getrennten Ingest-Weg. Empfänger (#1390): NUR für `caller == "button"` ohne
+  Redis-Eintrag `SCANNER_UNATTENDED_RECIPIENT_<CLIENT_ID>` des TOKEN-Mandanten — Nutzer = Eigentümer des Mandanten UND
+  der Konversation, sonst endgültig `refused`; Raumansage nur Seitenzahl. Langform: Design-Dok §11.
   🛑 Seit 2026-10-26 ist der Knopfwächter AUS als Vorgabe (`SCANNER_BUTTON_WATCH`, scanner #12) — der
   Sensortakt setzt das Gerät fest; die DOSIS ist unbelegt (850 gegen 18.000 Öffnungen, widersprüchlich),
   deshalb aus und nicht langsamer. `caller == "button"` entsteht damit nicht mehr von SELBST — auslösbar
