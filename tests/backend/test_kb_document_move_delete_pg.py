@@ -443,8 +443,9 @@ class TestDeleteIsTheOwnersSwitch:
         assert await check_kb_access(kb, alice, "delete_kb", db_session)
 
     async def test_a_legacy_document_grant_never_deletes(self, db_session, people):
-        """Atom grants have no delete concept: an admin-level legacy grant opens
-        the KB ACL at admin, but not delete."""
+        """Atom grants have no delete concept, and since #1446 no KB level
+        either: an admin-level legacy grant neither writes nor deletes through
+        the KB ACL (it opens its document via circle_sql only)."""
         from api.routes.knowledge import check_document_access
 
         alice, bob, _ = people
@@ -456,7 +457,7 @@ class TestDeleteIsTheOwnersSwitch:
             {"a": doc.atom_id, "to": bob.id, "by": alice.id})
         await db_session.commit()
 
-        assert await check_document_access(doc, bob, "write", db_session)
+        assert not await check_document_access(doc, bob, "write", db_session)
         assert not await check_document_access(doc, bob, "delete", db_session)
 
     async def test_unknown_action_is_denied(self, db_session, people):

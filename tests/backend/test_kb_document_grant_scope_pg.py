@@ -364,3 +364,14 @@ class TestTierOnlyPolicy:
         policy = (await db_session.execute(
             select(Atom.policy).where(Atom.atom_id == doc.atom_id))).scalar_one()
         assert policy == {"tier": 2}
+
+    def test_other_atom_types_keep_their_policy_dimensions(self):
+        """Only documents and facts are tier-only; a note keeps its other keys."""
+        from fastapi import HTTPException
+
+        from api.routes.atoms import _assert_tier_only_policy
+
+        assert _assert_tier_only_policy("note", {"tier": 2, "tenant": "acme"}) is None
+        with pytest.raises(HTTPException) as exc:
+            _assert_tier_only_policy("kb_document", {"tier": 2, "tenant": "acme"})
+        assert exc.value.status_code == 422
