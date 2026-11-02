@@ -1111,6 +1111,16 @@ async def create_knowledge_base(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _counts_per_caller(user: User | None) -> bool:
+    """Whether KB document counts go through the document reach filter: auth on
+    and the caller below ``kb.all``. ``kb.all`` and auth-off count globally."""
+    return bool(
+        settings.auth_enabled
+        and user is not None
+        and not has_permission(user.get_permissions(), Permission.KB_ALL)
+    )
+
+
 async def _readable_knowledge_bases(
     all_bases: list[KnowledgeBase], user: User, db: AsyncSession
 ) -> list[KnowledgeBase]:
@@ -1141,8 +1151,11 @@ async def list_knowledge_bases(
     - kb.own: own + explicitly shared
     - kb.none (or no KB rung at all): none
     """
-    # Get all KBs first
-    all_bases = await rag.list_knowledge_bases()
+    # Get all KBs first. Below kb.all (auth on) each KB's document count runs
+    # through the document reach filter, like the document list and /stats.
+    all_bases = await rag.list_knowledge_bases(
+        asker_id=(user.id if user else None), enforce_circles=_counts_per_caller(user)
+    )
 
     # Filter by access if auth is enabled
     if settings.auth_enabled and user:
@@ -1253,7 +1266,9 @@ async def get_knowledge_base(
         name=kb.name,
         description=kb.description,
         is_active=kb.is_active,
-        document_count=len(kb.documents) if kb.documents else 0,
+        document_count=await rag.count_kb_documents(
+            kb.id, asker_id=(user.id if user else None), enforce_circles=_counts_per_caller(user)
+        ),
         created_at=kb.created_at.isoformat() if kb.created_at else "",
         updated_at=kb.updated_at.isoformat() if kb.updated_at else ""
     )
@@ -1434,16 +1449,15 @@ async def get_knowledge_stats(
     Auth on and below ``kb.all``: documents and chunks through the document
     reach filter (the one of the document list), KBs through the KB-list rule.
     ``kb.all`` and auth-off count everything."""
-    per_caller = False
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
         user_perms = user.get_permissions()
         if not has_permission(user_perms, Permission.KB_OWN):
             raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
-        per_caller = not has_permission(user_perms, Permission.KB_ALL)
-    if per_caller:
-        bases = await _readable_knowledge_bases(await rag.list_knowledge_bases(), user, db)
+    if _counts_per_caller(user):
+        all_bases = await rag.list_knowledge_bases(asker_id=user.id, enforce_circles=True)
+        bases = await _readable_knowledge_bases(all_bases, user, db)
         stats = await rag.get_stats(
             asker_id=user.id, enforce_circles=True, knowledge_base_ids={kb.id for kb in bases}
         )

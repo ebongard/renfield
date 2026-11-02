@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from sqlalchemy import delete, func, nulls_last, select, text
+from sqlalchemy import Select, delete, func, nulls_last, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1069,12 +1069,44 @@ class RAGService(AtomOwnerResolverMixin):
         logger.info(f"Knowledge base created: ID={kb.id}, name={name}")
         return kb
 
-    async def list_knowledge_bases(self) -> list[KnowledgeBase]:
-        """List all knowledge bases (without eager-loading documents)"""
+    @staticmethod
+    def _kb_document_count(
+        kb_id: Any, *, asker_id: int | None, enforce_circles: bool
+    ) -> Select:
+        """``SELECT count(*)`` of the documents in KB ``kb_id`` (a column for a
+        correlated subquery, or a literal id). ``enforce_circles`` counts only
+        the documents ``asker_id`` may reach -- the document filter of the list
+        and the search gate -- so a readable KB of another user does not reveal
+        how many documents its owner keeps there out of the caller's reach."""
+        stmt = select(func.count(Document.id)).where(Document.knowledge_base_id == kb_id)
+        if enforce_circles:
+            from services.document_search import visible_document_ids
+
+            stmt = stmt.where(Document.id.in_(visible_document_ids(asker_id)))
+        return stmt
+
+    async def count_kb_documents(
+        self, kb_id: int, *, asker_id: int | None, enforce_circles: bool
+    ) -> int:
+        """Document count of one KB, per caller under ``enforce_circles``."""
+        stmt = self._kb_document_count(
+            kb_id, asker_id=asker_id, enforce_circles=enforce_circles
+        )
+        return int(await self.db.scalar(stmt) or 0)
+
+    async def list_knowledge_bases(
+        self, *, asker_id: int | None, enforce_circles: bool
+    ) -> list[KnowledgeBase]:
+        """List all knowledge bases (without eager-loading documents).
+
+        Every KB is returned; filtering KBs is the caller's job. ``asker_id`` +
+        ``enforce_circles`` (no defaults) scope only each KB's
+        ``_document_count`` (see ``_kb_document_count``)."""
         # Use a count subquery instead of selectinload to avoid loading all documents
         doc_count_subq = (
-            select(func.count(Document.id))
-            .where(Document.knowledge_base_id == KnowledgeBase.id)
+            self._kb_document_count(
+                KnowledgeBase.id, asker_id=asker_id, enforce_circles=enforce_circles
+            )
             .correlate(KnowledgeBase)
             .scalar_subquery()
             .label("document_count")
@@ -1210,7 +1242,9 @@ class RAGService(AtomOwnerResolverMixin):
         document filter of the list and the search gate) and their chunks;
         ``knowledge_base_ids`` (the caller's readable KBs) then replaces the KB
         count. No defaults on purpose: a caller that forgets the switch must
-        fail, not silently count every user's data."""
+        fail, not silently count every user's data. The chunk count is the
+        chunks of the visible documents, not the retrievable chunks (retrieval
+        filters on ``dc.circle_tier``, a mirror of the document tier)."""
         doc_stmt = select(func.count(Document.id))
         chunk_stmt = select(func.count(DocumentChunk.id))
         if enforce_circles:

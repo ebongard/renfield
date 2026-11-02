@@ -5,7 +5,8 @@ documents, chunks, KBs) to every ``kb.own`` holder, so a user learned how much
 the others store. It now counts, below ``kb.all``, documents and chunks through
 the document reach filter of the document list (``visible_document_ids``) and
 KBs through the KB-list rule (``_readable_knowledge_bases``). ``kb.all`` and
-auth-off keep the global numbers.
+auth-off keep the global numbers. The per-KB ``document_count`` of
+``GET /bases`` and ``GET /bases/{id}`` counts through the same filter.
 
 Real Postgres: the filter is Postgres SQL (``circle_sql``).
 """
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from models.database import Document, DocumentChunk, KnowledgeBase, Role, User
 from services.auth_service import get_optional_user
@@ -173,3 +174,68 @@ async def test_enforcing_without_kb_ids_fails_closed(db_session, world):
         await RAGService(db_session).get_stats(
             asker_id=world["carol"].id, enforce_circles=True, knowledge_base_ids=None
         )
+
+
+# --------------------------------------------------------------------------- #
+# The per-KB ``document_count`` of ``GET /bases`` and ``GET /bases/{id}`` is the
+# same class: a readable KB of another user must not reveal how many documents
+# its owner keeps there out of the caller's reach.
+
+async def _kb_counts(client: AsyncClient) -> dict[str, int]:
+    resp = await client.get("/api/knowledge/bases")
+    assert resp.status_code == 200, resp.text
+    return {kb["name"]: kb["document_count"] for kb in resp.json()}
+
+
+async def _one_kb_count(client: AsyncClient, db_session, name: str) -> int:
+    kb_id = (await db_session.execute(
+        select(KnowledgeBase.id).where(KnowledgeBase.name == name)
+    )).scalar_one()
+    resp = await client.get(f"/api/knowledge/bases/{kb_id}")
+    assert resp.status_code == 200, resp.text
+    return resp.json()["document_count"]
+
+
+async def test_public_kb_of_another_user_shows_only_reachable_documents(
+    async_client, db_session, world, auth_on
+):
+    """dave (kb.shared) sees alice's public KB, but its one document is tier
+    self: the count is 0, in the list and on the detail route."""
+    _as(world["dave"])
+    assert await _kb_counts(async_client) == {"Alice oeffentlich": 0}
+    assert await _one_kb_count(async_client, db_session, "Alice oeffentlich") == 0
+
+
+async def test_kb_document_count_rises_with_reach(async_client, db_session, world, auth_on):
+    """Negative control on the filter itself: once the public KB's document is
+    on the public tier, dave's count follows -- the filter counts reach, it
+    does not just zero foreign KBs."""
+    await db_session.execute(
+        update(Document).where(Document.filename == "a-public.pdf").values(circle_tier=4)
+    )
+    await db_session.commit()
+    _as(world["dave"])
+    assert await _kb_counts(async_client) == {"Alice oeffentlich": 1}
+
+
+async def test_owner_and_share_counts_are_whole(async_client, db_session, world, auth_on):
+    _as(world["alice"])
+    assert await _kb_counts(async_client) == {
+        "Alice privat": 2, "Alice geteilt": 1, "Alice oeffentlich": 1,
+    }
+    _as(world["carol"])
+    assert await _kb_counts(async_client) == {"Alice geteilt": 1, "Carol privat": 1}
+    assert await _one_kb_count(async_client, db_session, "Alice geteilt") == 1
+
+
+async def test_kb_all_and_auth_off_count_kb_documents_globally(
+    async_client, db_session, world, auth_on, monkeypatch
+):
+    expected = {"Alice privat": 2, "Alice geteilt": 1, "Alice oeffentlich": 1, "Carol privat": 1}
+    _as(world["admin"])
+    assert await _kb_counts(async_client) == expected
+    assert await _one_kb_count(async_client, db_session, "Alice privat") == 2
+    monkeypatch.setattr(settings, "auth_enabled", False)
+    _as(None)
+    assert await _kb_counts(async_client) == expected
+    assert await _one_kb_count(async_client, db_session, "Alice privat") == 2
