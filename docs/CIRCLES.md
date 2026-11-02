@@ -117,38 +117,64 @@ meetings, PDF split, auto-index): server-resolved owner KBs, no caller KB id. Pr
 
 ### Moving and deleting documents (#1460, #1461, #1462)
 
-- **A move to another owner's KB needs the document's OWNER (or `kb.all`).** Write access on source and target is
-  not enough. A write share lets the grantee work INSIDE the owner's KBs; it does not let him give her documents
-  away, least of all to himself, because he would keep reading them as owner after the share is revoked (#1462).
-  "Owner" = the `kb_document` atom's owner, for a legacy atom-less row the KB owner (`RAGService.document_owners`).
-  One foreign document refuses the whole batch (403). Moves between KBs of the SAME owner keep the old rule.
-- **The atom follows the KB (#1460).** `owner_after_move`: the new owner is the target KB's owner; an ownerless KB
-  has nobody to hand it to, so the owner stays (atom-owner fallback). On a change of owner,
-  `AtomService.rehome_kb_document` sets the atom owner and the target KB's `default_circle_tier` (what a fresh filing
-  there gets) and cascades both to `documents.circle_tier`, chunks, facts and fact atoms. Per-fact tier overrides
-  are reset to the document tier: they were the previous owner's choice about her circles. Same owner: the tier
-  stays as it is (the owner's choice; filing elsewhere neither widens nor narrows it). Before, the old owner kept
-  reading the moved document through the atom-owner fallback, and it kept the source KB's tier.
+- **A move that changes the owner needs an OWNER of the document (or `kb.all`).** Write access on source and
+  target is not enough. A write share lets the grantee work INSIDE the owner's KBs; it does not let him give her
+  documents away, least of all to himself, because he would keep reading them as owner after the share is revoked
+  (#1462). The owners of a document are everyone the filter treats as owner: the `kb_document` atom's owner AND the
+  KB owner (`RAGService.document_owners`; the owner branch in `circle_sql` is an OR). A move changes the owner
+  unless the target KB's owner is exactly that set (`move_changes_owner`); a move into an OWNERLESS KB counts as a
+  change too. One foreign document refuses the whole batch (403). Moves between KBs of the same single owner keep
+  the old rule (write on both).
+- **Only settled documents move.** A document that is not `completed` or `failed` (pending, processing, a PDF-split
+  state) is refused with 409: the worker writes chunks and facts at the owner and tier it read at the start.
+- **The atom follows the KB (#1460).** On a change of owner into a KB WITH an owner, `AtomService.rehome_document`
+  sets the atom owner to the KB owner and the tier to the target KB's `default_circle_tier` (what a fresh filing
+  there gets), and cascades both to `documents.circle_tier`, chunks, facts and fact atoms; an atom-less legacy row
+  gets the tier cascade alone. Per-fact tier overrides are reset to the document tier: they were the previous
+  owner's choice about her circles. Same owner: the tier stays (the owner's choice; filing elsewhere neither widens
+  nor narrows it). Ownerless target: nobody to hand it to, the atom owner stays (atom-owner fallback).
+- 🛑 **Documents moved across owners BEFORE #1460 have two owners** (atom owner A in a KB of B; both read it as
+  owner). Not repaired automatically (who is the rightful owner is not derivable); the gate names both, and the
+  next move into one owner's KB settles it. A count on production is pending with the owner. The atom routes
+  (`api/routes/atoms.py`, `load_owned_atom`) still let A act on such an atom as its owner.
 - **Deleting a document purges its atoms in the same transaction (#1461).** `RAGService._delete_document_rows`
   purges the facts' atoms, deletes chunks and the row, then purges the `kb_document` atom (its grants go with it,
-  FK CASCADE). `delete_knowledge_base` runs every document through it: the `documents.knowledge_base_id` FK has
-  no ON DELETE action, so deleting a non-empty KB used to fail outright on Postgres. Atoms left behind by older
-  deletes: `bin/purge_orphan_document_atoms.py` (dry run by default, `--commit` purges and logs what it erased;
-  no `--revert`, it is the erasure the delete promised; `__pending__` placeholders are left to the reaper).
-- **Delete needs an admin share.** `check_kb_access` used to read the action `delete` as the READ level, so a read
-  grantee could delete the owner's documents and the KB. Now `delete` needs `admin` (owner and `kb.all` as before),
-  and an unknown action is denied. Proof for all four: `tests/backend/test_kb_document_move_delete_pg.py`.
+  FK CASCADE). `delete_knowledge_base` runs every document through it and unlinks `chat_uploads.knowledge_base_id`:
+  neither `documents.knowledge_base_id` nor `chat_uploads.knowledge_base_id` has an ON DELETE action, so deleting a
+  non-empty KB (or one an indexed chat upload names) used to fail outright on Postgres. The files are removed only
+  AFTER the commit. Atoms left behind by older deletes: `bin/purge_orphan_document_atoms.py` (dry run by default;
+  `--commit` writes the full list to its log BEFORE the purge commits, `complete: false`, and marks it
+  `complete: true` after; no `--revert`, it is the erasure the delete promised). An orphan is an atom whose source
+  row is gone AND that no live row references by `atom_id`; `__pending__` placeholders are left to the reaper.
+- **Delete is the owner's switch, not a level (`kb_shares.can_delete`, `pc20261102`).** `check_kb_access(kb, user,
+  "delete")` allows the KB owner, `kb.all`, and a share with `can_delete = true` — whatever its level (a read share
+  with the switch may delete, an admin share without it may not). Until #1462 `delete` fell through to the READ
+  level, so every grantee could delete. Document level (`check_document_access(..., "delete")`): auth off → kb.all →
+  the atom owner → the KB rule above. A legacy per-document grant has no delete concept and never deletes.
+  An unknown action is denied. **Who sets the switch:** only the KB owner or `kb.all` (`POST /bases/{id}/share`,
+  field `can_delete`; omitted = keep the stored value, new share = false). An admin grantee keeps creating, changing
+  and revoking shares, but naming `can_delete` is refused (403) and its upserts leave the switch untouched; a
+  revoke takes the switch with the share. The KB list and the share list return `can_delete`. **No backfill:**
+  every existing share starts with false — today's admin grantees lose delete on purpose; the backfill
+  (`bin/backfill_kb_shares.py`) writes false and its `--revert` spares a row that has the switch since. A write
+  grantee therefore cannot delete even its own upload in a shared KB (the upload belongs to the KB owner) unless
+  the owner gives the switch. There is no share dialog in the frontend yet; the switch is API-only.
+  Proof for all of the above: `tests/backend/test_kb_document_move_delete_pg.py`,
+  `tests/backend/test_pc20261102_kb_share_can_delete_migration.py`.
 
 Count of orphans (read-only, numbers only):
 
 ```sql
-SELECT a.atom_type, COUNT(*) AS atoms, COUNT(g.atom_id) AS grants
+SELECT a.atom_type, COUNT(DISTINCT a.atom_id) AS atoms, COUNT(g.atom_id) AS grants
 FROM atoms a
 LEFT JOIN atom_explicit_grants g ON g.atom_id = a.atom_id
-WHERE (a.atom_type = 'kb_document'
-       AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.id::text = a.source_id))
-   OR (a.atom_type = 'document_fact'
-       AND NOT EXISTS (SELECT 1 FROM document_facts f WHERE f.id::text = a.source_id))
+WHERE a.source_id NOT LIKE '\_\_pending\_\_%' ESCAPE '\'
+  AND ((a.atom_type = 'kb_document'
+        AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.id::text = a.source_id)
+        AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.atom_id = a.atom_id))
+    OR (a.atom_type = 'document_fact'
+        AND NOT EXISTS (SELECT 1 FROM document_facts f WHERE f.id::text = a.source_id)
+        AND NOT EXISTS (SELECT 1 FROM document_facts f WHERE f.atom_id = a.atom_id)))
 GROUP BY a.atom_type;
 ```
 
@@ -207,7 +233,7 @@ Die Review-Schlange wird **je Namens-Cluster** entschieden, nicht je Paar (`POST
 | `atom_explicit_grants` | Ausnahme-Grants: `(atom_id, granted_to_user_id, permission_level)` |
 | `circles` | Pro-User Tier-Konfiguration (optionale Anpassung der 5 Standard-Stufen) |
 | `circle_memberships` | Wer ist in welchem Tier-Ring welches Eigentümers |
-| `kb_shares` | Knowledge-Base-Freigabe `(kb_id, user_id, permission_level)` — eine Zeile je Freigabe, zur Abfragezeit ausgewertet (seit `pc20261101`; vorher nur Grants je damals vorhandenem Dokument, die als Alt-Grants weiter zählen) |
+| `kb_shares` | Knowledge-Base-Freigabe `(kb_id, user_id, permission_level, can_delete)` — `can_delete` ist der getrennte Löschschalter des Eigentümers (`pc20261102`, Standard false); eine Zeile je Freigabe, zur Abfragezeit ausgewertet (seit `pc20261101`; vorher nur Grants je damals vorhandenem Dokument, die als Alt-Grants weiter zählen) |
 
 **Denormalisierte Spalten**: `document_chunks.circle_tier`, `document_chunks.atom_id`, dasselbe Paar auf `kg_entities`, `kg_relations`, `conversation_memories`.
 
