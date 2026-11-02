@@ -22,7 +22,9 @@ import {
   useKbSharesQuery,
   useShareKnowledgeBase,
   useRevokeKbShare,
+  isKbLevelShare,
   type KbShare,
+  type KbLevelShare,
   type KbShareLevel,
   type KnowledgeBaseRow,
 } from '../../api/resources/knowledge';
@@ -54,7 +56,8 @@ export default function KbShareDialog({ kb, isOpen, onClose }: KbShareDialogProp
   const [addCanDelete, setAddCanDelete] = useState(false);
 
   const shares = sharesQuery.data ?? [];
-  const sharedIds = new Set(shares.map((s) => s.user_id));
+  // Grantees with only per-document grants may still be given a KB share.
+  const sharedIds = new Set(shares.filter(isKbLevelShare).map((s) => s.user_id));
   // The user list needs USERS_VIEW; without it the picker falls back to an id field.
   const userOptions = (usersQuery.data ?? []).filter(
     (u) => u.id !== kb.owner_id && !sharedIds.has(u.id),
@@ -70,10 +73,10 @@ export default function KbShareDialog({ kb, isOpen, onClose }: KbShareDialogProp
     }
   };
 
-  const changeLevel = (share: KbShare, level: KbShareLevel) =>
+  const changeLevel = (share: KbLevelShare, level: KbShareLevel) =>
     run(() => shareMutation.mutateAsync({ kbId: kb.id, userId: share.user_id, permission: level }));
 
-  const toggleSwitch = (share: KbShare) =>
+  const toggleSwitch = (share: KbLevelShare) =>
     run(() => shareMutation.mutateAsync({
       kbId: kb.id, userId: share.user_id, permission: share.permission, canDelete: !share.can_delete,
     }));
@@ -123,6 +126,13 @@ export default function KbShareDialog({ kb, isOpen, onClose }: KbShareDialogProp
                   <span className="grow text-sm font-medium text-gray-900 dark:text-white">
                     {share.username || `#${share.user_id}`}
                   </span>
+                  {!isKbLevelShare(share) ? (
+                    // Only per-document grants: no KB level, no switch — read-only.
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {t('knowledge.shares.documentGrants', { count: share.documents ?? 0 })}
+                    </span>
+                  ) : (
+                  <>
                   <select
                     aria-label={t('knowledge.shares.levelFor', { name: share.username })}
                     value={share.permission}
@@ -152,6 +162,8 @@ export default function KbShareDialog({ kb, isOpen, onClose }: KbShareDialogProp
                         {t('knowledge.shares.mayDelete')}
                       </span>
                     )
+                  )}
+                  </>
                   )}
                   <button
                     type="button"

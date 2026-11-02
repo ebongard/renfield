@@ -173,6 +173,27 @@ describe('KbShareDialog', () => {
     expect(captured.posts[0]).toEqual({ user_id: 4, permission: 'read' });
   });
 
+  it('shows a grantee with only per-document grants read-only, revocable', async () => {
+    const docGrants: KbShare = {
+      ...share(4, 'dave', 'read', false), permission: null, kind: 'document_grants', documents: 3,
+    };
+    const captured = wire([share(2, 'bob', 'write', false), docGrants]);
+    renderWithProviders(<KbShareDialog kb={OWNER_KB} isOpen onClose={() => {}} />);
+    await screen.findByText('dave', { selector: 'span' });
+
+    const row = rowOf('dave');
+    expect(within(row).getByText('Zugriff auf 3 einzelne Dokumente')).toBeInTheDocument();
+    // No level, no switch — even for the owner.
+    expect(within(row).queryByRole('combobox')).toBeNull();
+    expect(within(row).queryByRole('checkbox')).toBeNull();
+    // Still offered in the picker: a KB share may be given on top.
+    const picker = await screen.findByLabelText('Person');
+    await waitFor(() => expect(within(picker).getByRole('option', { name: 'dave' })).toBeInTheDocument());
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Freigabe für dave entziehen' }));
+    await waitFor(() => expect(captured.deletes).toEqual(['4']));
+  });
+
   it('falls back to an id field without the user list and shows the refusal', async () => {
     const captured = wire([], { usersStatus: 403, shareStatus: 403 });
     renderWithProviders(<KbShareDialog kb={ADMIN_GRANTEE_KB} isOpen onClose={() => {}} />);

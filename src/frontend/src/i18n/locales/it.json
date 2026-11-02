@@ -728,7 +728,9 @@
       "user": "Persona",
       "userIdHint": "L'elenco utenti non è disponibile per te; inserisci l'ID utente.",
       "switchHint": "Eliminare non è un livello: solo chi riceve “può eliminare” dal proprietario può eliminare documenti. Solo il proprietario elimina la base di conoscenza stessa.",
-      "addButton": "Condividi"
+      "addButton": "Condividi",
+      "documentGrants_one": "Accesso a {{count}} singolo documento",
+      "documentGrants_other": "Accesso a {{count}} singoli documenti"
     }
   },
   "memory": {

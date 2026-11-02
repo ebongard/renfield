@@ -34,16 +34,30 @@ export interface KnowledgeBaseRow {
 
 export type KbShareLevel = 'read' | 'write' | 'admin';
 
-/** One share of a KB (`GET /bases/{id}/permissions`); `id` is the grantee's user id. */
+/**
+ * One row of a KB's share list (`GET /bases/{id}/permissions`); `id` is the
+ * grantee's user id. `kind` tells a real KB share (absent = `kb_share`) from a
+ * grantee who holds only per-document grants on documents of the KB
+ * (`document_grants`, `documents` of them): no KB level, never the switch.
+ */
 export interface KbShare {
   id: number;
   user_id: number;
   username: string;
-  permission: KbShareLevel;
+  permission: KbShareLevel | null;
   granted_by: number | null;
   granted_by_username: string | null;
   created_at: string;
   can_delete: boolean;
+  kind?: 'kb_share' | 'document_grants';
+  documents?: number;
+}
+
+/** A real KB share — the row carries a level. */
+export type KbLevelShare = KbShare & { permission: KbShareLevel };
+
+export function isKbLevelShare(share: KbShare): share is KbLevelShare {
+  return share.kind !== 'document_grants' && share.permission !== null;
 }
 
 export interface KnowledgeStats {

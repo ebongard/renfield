@@ -1070,7 +1070,9 @@
       "user": "Person",
       "userIdHint": "The user list is not available to you; enter the user ID.",
       "switchHint": "Deleting is not a level: only those the owner gives “may delete” can delete documents. Only the owner deletes the knowledge base itself.",
-      "addButton": "Share"
+      "addButton": "Share",
+      "documentGrants_one": "Access to {{count}} single document",
+      "documentGrants_other": "Access to {{count}} single documents"
     }
   },
   "memory": {
