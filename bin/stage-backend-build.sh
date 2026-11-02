@@ -57,4 +57,4 @@ if [[ ! -f "$REPO_ROOT/secrets/postgres_password" ]]; then
   echo "NOTE: secrets/ holds no secret files yet. Run bin/generate-secrets.sh before"
   echo "      'docker compose up' -- compose refuses to start without the files."
 fi
-echo "Done. Next: docker compose build && docker compose up -d"
+echo "Done."
