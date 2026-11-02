@@ -356,11 +356,16 @@ Eine Freigabe ist eine Zeile in `kb_shares` und gilt für **jedes** Dokument der
 | `admin` | mit anderen teilen (Freigaben anlegen, ändern, entziehen) |
 
 **Löschen ist keine Stufe**, sondern ein eigener Schalter der Freigabe: `can_delete` (`pc20261102`, Standard
-`false`). Dokumente und die KB löschen dürfen der KB-Eigentümer, `kb.all` und wer eine Freigabe mit
-`can_delete: true` hat — gleich welcher Stufe. Den Schalter setzen oder entziehen dürfen **nur** der Eigentümer und
-`kb.all`; eine `admin`-Freigabe darf es nicht (403, sobald `can_delete` im Aufruf steht; ihre sonstigen Änderungen
-lassen den Schalter unberührt). Bestehende Freigaben, auch `admin`, haben ihn nicht: wer bisher als `admin` löschen
-konnte, kann es nicht mehr, bis der Eigentümer ihn setzt. Ein Dokument in die KB eines ANDEREN Eigentümers
+`false`). **Dokumente** löschen dürfen der KB-Eigentümer, `kb.all` und wer eine Freigabe mit `can_delete: true` hat —
+gleich welcher Stufe. **Die KB selbst** löschen dürfen nur der Eigentümer und `kb.all` (eigene Aktion `delete_kb`);
+weder eine Stufe noch der Schalter reicht dafür. Den Schalter setzen oder entziehen dürfen **nur** der Eigentümer und
+`kb.all`; eine `admin`-Freigabe darf es nicht (403, sobald `can_delete` im Aufruf steht). Eine Freigabe, die den
+Schalter trägt, darf eine `admin`-Freigabe auch weder ändern noch entziehen (403) — sonst könnte sie sie herabstufen
+oder entziehen und ohne Schalter neu anlegen; Freigaben ohne Schalter verwaltet sie wie bisher. Bestehende
+Freigaben, auch `admin`, haben ihn nicht: wer bisher als `admin` löschen konnte, kann es nicht mehr, bis der
+Eigentümer ihn setzt. Die KB-Liste meldet je KB `can_delete` (Dokumente) und `can_delete_kb` (die KB selbst und
+den Schalter); die Oberfläche (`/knowledge`, Freigabe-Dialog an der KB) blendet danach Löschknöpfe und den
+Schalter aus. Ein Dokument in die KB eines ANDEREN Eigentümers
 verschieben darf nur ein Eigentümer des Dokuments (oder `kb.all`), siehe `docs/CIRCLES.md` → Moving and deleting
 documents.
 

@@ -125,42 +125,66 @@ meetings, PDF split, auto-index): server-resolved owner KBs, no caller KB id. Pr
   unless the target KB's owner is exactly that set (`move_changes_owner`); a move into an OWNERLESS KB counts as a
   change too. One foreign document refuses the whole batch (403). Moves between KBs of the same single owner keep
   the old rule (write on both).
-- **Only settled documents move.** A document that is not `completed` or `failed` (pending, processing, a PDF-split
-  state) is refused with 409: the worker writes chunks and facts at the owner and tier it read at the start.
+- **Only settled documents move.** A document that is not `completed`, `failed` or `split_archived` (the archived
+  combined original of an executed PDF split) — i.e. pending, processing, `split_pending`, `split_review` — is
+  refused with 409, and the detail names the busy documents (the move dialog shows that text): the worker writes
+  chunks and facts at the owner and tier it read at the start.
 - **The atom follows the KB (#1460).** On a change of owner into a KB WITH an owner, `AtomService.rehome_document`
   sets the atom owner to the KB owner and the tier to the target KB's `default_circle_tier` (what a fresh filing
   there gets), and cascades both to `documents.circle_tier`, chunks, facts and fact atoms; an atom-less legacy row
   gets the tier cascade alone. Per-fact tier overrides are reset to the document tier: they were the previous
   owner's choice about her circles. Same owner: the tier stays (the owner's choice; filing elsewhere neither widens
   nor narrows it). Ownerless target: nobody to hand it to, the atom owner stays (atom-owner fallback).
-- 🛑 **Documents moved across owners BEFORE #1460 have two owners** (atom owner A in a KB of B; both read it as
-  owner). Not repaired automatically (who is the rightful owner is not derivable); the gate names both, and the
-  next move into one owner's KB settles it. A count on production is pending with the owner. The atom routes
-  (`api/routes/atoms.py`, `load_owned_atom`) still let A act on such an atom as its owner.
+- 🛑 **Documents moved across owners BEFORE #1460 have two owners** (atom owner A in a KB of B; the retrieval
+  filter lets both read it as owner). Not repaired automatically (who is the rightful owner is not derivable); the
+  move gate names both, and the next move into one owner's KB settles it. The per-document gate
+  (`check_document_access`: read, reindex, tier, delete) lets the atom owner through ONLY where she is the KB's
+  owner, the KB has none, or there is no KB; on a two-owner row A falls to the KB rule (403 without a share), B
+  decides. The atom routes (`api/routes/atoms.py`, `load_owned_atom`) still let A act on such an atom as its owner.
+  Count (read-only, numbers only):
+
+  ```sql
+  SELECT COUNT(*) FROM documents d
+  JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id
+  JOIN atoms a ON a.atom_id = d.atom_id
+  WHERE kb.owner_id IS NOT NULL AND a.owner_user_id <> kb.owner_id;
+  ```
 - **Deleting a document purges its atoms in the same transaction (#1461).** `RAGService._delete_document_rows`
   purges the facts' atoms, deletes chunks and the row, then purges the `kb_document` atom (its grants go with it,
   FK CASCADE). `delete_knowledge_base` runs every document through it and unlinks `chat_uploads.knowledge_base_id`:
   neither `documents.knowledge_base_id` nor `chat_uploads.knowledge_base_id` has an ON DELETE action, so deleting a
   non-empty KB (or one an indexed chat upload names) used to fail outright on Postgres. The files are removed only
-  AFTER the commit. Atoms left behind by older deletes: `bin/purge_orphan_document_atoms.py` (dry run by default;
+  AFTER the commit; a file that cannot be removed then is logged as ERROR with the document id and the path (the
+  rows are gone, nothing else references it). Atoms left behind by older deletes: `bin/purge_orphan_document_atoms.py` (dry run by default;
   `--commit` writes the full list to its log BEFORE the purge commits, `complete: false`, and marks it
   `complete: true` after; no `--revert`, it is the erasure the delete promised). An orphan is an atom whose source
   row is gone AND that no live row references by `atom_id`; `__pending__` placeholders are left to the reaper.
 - **Delete is the owner's switch, not a level (`kb_shares.can_delete`, `pc20261102`).** `check_kb_access(kb, user,
-  "delete")` allows the KB owner, `kb.all`, and a share with `can_delete = true` — whatever its level (a read share
-  with the switch may delete, an admin share without it may not). Until #1462 `delete` fell through to the READ
-  level, so every grantee could delete. Document level (`check_document_access(..., "delete")`): auth off → kb.all →
-  the atom owner → the KB rule above. A legacy per-document grant has no delete concept and never deletes.
-  An unknown action is denied. **Who sets the switch:** only the KB owner or `kb.all` (`POST /bases/{id}/share`,
-  field `can_delete`; omitted = keep the stored value, new share = false). An admin grantee keeps creating, changing
-  and revoking shares, but naming `can_delete` is refused (403) and its upserts leave the switch untouched; a
-  revoke takes the switch with the share. The KB list and the share list return `can_delete`. **No backfill:**
-  every existing share starts with false — today's admin grantees lose delete on purpose; the backfill
-  (`bin/backfill_kb_shares.py`) writes false and its `--revert` spares a row that has the switch since. A write
-  grantee therefore cannot delete even its own upload in a shared KB (the upload belongs to the KB owner) unless
-  the owner gives the switch. There is no share dialog in the frontend yet; the switch is API-only.
+  "delete")` — deleting DOCUMENTS — allows the KB owner, `kb.all`, and a share with `can_delete = true`, whatever its
+  level (a read share with the switch may delete, an admin share without it may not). Until #1462 `delete` fell
+  through to the READ level, so every grantee could delete. **Deleting the KB itself is a separate action,
+  `"delete_kb"`: KB owner or `kb.all` only — no level and no switch reaches it.** Document level
+  (`check_document_access(..., "delete")`): auth off → kb.all → the atom owner (as restricted above) → the KB rule.
+  A legacy per-document grant has no delete concept and never deletes. An unknown action is denied. **Who sets the
+  switch:** only the KB owner or `kb.all` (`POST /bases/{id}/share`, field `can_delete`; omitted = keep the stored
+  value, new share = false). An admin grantee keeps creating, changing and revoking UNSWITCHED shares; naming
+  `can_delete` is refused (403), and so is changing or revoking a share that carries the switch (403 on the upsert
+  and on `DELETE /bases/{id}/permissions/{user_id}`) — otherwise it could downgrade the share, or revoke and
+  re-create it without the switch. The KB list returns `can_delete` (documents) and `can_delete_kb` (the KB, and
+  the right to set the switch); the share list returns `can_delete` per share. **No backfill:** every existing
+  share starts with false — today's admin grantees lose delete on purpose; the backfill (`bin/backfill_kb_shares.py`)
+  writes false and its `--revert` spares a row that has the switch since. A write grantee therefore cannot delete
+  even its own upload in a shared KB (the upload belongs to the KB owner) unless the owner gives the switch.
+  **Frontend:** the KB chips on `/knowledge` carry a share button for the owner and admin grantees
+  (`components/knowledge/KbShareDialog.tsx`: list, level, add, revoke; the "darf löschen" switch is operable only
+  with `can_delete_kb`, shown read-only otherwise, and a switched share's level and revoke are disabled for an admin
+  grantee; a row of `kind: "document_grants"` — a grantee with only per-document grants — shows "Zugriff auf n
+  einzelne Dokumente" without level or switch and can only be revoked). The KB delete button appears only with `can_delete_kb`, a document's only with `can_delete` on its KB
+  (a KB-less document keeps the button; the backend decides).
   Proof for all of the above: `tests/backend/test_kb_document_move_delete_pg.py`,
-  `tests/backend/test_pc20261102_kb_share_can_delete_migration.py`.
+  `tests/backend/test_pc20261102_kb_share_can_delete_migration.py`,
+  `tests/frontend/react/components/KbShareDialog.test.tsx`,
+  `tests/frontend/react/pages/KnowledgePage.deleteRights.test.tsx`.
 
 Count of orphans (read-only, numbers only):
 
