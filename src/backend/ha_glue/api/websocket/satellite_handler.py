@@ -541,6 +541,31 @@ def _handshake_satisfies_enrollment(auth_result: dict | None, register_token: st
     )
 
 
+async def _end_empty_turn(manager, websocket, session_id: str, detail: dict) -> None:
+    """End a turn that produced no text; the caller has already counted it.
+
+    A fault here must not reach the connection's outer handler: that drops
+    the connection, and `unregister` then ends the open session as
+    `completed` — the history would show a successful turn. Instead: log,
+    end the session as `end_failed` (not a success) and, should that fail
+    too, at least return the satellite to idle and keep the connection.
+    Nothing is counted a second time.
+    """
+    try:
+        await manager.end_session(session_id, reason="empty_transcription", detail=detail)
+        return
+    except Exception as e:
+        logger.error(f"❌ Ending empty turn {session_id} failed: {e!r}")
+    try:
+        await manager.end_session(session_id, reason="end_failed", detail=detail)
+    except Exception as e:
+        logger.error(f"❌ Fallback end of {session_id} failed: {e!r}")
+        try:
+            await websocket.send_json({"type": "state", "state": "idle"})
+        except Exception:
+            pass  # The satellite may have disconnected
+
+
 @router.websocket("/ws/satellite")
 async def satellite_websocket(
     websocket: WebSocket,
@@ -1112,11 +1137,11 @@ async def satellite_websocket(
                     )
                     continue
 
-                # Outside the try: a fault while ending must not count the
-                # same empty turn a second time as an stt_error.
+                # Outside the STT try: the turn is counted exactly once, here,
+                # and a fault while ending it is handled on the spot.
                 if not transcribed:
-                    await satellite_manager.end_session(
-                        session_id, reason="empty_transcription", detail=empty_turn(),
+                    await _end_empty_turn(
+                        satellite_manager, websocket, session_id, empty_turn(),
                     )
                     continue
 

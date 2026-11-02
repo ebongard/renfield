@@ -407,7 +407,38 @@ async def test_satellite_fault_while_ending_an_empty_turn_counts_once(satellite_
     await handler.satellite_websocket(ws, token=None)
 
     assert counted == [("satellite", "vad_floor")]
-    assert calls == ["empty_transcription"]
+    assert calls == ["empty_transcription", "end_failed"]
+    ends = [e["details"] for e in mgr._satellite_history["sat-bad"] if e["type"] == "session_end"]
+    assert len(ends) == 1, "unregister must not end the turn a second time as completed"
+    assert "s1" not in mgr.sessions, "a session left open would later end as `completed`"
+    assert ends[0]["reason"] == "end_failed"
+    assert ends[0]["success"] is False
+    assert ends[0]["empty_kind"] == "vad_floor"
+    assert {"type": "state", "state": "idle"} in ws.sent
+
+
+async def test_satellite_empty_turn_whose_every_end_fails_still_goes_idle(satellite_env):
+    """Last resort: both ends fail. The satellite is still told to go idle,
+    and nothing is counted twice."""
+    handler, mgr, whisper, counted = satellite_env
+    whisper.transcribe_bytes = AsyncMock(return_value="")
+    ws = _FakeSatelliteSocket([{"type": "audio_end", "session_id": "s1", "reason": "silence"}])
+    await mgr.register(satellite_id="sat-bad", room="Kinderbad", websocket=ws, capabilities={})
+    await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
+    mgr.buffer_audio_bytes("s1", b"\0" * 99840, 1)
+    mgr.end_session = AsyncMock(side_effect=RuntimeError("history store gone"))
+    lines, done = _capture_warnings()
+    try:
+        await handler.satellite_websocket(ws, token=None)
+    finally:
+        done()
+
+    assert not any("Satellite WebSocket error" in m for m in lines), (
+        "the fault reached the outer handler, which drops the connection"
+    )
+    assert counted == [("satellite", "vad_floor")]
+    assert mgr.end_session.await_count == 2
+    assert ws.sent[-1] == {"type": "state", "state": "idle"}
 
 
 # ---------------------------------------------------------------------------
