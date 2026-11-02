@@ -1372,6 +1372,9 @@ class KBShare(Base):
     permission_level = Column(String(16), nullable=False, default=KB_PERM_READ)
     granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     granted_at = Column(DateTime, nullable=False, default=_utcnow)
+    # Deleting (documents, the KB) is NOT implied by any level: the KB owner (or
+    # kb.all) grants it per share (pc20261102). Only they may set or clear it.
+    can_delete = Column(Boolean, nullable=False, default=False, server_default="false")
 
     __table_args__ = (
         Index("idx_kb_shares_user", "user_id"),

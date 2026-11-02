@@ -1049,7 +1049,34 @@
     "statusSplitPending": "Wird aufgeteilt",
     "statusSplitReview": "Aufteilung prüfen",
     "statusSplitArchived": "Aufgeteilt (Original archiviert)",
-    "sendToSimba": "An Simba senden"
+    "sendToSimba": "An Simba senden",
+    "shareKnowledgeBase": "Freigaben verwalten",
+    "shares": {
+      "title": "Freigaben von „{{name}}“",
+      "list": "Freigaben",
+      "empty": "Diese Wissensbasis ist mit niemandem geteilt.",
+      "levelFor": "Stufe für {{name}}",
+      "levelLabel": "Stufe",
+      "level": {
+        "read": "Lesen",
+        "write": "Schreiben",
+        "admin": "Verwalten"
+      },
+      "mayDelete": "darf löschen",
+      "revoke": "Freigabe entziehen",
+      "revokeFor": "Freigabe für {{name}} entziehen",
+      "lockedHint": "Diese Freigabe trägt das Recht zu löschen; ändern oder entziehen kann sie nur der Eigentümer.",
+      "add": "Freigabe hinzufügen",
+      "user": "Person",
+      "userIdHint": "Die Personenliste ist für dich nicht freigegeben; gib die Benutzer-ID ein.",
+      "switchHint": "Löschen ist keine Stufe: Dokumente löschen darf nur, wem der Eigentümer „darf löschen“ gibt. Die Wissensbasis selbst löscht nur der Eigentümer.",
+      "addButton": "Freigeben",
+      "documentGrants_one": "Zugriff auf {{count}} einzelnes Dokument",
+      "documentGrants_other": "Zugriff auf {{count}} einzelne Dokumente",
+      "unnamedUser": "Person #{{id}}",
+      "userIdPlaceholder": "Benutzer-ID",
+      "pickUser": "Person wählen …"
+    }
   },
   "memory": {
     "title": "Erinnerungen",

@@ -338,9 +338,12 @@ curl -X POST http://localhost:8000/api/knowledge/bases/1/share \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 5,
-    "permission": "read"
+    "permission": "read",
+    "can_delete": false
   }'
 ```
+
+`can_delete` ist optional; weggelassen bleibt der gespeicherte Wert (neue Freigabe: `false`).
 
 Eine Freigabe ist eine Zeile in `kb_shares` und gilt für **jedes** Dokument der KB — auch für später hochgeladene, hineinverschobene, und für eine bei der Freigabe noch leere KB. Ein von der berechtigten Person hochgeladenes Dokument gehört weiterhin dem KB-Eigentümer (Stufe = KB-Standardstufe); lesen kann sie es über die Freigabe. Ein aus der KB herausverschobenes Dokument ist für sie nicht mehr sichtbar. Entziehen löscht die Freigabe und die Alt-Grants dieser Person auf den Dokumenten der KB. Bestands-Freigaben, die nur als Alt-Grants existieren, gelten weiter, decken aber erst nach `bin/backfill_kb_shares.py --commit` auch neue Dokumente.
 
@@ -349,8 +352,22 @@ Eine Freigabe ist eine Zeile in `kb_shares` und gilt für **jedes** Dokument der
 | Level | Beschreibung |
 |-------|--------------|
 | `read` | KB in Suche verwenden, Dokumente lesen |
-| `write` | Dokumente hinzufügen/bearbeiten |
-| `admin` | KB löschen, mit anderen teilen |
+| `write` | Dokumente hinzufügen/bearbeiten, innerhalb der KBs desselben Eigentümers verschieben |
+| `admin` | mit anderen teilen (Freigaben anlegen, ändern, entziehen) |
+
+**Löschen ist keine Stufe**, sondern ein eigener Schalter der Freigabe: `can_delete` (`pc20261102`, Standard
+`false`). **Dokumente** löschen dürfen der KB-Eigentümer, `kb.all` und wer eine Freigabe mit `can_delete: true` hat —
+gleich welcher Stufe. **Die KB selbst** löschen dürfen nur der Eigentümer und `kb.all` (eigene Aktion `delete_kb`);
+weder eine Stufe noch der Schalter reicht dafür. Den Schalter setzen oder entziehen dürfen **nur** der Eigentümer und
+`kb.all`; eine `admin`-Freigabe darf es nicht (403, sobald `can_delete` im Aufruf steht). Eine Freigabe, die den
+Schalter trägt, darf eine `admin`-Freigabe auch weder ändern noch entziehen (403) — sonst könnte sie sie herabstufen
+oder entziehen und ohne Schalter neu anlegen; Freigaben ohne Schalter verwaltet sie wie bisher. Bestehende
+Freigaben, auch `admin`, haben ihn nicht: wer bisher als `admin` löschen konnte, kann es nicht mehr, bis der
+Eigentümer ihn setzt. Die KB-Liste meldet je KB `can_delete` (Dokumente) und `can_delete_kb` (die KB selbst und
+den Schalter); die Oberfläche (`/knowledge`, Freigabe-Dialog an der KB) blendet danach Löschknöpfe und den
+Schalter aus. Ein Dokument in die KB eines ANDEREN Eigentümers
+verschieben darf nur ein Eigentümer des Dokuments (oder `kb.all`), siehe `docs/CIRCLES.md` → Moving and deleting
+documents.
 
 ### Sharing-API
 

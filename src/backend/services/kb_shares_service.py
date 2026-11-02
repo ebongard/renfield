@@ -20,8 +20,11 @@ today), ``share_kb`` keeps their level in step and ``revoke_kb_share`` deletes
 them, exactly as before.
 
 Public surface:
-    share_kb(db, kb_id, target_user_id, permission_level, granted_by)
+    share_kb(db, kb_id, target_user_id, permission_level, granted_by, *, can_delete=None)
         Idempotent upsert of the kb_shares row; aligns legacy grants' level.
+        ``can_delete`` = the owner's delete switch (None keeps it).
+    user_may_delete_in_kb(db, kb_id, user_id) -> bool
+    get_user_kb_delete_switches(db, user_id, kb_ids) -> set[int]
     revoke_kb_share(db, kb_id, target_user_id)
         Deletes the kb_shares row AND the user's grants on the KB's documents.
     list_kb_shares(db, kb_id) -> list[dict]
@@ -65,9 +68,16 @@ async def share_kb(
     target_user_id: int,
     permission_level: str,
     granted_by: int | None,
+    *,
+    can_delete: bool | None = None,
 ) -> None:
     """
     Idempotently share `kb_id` with `target_user_id` at `permission_level`.
+
+    ``can_delete`` is the owner's separate delete switch (pc20261102): ``None``
+    keeps the stored value (FALSE for a new share), ``True``/``False`` sets it.
+    WHO may set it is the route's decision (KB owner or kb.all only); this
+    function only writes.
 
     Upserts the ``kb_shares`` row — which covers every current AND future
     document of the KB, an empty KB included. Legacy per-document grants of the
@@ -88,16 +98,19 @@ async def share_kb(
         "granter": granted_by,
         "now": now,
         "kb_id": kb_id,
+        "can_delete": can_delete,
     }
     await db.execute(
         text(
             "INSERT INTO kb_shares "
-            "  (kb_id, user_id, permission_level, granted_by, granted_at) "
-            "VALUES (:kb_id, :target, :perm, :granter, :now) "
+            "  (kb_id, user_id, permission_level, granted_by, granted_at, can_delete) "
+            "VALUES (:kb_id, :target, :perm, :granter, :now, "
+            "        COALESCE(CAST(:can_delete AS BOOLEAN), FALSE)) "
             "ON CONFLICT (kb_id, user_id) DO UPDATE "
             "  SET permission_level = EXCLUDED.permission_level, "
             "      granted_by = EXCLUDED.granted_by, "
-            "      granted_at = EXCLUDED.granted_at"
+            "      granted_at = EXCLUDED.granted_at, "
+            "      can_delete = COALESCE(CAST(:can_delete AS BOOLEAN), kb_shares.can_delete)"
         ),
         params,
     )
@@ -160,6 +173,7 @@ async def list_kb_shares(db: AsyncSession, kb_id: int) -> list[dict[str, Any]]:
     Returns:
         permission   MAX-permissive level (admin > write > read) across the
                      kb_shares row and all legacy grants on the KB.
+        can_delete   the kb_shares row's delete switch (legacy grants: FALSE).
         granted_at   timestamp of the MOST RECENT of those rows.
         granted_by   the user_id that issued THAT most-recent row (paired via
                      DISTINCT ON, not an arbitrary MAX(granted_by)).
@@ -183,7 +197,11 @@ async def list_kb_shares(db: AsyncSession, kb_id: int) -> list[dict[str, Any]]:
             "  FROM per_source GROUP BY user_id "
             ") "
             "SELECT DISTINCT ON (r.user_id) "
-            "       r.user_id, r.rank, r.latest_at AS granted_at, ps.granted_by "
+            "       r.user_id, r.rank, r.latest_at AS granted_at, ps.granted_by, "
+            # Legacy grants carry no switch: only the kb_shares row can grant delete.
+            "       COALESCE((SELECT ks2.can_delete FROM kb_shares ks2 "
+            "                 WHERE ks2.kb_id = :kb_id AND ks2.user_id = r.user_id), FALSE) "
+            "         AS can_delete "
             "FROM ranked r "
             "JOIN per_source ps "
             "  ON ps.user_id = r.user_id AND ps.granted_at = r.latest_at "
@@ -197,6 +215,7 @@ async def list_kb_shares(db: AsyncSession, kb_id: int) -> list[dict[str, Any]]:
             "permission": _RANK_TO_PERM.get(int(row.rank), "read"),
             "granted_by": row.granted_by,
             "granted_at": row.granted_at,
+            "can_delete": bool(row.can_delete),
         }
         for row in result.fetchall()
     ]
@@ -210,6 +229,32 @@ async def get_user_kb_permission_level(
     """MAX level over the kb_shares row and legacy grants of `user_id` on `kb_id`, or None."""
     levels = await get_user_kb_permission_levels(db, user_id, [kb_id])
     return levels.get(kb_id)
+
+
+async def user_may_delete_in_kb(db: AsyncSession, kb_id: int, user_id: int) -> bool:
+    """Whether `user_id`'s share of `kb_id` carries the owner's delete switch.
+
+    Independent of the level (an admin share without the switch may not delete);
+    a legacy per-document grant never carries it. The KB owner and kb.all are the
+    caller's business (``check_kb_access``)."""
+    return bool((await db.execute(
+        text("SELECT can_delete FROM kb_shares WHERE kb_id = :kb_id AND user_id = :u"),
+        {"kb_id": kb_id, "u": user_id},
+    )).scalar())
+
+
+async def get_user_kb_delete_switches(
+    db: AsyncSession, user_id: int, kb_ids: list[int] | set[int],
+) -> set[int]:
+    """Batch form of :func:`user_may_delete_in_kb` (one query for the KB list)."""
+    if not kb_ids:
+        return set()
+    rows = await db.execute(
+        text("SELECT kb_id FROM kb_shares WHERE user_id = :u AND can_delete "
+             "AND kb_id = ANY(:kb_ids)"),
+        {"u": user_id, "kb_ids": list(kb_ids)},
+    )
+    return {int(r.kb_id) for r in rows}
 
 
 async def list_user_shared_kb_ids(db: AsyncSession, user_id: int) -> set[int]:
@@ -310,10 +355,13 @@ async def backfill_kb_shares(db: AsyncSession, *, dry_run: bool) -> KBShareBackf
 
     rows = (await db.execute(text(
         derived_cte
-        + "INSERT INTO kb_shares (kb_id, user_id, permission_level, granted_by, granted_at) "
+        + "INSERT INTO kb_shares "
+        "  (kb_id, user_id, permission_level, granted_by, granted_at, can_delete) "
         "SELECT dv.kb_id, dv.user_id, "
         "       CASE dv.rank WHEN 3 THEN 'admin' WHEN 2 THEN 'write' ELSE 'read' END, "
-        "       dv.granted_by, COALESCE(dv.granted_at, now() AT TIME ZONE 'UTC') "
+        "       dv.granted_by, COALESCE(dv.granted_at, now() AT TIME ZONE 'UTC'), "
+        # A legacy grant never meant "may delete": the switch is the owner's.
+        "       FALSE "
         "FROM derived dv "
         "ON CONFLICT (kb_id, user_id) DO NOTHING "
         "RETURNING kb_id, user_id, granted_at"
@@ -331,7 +379,8 @@ async def revert_kb_share_backfill(db: AsyncSession, inserted: list[dict[str, An
 
     A row is deleted only while its ``granted_at`` still equals the logged value:
     a share re-made or changed through the UI since then is somebody's decision,
-    not backfill output, and stays. Legacy grants were never touched, so access
+    not backfill output, and stays -- as does one the owner has given the delete
+    switch since (the backfill writes FALSE). Legacy grants were never touched, so access
     falls back to them. Returns the number of deleted rows.
     """
     deleted = 0
@@ -339,7 +388,7 @@ async def revert_kb_share_backfill(db: AsyncSession, inserted: list[dict[str, An
         res = await db.execute(
             text(
                 "DELETE FROM kb_shares WHERE kb_id = :kb_id AND user_id = :user_id "
-                "AND granted_at = :granted_at"
+                "AND granted_at = :granted_at AND NOT can_delete"
             ),
             {
                 "kb_id": int(row["kb_id"]),
