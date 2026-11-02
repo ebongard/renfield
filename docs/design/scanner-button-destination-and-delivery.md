@@ -280,6 +280,14 @@ Entscheidungen des Eigentümers vom 2026-11-02, umgesetzt in
   endgültig `refused` (2xx, der Scanner hört auf) + WARNING; nichts wird
   geschrieben, keine Konversation angelegt. Eine eigentümerlose Ablage
   (`resolve_owner_user_id` → None) passt zu keinem Nutzer und wird abgelehnt.
+- **Die Konversation muss PRIVAT sein** (Review 2026-11-02): `circle_tier = 0`
+  auf der Zeile UND im kanonischen `atoms.policy["tier"]` ihres Atoms (falls
+  vorhanden), und kein `atom_explicit_grants`-Eintrag. Sonst endgültig
+  `refused` + WARNING. Grund: die Nachricht trägt Dokument-Id, Ziel und einen
+  Knopf zum Dokument, und nach der Entscheidung des Eigentümers sieht sie nur
+  der Dokument-Eigentümer — eine geteilte Konversation (Raumverlauf auf Stufe 2,
+  ein Einzel-Grant) reichte sie an jedes Mitglied weiter. Ein Atom ohne
+  lesbare Stufe gilt als geteilt (fail-closed).
 - **Rückfall NUR bei `caller == "button"` und fehlendem Redis-Eintrag.**
   `caller` steht im Rumpf und entscheidet damit nur, OB zurückgefallen wird,
   nie WER empfängt. Ohne diese Bedingung würde ein schnell scheiternder
@@ -290,7 +298,10 @@ Entscheidungen des Eigentümers vom 2026-11-02, umgesetzt in
   Die Nachricht kommt aus `render_completion_message` mit leerem Titel — der
   Titel des Ereignisses wird nie verwendet.
 - **Raumansage** nur mit `SCANNER_UNATTENDED_ROOM_<CLIENT_ID>` (positive
-  Ganzzahl; sonst WARNING, keine Ansage): „Der Scan ist fertig, N Seite(n).“ für
+  Ganzzahl aus ASCII-Ziffern; sonst WARNING, keine Ansage — die Zustellung
+  selbst läuft weiter. `"²".isdigit()` ist wahr und `int("²")` wirft; weil der
+  Raum VOR der Zustellung aufgelöst wird, hätte ein Tippfehler jede
+  Knopf-Meldung in eine 24 h lang wiederholte 500 verwandelt): „Der Scan ist fertig, N Seite(n).“ für
   `done`, sonst die bisherige gesprochene Kurzform. Nur die ZAHL kommt aus dem
   Ereignis, als `int` geprüft; kein Titel, kein Dokumentdetail. Die Ansage für
   Sprachanfragen bleibt byte-identisch.
