@@ -281,13 +281,17 @@ Entscheidungen des Eigentümers vom 2026-11-02, umgesetzt in
   geschrieben, keine Konversation angelegt. Eine eigentümerlose Ablage
   (`resolve_owner_user_id` → None) passt zu keinem Nutzer und wird abgelehnt.
 - **Die Konversation muss PRIVAT sein** (Review 2026-11-02): `circle_tier = 0`
-  auf der Zeile UND im kanonischen `atoms.policy["tier"]` ihres Atoms (falls
-  vorhanden), und kein `atom_explicit_grants`-Eintrag. Sonst endgültig
+  auf der Zeile UND im kanonischen `atoms.policy["tier"]` JEDES ihrer Atome,
+  und kein `atom_explicit_grants`-Eintrag. Die Atome werden gefunden wie im
+  Lesepfad (`conversations_circles_filter`: `source_table='conversations' AND
+  source_id = c.id`) plus `conversations.atom_id` — sonst trüge ein
+  abgedriftetes Zweitatom einen Grant, den der Leser beachtet. Sonst endgültig
   `refused` + WARNING. Grund: die Nachricht trägt Dokument-Id, Ziel und einen
-  Knopf zum Dokument, und nach der Entscheidung des Eigentümers sieht sie nur
-  der Dokument-Eigentümer — eine geteilte Konversation (Raumverlauf auf Stufe 2,
-  ein Einzel-Grant) reichte sie an jedes Mitglied weiter. Ein Atom ohne
-  lesbare Stufe gilt als geteilt (fail-closed).
+  Knopf zum Dokument und soll nicht weiter reichen als das Dokument — eine
+  geteilte Konversation (Raumverlauf auf Stufe 2, ein Einzel-Grant) reichte sie
+  an jedes Mitglied weiter. „Privat“ heisst dabei Stufe 0 wie die Ablage selbst,
+  nicht „nur der Eigentümer“: ein Kreismitglied auf Tiefe 0 erreicht beide
+  gleich. Ein Atom ohne lesbare Stufe gilt als geteilt (fail-closed).
 - **Rückfall NUR bei `caller == "button"` und fehlendem Redis-Eintrag.**
   `caller` steht im Rumpf und entscheidet damit nur, OB zurückgefallen wird,
   nie WER empfängt. Ohne diese Bedingung würde ein schnell scheiternder
