@@ -127,9 +127,10 @@ async def _process_device_session(
 
     logger.info(f"🎵 Processing {len(audio_bytes)} bytes of audio")
 
-    # Set once STT produced text: a failure BEFORE that is an empty turn
-    # (the STT stage failed), one after it is a processing error.
-    transcribed = False
+    # What STT produced: None until it returned. A failure while it is still
+    # None is an stt_error; after "empty" the turn was already counted, after
+    # "text" it is a processing error and no empty turn at all.
+    stt_outcome: str | None = None
 
     # Transcribe with Whisper
     try:
@@ -199,11 +200,12 @@ async def _process_device_session(
             )
 
         if not text or not text.strip():
+            stt_outcome = "empty"
             empty_turn()
             await device_manager.end_session(session_id, reason="empty_transcription")
             return
 
-        transcribed = True
+        stt_outcome = "text"
         logger.info(f"📝 Transcription: '{text}'")
         await device_manager.send_transcription(session_id, text, speaker_name, speaker_alias)
 
@@ -214,7 +216,7 @@ async def _process_device_session(
         logger.error(f"❌ Audio processing failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        if not transcribed:
+        if stt_outcome is None:
             empty_turn(stt_failed=True)
         await device_manager.end_session(session_id, reason="processing_error")
 

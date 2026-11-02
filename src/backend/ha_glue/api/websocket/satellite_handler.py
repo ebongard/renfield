@@ -1006,6 +1006,7 @@ async def satellite_websocket(
                 logger.info(f"🌐 Using language: {satellite_language}")
 
                 # Transcribe with Whisper (with speaker recognition)
+                transcribed = False
                 try:
                     whisper = get_whisper_service()
                     await asyncio.to_thread(whisper.load_model)  # No-op if already loaded
@@ -1094,22 +1095,28 @@ async def satellite_websocket(
                             raise_stt_errors=True,
                         )
 
-                    if not text or not text.strip():
-                        await satellite_manager.end_session(
-                            session_id, reason="empty_transcription", detail=empty_turn(),
-                        )
-                        continue
-
-                    logger.info(f"📝 Transcription: '{text}'")
-                    await satellite_manager.send_transcription(session_id, text)
+                    if text and text.strip():
+                        transcribed = True
+                        logger.info(f"📝 Transcription: '{text}'")
+                        await satellite_manager.send_transcription(session_id, text)
 
                 except Exception as e:
                     logger.error(f"❌ Whisper transcription failed: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
+                    # A fault AFTER the text arrived is not a turn without
+                    # text: it is neither counted nor called an stt_error.
                     await satellite_manager.end_session(
                         session_id, reason="transcription_error",
-                        detail=empty_turn(stt_failed=True),
+                        detail=None if transcribed else empty_turn(stt_failed=True),
+                    )
+                    continue
+
+                # Outside the try: a fault while ending must not count the
+                # same empty turn a second time as an stt_error.
+                if not transcribed:
+                    await satellite_manager.end_session(
+                        session_id, reason="empty_transcription", detail=empty_turn(),
                     )
                     continue
 

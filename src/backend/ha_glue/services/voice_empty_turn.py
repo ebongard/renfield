@@ -102,8 +102,18 @@ def classify_empty_turn(
     if turn_end_reason == "silence":
         if floor_seconds is None:
             return "unknown_end"
-        # Half a chunk of slack: the length is a multiple of the chunk, and a
-        # float sum must not push the floor itself over the line.
+        # Half a chunk of slack, deliberately not one: the length is a
+        # multiple of the chunk, so half a chunk only absorbs float error.
+        # One speech chunk at the first counted position already ends the
+        # turn ONE chunk past the floor (3.20 s); a full chunk of slack would
+        # file the shortest turn in which the VAD did hear speech as a floor.
+        # An overrun chunk would need the satellite to send audio after
+        # deciding to stop but before `audio_end`: the chunk that triggers the
+        # end schedules `_end_listening` first, which flips the state before
+        # any later chunk can be streamed; only a pending camera snapshot
+        # (awaited before `audio_end`) together with an event-loop stall of
+        # >= 80 ms could let a queued chunk through. The per-turn length in
+        # the log line shows whether 3.20 s piles up in camera rooms.
         if audio_seconds <= floor_seconds + SATELLITE_CHUNK_SECONDS / 2:
             return "vad_floor"
         return "vad_heard_speech"

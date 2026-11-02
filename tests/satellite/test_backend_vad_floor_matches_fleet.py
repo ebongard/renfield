@@ -83,8 +83,11 @@ def _fleet_values() -> list[tuple[str, float, int, int]]:
     return [pi, pod]
 
 
-def _measured_floor_seconds(min_listening_s: float, silence_ms: int, chunk_size: int) -> float:
-    """Feed no-speech chunks into the real `_on_audio_chunk` until it ends."""
+def _measured_floor_seconds(
+    min_listening_s: float, silence_ms: int, chunk_size: int, speech: list[bool] | None = None,
+) -> float:
+    """Feed chunks into the real `_on_audio_chunk` until it ends on silence.
+    ``speech`` is the VAD verdict per chunk (default: never speech)."""
     sat = object.__new__(Satellite)
     sat.config = MagicMock()
     sat.config.audio.chunk_size = chunk_size
@@ -104,7 +107,8 @@ def _measured_floor_seconds(min_listening_s: float, silence_ms: int, chunk_size:
     sat.preprocessor = MagicMock()
     sat.preprocessor.normalize = lambda b: b
     sat.vad = MagicMock()
-    sat.vad.is_speech = MagicMock(return_value=False)
+    verdicts = iter(speech or [])
+    sat.vad.is_speech = MagicMock(side_effect=lambda _b: next(verdicts, False))
     sat.ws_client = MagicMock()
     sat._end_listening = MagicMock(return_value=None)
     sat._schedule_async = MagicMock()
@@ -118,27 +122,52 @@ def _measured_floor_seconds(min_listening_s: float, silence_ms: int, chunk_size:
     raise AssertionError("the turn never ended on silence")
 
 
+#: The floor the backend classifies against. 🛑 The SAME literal is pinned on
+#: the backend side (`test_the_fleet_floor_is_the_measured_3_12_seconds` in
+#: tests/backend/test_voice_empty_turn.py asserts `vad_floor_seconds()` is it).
+#: Neither test recomputes the other side's formula: a fleet config change
+#: breaks this test, a change to the backend constants breaks that one.
+BACKEND_FLOOR_SECONDS = 3.12
+
+
 @pytest.mark.satellite
 @pytest.mark.parametrize("source,min_s,silence_ms,chunk", _fleet_values())
-def test_the_backend_floor_is_the_measured_fleet_floor(source, min_s, silence_ms, chunk):
-    consts = _backend_constants()
-    floor = (
-        int(consts["FLEET_MIN_LISTENING_SECONDS"] * 1000 / (consts["SATELLITE_CHUNK_SECONDS"] * 1000))
-        + int(consts["FLEET_SILENCE_DURATION_MS"] / (consts["SATELLITE_CHUNK_SECONDS"] * 1000))
-        - 1
-    ) * consts["SATELLITE_CHUNK_SECONDS"]
+def test_the_fleet_ends_a_speechless_turn_at_the_backend_floor(source, min_s, silence_ms, chunk):
     measured = _measured_floor_seconds(min_s, silence_ms, chunk)
-    assert measured == pytest.approx(floor), (
+    assert measured == pytest.approx(BACKEND_FLOOR_SECONDS), (
         f"{source}: the satellite ends a speechless turn after {measured:.2f} s, "
-        f"the backend classifies against {floor:.2f} s — update voice_empty_turn.py"
+        f"the backend classifies against {BACKEND_FLOOR_SECONDS:.2f} s — update "
+        "the FLEET_* constants in voice_empty_turn.py and both pinned literals"
     )
 
 
 @pytest.mark.satellite
-def test_the_measured_floor_is_the_one_from_the_issue():
-    """Precondition for the test above: the harness really measures 3.12 s
-    with the fleet values (the length 133 recordings had in #1386)."""
-    assert _measured_floor_seconds(2.0, 1200, 1280) == pytest.approx(3.12)
+def test_the_harness_sees_a_changed_setting():
+    """Negative control: the measurement follows the settings, so the test
+    above is not green merely because the harness always returns 3.12."""
+    assert _measured_floor_seconds(2.0, 1500, 1280) != pytest.approx(BACKEND_FLOOR_SECONDS)
+    assert _measured_floor_seconds(1.0, 1200, 1280) != pytest.approx(BACKEND_FLOOR_SECONDS)
+
+
+@pytest.mark.satellite
+def test_any_speech_after_the_grace_period_ends_later_than_the_floor():
+    """The classifier's boundary from the other side: ONE speech chunk at the
+    first counted position (chunk 25) already pushes the end one chunk past
+    the floor (3.20 s). This is why the backend's slack is half a chunk, not
+    one: a full chunk would swallow the shortest turn in which the VAD did
+    hear speech."""
+    first_counted = [False] * 24 + [True]
+    assert _measured_floor_seconds(2.0, 1200, 1280, speech=first_counted) == pytest.approx(3.20)
+
+
+@pytest.mark.satellite
+def test_speech_inside_the_grace_period_still_ends_at_the_floor():
+    """Why `vad_floor` is a signature, not proof: a command spoken entirely
+    inside the 2 s grace period ends at the floor too."""
+    inside_grace = [True] * 24
+    assert _measured_floor_seconds(2.0, 1200, 1280, speech=inside_grace) == pytest.approx(
+        BACKEND_FLOOR_SECONDS
+    )
 
 
 @pytest.mark.satellite
