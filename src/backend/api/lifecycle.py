@@ -105,6 +105,30 @@ async def _reconcile_credentials_boot():
         logger.warning(f"credential-reconciler boot pass failed: {e}")
 
 
+async def _warn_uncovered_kb_shares() -> None:
+    """Boot warning for the #1446 precondition: a KB share comes ONLY from
+    ``kb_shares``. A legacy per-document grant whose (KB, user) pair has no row
+    there no longer gives KB level -- the grantee lost the KB in his list and
+    every KB-level right until ``bin/backfill_kb_shares.py`` has run. Counts only;
+    never acts (suspicious pairs need the owner's decision). Auth off: no-op."""
+    if not settings.auth_enabled:
+        return
+    try:
+        from services.kb_shares_service import uncovered_legacy_pairs
+
+        async with AsyncSessionLocal() as db_session:
+            pairs = await uncovered_legacy_pairs(db_session)
+        if pairs.clean or pairs.suspicious:
+            logger.warning(
+                f"⚠️  kb_shares: {len(pairs.clean)} legacy (KB, user) pair(s) without a "
+                f"kb_shares row and {len(pairs.suspicious)} suspicious pair(s) awaiting the "
+                "owner -- those grantees have no KB-level access. Run "
+                "bin/backfill_kb_shares.py (dry run first)."
+            )
+    except Exception as e:
+        logger.warning(f"kb_shares precondition check failed: {e}")
+
+
 async def _init_auth():
     """Initialize authentication system with default roles and admin user."""
     try:
@@ -735,6 +759,7 @@ async def lifespan(app: "FastAPI"):
     # Self-heal DB-stored integration tokens from their authoritative Secret source
     # so a DB wipe doesn't leave folder/email-ingest pushes 403ing (2026-07 incident).
     await _reconcile_credentials_boot()
+    await _warn_uncovered_kb_shares()
 
     # Stage 2: Independent services (parallel)
     await asyncio.gather(

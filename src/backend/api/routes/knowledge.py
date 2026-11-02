@@ -129,10 +129,11 @@ async def check_kb_access(
     2. kb.all permission → full access
     3. Owner → full access
     4. Public KB → read access for users with kb.shared
-    5. KB share (kb_shares / legacy grants) → read and write at that level;
-       "delete" (documents) ONLY with the share's `can_delete` switch, whatever
-       the level; "delete_kb" (the KB itself) never through a share — owner and
-       kb.all only; an unknown action is denied
+    5. KB share (the kb_shares row only; a document grant does not count,
+       #1446) → read and write at that level; "delete" (documents) ONLY with
+       the share's `can_delete` switch, whatever the level; "delete_kb" (the
+       KB itself) never through a share — owner and kb.all only; an unknown
+       action is denied
     6. kb.own permission → access to own KBs only
     """
     # Auth disabled = full access
@@ -174,7 +175,7 @@ async def check_kb_access(
     if required_action == "delete_kb":
         return False
 
-    # KB share: kb_shares row or legacy per-document grants (MAX level).
+    # KB share: the kb_shares row only (a document grant opens its document, #1446).
     required_level = _SHARE_LEVELS.get(required_action)
     if required_level is None:
         return False  # an unknown action is denied, never read as "read"
@@ -274,7 +275,7 @@ async def get_user_kb_permission(
     if kb.owner_id == user.id:
         return "owner"
 
-    # KB share: kb_shares row or legacy per-document grants (MAX level).
+    # KB share: the kb_shares row only (a document grant opens its document, #1446).
     from services.kb_shares_service import get_user_kb_permission_level
     level = await get_user_kb_permission_level(db, kb.id, user.id)
     if level:
@@ -1657,8 +1658,8 @@ async def list_kb_permissions(
     """
     List all permissions for a knowledge base. Owner or admin only.
 
-    One row per grantee: the kb_shares row merged with any legacy
-    per-document grants (MAX level), see kb_shares_service.list_kb_shares.
+    One row per ``kb_shares`` grantee (kb_shares_service.list_kb_shares). A
+    grant on a single document is no KB share and is not listed (#1446).
     The `id` field in the response is the granted_to_user_id (same thing
     the revoke endpoint's {permission_id} path param now accepts).
     """
@@ -1777,7 +1778,7 @@ async def share_knowledge_base(
         can_delete=data.can_delete,
     )
 
-    # Fetch the aggregated share row to echo back
+    # Fetch the share row to echo back
     shares = await list_kb_shares(db, kb_id)
     share_row = next((s for s in shares if s["user_id"] == data.user_id), None)
     granted_at = share_row["granted_at"].isoformat() if share_row and share_row["granted_at"] else ""

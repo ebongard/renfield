@@ -416,10 +416,12 @@ class AtomService:
         """Hand a document to another owner at ``tier`` (no commit).
 
         Used when a document moves into a KB of another owner (#1460): the document
-        filters read the owner from ``kb.owner_id`` OR the atom owner, and
-        ``CircleResolver.can_access_atom`` reads the atom owner, so the atom must
-        follow the KB or both owners would read it. Owner and tier cascade to the
-        document row, its chunks, its facts and the facts' atoms. A legacy
+        filters read the owner from ``kb.owner_id`` OR the atom owner, so the
+        atom must follow the KB or both owners would read it. With auth on,
+        ``CircleResolver.can_access_atom`` applies those same filters (#1463); the
+        atom owner itself still decides with auth off and in ``load_owned_atom``
+        (who may change the tier or delete the atom). Owner and tier cascade to
+        the document row, its chunks, its facts and the facts' atoms. A legacy
         atom-less document (``atom_id=None``) has no atom to re-own; its tier still
         cascades, so its chunks do not keep the previous KB's reach.
 

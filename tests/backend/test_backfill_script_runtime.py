@@ -538,3 +538,83 @@ class TestKbSharesBackfillLog:
         assert asyncio.run(module._run(args)) == 0
         assert calls == [True]
         assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.unit
+class TestKbSharesAdopt:
+    """``--adopt KB_ID:USER_ID`` is the owner's explicit decision for a pair the
+    backfill refused as suspicious (#1446): dry run unless ``--commit``, logged
+    like a backfill run so ``--revert --log`` takes it back."""
+
+    @pytest.fixture
+    def kbs(self, monkeypatch):
+        module = _load(_BIN / "backfill_kb_shares.py")
+        calls: list[tuple] = []
+
+        async def fake_adopt(session, requested, *, dry_run):
+            calls.append((tuple(requested), dry_run))
+            from services.kb_shares_service import KBShareBackfillResult
+            return KBShareBackfillResult(
+                suspicious=[{"kb_id": 1, "user_id": 2, "grants": 3,
+                             "permission": "write", "reasons": ["partial"]}],
+                skipped=[{"kb_id": 9, "user_id": 9}],
+                inserted=[] if dry_run else [
+                    {"kb_id": 1, "user_id": 2, "granted_at": "2026-10-01T00:00:00"}
+                ],
+            )
+
+        async def no_backfill(session, *, dry_run):
+            raise AssertionError("--adopt must not run the full backfill")
+
+        monkeypatch.setattr(module, "adopt_kb_share_pairs", fake_adopt)
+        monkeypatch.setattr(module, "backfill_kb_shares", no_backfill)
+        monkeypatch.setattr(module, "AsyncSessionLocal", lambda: _NoopSession())
+        return module, calls
+
+    def test_parser_reads_pairs_and_rejects_garbage(self, kbs):
+        module, _ = kbs
+        args = module._build_parser().parse_args(["--adopt", "12:7", "3:4", "--commit"])
+        assert args.adopt == [(12, 7), (3, 4)] and args.commit
+        with pytest.raises(SystemExit):
+            module._build_parser().parse_args(["--adopt", "12-7"])
+
+    def test_adopt_dry_run_writes_no_log(self, kbs, tmp_path, monkeypatch):
+        module, calls = kbs
+        monkeypatch.chdir(tmp_path)
+        args = SimpleNamespace(commit=False, revert=False, log=None, adopt=[(1, 2), (9, 9)])
+        assert asyncio.run(module._run(args)) == 0
+        assert calls == [(((1, 2), (9, 9)), True)]
+        assert list(tmp_path.iterdir()) == []
+
+    def test_adopt_commit_writes_the_revert_log(self, kbs, tmp_path):
+        module, calls = kbs
+        log = tmp_path / "adopt.json"
+        args = SimpleNamespace(commit=True, revert=False, log=str(log), adopt=[(1, 2)])
+        assert asyncio.run(module._run(args)) == 0
+        assert calls == [(((1, 2),), False)]
+        data = json.loads(log.read_text())
+        assert data["complete"] is True
+        assert data["inserted"] == [
+            {"kb_id": 1, "user_id": 2, "granted_at": "2026-10-01T00:00:00"}
+        ]
+
+    def test_backfill_lists_suspicious_pairs(self, monkeypatch, tmp_path, caplog):
+        module = _load(_BIN / "backfill_kb_shares.py")
+
+        async def fake_backfill(session, *, dry_run):
+            from services.kb_shares_service import KBShareBackfillResult
+            return KBShareBackfillResult(
+                pairs_with_grants=2, already_shared=0, clean_missing=1,
+                suspicious=[{"kb_id": 5, "user_id": 6, "grants": 1,
+                             "permission": "read", "reasons": ["split_batch"]}],
+            )
+
+        monkeypatch.setattr(module, "backfill_kb_shares", fake_backfill)
+        monkeypatch.setattr(module, "AsyncSessionLocal", lambda: _NoopSession())
+        monkeypatch.chdir(tmp_path)
+        with caplog.at_level(logging.INFO, logger="backfill_kb_shares"):
+            args = SimpleNamespace(commit=False, revert=False, log=None)
+            assert asyncio.run(module._run(args)) == 0
+        assert "missing: 2 (clean: 1, suspicious: 1)" in caplog.text
+        assert "SUSPICIOUS (owner decides) | kb_id=5 user_id=6" in caplog.text
+        assert "--adopt KB_ID:USER_ID --commit" in caplog.text

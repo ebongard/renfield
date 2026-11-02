@@ -2,7 +2,7 @@
 Unit tests for kb_shares_service — the legacy KBPermission consumer rewrite.
 
 These are pure surface tests: signature shape, error handling on bad inputs,
-and the SQL-string contents (kb_shares + the legacy atoms → grants joins).
+and the SQL-string contents (the KB level reads kb_shares only, #1446).
 Real DB roundtrips live in tests/backend/test_circles_v1_migration.py and
 the (deferred) integration suite.
 """
@@ -45,13 +45,13 @@ async def test_share_kb_upserts_the_kb_shares_row_and_writes_no_document_grants(
     )
 
     statements = [str(c.args[0]) for c in db.execute.call_args_list]
-    upsert, align = statements
+    (upsert,) = statements
     # The share is ONE row, evaluated at query time — it covers later documents.
     assert "INSERT INTO kb_shares" in upsert
     assert "ON CONFLICT (kb_id, user_id) DO UPDATE" in upsert
-    # Legacy per-document grants only get their level aligned; none are created.
-    assert align.startswith("UPDATE atom_explicit_grants")
-    assert not any("INSERT INTO atom_explicit_grants" in st for st in statements)
+    # #1446: per-document grants are neither created nor touched — the KB level
+    # comes from the kb_shares row alone.
+    assert not any("atom_explicit_grants" in st for st in statements)
     assert not any("document_chunks" in st for st in statements)
     binds = db.execute.call_args_list[0].args[1]
     assert binds["target"] == 7
@@ -95,14 +95,13 @@ async def test_revoke_kb_share_rowcount_none_returns_zero():
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_list_kb_shares_aggregates_to_max_permission():
+async def test_list_kb_shares_returns_the_kb_shares_rows():
     db = MagicMock()
     fake_result = MagicMock()
-    # Three users, three different MAX ranks
     fake_result.fetchall.return_value = [
-        MagicMock(user_id=10, rank=3, granted_by=1, granted_at=datetime(2026, 1, 1)),  # admin
-        MagicMock(user_id=11, rank=2, granted_by=1, granted_at=datetime(2026, 2, 1)),  # write
-        MagicMock(user_id=12, rank=1, granted_by=2, granted_at=datetime(2026, 3, 1)),  # read
+        MagicMock(user_id=10, permission_level="admin", granted_by=1, granted_at=datetime(2026, 1, 1)),
+        MagicMock(user_id=11, permission_level="write", granted_by=1, granted_at=datetime(2026, 2, 1)),
+        MagicMock(user_id=12, permission_level="read", granted_by=2, granted_at=datetime(2026, 3, 1)),
     ]
     db.execute = AsyncMock(return_value=fake_result)
 
@@ -115,26 +114,16 @@ async def test_list_kb_shares_aggregates_to_max_permission():
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_list_kb_shares_uses_distinct_on_for_paired_granter():
-    """
-    Review BLOCKING #4 regression guard: the aggregate must pair granted_by
-    with the row producing granted_at (not arbitrary MAX(granted_by) with
-    MIN(granted_at) as the legacy code did).
-    """
+async def test_list_kb_shares_reads_kb_shares_only():
+    """#1446: a grant on a document is no KB share — the owner's share list
+    (and the revoke ids it hands out) comes from kb_shares alone."""
     db = MagicMock()
     db.execute = AsyncMock(return_value=MagicMock(fetchall=lambda: []))
     await kb_shares_service.list_kb_shares(db, kb_id=1)
 
     sql = str(db.execute.call_args.args[0])
-    # DISTINCT ON ensures one row per user, paired correctly.
-    assert "DISTINCT ON" in sql
-    # kb_shares rows and the most-recent legacy grant per (user, document)
-    # are merged before the per-user aggregation.
-    assert "per_source" in sql
     assert "FROM kb_shares ks" in sql
-    # The legacy arbitrary MAX(granted_by) must not appear.
-    assert "MAX(granted_by)" not in sql.replace(" ", "")
-    assert "MAX(g.granted_by)" not in sql
+    assert "atom_explicit_grants" not in sql
 
 
 @pytest.mark.asyncio
@@ -149,16 +138,27 @@ async def test_get_user_kb_permission_level_none_when_no_rows():
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_get_user_kb_permission_level_translates_rank_to_string():
-    cases = [(1, "read"), (2, "write"), (3, "admin")]
-    for rank, expected in cases:
+async def test_get_user_kb_permission_level_returns_the_share_level():
+    for stored in ("read", "write", "admin"):
         db = MagicMock()
         fake_result = MagicMock()
-        fake_result.fetchall.return_value = [MagicMock(kb_id=1, rank=rank)]
+        fake_result.fetchall.return_value = [MagicMock(kb_id=1, permission_level=stored)]
         db.execute = AsyncMock(return_value=fake_result)
 
         level = await kb_shares_service.get_user_kb_permission_level(db, kb_id=1, user_id=2)
-        assert level == expected, f"rank {rank} should map to {expected}"
+        assert level == stored
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_get_user_kb_permission_level_ignores_an_unknown_stored_level():
+    """Fail closed: a level outside read/write/admin grants nothing."""
+    db = MagicMock()
+    fake_result = MagicMock()
+    fake_result.fetchall.return_value = [MagicMock(kb_id=1, permission_level="god-mode")]
+    db.execute = AsyncMock(return_value=fake_result)
+
+    assert await kb_shares_service.get_user_kb_permission_level(db, kb_id=1, user_id=2) is None
 
 
 @pytest.mark.asyncio
@@ -167,7 +167,9 @@ async def test_list_user_shared_kb_ids_returns_set_of_ints():
     db = MagicMock()
     fake_result = MagicMock()
     fake_result.fetchall.return_value = [
-        MagicMock(kb_id=7, rank=1), MagicMock(kb_id=42, rank=2), MagicMock(kb_id=101, rank=3),
+        MagicMock(kb_id=7, permission_level="read"),
+        MagicMock(kb_id=42, permission_level="write"),
+        MagicMock(kb_id=101, permission_level="admin"),
     ]
     db.execute = AsyncMock(return_value=fake_result)
 
@@ -185,9 +187,9 @@ async def test_get_user_kb_permission_levels_batches_into_one_query():
     db = MagicMock()
     fake_result = MagicMock()
     fake_result.fetchall.return_value = [
-        MagicMock(kb_id=1, rank=3),
-        MagicMock(kb_id=2, rank=2),
-        MagicMock(kb_id=3, rank=1),
+        MagicMock(kb_id=1, permission_level="admin"),
+        MagicMock(kb_id=2, permission_level="write"),
+        MagicMock(kb_id=3, permission_level="read"),
     ]
     db.execute = AsyncMock(return_value=fake_result)
 
@@ -197,12 +199,10 @@ async def test_get_user_kb_permission_levels_batches_into_one_query():
 
     db.execute.assert_awaited_once()
     assert levels == {1: "admin", 2: "write", 3: "read"}
-    # GROUP BY must be present — single query, not per-KB
     sql = str(db.execute.call_args.args[0])
-    assert "GROUP BY kb_id" in sql
-    # Both sources are restricted: legacy grants and kb_shares.
-    assert "d.knowledge_base_id = ANY(:kb_ids)" in sql
     assert "ks.kb_id = ANY(:kb_ids)" in sql
+    # #1446: the KB level comes from kb_shares only, never from a document grant.
+    assert "atom_explicit_grants" not in sql
 
 
 @pytest.mark.asyncio
@@ -225,7 +225,7 @@ async def test_get_user_kb_permission_levels_none_returns_all_grants():
     db = MagicMock()
     fake_result = MagicMock()
     fake_result.fetchall.return_value = [
-        MagicMock(kb_id=7, rank=2),
+        MagicMock(kb_id=7, permission_level="write"),
     ]
     db.execute = AsyncMock(return_value=fake_result)
 
