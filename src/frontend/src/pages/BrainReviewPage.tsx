@@ -33,6 +33,14 @@ const ATOM_TYPE_COLORS: Record<AtomType, BadgeColor> = {
 
 const DAY_OPTIONS = [1, 3, 7, 14, 30];
 
+// Documents and their facts carry a tier-only policy: the backend refuses any
+// other key with 422 (#1463, the circle_sql filter knows the tier alone).
+const TIER_ONLY_ATOM_TYPES: ReadonlySet<AtomType> = new Set<AtomType>(['kb_document', 'document_fact']);
+
+function nextPolicy(atom: ReviewAtom, tier: CircleTier): NonNullable<ReviewAtom['policy']> {
+  return TIER_ONLY_ATOM_TYPES.has(atom.atom_type) ? { tier } : { ...(atom.policy || {}), tier };
+}
+
 export default function BrainReviewPage() {
   const { t, i18n } = useTranslation();
 
@@ -64,7 +72,7 @@ export default function BrainReviewPage() {
     try {
       await patchTier.mutateAsync({
         atomId: atom.atom_id,
-        policy: { ...(atom.policy || {}), tier: newTier },
+        policy: nextPolicy(atom, newTier),
       });
       setSuccess(t('circles.reviewTierChanged'));
     } catch (err) {
