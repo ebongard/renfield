@@ -294,7 +294,8 @@ def shipped_rules(monkeypatch):
 
 def _paperless_result() -> dict:
     payload, _ = RECORDED_SHAPES[_PAPERLESS]
-    return {"success": True, "message": json.dumps(payload), "action_taken": True}
+    return {"success": True, "message": json.dumps(payload), "action_taken": True,
+            "data": {"returned": 2}}
 
 
 async def _drain(agent: AgentService, **kwargs) -> list[AgentStep]:
