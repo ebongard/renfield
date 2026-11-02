@@ -104,8 +104,9 @@ def _compact_json_text(text: Any, field_paths: list[str], tool_name: str) -> str
     nothing for months after the MCP wrapped its list into {"summary", "results"},
     and the agent answered "nothing found" to every search). Handing the agent an
     empty object is worse than the uncompacted payload, so the payload stays and
-    a WARNING names the mismatch. Only keys are logged, never values. The same holds for a rule that keeps its scalar keys but
-    loses a whitelisted list (``_lost_array_paths``).
+    a WARNING names the mismatch. Only keys are logged, never values. The same
+    holds for a rule that keeps its scalar keys but loses a whitelisted list
+    (``_lost_array_paths``).
 
     The "uncompacted" payload is bounded for the PROMPT, not at the source: the
     message was truncated by the MCP client (``_truncate_response``), the data
@@ -179,7 +180,8 @@ def _lost_array_paths(parsed: Any, compacted: Any, field_paths: list[str]) -> li
     """
     if not isinstance(parsed, dict):
         return []
-    is_error_envelope = "error" in parsed
+    # Truthy, not mere presence: `"error": null` / `""` is a success payload.
+    is_error_envelope = bool(parsed.get("error"))
 
     lost: list[str] = []
     seen: set[str] = set()

@@ -538,6 +538,20 @@ class TestLostListFallsBack:
         assert not warnings_logged
 
     @pytest.mark.unit
+    @pytest.mark.parametrize("empty_error", [None, ""])
+    def test_empty_error_field_is_no_envelope_so_the_rename_is_caught(
+        self, shipped_rules, warnings_logged, empty_error,
+    ):
+        """`"error": null` is a success payload: a renamed list still counts."""
+        payload = {"error": empty_error, "summary": {"n": 1}, "documents": [{"id": 1}]}
+        result = _as_mcp_result(payload)
+        compacted = compact_mcp_result("mcp.paperless.search_documents", result)
+
+        assert compacted["message"] == result["message"]
+        assert len(warnings_logged) == 2
+        assert "results[]" in warnings_logged[0] and "documents" in warnings_logged[0]
+
+    @pytest.mark.unit
     def test_list_turned_into_an_object_passes_through_uncompacted(
         self, shipped_rules, warnings_logged,
     ):
