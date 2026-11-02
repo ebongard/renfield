@@ -732,9 +732,10 @@ async def forward_via_email(
 
     Under auth only the upload's OWNER — its uploader or the conversation's
     owner — may forward it (the same rule as ``/index``): the original file
-    leaves the house to any address the caller names. Reaching the upload through a shared conversation is enough to read
-    its preview, not to send the file on. Paperless and Simba stay reach-based
-    (they file inside the household's own systems).
+    leaves the house to any address the caller names. Reaching the upload
+    through a shared conversation is enough to read its preview, not to send
+    the file on. Paperless and Simba stay reach-based (they file inside the
+    household's own systems).
     """
     # Fetch upload (scoped to the authenticated user's conversations)
     upload = await _get_owned_upload(db, upload_id, user)

@@ -185,8 +185,10 @@ async def test_upload_records_the_authenticated_caller(
 async def test_uploader_is_never_taken_from_the_request(
     async_client: AsyncClient, db_session, people, auth_on,
 ):
-    """A client naming another user as uploader is ignored: the row records
-    the authenticated caller."""
+    """Regression guard, NOT proof of the fix: today FastAPI drops the
+    undeclared form field before the handler runs, so this cannot fail. It
+    fails the day someone adds an ``uploaded_by_user_id`` Form parameter and
+    lets it reach the row — the uploader must stay the authenticated caller."""
     await _room_thread(db_session, people)
 
     _as(people["member"])

@@ -114,9 +114,10 @@ KB is read-only). `rag.manage` does not stand in for it. `POST /api/chat/upload/
 additionally requires the upload to be the caller's own: its uploader (`chat_uploads.uploaded_by_user_id`, set
 server-side from the authenticated caller at upload, #1459) or the conversation's `user_id` (circle reach is enough to
 READ an attachment, not to file it). Rows from before the column have NULL there and keep the owner-only rule; the
-column is `ON DELETE SET NULL`, so a deleted uploader falls back to it too. Reach is still checked first. Sites checked: `/api/knowledge/upload`, `/api/chat/upload/{id}/index` (both fixed), `/documents/move`
-(already gated: target write + per-source `check_document_access`), the ingest paths (folder, email, meetings,
-PDF split, auto-index): server-resolved owner KBs, no caller KB id. Proof: `tests/backend/test_kb_write_gate.py`.
+column is `ON DELETE SET NULL`, so a deleted uploader falls back to it too. Reach is still checked first. Sites
+checked: `/api/knowledge/upload`, `/api/chat/upload/{id}/index` (both fixed), `/documents/move` (already gated: target
+write + per-source `check_document_access`), the ingest paths (folder, email, meetings, PDF split, auto-index):
+server-resolved owner KBs, no caller KB id. Proof: `tests/backend/test_kb_write_gate.py`.
 
 Attaching is a write on the conversation: `POST /api/chat/upload` applies the chat's own message-write rule to its
 `session_id` (`chat_upload._may_write_session` → `ConversationService.reaches`, exactly as `save_message` with
