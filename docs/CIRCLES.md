@@ -470,3 +470,12 @@ Zwei Hälften, die man nicht verwechseln darf: **Lesen folgt der Reichweite, Zer
 `ConversationService.may_alter` (Eigentümer plus `chat.all`) und `_get_owned_meeting(..., for_write=True)`
 bleiben eigentümergebunden. Die Nachrichtensuche und die Chat-Anhänge folgen der Reichweite des Verlaufs,
 weil sie sonst einen Faden zeigten, dessen Inhalt niemand findet.
+
+**Gesprächsvariablen (`conversations.context_vars`, #1447) folgen der Reichweite der UNTERHALTUNG, nicht der Stufe
+des Quellobjekts.** Sie stammen aus Werkzeugergebnissen (Titel und Korrespondent eines Paperless-Dokuments, Betreff
+und Absender einer Mail) und werden geschrieben (`save_turn_context_vars`) und gelesen (`load_context_vars`,
+ebenso `load_summary`) nur, wenn die Unterhaltung in der Reichweite des Aufrufers liegt (`ConversationService.reaches`,
+ohne Identität: nichts). Folge, die man wollen muss: in einem GETEILTEN Verlauf (Raumverlauf, Stufe 2) sieht jedes
+erreichende Mitglied im nächsten Zug die Variablen, die ein anderes Mitglied mit SEINEN Werkzeugen erzeugt hat —
+auch wenn das Quelldokument selbst Stufe 0 trägt. Das ist dieselbe Eigenschaft wie bei den Nachrichten des Verlaufs,
+in denen das Ergebnis ohnehin steht; eine zweite, objektgenaue Prüfung je Variable gibt es nicht.

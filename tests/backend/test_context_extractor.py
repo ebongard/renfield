@@ -180,8 +180,27 @@ class TestExtractContextVars:
         assert extract_context_vars("mcp.paperless.search_documents", result) == {}
 
     @pytest.mark.unit
-    def test_empty_result_ignored(self):
+    def test_empty_result_clears_the_rule_sets_keys(self):
+        """Zero hits: there is no "last document" any more — every key of the
+        rule set comes back as None, the merge's delete marker (#1447 review)."""
         result = {"success": True, "message": json.dumps({"summary": {"returned": 0}, "results": []})}
         extracted = extract_context_vars("mcp.paperless.search_documents", result)
-        # results.[0].id on an empty list returns None — no variables extracted
-        assert extracted == {}
+        assert extracted == {
+            "last_document_id": None,
+            "last_document_title": None,
+            "last_document_correspondent": None,
+        }
+
+    @pytest.mark.unit
+    def test_a_missing_field_clears_only_that_key(self):
+        """A hit without correspondent must not keep the previous hit's one."""
+        payload = {"results": [{"id": 43, "title": "Vertrag", "correspondent": None}]}
+        extracted = extract_context_vars(
+            "mcp.paperless.search_documents",
+            {"success": True, "message": json.dumps(payload)},
+        )
+        assert extracted == {
+            "last_document_id": 43,
+            "last_document_title": "Vertrag",
+            "last_document_correspondent": None,
+        }

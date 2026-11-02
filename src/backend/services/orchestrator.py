@@ -181,6 +181,7 @@ def _failed_sub_result(role: str, query: str, error: str | None = None) -> dict:
         "plugin_data": {},
         "error": error,
         "has_data": False,
+        "context_vars": {},
     }
 
 
@@ -399,9 +400,15 @@ class QueryOrchestrator:
         executor: "ActionExecutor",
         lang: str = "de",
         typing_callback: "Callable[[], Awaitable[None]] | None" = None,
+        context_vars_out: dict | None = None,
         **agent_kwargs,
     ) -> AsyncGenerator["AgentStep", None]:
         """Run sub-agents and synthesize results.
+
+        ``context_vars_out`` (when provided) receives the context variables
+        every sub-agent extracted from its tool results, merged in sub-query
+        order, once the sub-agents are done — the same contract as
+        ``AgentService.run(context_vars_out=...)``; the caller persists them.
 
         ``pre_orchestration`` fires upstream in the caller (chat_handler
         / Teams transport) before sub_queries are determined, so plugins
@@ -445,6 +452,10 @@ class QueryOrchestrator:
             if step.step_type == "final_answer":
                 final_answer = step.content
             yield step
+
+        if context_vars_out is not None:
+            for sub in sub_results:
+                context_vars_out.update(sub.get("context_vars") or {})
 
         # run_hooks never raises — direct call.
         hook_results = await run_hooks(
@@ -575,12 +586,14 @@ class QueryOrchestrator:
             # so this reflects the data flow, not the LLM's wording.
             has_data = False
             incomplete = False
+            sub_context_vars: dict = {}
             try:
                 async for step in agent.run(
                     message=query,
                     ollama=ollama,
                     executor=executor,
                     lang=lang,
+                    context_vars_out=sub_context_vars,
                     **agent_kwargs,
                 ):
                     if (
@@ -630,6 +643,7 @@ class QueryOrchestrator:
                 "error": agent_run_error,
                 "has_data": has_data,
                 "incomplete": incomplete,
+                "context_vars": sub_context_vars,
             }
 
             # post_sub_agent: fire even on agent.run crash so plugins can
