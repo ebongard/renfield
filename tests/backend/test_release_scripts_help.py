@@ -108,15 +108,16 @@ def test_deploy_help_in_any_position_starts_nothing(args):
     assert "=== preflight" not in proc.stdout
 
 
-@pytest.mark.parametrize("args", [
-    ("--backend-tag", "--help", "--skip-frontend"),
-    ("--skip-frontend", "--backend-tag"),
-    ("--backend-tag", "x", "--skip-frontend", "--bogus"),
+@pytest.mark.parametrize(("args", "reason"), [
+    (("--backend-tag", "--help", "--skip-frontend"), "--backend-tag needs a value"),
+    (("--skip-frontend", "--backend-tag"), "--backend-tag needs a value"),
+    (("--backend-tag", "x", "--skip-frontend", "--bogus"), "unknown arg: --bogus"),
 ])
-def test_deploy_rejects_a_flag_as_value_and_unknown_arguments(args):
+def test_deploy_rejects_a_flag_as_value_and_unknown_arguments(args, reason):
     """`--backend-tag --help` must not take "--help" as the tag and deploy it."""
     proc = _run(_DEPLOY, *args)
     assert proc.returncode == 2
+    assert reason in proc.stderr
     assert "=== preflight" not in proc.stdout
 
 
