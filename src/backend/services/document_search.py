@@ -35,7 +35,7 @@ from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Document
-from services.circle_sql import document_chunks_circles_filter
+from services.circle_sql import documents_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
 from utils.log_safety import error_text_without_content
@@ -164,8 +164,8 @@ async def _visible_ids(db: AsyncSession, ids: list[int], asker_id: int | None) -
     the gate entirely (see search_documents)."""
     if not ids:
         return set()
-    clause, params = document_chunks_circles_filter(
-        asker_id if asker_id is not None else 0, chunk_alias="d", doc_alias="d", kb_alias="kb"
+    clause, params = documents_circles_filter(
+        asker_id if asker_id is not None else 0, doc_alias="d", kb_alias="kb"
     )
     params["ids"] = ids
     sql = text(
