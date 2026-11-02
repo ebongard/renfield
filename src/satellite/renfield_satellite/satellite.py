@@ -51,6 +51,10 @@ class SatelliteState(str, Enum):
     ERROR = "error"
 
 
+# Error text for an OTA request refused because another run is in flight.
+UPDATE_ALREADY_IN_PROGRESS = "update already in progress"
+
+
 class Satellite:
     """
     Main satellite controller.
@@ -1530,12 +1534,6 @@ class Satellite:
             print("⚠️ Cannot start update: no server URL")
             return
 
-        # The progress frames of the run in flight carry ITS id. A request that
-        # arrives while a run is still going is refused by the update manager —
-        # it must not relabel that run's frames with its own id.
-        if not self.update_manager.is_updating:
-            self._ota_run_id = run_id
-
         # Start update asynchronously
         self._schedule_async(
             self._start_update(
@@ -1558,6 +1556,24 @@ class Satellite:
         """Start the OTA update process"""
         from . import __version__
         old_version = __version__
+
+        # A run is already in flight: refuse THIS request under its own id, with
+        # its own reason. Reporting the running run's stage and error here
+        # would make the backend record that run's state as this one's (#1280).
+        if self.update_manager.is_updating:
+            print("⚠️ Update request refused: an update is already in progress")
+            await self.ws_client.send_update_failed(
+                stage=UpdateStage.IDLE.value,
+                error=UPDATE_ALREADY_IN_PROGRESS,
+                rolled_back=False,
+                run_id=run_id,
+            )
+            return
+
+        # Accepted. No await lies between the check above and start_update
+        # marking itself busy, so the id is set exactly for the run that starts
+        # here — the progress frames of that run carry it.
+        self._ota_run_id = run_id
 
         print(f"🚀 Starting update: {old_version} → {target_version}")
 

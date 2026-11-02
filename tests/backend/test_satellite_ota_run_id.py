@@ -207,3 +207,131 @@ async def test_update_request_carries_the_minted_run_id(monkeypatch):
     assert sent["type"] == "update_request"
     assert sent["run_id"] == mgr.get_satellite("sat-1").update_run_id
     assert sent["run_id"]
+
+
+# ==========================================================================
+# 4. The run outlives a WS reconnect (review P2)
+# ==========================================================================
+
+
+async def _register(mgr, version="1.4.6", ws=None):
+    return await mgr.register(
+        satellite_id="sat-1", room="Fitnessraum", websocket=ws or AsyncMock(),
+        capabilities={}, version=version,
+    )
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+async def test_fast_reconnect_keeps_the_run_and_its_final_frame_lands():
+    """The satellite process keeps its run id across a WS reconnect. A fresh
+    roster entry without it would drop the rest of the run, the final frame
+    included, and the admin would never see the outcome."""
+    from ha_glue.services.satellite_manager import SatelliteManager
+    from ha_glue.services.satellite_manager import UpdateStatus as US
+
+    mgr = SatelliteManager()
+    await _register(mgr)
+    run_id = mgr.begin_update_run("sat-1")
+    mgr.apply_update_progress("sat-1", stage="installing", progress=70)
+    started = mgr.get_satellite("sat-1").update_started_at
+
+    await _register(mgr)  # the old entry is still there: a fast reconnect
+
+    sat = mgr.get_satellite("sat-1")
+    assert sat.update_run_id == run_id
+    assert sat.update_status == US.IN_PROGRESS
+    assert sat.update_stage == "installing"
+    assert sat.update_started_at == started
+    assert mgr.accepts_update_frame("sat-1", run_id) is True
+    mgr.apply_update_progress("sat-1", stage="failed", progress=0, message="pip failed")
+    assert sat.update_status == US.FAILED
+    assert sat.update_error == "pip failed"
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+async def test_disconnect_then_register_keeps_the_run():
+    """The usual path: the dying socket unregisters first, then the satellite
+    registers again. The run is parked in between."""
+    from ha_glue.services.satellite_manager import SatelliteManager
+    from ha_glue.services.satellite_manager import UpdateStatus as US
+
+    mgr = SatelliteManager()
+    ws = AsyncMock()
+    await _register(mgr, ws=ws)
+    run_id = mgr.begin_update_run("sat-1")
+    await mgr.unregister("sat-1", websocket=ws)
+    assert mgr.get_satellite("sat-1") is None
+
+    await _register(mgr)
+
+    sat = mgr.get_satellite("sat-1")
+    assert sat.update_run_id == run_id
+    assert sat.update_status == US.IN_PROGRESS
+    assert mgr._parked_update_runs == {}
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+async def test_coming_back_on_a_new_version_completes_the_run():
+    """The restart into the new code swallowed the final frames. Left running,
+    the stuck-run sweep would fail a SUCCESSFUL update later."""
+    from ha_glue.services.satellite_manager import SatelliteManager
+    from ha_glue.services.satellite_manager import UpdateStatus as US
+
+    mgr = SatelliteManager()
+    ws = AsyncMock()
+    await _register(mgr, ws=ws)
+    mgr.begin_update_run("sat-1")
+    await mgr.unregister("sat-1", websocket=ws)
+
+    await _register(mgr, version="1.5.0")
+
+    sat = mgr.get_satellite("sat-1")
+    assert sat.update_status == US.COMPLETED
+    assert sat.update_started_at is None
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+async def test_a_satellite_without_a_run_registers_clean():
+    from ha_glue.services.satellite_manager import SatelliteManager
+    from ha_glue.services.satellite_manager import UpdateStatus as US
+
+    mgr = SatelliteManager()
+    ws = AsyncMock()
+    await _register(mgr, ws=ws)
+    await mgr.unregister("sat-1", websocket=ws)
+    assert mgr._parked_update_runs == {}
+
+    await _register(mgr)
+    sat = mgr.get_satellite("sat-1")
+    assert sat.update_status == US.NONE
+    assert sat.update_run_id is None
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+async def test_heartbeat_eviction_parks_a_finished_run():
+    """A finished run's outcome survives an eviction, so the admin still sees it
+    after the satellite comes back (a RUNNING update is never evicted)."""
+    import time as _time
+
+    from ha_glue.services.satellite_manager import SatelliteManager
+    from ha_glue.services.satellite_manager import UpdateStatus as US
+
+    mgr = SatelliteManager()
+    await _register(mgr)
+    run_id = mgr.begin_update_run("sat-1")
+    mgr.apply_update_progress("sat-1", stage="failed", progress=0, message="kaputt")
+    mgr.get_satellite("sat-1").last_heartbeat = _time.time() - 10_000
+
+    await mgr.cleanup_stale()
+    assert mgr.get_satellite("sat-1") is None
+
+    await _register(mgr)
+    sat = mgr.get_satellite("sat-1")
+    assert sat.update_status == US.FAILED
+    assert sat.update_error == "kaputt"
+    assert sat.update_run_id == run_id

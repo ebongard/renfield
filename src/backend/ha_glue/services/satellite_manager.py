@@ -151,8 +151,11 @@ class SatelliteInfo:
     # `update_request` (#1280). A satellite that knows the protocol echoes it in
     # every `update_progress` / `update_complete` / `update_failed`; a frame
     # carrying a DIFFERENT id is a straggler from an earlier run and is dropped.
-    # Kept after the run ends, so a late frame of THIS run still matches and is
-    # handled by the terminal-state guard instead.
+    # Kept after the run ends, so a late frame of THIS run still matches: a late
+    # `update_progress` then hits the terminal-state guard in
+    # `apply_update_progress`, while `update_complete` / `update_failed` are
+    # recorded as the run's real outcome. Survives a WS reconnect (see
+    # `_RUN_STATE_FIELDS`); a backend restart loses it by design.
     update_run_id: str | None = None
 
 
@@ -194,6 +197,9 @@ class SatelliteManager:
 
     def __init__(self):
         self.satellites: dict[str, SatelliteInfo] = {}
+        # OTA run state of satellites that disconnected with a run on record,
+        # kept until they register again (see `_RUN_STATE_FIELDS`).
+        self._parked_update_runs: dict[str, dict[str, Any]] = {}
         self.sessions: dict[str, SatelliteSession] = {}
         self._lock = asyncio.Lock()
         # On-demand camera snapshot requests: request_id → Future[image_b64|None].
@@ -277,6 +283,17 @@ class SatelliteManager:
             )
 
             # Register satellite
+            # The OTA run outlives the connection (#1280 review): the satellite
+            # process keeps its run id across a WS reconnect, so a fresh entry
+            # without it would drop every remaining frame of the run, the final
+            # one included, and the admin would never learn the outcome.
+            old_sat = self.satellites.get(satellite_id)
+            carried_run = (
+                self._run_state_of(old_sat) if old_sat is not None
+                else self._parked_update_runs.pop(satellite_id, None)
+            )
+            self._parked_update_runs.pop(satellite_id, None)
+
             self.satellites[satellite_id] = SatelliteInfo(
                 satellite_id=satellite_id,
                 room=room,
@@ -286,6 +303,10 @@ class SatelliteManager:
                 version=version,
                 authenticated=authenticated,
             )
+            if carried_run:
+                self._restore_run_state(
+                    self.satellites[satellite_id], carried_run, version
+                )
 
             logger.info(f"✅ Satellite registered: {satellite_id} in {room} (v{version})")
             logger.info(f"   Capabilities: wakeword={caps.local_wakeword}, speaker={caps.speaker}, leds={caps.led_count}")
@@ -330,6 +351,9 @@ class SatelliteManager:
                 await self._end_session_internal(sat.current_session_id)
 
             del self.satellites[satellite_id]
+            # A run on record outlives the connection; `register` picks it up.
+            if sat.update_status != UpdateStatus.NONE:
+                self._parked_update_runs[satellite_id] = self._run_state_of(sat)
             logger.info(f"👋 Satellite unregistered: {satellite_id}")
 
             # Push liveness so the kiosk drops the departed satellite.
@@ -1056,6 +1080,49 @@ class SatelliteManager:
             satellite_id, UpdateStatus.IN_PROGRESS, stage=stage, progress=progress
         )
 
+    # The run state a WS reconnect carries over (#1280 review). Without it the
+    # new roster entry starts with no run id, and every remaining frame of the
+    # run — the final one included — is dropped as a straggler.
+    _RUN_STATE_FIELDS = (
+        "update_run_id",
+        "update_status",
+        "update_stage",
+        "update_progress",
+        "update_error",
+        "update_started_at",
+    )
+
+    @classmethod
+    def _run_state_of(cls, sat: SatelliteInfo) -> dict[str, Any] | None:
+        """Snapshot of a satellite's OTA run, or None when there is none."""
+        if sat.update_status == UpdateStatus.NONE:
+            return None
+        state = {name: getattr(sat, name) for name in cls._RUN_STATE_FIELDS}
+        state["version"] = sat.version
+        return state
+
+    def _restore_run_state(
+        self, sat: SatelliteInfo, state: dict[str, Any], new_version: str
+    ) -> None:
+        """Put a carried-over run onto a freshly registered entry.
+
+        A run still IN_PROGRESS whose satellite comes back on a DIFFERENT
+        version was installed: the restart into the new code swallowed the
+        final frames. It is closed as COMPLETED — left running, the stuck-run
+        sweep would fail a successful update 15 minutes later. Back on the SAME
+        version the run simply continues (a WS blip); the sweep remains the net
+        for a run that never ends.
+        """
+        for name in self._RUN_STATE_FIELDS:
+            setattr(sat, name, state[name])
+        if (
+            sat.update_status == UpdateStatus.IN_PROGRESS
+            and new_version not in ("unknown", state["version"])
+        ):
+            self.set_update_status(
+                sat.satellite_id, UpdateStatus.COMPLETED, stage="completed", progress=100
+            )
+
     def begin_update_run(self, satellite_id: str) -> str | None:
         """Start a new OTA run: mint its id and mark it IN_PROGRESS (#1280).
 
@@ -1321,6 +1388,8 @@ class SatelliteManager:
                     await self._end_session_internal(sat.current_session_id, reason="disconnect")
                 room, room_id, websocket = sat.room, sat.room_id, sat.websocket
                 del self.satellites[sat_id]
+                if sat.update_status != UpdateStatus.NONE:
+                    self._parked_update_runs[sat_id] = self._run_state_of(sat)
                 # Push liveness so the kiosk drops a satellite that timed out.
                 await self._broadcast_satellite_liveness(
                     sat_id, room, room_id, online=False

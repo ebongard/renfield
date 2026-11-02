@@ -1452,6 +1452,7 @@
     "latestVersion": "Latest Version",
     "updateAvailable": "Update",
     "updating": "Updating...",
+    "corrupt": "Data unreadable",
     "updateNow": "Update Now",
     "upToDate": "Up to date",
     "updateInProgress": "Update in progress...",

@@ -127,3 +127,34 @@ describe('SatellitesPage capability badges', () => {
     expect(screen.getByText('Display')).toBeInTheDocument();
   });
 });
+
+describe('SatellitesPage corrupt entry (#1279)', () => {
+  it('flags an entry the backend could not build and never shows it as fresh', async () => {
+    mockSatellites({
+      state: 'error',
+      satellite_id: 'bad-sat',
+      room: 'Keller',
+      uptime_seconds: -1,
+      heartbeat_ago_seconds: -1,
+      corrupt: true,
+    });
+
+    renderWithProviders(<SatellitesPage />);
+
+    expect(await screen.findByText('Daten unlesbar')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('Keller'));
+
+    // -1 is "unknown": neither "gerade eben" nor "0s".
+    expect(await screen.findAllByText('—')).toHaveLength(2);
+    expect(screen.queryByText('0s')).not.toBeInTheDocument();
+  });
+
+  it('shows no flag on a healthy entry', async () => {
+    mockSatellites({ ...base, satellite_id: 'good-sat', room: 'Flur' });
+
+    renderWithProviders(<SatellitesPage />);
+
+    expect(await screen.findByText('Flur')).toBeInTheDocument();
+    expect(screen.queryByText('Daten unlesbar')).not.toBeInTheDocument();
+  });
+});

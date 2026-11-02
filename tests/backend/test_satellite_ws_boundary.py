@@ -15,6 +15,7 @@ Two lines of defence, each tested here:
 """
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -242,47 +243,70 @@ def _poisoned(sat_id: str) -> SatelliteInfo:
     return sat
 
 
-@pytest.mark.integration
-async def test_list_survives_one_corrupt_satellite(async_client: AsyncClient):
+@pytest.fixture
+def roster():
+    """The global roster, emptied for the test and RESTORED afterwards."""
     manager = get_satellite_manager()
+    saved = dict(manager.satellites)
     manager.satellites.clear()
-    try:
-        manager.satellites["good-sat"] = SatelliteInfo(
-            satellite_id="good-sat",
-            room="Wohnzimmer",
-            websocket=MagicMock(),
-            capabilities=SatelliteCapabilities(led_count=12),
-        )
-        manager.satellites["bad-sat"] = _poisoned("bad-sat")
-
-        response = await async_client.get("/api/satellites")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total_count"] == 2
-        by_id = {s["satellite_id"]: s for s in data["satellites"]}
-        assert by_id["good-sat"]["corrupt"] is False
-        assert by_id["good-sat"]["capabilities"]["led_count"] == 12
-        assert by_id["bad-sat"]["corrupt"] is True
-        assert by_id["bad-sat"]["room"] == "Keller"
-        assert by_id["bad-sat"]["state"] == "error"
-    finally:
-        manager.satellites.clear()
+    yield manager
+    manager.satellites.clear()
+    manager.satellites.update(saved)
 
 
 @pytest.mark.integration
-async def test_detail_of_a_corrupt_satellite_is_flagged_not_500(async_client: AsyncClient):
-    manager = get_satellite_manager()
-    manager.satellites.clear()
-    try:
-        manager.satellites["bad-sat"] = _poisoned("bad-sat")
+async def test_list_survives_one_corrupt_satellite(async_client: AsyncClient, roster):
+    roster.satellites["good-sat"] = SatelliteInfo(
+        satellite_id="good-sat",
+        room="Wohnzimmer",
+        websocket=MagicMock(),
+        capabilities=SatelliteCapabilities(led_count=12),
+    )
+    bad = _poisoned("bad-sat")
+    roster.satellites["bad-sat"] = bad
 
-        response = await async_client.get("/api/satellites/bad-sat")
+    response = await async_client.get("/api/satellites")
 
-        assert response.status_code == 200
-        assert response.json()["corrupt"] is True
-    finally:
-        manager.satellites.clear()
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 2
+    by_id = {s["satellite_id"]: s for s in data["satellites"]}
+    assert by_id["good-sat"]["corrupt"] is False
+    assert by_id["good-sat"]["capabilities"]["led_count"] == 12
+    entry = by_id["bad-sat"]
+    assert entry["corrupt"] is True
+    assert entry["room"] == "Keller"
+    assert entry["state"] == "error"
+    # Never dressed up as fresh: the durations say "unknown", and the
+    # heartbeat timestamp is the backend's own, not "now".
+    assert entry["heartbeat_ago_seconds"] == -1.0
+    assert entry["uptime_seconds"] == -1.0
+    assert entry["last_heartbeat"] == datetime.fromtimestamp(bad.last_heartbeat).isoformat()
+
+
+@pytest.mark.integration
+async def test_detail_of_a_corrupt_satellite_is_flagged_not_500(async_client: AsyncClient, roster):
+    roster.satellites["bad-sat"] = _poisoned("bad-sat")
+
+    response = await async_client.get("/api/satellites/bad-sat")
+
+    assert response.status_code == 200
+    assert response.json()["corrupt"] is True
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+def test_a_backend_fault_is_not_disguised_as_a_corrupt_entry(monkeypatch):
+    """Only a bad roster VALUE becomes a placeholder; a fault elsewhere (update
+    service, session store) must stay an honest error."""
+    import ha_glue.api.routes.satellites as routes
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("update service down")
+
+    monkeypatch.setattr(routes, "_satellite_to_response", _boom)
+    with pytest.raises(RuntimeError):
+        routes._satellite_to_response_guarded("sat-1", {"room": "Flur"})
 
 
 @pytest.mark.backend
@@ -291,11 +315,40 @@ def test_corrupt_placeholder_never_fails_on_its_own_inputs():
     """The fallback itself must not raise, whatever the entry holds."""
     from ha_glue.api.routes.satellites import _corrupt_satellite_response
 
-    resp = _corrupt_satellite_response(42, {"room": {"x": 1}})
+    resp = _corrupt_satellite_response(42, {"room": {"x": 1}, "last_heartbeat": "gestern"})
     assert resp.satellite_id == "42"
     assert resp.room == ""
     assert resp.corrupt is True
+    assert resp.last_heartbeat == datetime.fromtimestamp(0)
+    assert resp.heartbeat_ago_seconds == -1.0
 
     resp = _corrupt_satellite_response("sat-1", None)
     assert resp.satellite_id == "sat-1"
     assert resp.room == ""
+
+    resp = _corrupt_satellite_response("sat-1", {"connected_at": 10**20, "last_heartbeat": True})
+    assert resp.connected_at == datetime.fromtimestamp(0)
+    assert resp.last_heartbeat == datetime.fromtimestamp(0)
+
+
+# ==========================================================================
+# 5. The register frame's satellite id
+# ==========================================================================
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+@pytest.mark.parametrize("bad_id", [5, {"id": "flur"}, "", "x" * 129, None])
+def test_register_satellite_id_refuses_unusable_ids(bad_id):
+    from ha_glue.api.websocket.satellite_handler import _register_satellite_id
+
+    assert _register_satellite_id({"satellite_id": bad_id}) is None
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+def test_register_satellite_id_keeps_valid_and_default_ids():
+    from ha_glue.api.websocket.satellite_handler import _register_satellite_id
+
+    assert _register_satellite_id({"satellite_id": "sat-flur"}) == "sat-flur"
+    assert _register_satellite_id({}) == "unknown"

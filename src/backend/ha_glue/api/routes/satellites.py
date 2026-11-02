@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ha_glue.services.satellite_manager import get_satellite_manager
 from ha_glue.services.satellite_update_service import get_satellite_update_service
@@ -199,28 +199,54 @@ def _satellite_to_response(sat_id: str, sat_data: dict[str, Any]) -> SatelliteRe
     )
 
 
+# Placeholder values of a corrupt entry. Deliberately implausible, so that a
+# flagged entry can never pass for a satellite that has just reported in.
+_NO_TIMESTAMP = datetime.fromtimestamp(0)
+_NO_DURATION = -1.0
+
+
+def _backend_timestamp(value: object) -> datetime:
+    """A roster timestamp (set by the backend itself, never by the device), or
+    the placeholder when even that is unusable."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(value)
+        except (OverflowError, OSError, ValueError):
+            pass
+    return _NO_TIMESTAMP
+
+
 def _corrupt_satellite_response(sat_id: object, sat_data: dict[str, Any]) -> SatelliteResponse:
     """A placeholder entry for a satellite whose roster data cannot be served.
 
     Built only from values that cannot fail validation: the id and room are
-    taken when they are strings, everything else is a default. The satellite
-    stays VISIBLE (it is connected) and is flagged, instead of vanishing.
+    taken when they are strings, the connection timestamps when the backend's
+    own values are usable, everything else is a default. The durations are
+    never computed: ``-1`` says "unknown", where ``0`` would read as a
+    heartbeat that just arrived. The satellite stays VISIBLE (it is connected)
+    and is flagged, instead of vanishing.
     """
-    now = datetime.now()
-    room = sat_data.get("room") if isinstance(sat_data, dict) else None
+    data = sat_data if isinstance(sat_data, dict) else {}
+    room = data.get("room")
     return SatelliteResponse(
         satellite_id=sat_id if isinstance(sat_id, str) else str(sat_id),
         room=room if isinstance(room, str) else "",
         state="error",
-        connected_at=now,
-        last_heartbeat=now,
-        uptime_seconds=0.0,
-        heartbeat_ago_seconds=0.0,
+        connected_at=_backend_timestamp(data.get("connected_at")),
+        last_heartbeat=_backend_timestamp(data.get("last_heartbeat")),
+        uptime_seconds=_NO_DURATION,
+        heartbeat_ago_seconds=_NO_DURATION,
         has_active_session=False,
         capabilities=SatelliteCapabilitiesResponse(),
         metrics=SatelliteMetricsResponse(),
         corrupt=True,
     )
+
+
+# What a bad roster VALUE raises while the response is built. Anything else —
+# a fault in the update service or the session store — is a backend error and
+# stays an honest 500 instead of being disguised as one corrupt satellite.
+_CORRUPT_ENTRY_ERRORS = (ValidationError, TypeError, ValueError, KeyError)
 
 
 def _satellite_to_response_guarded(sat_id: str, sat_data: dict[str, Any]) -> SatelliteResponse:
@@ -233,7 +259,7 @@ def _satellite_to_response_guarded(sat_id: str, sat_data: dict[str, Any]) -> Sat
     """
     try:
         return _satellite_to_response(sat_id, sat_data)
-    except Exception as e:
+    except _CORRUPT_ENTRY_ERRORS as e:
         logger.error(f"Satellite '{sat_id}' cannot be rendered, shown as corrupt: {e!r}")
         return _corrupt_satellite_response(sat_id, sat_data)
 

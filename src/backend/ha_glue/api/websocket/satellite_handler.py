@@ -336,6 +336,24 @@ def _belongs_to_current_run(manager, satellite_id: str, data: dict) -> bool:
     return manager.accepts_update_frame(satellite_id, data.get("run_id"))
 
 
+MAX_SATELLITE_ID_CHARS = 128
+
+
+def _register_satellite_id(data: dict) -> str | None:
+    """The satellite id from a register frame, or None when it is unusable.
+
+    Absent → ``"unknown"``, as before. Anything that is not a non-empty string
+    of bounded length is refused rather than coerced: `str(5)` would make
+    ``"5"`` match a handshake identity the device never presented.
+    """
+    satellite_id = data.get("satellite_id", "unknown")
+    if not isinstance(satellite_id, str) or not satellite_id:
+        return None
+    if len(satellite_id) > MAX_SATELLITE_ID_CHARS:
+        return None
+    return satellite_id
+
+
 def _register_fields(data: dict) -> tuple[str, dict, str, str]:
     """Room, capabilities, language and version from a register frame, typed.
 
@@ -709,7 +727,20 @@ async def satellite_websocket(
 
             # Handle registration
             if msg_type == "register":
-                satellite_id = data.get("satellite_id", "unknown")
+                satellite_id = _register_satellite_id(data)
+                if satellite_id is None:
+                    # The id is the identity every later check binds to (the
+                    # handshake identity, the enrollment row, the roster key).
+                    # Coercing a non-string would invent an identity the device
+                    # never claimed, so the frame is refused instead (#1279).
+                    logger.warning(
+                        f"🚫 Satellite register rejected from {ip_address}: invalid satellite_id"
+                    )
+                    await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, "invalid-satellite-id")
+                    await websocket.close(
+                        code=WSAuthError.UNAUTHORIZED, reason="invalid-satellite-id"
+                    )
+                    return
                 room, capabilities, language, version = _register_fields(data)
                 enrollment_psk = data.get("token")
 

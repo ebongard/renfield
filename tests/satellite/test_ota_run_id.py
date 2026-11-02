@@ -102,55 +102,77 @@ def _satellite(is_updating: bool = False):
     sat.ws_client = MagicMock()
     sat.ws_client.server_url = "ws://backend:8000/ws/satellite"
     sat.ws_client.send_update_progress = MagicMock(return_value=None)
+    sat.ws_client.send_update_complete = AsyncMock()
+    sat.ws_client.send_update_failed = AsyncMock()
     sat.update_manager = MagicMock()
     sat.update_manager.is_updating = is_updating
+    sat.update_manager.last_error = "boom"
+    sat.update_manager.rolled_back = True
     sat._schedule_async = MagicMock()
-    sat._start_update = MagicMock(return_value=None)
     return sat
 
 
 @pytest.mark.satellite
-def test_request_sets_the_run_id_for_progress_frames():
-    from renfield_satellite.update.update_manager import UpdateStage
-
+def test_request_hands_its_run_id_to_the_start_without_claiming_the_run():
+    """The id becomes the RUN's id only once the start has accepted it."""
     sat = _satellite()
+    sat._start_update = MagicMock(return_value=None)
     sat._on_update_request("1.5.0", "/p", "sha256:x", 1, run_id="r1")
 
-    assert sat._ota_run_id == "r1"
     assert sat._start_update.call_args.kwargs["run_id"] == "r1"
-
-    sat._on_update_progress(UpdateStage.DOWNLOADING, 10, "x")
-    assert sat.ws_client.send_update_progress.call_args.kwargs["run_id"] == "r1"
+    assert sat._ota_run_id is None
 
 
 @pytest.mark.satellite
-def test_request_during_a_running_update_does_not_relabel_its_frames():
+async def test_accepted_start_labels_the_progress_frames_of_its_run():
+    from renfield_satellite.update.update_manager import UpdateStage
+
+    sat = _satellite()
+
+    async def _run(**_kwargs):
+        # What the real manager does while it works: report progress.
+        sat._on_update_progress(UpdateStage.DOWNLOADING, 10, "x")
+        return True
+
+    sat.update_manager.start_update = AsyncMock(side_effect=_run)
+
+    await sat._start_update("1.5.0", "/p", "sha256:x", 1, "http://b", run_id="r1")
+
+    assert sat._ota_run_id == "r1"
+    assert sat.ws_client.send_update_progress.call_args.kwargs["run_id"] == "r1"
+    assert sat.ws_client.send_update_complete.call_args.kwargs["run_id"] == "r1"
+
+
+@pytest.mark.satellite
+async def test_request_during_a_running_update_is_refused_under_its_own_id():
+    """Neither relabels the running run's frames nor reports ITS state."""
+    from renfield_satellite.satellite import UPDATE_ALREADY_IN_PROGRESS
     from renfield_satellite.update.update_manager import UpdateStage
 
     sat = _satellite(is_updating=True)
     sat._ota_run_id = "running"
-    sat._on_update_request("1.5.0", "/p", "sha256:x", 1, run_id="second")
+    sat.update_manager.current_stage = UpdateStage.INSTALLING
+    sat.update_manager.start_update = AsyncMock(return_value=False)
 
+    await sat._start_update("1.5.0", "/p", "sha256:x", 1, "http://b", run_id="second")
+
+    sat.update_manager.start_update.assert_not_called()
     assert sat._ota_run_id == "running"
-    # The refused request still answers under ITS id.
-    assert sat._start_update.call_args.kwargs["run_id"] == "second"
-    sat._on_update_progress(UpdateStage.DOWNLOADING, 10, "x")
+    assert sat.ws_client.send_update_failed.call_args.kwargs == {
+        "stage": "idle",
+        "error": UPDATE_ALREADY_IN_PROGRESS,
+        "rolled_back": False,
+        "run_id": "second",
+    }
+    sat._on_update_progress(UpdateStage.INSTALLING, 70, "x")
     assert sat.ws_client.send_update_progress.call_args.kwargs["run_id"] == "running"
 
 
 @pytest.mark.satellite
 async def test_start_update_answers_with_its_own_run_id():
-    from renfield_satellite.satellite import Satellite
-
     for success in (True, False):
-        sat = object.__new__(Satellite)
-        sat.ws_client = MagicMock()
-        sat.ws_client.send_update_complete = AsyncMock()
-        sat.ws_client.send_update_failed = AsyncMock()
-        sat.update_manager = MagicMock()
+        sat = _satellite()
         sat.update_manager.start_update = AsyncMock(return_value=success)
-        sat.update_manager.last_error = "boom"
-        sat.update_manager.rolled_back = True
 
         await sat._start_update("1.5.0", "/p", "sha256:x", 1, "http://b", run_id="r9")
 
