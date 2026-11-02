@@ -116,7 +116,7 @@ async def _visible_document_meta(
     from sqlalchemy import text
 
     from models.database import TIER_PUBLIC
-    from services.circle_sql import circles_filter_clause, circles_filter_params
+    from services.circle_sql import documents_circles_filter
 
     if not settings.auth_enabled:
         doc_clause, doc_params = "TRUE", {}
@@ -124,17 +124,7 @@ async def _visible_document_meta(
         # Anonymous authed caller → public documents only.
         doc_clause, doc_params = "d.circle_tier = :doc_pub", {"doc_pub": TIER_PUBLIC}
     else:
-        doc_clause = circles_filter_clause(
-            table_alias="d",
-            owner_col="owner_id",
-            tier_col="circle_tier",
-            source_table_value="documents",
-            owner_table_alias="kb",
-            source_id_expr="d.id",
-            owner_atom_id_expr="d.atom_id",
-            kb_share_kb_id_expr="d.knowledge_base_id",
-        )
-        doc_params = circles_filter_params(user_id_int, source_table_value="documents")
+        doc_clause, doc_params = documents_circles_filter(user_id_int)
 
     sql = text(f"""
         SELECT d.id AS id, d.generated_title AS generated_title, d.title AS title,

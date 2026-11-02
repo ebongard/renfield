@@ -37,6 +37,7 @@ from services.turn_extraction import (
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 from utils.prompt_safety import neutralize_delimiters
 from utils.request_context import request_id as request_id_var
 from utils.voice_context import voice_originated
@@ -285,6 +286,29 @@ async def _replacement_session_for(
         f"🔁 Session replaced: the named one does not belong to the caller (user={auth_user_id})"
     )
     return new_id
+
+
+async def _persist_turn_context_vars(
+    session_id: str, extracted: dict, tool_summaries: list, user_id: int | None,
+) -> None:
+    """Store a saved turn's context variables for the next turn's prompt (#1447).
+
+    Never fails the turn: the variables are a convenience for follow-ups.
+    """
+    if not extracted and not tool_summaries:
+        return
+    try:
+        from services.conversation_service import ConversationService
+
+        async with AsyncSessionLocal() as db:
+            await ConversationService(db).save_turn_context_vars(
+                session_id, extracted,
+                tool_summaries=tool_summaries,
+                user_id=user_id,
+                enforce_ownership=settings.auth_enabled,
+            )
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to save context vars: {error_text_without_content(e)}")
 
 
 async def _restart_conversation_for_caller(
@@ -1551,6 +1575,10 @@ async def websocket_endpoint(
             # Shared init so the persist/done block can reference it on every path
             # (the legacy non-agent path never touches agent_tool_results).
             agent_tool_results: list = []
+            # Context variables the agent extracted from this turn's tool
+            # results (#1447): filled by agent.run / run_orchestrated through
+            # `context_vars_out`, persisted after the turn was saved.
+            turn_context_vars: dict = {}
             # EVERY tool_result step of the turn as (tool, success) — including
             # the failures, which carry no data and therefore never land in
             # agent_tool_results. This is what makes action_success able to say
@@ -1736,13 +1764,25 @@ async def websocket_endpoint(
                         from services.conversation_service import ConversationService
                         async with AsyncSessionLocal() as _cv_db:
                             _cv_svc = ConversationService(_cv_db)
-                            _ctx_vars = await _cv_svc.load_context_vars(msg_session_id) or {}
-                            if _ctx_vars:
-                                _context_vars_text = "\n".join(
-                                    f"{k}: {v}" for k, v in _ctx_vars.items()
-                                    if not k.startswith("_")  # skip internal keys
-                                )
-                            _summary_text = await _cv_svc.load_summary(msg_session_id) or ""
+                            # Same identity and rule as the history load above:
+                            # the JWT caller, and only within its reach. Under
+                            # auth-on the session boundary lets a caller without
+                            # identity keep any session id; reach then gives it
+                            # nothing (#1447 review).
+                            _read_uid = (
+                                auth_result.get("user_id")
+                                if isinstance(auth_result, dict) else None
+                            )
+                            _ctx_vars = await _cv_svc.load_context_vars(
+                                msg_session_id, user_id=_read_uid,
+                                enforce_ownership=settings.auth_enabled,
+                            ) or {}
+                            from services.context_extractor import render_context_vars_text
+                            _context_vars_text = render_context_vars_text(_ctx_vars)
+                            _summary_text = await _cv_svc.load_summary(
+                                msg_session_id, user_id=_read_uid,
+                                enforce_ownership=settings.auth_enabled,
+                            ) or ""
                     except Exception as _e:
                         logger.warning(f"Failed to load context vars/summary: {_e}")
 
@@ -1790,7 +1830,9 @@ async def websocket_endpoint(
                         async with AsyncSessionLocal() as _ad_db:
                             from services.conversation_service import ConversationService
                             await ConversationService(_ad_db).save_context_vars(
-                                msg_session_id, {"_active_domain": role.name}
+                                msg_session_id, {"_active_domain": role.name},
+                                user_id=user_id,
+                                enforce_ownership=settings.auth_enabled,
                             )
                     except Exception:
                         pass  # Non-critical
@@ -2135,6 +2177,7 @@ async def websocket_endpoint(
                             # `agent_kwargs` is spread into
                             # `agent.run(**agent_kwargs)`.
                             corrected_intent=_corrected,
+                            context_vars_out=turn_context_vars,
                         ):
                             if step.step_type == "final_answer":
                                 deferred_final_answer = step.content
@@ -2355,6 +2398,7 @@ async def websocket_endpoint(
                         progress_sink=_federation_progress_sink,
                         session_id=msg_session_id,
                         corrected_intent=_corrected,
+                        context_vars_out=turn_context_vars,
                     ):
                         ws_msg = step_to_ws_message(step)
                         await websocket.send_json(ws_msg)
@@ -2793,6 +2837,15 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                         )
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to save messages to DB: {e}")
+
+            # Context variables of this turn (#1447) — only once the turn LANDED:
+            # a saved assistant message proves the conversation exists and that
+            # `save_message` accepted this caller there (or the replacement path
+            # above rebound `msg_session_id` to the caller's fresh thread).
+            if msg_session_id and saved_assistant_message_id is not None:
+                await _persist_turn_context_vars(
+                    msg_session_id, turn_context_vars, agent_tool_results, user_id
+                )
 
             # Check for output routing if we have room context
             tts_handled_by_server = False

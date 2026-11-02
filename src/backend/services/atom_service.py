@@ -310,61 +310,9 @@ class AtomService:
         # read stale document_chunks.circle_tier and leak chunks at the old
         # tier until someone noticed (Risk A from the design doc review).
         if atom_orm.atom_type == ATOM_TYPE_KB_DOCUMENT:
-            doc_id = int(atom_orm.source_id)
-            await self.db.execute(
-                text(
-                    "UPDATE document_chunks SET circle_tier = :tier "
-                    "WHERE document_id = :doc_id"
-                ),
-                {"tier": new_tier, "doc_id": doc_id},
+            fact_atom_ids = await self._cascade_kb_document_tier(
+                int(atom_orm.source_id), new_tier,
             )
-            # Schicht A facts (document_fact atoms) inherit the parent document's
-            # tier the same way chunks do — keep them in lockstep so retrieval
-            # can't leak a Steuernummer/obligation at the old tier. Also bump
-            # the facts' own atoms.policy so the canonical policy stays in sync.
-            # Only facts that have NOT been individually overridden follow the
-            # document tier — a per-fact override (e.g. a public issuer on a
-            # private doc) is sticky in both directions until explicitly reset.
-            # Concurrency: a per-fact override (the PATCH route SELECT-FOR-UPDATEs
-            # the fact atom) racing this doc cascade converges to "override wins"
-            # — the WHERE NOT tier_overridden is re-evaluated per row at statement
-            # time under MVCC and the fact-row write is the last writer, so the
-            # circle_tier + atoms.policy stay consistent (both UPDATEs carry the
-            # same guard).
-            await self.db.execute(
-                text(
-                    "UPDATE document_facts SET circle_tier = :tier "
-                    "WHERE document_id = :doc_id AND NOT tier_overridden"
-                ),
-                {"tier": new_tier, "doc_id": doc_id},
-            )
-            await self.db.execute(
-                text(
-                    # CAST(:tier AS INTEGER): json_build_object is VARIADIC "any",
-                    # so asyncpg can't infer a bare param's type ($1) -> 500.
-                    "UPDATE atoms SET policy = json_build_object('tier', CAST(:tier AS INTEGER)), "
-                    "updated_at = NOW() "
-                    "FROM document_facts f "
-                    "WHERE atoms.atom_type = :fact_type "
-                    "AND atoms.source_id = f.id::text "
-                    "AND f.document_id = :doc_id "
-                    "AND NOT f.tier_overridden"
-                ),
-                {"tier": new_tier, "fact_type": ATOM_TYPE_DOCUMENT_FACT, "doc_id": doc_id},
-            )
-            # Collect the fact atom_ids so their per-atom resolver grant cache
-            # is invalidated after commit — otherwise retrieval would read the
-            # fact atoms' stale cached access decision at the old tier, leaking
-            # a Steuernummer/obligation. (document_facts.atom_id IS the fact's
-            # atom id.) The parent doc atom is invalidated at :invalidate below.
-            fact_atom_ids = [
-                row.atom_id for row in (await self.db.execute(
-                    text(
-                        "SELECT atom_id FROM document_facts WHERE document_id = :doc_id"
-                    ),
-                    {"doc_id": doc_id},
-                )).fetchall()
-            ]
 
         # KG node cascade: incident relations recompute MIN(subject, object).
         if atom_orm.atom_type == ATOM_TYPE_KG_NODE:
@@ -399,6 +347,123 @@ class AtomService:
         # isn't invalidated after a kg_node tier change; out of scope here.)
         for fa in fact_atom_ids:
             self.resolver.invalidate_for_atom(fa)
+
+    async def _cascade_kb_document_tier(self, doc_id: int, new_tier: int) -> list[str]:
+        """Carry a ``kb_document`` tier to its chunks, facts and fact atoms (no commit).
+
+        Returns the fact atom ids, whose cached access decisions the caller must
+        invalidate after its commit.
+        """
+        await self.db.execute(
+            text(
+                "UPDATE document_chunks SET circle_tier = :tier "
+                "WHERE document_id = :doc_id"
+            ),
+            {"tier": new_tier, "doc_id": doc_id},
+        )
+        # Schicht A facts (document_fact atoms) inherit the parent document's
+        # tier the same way chunks do — keep them in lockstep so retrieval
+        # can't leak a Steuernummer/obligation at the old tier. Also bump
+        # the facts' own atoms.policy so the canonical policy stays in sync.
+        # Only facts that have NOT been individually overridden follow the
+        # document tier — a per-fact override (e.g. a public issuer on a
+        # private doc) is sticky in both directions until explicitly reset.
+        # Concurrency: a per-fact override (the PATCH route SELECT-FOR-UPDATEs
+        # the fact atom) racing this doc cascade converges to "override wins"
+        # — the WHERE NOT tier_overridden is re-evaluated per row at statement
+        # time under MVCC and the fact-row write is the last writer, so the
+        # circle_tier + atoms.policy stay consistent (both UPDATEs carry the
+        # same guard).
+        await self.db.execute(
+            text(
+                "UPDATE document_facts SET circle_tier = :tier "
+                "WHERE document_id = :doc_id AND NOT tier_overridden"
+            ),
+            {"tier": new_tier, "doc_id": doc_id},
+        )
+        await self.db.execute(
+            text(
+                # CAST(:tier AS INTEGER): json_build_object is VARIADIC "any",
+                # so asyncpg can't infer a bare param's type ($1) -> 500.
+                "UPDATE atoms SET policy = json_build_object('tier', CAST(:tier AS INTEGER)), "
+                "updated_at = NOW() "
+                "FROM document_facts f "
+                "WHERE atoms.atom_type = :fact_type "
+                "AND atoms.source_id = f.id::text "
+                "AND f.document_id = :doc_id "
+                "AND NOT f.tier_overridden"
+            ),
+            {"tier": new_tier, "fact_type": ATOM_TYPE_DOCUMENT_FACT, "doc_id": doc_id},
+        )
+        # Collect the fact atom_ids so their per-atom resolver grant cache
+        # is invalidated after commit — otherwise retrieval would read the
+        # fact atoms' stale cached access decision at the old tier, leaking
+        # a Steuernummer/obligation. (document_facts.atom_id IS the fact's
+        # atom id.) The caller invalidates the parent doc atom itself.
+        fact_atom_ids = [
+            row.atom_id for row in (await self.db.execute(
+                text(
+                    "SELECT atom_id FROM document_facts WHERE document_id = :doc_id"
+                ),
+                {"doc_id": doc_id},
+            )).fetchall()
+        ]
+        return fact_atom_ids
+
+    async def rehome_document(
+        self, doc_id: int, *, atom_id: str | None, owner_user_id: int, tier: int,
+    ) -> list[str]:
+        """Hand a document to another owner at ``tier`` (no commit).
+
+        Used when a document moves into a KB of another owner (#1460): the document
+        filters read the owner from ``kb.owner_id`` OR the atom owner, so the
+        atom must follow the KB or both owners would read it. With auth on,
+        ``CircleResolver.can_access_atom`` applies those same filters (#1463); the
+        atom owner itself still decides with auth off and in ``load_owned_atom``
+        (who may change the tier or delete the atom). Owner and tier cascade to
+        the document row, its chunks, its facts and the facts' atoms. A legacy
+        atom-less document (``atom_id=None``) has no atom to re-own; its tier still
+        cascades, so its chunks do not keep the previous KB's reach.
+
+        A per-fact tier override is RESET here: it was the previous owner's choice
+        about the reach of her circles, which says nothing about the new owner's.
+        The fact falls back to the document tier (never more visible than the parent).
+
+        Returns every atom id whose cached access decision is now stale (the
+        document atom first, when there is one); the caller invalidates them after
+        its commit.
+        """
+        stale: list[str] = []
+        if atom_id is not None:
+            atom_orm = (await self.db.execute(
+                select(AtomModel).where(AtomModel.atom_id == atom_id)
+            )).scalar_one_or_none()
+            if atom_orm is None or atom_orm.atom_type != ATOM_TYPE_KB_DOCUMENT:
+                raise ValueError(f"rehome_document: {atom_id} is no kb_document atom")
+            atom_orm.owner_user_id = int(owner_user_id)
+            atom_orm.policy = {"tier": int(tier)}
+            atom_orm.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            await self.db.flush()
+            stale.append(atom_id)
+
+        await self.db.execute(
+            text("UPDATE documents SET circle_tier = :tier WHERE id = :doc_id"),
+            {"tier": int(tier), "doc_id": doc_id},
+        )
+        await self.db.execute(
+            text("UPDATE document_facts SET tier_overridden = FALSE WHERE document_id = :doc_id"),
+            {"doc_id": doc_id},
+        )
+        await self.db.execute(
+            text(
+                "UPDATE atoms SET owner_user_id = :owner, updated_at = NOW() "
+                "FROM document_facts f "
+                "WHERE atoms.atom_id = f.atom_id AND f.document_id = :doc_id"
+            ),
+            {"owner": int(owner_user_id), "doc_id": doc_id},
+        )
+        stale += await self._cascade_kb_document_tier(doc_id, int(tier))
+        return stale
 
     async def reset_fact_tier(self, fact_id: int) -> int | None:
         """Clear a document_fact's per-fact tier override, restoring it to the

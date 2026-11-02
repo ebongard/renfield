@@ -36,17 +36,23 @@ set -euo pipefail
 
 # --- config -----------------------------------------------------------------
 BUILD_HOST="${RENFIELD_BUILD_HOST:-evdb@192.168.1.159}"
-REGISTRY="${RENFIELD_REGISTRY:?set RENFIELD_REGISTRY, e.g. export RENFIELD_REGISTRY=your-registry.example/renfield}"
 KCTX="${RENFIELD_KCTX:-renfield-private}"
 NS="${RENFIELD_NS:-renfield}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/backend-build-extras.sh
+. "$REPO_ROOT/bin/lib/backend-build-extras.sh"
 
 # --- args -------------------------------------------------------------------
 BACKEND_TAG="" FRONTEND_TAG="" DO_MIGRATE=0 DRY_RUN=0 SKIP_BACKEND=0 SKIP_FRONTEND=0 SKIP_MIGRATION_GATE=0
+# An option's value must be present and must not be the next flag:
+# `--backend-tag --help` used to take "--help" as the tag and start a deploy.
+need_value() {
+  [[ $# -ge 2 && -n "$2" && "$2" != -* ]] || { echo "ERROR: $1 needs a value" >&2; exit 2; }
+}
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --backend-tag)   BACKEND_TAG="$2"; shift 2 ;;
-    --frontend-tag)  FRONTEND_TAG="$2"; shift 2 ;;
+    --backend-tag)   need_value "$@"; BACKEND_TAG="$2"; shift 2 ;;
+    --frontend-tag)  need_value "$@"; FRONTEND_TAG="$2"; shift 2 ;;
     --migrate)       DO_MIGRATE=1; shift ;;
     --dry-run)       DRY_RUN=1; shift ;;
     --skip-backend)  SKIP_BACKEND=1; shift ;;
@@ -60,6 +66,10 @@ while [[ $# -gt 0 ]]; do
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+# Required, but only once the arguments are parsed: `--help` must be readable
+# without first setting the variable the help is meant to explain (#1399).
+REGISTRY="${RENFIELD_REGISTRY:?set RENFIELD_REGISTRY, e.g. export RENFIELD_REGISTRY=your-registry.example/renfield}"
 
 [[ $SKIP_BACKEND == 0 && -z "$BACKEND_TAG" ]] && { echo "ERROR: --backend-tag required (or --skip-backend)"; exit 2; }
 [[ $SKIP_FRONTEND == 0 && -z "$FRONTEND_TAG" ]] && { echo "ERROR: --frontend-tag required (or --skip-frontend)"; exit 2; }
@@ -100,11 +110,13 @@ if [[ $SKIP_BACKEND == 0 ]]; then
     --exclude='.coverage' --exclude='htmlcov' --exclude='.env' --exclude='.env.local' \
     --exclude='secrets/' --exclude='Users/' \
     $REPO_ROOT/src/backend/ $BUILD_HOST:$STAGING/src/backend/"
-  # wakeword models + satellite source (bundled into the backend image)
-  run "rsync -az $REPO_ROOT/data/wakeword-models/ $BUILD_HOST:$STAGING/src/backend/wakeword-models/"
-  run "$RSYNC --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' \
-    --exclude='provisioning' --exclude='tests' \
-    $REPO_ROOT/src/satellite/ $BUILD_HOST:$STAGING/src/backend/satellite/"
+  # wakeword models + satellite source (bundled into the backend image). The
+  # commands come from bin/lib/backend-build-extras.sh, shared with the compose
+  # stager bin/stage-backend-build.sh (#1359). The list is read on FD 3, not
+  # stdin, so a command that reads stdin cannot swallow the rest of the list.
+  while IFS= read -r -u 3 _extras_cmd; do
+    run "$_extras_cmd"
+  done 3< <(backend_extras_rsync_cmds "$REPO_ROOT" "$BUILD_HOST:$STAGING/src/backend")
   # Extra top-level Python packages from OUTSIDE this repo (e.g. a private
   # plugin named in PLUGIN_MODULES). Colon-separated package DIRECTORIES; each
   # lands at src/backend/<basename> → /app/<basename>, importable. Staging from

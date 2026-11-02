@@ -25,7 +25,14 @@ Thank you for your interest in contributing to Renfield! This guide will help yo
    # Edit .env with your settings (Ollama URL, model names, etc.)
    ```
 
-3. **Start the stack**
+3. **Create secrets and stage the backend build context**
+   ```bash
+   bin/generate-secrets.sh      # creates secrets/* (compose refuses to start without them)
+   bin/stage-backend-build.sh   # stages src/satellite/ + data/wakeword-models/ into src/backend/
+   ```
+   Re-run `bin/stage-backend-build.sh` before a backend rebuild after changing either source.
+
+4. **Start the stack**
    ```bash
    # Mac development
    docker compose -f docker-compose.dev.yml up -d
@@ -34,12 +41,12 @@ Thank you for your interest in contributing to Renfield! This guide will help yo
    docker compose up -d
    ```
 
-4. **Download an LLM model**
+5. **Download an LLM model**
    ```bash
    docker exec -it renfield-ollama ollama pull qwen3:8b
    ```
 
-5. **Access the app**
+6. **Access the app**
    - Frontend: http://localhost:3000
    - API docs: http://localhost:8000/docs
 

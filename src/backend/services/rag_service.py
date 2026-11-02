@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from sqlalchemy import delete, func, nulls_last, select, text
+from sqlalchemy import Select, delete, func, nulls_last, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,7 +57,9 @@ from models.database import (
     DOC_STATUS_FAILED,
     DOC_STATUS_PENDING,
     DOC_STATUS_PROCESSING,
+    DOC_STATUS_SPLIT_ARCHIVED,
     EMBEDDING_DIMENSION,
+    Atom,
     Document,
     DocumentChunk,
     DocumentFact,
@@ -94,6 +96,50 @@ class DuplicateDocumentError(Exception):
     def __init__(self, winner: "Document | None"):
         self.winner = winner
         super().__init__("duplicate document")
+
+
+def _remove_file(path: str | None, document_id: int) -> None:
+    """Removal of a document's file once its rows are committed.
+
+    The rows are gone at this point, so a file that cannot be removed is an
+    orphan on the volume that nothing references any more: ERROR, with the
+    document id and the path, so it can be found and removed by hand."""
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+            logger.info(f"File deleted: {path}")
+    except Exception as e:
+        logger.error(
+            f"Could not delete the file of deleted document {document_id}: {path} ({e})"
+        )
+
+
+class DocumentBusyError(ValueError):
+    """A document that is still being processed (or is part of a PDF split) cannot
+    be moved: the worker writes its chunks and facts at the tier and owner it read
+    at the start, so a move in between would be overwritten or half-applied."""
+
+
+# A document may be moved only in a terminal state: completed, failed, or the
+# archived combined original of an executed PDF split.
+MOVABLE_STATUSES = frozenset(
+    {DOC_STATUS_COMPLETED, DOC_STATUS_FAILED, DOC_STATUS_SPLIT_ARCHIVED}
+)
+
+
+def move_changes_owner(owners: frozenset[int], target_kb_owner: int | None) -> bool:
+    """Whether filing a document with these ``owners`` into a KB owned by
+    ``target_kb_owner`` changes who reads it as owner.
+
+    ``owners`` = every user the document filters treat as owner (the atom owner
+    AND the KB owner — ``circle_sql``'s owner branch is an OR; see
+    :meth:`RAGService.document_owners`). After the move exactly the target KB's
+    owner is owner, so anything else is a change. An ownerless target KB counts as
+    a change as well: nobody reads it as KB owner afterwards, and the content
+    leaves the KB owner's hands. The move route's gate (#1462) and
+    ``RAGService.move_documents`` (#1460) both decide by this.
+    """
+    return target_kb_owner is None or owners != frozenset({target_kb_owner})
 
 
 class RAGService(AtomOwnerResolverMixin):
@@ -911,16 +957,29 @@ class RAGService(AtomOwnerResolverMixin):
         offset: int = 0,
         sort_by: str | None = None,
         order: str = "desc",
+        *,
+        asker_id: int | None,
+        enforce_circles: bool,
     ) -> list[Document]:
         """List documents.
 
         ``sort_by`` ∈ {name, imported, document_date} orders the FULL result set
         before paginating (so the sort is correct across pages, not just the page).
         Default (None) = recency (created_at desc). NULL document_date sorts last.
+
+        ``enforce_circles`` keeps only the documents ``asker_id`` may reach (the
+        same document filter as the ``q`` search gate), in SQL and before the
+        LIMIT/OFFSET. Both have NO default on purpose: a listing that forgets the
+        switch must fail, not silently return every user's documents.
         """
         # Hide superseded documents (a KB near-dup loser resolved as 'supersede',
         # #1170) — recoverable soft-delete, excluded from the list.
         stmt = select(Document).where(Document.superseded_by_document_id.is_(None))
+
+        if enforce_circles:
+            from services.document_search import visible_document_ids
+
+            stmt = stmt.where(Document.id.in_(visible_document_ids(asker_id)))
 
         if knowledge_base_id:
             stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
@@ -959,6 +1018,51 @@ class RAGService(AtomOwnerResolverMixin):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def _delete_document_rows(self, doc: Document) -> bool:
+        """Delete one document with everything hanging off it — NO commit.
+
+        The caller commits, so a document and its atoms go in one transaction
+        (single delete, and every document of a deleted KB). Returns whether the
+        document row was deleted.
+
+        Atoms are the access-control unit and do not cascade from their source
+        rows (the FK runs atom → source), so each is purged explicitly through
+        ``AtomPurgeService`` (the sanctioned path, ``test_no_direct_atom_delete``):
+        the facts' atoms first (that cascades the fact rows), the document's own
+        ``kb_document`` atom LAST — its purge would otherwise cascade the document
+        row away before the delete below can count it. Purging the document atom
+        also removes its ``atom_explicit_grants`` (FK CASCADE); left behind, they
+        were a dangling ``source_id`` row plus grants (#1461).
+        """
+        from services.atom_purge_service import AtomPurgeService
+
+        # Unlink the chat uploads that point at the document.
+        await self.db.execute(
+            text("UPDATE chat_uploads SET document_id = NULL WHERE document_id = :doc_id"),
+            {"doc_id": doc.id}
+        )
+        fact_atom_ids = (await self.db.execute(
+            select(DocumentFact.atom_id).where(DocumentFact.document_id == doc.id)
+        )).scalars().all()
+        for aid in fact_atom_ids:
+            if aid:
+                await AtomPurgeService.purge(
+                    self.db, atom_id=aid, reason="document_deleted", commit=False,
+                )
+
+        # Delete the chunks first (explicitly, in case CASCADE does not apply)
+        await self.db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc.id))
+        result = await self.db.execute(delete(Document).where(Document.id == doc.id))
+
+        if doc.atom_id:
+            await AtomPurgeService.purge(
+                self.db, atom_id=doc.atom_id, reason="document_deleted", commit=False,
+            )
+            from services.circle_resolver import CircleResolver
+
+            CircleResolver.invalidate_for_atom(doc.atom_id)
+        return result.rowcount > 0
+
     async def delete_document(self, document_id: int) -> bool:
         """Delete a document and all chunks belonging to it"""
         # Check whether the document exists
@@ -976,46 +1080,14 @@ class RAGService(AtomOwnerResolverMixin):
         except Exception:
             _deleted_owner = None
 
-        # Delete the file as well
-        try:
-            if doc.file_path and os.path.exists(doc.file_path):
-                os.remove(doc.file_path)
-                logger.info(f"File deleted: {doc.file_path}")
-        except Exception as e:
-            logger.warning(f"Could not delete file: {e}")
-
-        # Delete the foreign-key references in chat_uploads
-        await self.db.execute(
-            text("UPDATE chat_uploads SET document_id = NULL WHERE document_id = :doc_id"),
-            {"doc_id": document_id}
-        )
-
-        # Purge Schicht A fact atoms FIRST. The document_facts rows cascade-delete
-        # with the document (FK ON DELETE CASCADE), but the atoms each fact is
-        # wrapped in do NOT (the cascade runs the other way: atom→fact). Without
-        # this, deleting a document leaves orphan document_fact atoms with a
-        # dangling source_id — a retrieval/GDPR gap. AtomPurgeService is the
-        # sanctioned delete path (test_no_direct_atom_delete lint); purging the
-        # atom cascades the fact row away.
-        from services.atom_purge_service import AtomPurgeService
-        fact_atom_ids = (await self.db.execute(
-            select(DocumentFact.atom_id).where(DocumentFact.document_id == document_id)
-        )).scalars().all()
-        for aid in fact_atom_ids:
-            if aid:
-                await AtomPurgeService.purge(self.db, atom_id=aid, reason="document_deleted")
-
-        # Delete the chunks first (explicitly, in case CASCADE does not apply)
-        chunk_stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
-        await self.db.execute(chunk_stmt)
-
-        # Then delete the document
-        stmt = delete(Document).where(Document.id == document_id)
-        result = await self.db.execute(stmt)
+        file_path = doc.file_path
+        deleted = await self._delete_document_rows(doc)
         await self.db.commit()
+        # The file only after the commit: a failed transaction must not leave a
+        # row that points at a file already gone.
+        _remove_file(file_path, document_id)
 
         logger.info(f"Document deleted: ID={document_id}")
-        deleted = result.rowcount > 0
         if deleted:
             try:
                 from services.redis_client import get_redis
@@ -1056,12 +1128,44 @@ class RAGService(AtomOwnerResolverMixin):
         logger.info(f"Knowledge base created: ID={kb.id}, name={name}")
         return kb
 
-    async def list_knowledge_bases(self) -> list[KnowledgeBase]:
-        """List all knowledge bases (without eager-loading documents)"""
+    @staticmethod
+    def _kb_document_count(
+        kb_id: Any, *, asker_id: int | None, enforce_circles: bool
+    ) -> Select:
+        """``SELECT count(*)`` of the documents in KB ``kb_id`` (a column for a
+        correlated subquery, or a literal id). ``enforce_circles`` counts only
+        the documents ``asker_id`` may reach -- the document filter of the list
+        and the search gate -- so a readable KB of another user does not reveal
+        how many documents its owner keeps there out of the caller's reach."""
+        stmt = select(func.count(Document.id)).where(Document.knowledge_base_id == kb_id)
+        if enforce_circles:
+            from services.document_search import visible_document_ids
+
+            stmt = stmt.where(Document.id.in_(visible_document_ids(asker_id)))
+        return stmt
+
+    async def count_kb_documents(
+        self, kb_id: int, *, asker_id: int | None, enforce_circles: bool
+    ) -> int:
+        """Document count of one KB, per caller under ``enforce_circles``."""
+        stmt = self._kb_document_count(
+            kb_id, asker_id=asker_id, enforce_circles=enforce_circles
+        )
+        return int(await self.db.scalar(stmt) or 0)
+
+    async def list_knowledge_bases(
+        self, *, asker_id: int | None, enforce_circles: bool
+    ) -> list[KnowledgeBase]:
+        """List all knowledge bases (without eager-loading documents).
+
+        Every KB is returned; filtering KBs is the caller's job. ``asker_id`` +
+        ``enforce_circles`` (no defaults) scope only each KB's
+        ``_document_count`` (see ``_kb_document_count``)."""
         # Use a count subquery instead of selectinload to avoid loading all documents
         doc_count_subq = (
-            select(func.count(Document.id))
-            .where(Document.knowledge_base_id == KnowledgeBase.id)
+            self._kb_document_count(
+                KnowledgeBase.id, asker_id=asker_id, enforce_circles=enforce_circles
+            )
             .correlate(KnowledgeBase)
             .scalar_subquery()
             .label("document_count")
@@ -1080,15 +1184,41 @@ class RAGService(AtomOwnerResolverMixin):
             kbs.append(kb)
         return kbs
 
-    async def get_knowledge_base(self, kb_id: int) -> KnowledgeBase | None:
-        """Fetch a knowledge base by id"""
-        stmt = (
-            select(KnowledgeBase)
-            .options(selectinload(KnowledgeBase.documents))
-            .where(KnowledgeBase.id == kb_id)
-        )
+    async def get_knowledge_base(
+        self, kb_id: int, *, with_documents: bool = False
+    ) -> KnowledgeBase | None:
+        """Fetch a knowledge base by id. ``with_documents`` eager-loads its
+        documents -- only the KB delete needs them (it removes their files);
+        every other caller reads KB columns only, and a document count goes
+        through ``count_kb_documents`` (per caller), never ``len(kb.documents)``."""
+        stmt = select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+        if with_documents:
+            stmt = stmt.options(selectinload(KnowledgeBase.documents))
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def document_owners(self, docs: list[Document]) -> dict[int, frozenset[int]]:
+        """Everyone the document filters treat as OWNER of each document: the
+        owner of its ``kb_document`` atom and the owner of its KB.
+
+        ``circle_sql``'s owner branch is ``kb.owner_id = asker OR atom owner =
+        asker``. Normally the two are one person; a document moved across owners
+        before #1460 has two, and BOTH read it as owner. Naming only one of them
+        here would make the move gate disagree with the filters, so this returns
+        the set and decides nothing about who the rightful owner is. Empty = nobody
+        (atom-less in an ownerless KB, or KB-less without an atom)."""
+        if not docs:
+            return {}
+        rows = (await self.db.execute(
+            select(Document.id, Atom.owner_user_id, KnowledgeBase.owner_id)
+            .outerjoin(Atom, Atom.atom_id == Document.atom_id)
+            .outerjoin(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+            .where(Document.id.in_([d.id for d in docs]))
+        )).all()
+        return {
+            doc_id: frozenset(o for o in (atom_owner, kb_owner) if o is not None)
+            for doc_id, atom_owner, kb_owner in rows
+        }
 
     async def move_documents(
         self,
@@ -1107,6 +1237,7 @@ class RAGService(AtomOwnerResolverMixin):
 
         Raises:
             ValueError: when the target knowledge base does not exist or is inactive
+            DocumentBusyError: when a document to move is not completed or failed
         """
         # Validate the target knowledge base
         target_kb = await self.get_knowledge_base(target_kb_id)
@@ -1124,14 +1255,38 @@ class RAGService(AtomOwnerResolverMixin):
             raise ValueError("Keine der angegebenen Dokumente gefunden")
 
         # Move only documents that are not already in the target knowledge base
+        to_move = [doc for doc in docs if doc.knowledge_base_id != target_kb_id]
+        busy = sorted(doc.id for doc in to_move if doc.status not in MOVABLE_STATUSES)
+        if busy:
+            raise DocumentBusyError(
+                "Dokument(e) werden noch verarbeitet und können erst danach "
+                f"verschoben werden: {', '.join(map(str, busy))}"
+            )
+        owners = await self.document_owners(to_move)
+        target_owner = target_kb.owner_id
+        target_tier = int(target_kb.default_circle_tier or 0)
+        atom_svc = self._atom_service()
         moved = 0
         moved_atom_ids: list[str] = []
-        for doc in docs:
-            if doc.knowledge_base_id != target_kb_id:
-                doc.knowledge_base_id = target_kb_id
-                moved += 1
-                if doc.atom_id:
-                    moved_atom_ids.append(doc.atom_id)
+        stale_atom_ids: list[str] = []
+        for doc in to_move:
+            doc_owners = owners.get(doc.id, frozenset())
+            doc.knowledge_base_id = target_kb_id
+            moved += 1
+            if doc.atom_id:
+                moved_atom_ids.append(doc.atom_id)
+            if target_owner is not None and move_changes_owner(doc_owners, target_owner):
+                # Filing into another owner's KB hands the document to that owner
+                # (the filters read kb.owner_id); the atom follows (#1460), at the
+                # tier a fresh filing there would get. An atom-less legacy row
+                # still takes the tier. Same owner: the tier stays the owner's
+                # choice. An ownerless target has nobody to hand it to: the atom
+                # owner stays (atom-owner fallback).
+                stale_atom_ids += await atom_svc.rehome_document(
+                    doc.id, atom_id=doc.atom_id, owner_user_id=target_owner,
+                    tier=target_tier,
+                )
+                doc.circle_tier = target_tier
 
         if moved_atom_ids:
             # Access through a KB share follows the document's CURRENT KB at query
@@ -1148,9 +1303,9 @@ class RAGService(AtomOwnerResolverMixin):
 
         if moved > 0:
             await self.db.commit()
-            if moved_atom_ids:
+            if moved_atom_ids or stale_atom_ids:
                 from services.circle_resolver import CircleResolver
-                for atom_id in moved_atom_ids:
+                for atom_id in {*moved_atom_ids, *stale_atom_ids}:
                     CircleResolver.invalidate_for_atom(atom_id)
             logger.info(
                 f"📦 {moved} document(s) moved to KB '{target_kb.name}' (ID={target_kb_id})"
@@ -1160,22 +1315,33 @@ class RAGService(AtomOwnerResolverMixin):
 
     async def delete_knowledge_base(self, kb_id: int) -> bool:
         """Delete a knowledge base with all of its documents"""
-        kb = await self.get_knowledge_base(kb_id)
+        kb = await self.get_knowledge_base(kb_id, with_documents=True)
         if not kb:
             return False
 
-        # Delete the files of all documents
-        for doc in kb.documents:
-            try:
-                if doc.file_path and os.path.exists(doc.file_path):
-                    os.remove(doc.file_path)
-            except Exception as e:
-                logger.warning(f"Could not delete file: {e}")
+        docs = list(kb.documents)
+        file_paths = [(doc.id, doc.file_path) for doc in docs]
 
-        # Delete from the database (documents + chunks go via cascade)
+        # Each document through the document delete path: the DB foreign key on
+        # documents.knowledge_base_id has no ON DELETE action, and the atoms of the
+        # documents (and their grants) do not cascade from the documents (#1461).
+        for doc in docs:
+            await self._delete_document_rows(doc)
+        # chat_uploads.knowledge_base_id has no ON DELETE action either: an upload
+        # indexed into this KB would block the delete. The upload stays (it belongs
+        # to its conversation), it just no longer names a KB.
+        await self.db.execute(
+            text("UPDATE chat_uploads SET knowledge_base_id = NULL WHERE knowledge_base_id = :kb"),
+            {"kb": kb_id},
+        )
         stmt = delete(KnowledgeBase).where(KnowledgeBase.id == kb_id)
         result = await self.db.execute(stmt)
         await self.db.commit()
+
+        # Files only after the commit: a failed transaction must not leave rows
+        # that point at files already gone.
+        for doc_id, path in file_paths:
+            _remove_file(path, doc_id)
 
         logger.info(f"Knowledge base deleted: ID={kb_id}")
         return result.rowcount > 0
@@ -1184,20 +1350,41 @@ class RAGService(AtomOwnerResolverMixin):
     # Statistics
     # ==========================================================================
 
-    async def get_stats(self) -> dict[str, Any]:
-        """Return statistics about the RAG database"""
-        doc_count = await self.db.scalar(
-            select(func.count(Document.id))
-        )
+    async def get_stats(
+        self,
+        *,
+        asker_id: int | None,
+        enforce_circles: bool,
+        knowledge_base_ids: set[int] | None,
+    ) -> dict[str, Any]:
+        """Return statistics about the RAG database.
+
+        ``enforce_circles`` counts only the documents ``asker_id`` may reach (the
+        document filter of the list and the search gate) and their chunks;
+        ``knowledge_base_ids`` (the caller's readable KBs) then replaces the KB
+        count. No defaults on purpose: a caller that forgets the switch must
+        fail, not silently count every user's data. The chunk count is the
+        chunks of the visible documents, not the retrievable chunks (retrieval
+        filters on ``dc.circle_tier``, a mirror of the document tier)."""
+        doc_stmt = select(func.count(Document.id))
+        chunk_stmt = select(func.count(DocumentChunk.id))
+        if enforce_circles:
+            from services.document_search import visible_document_ids
+
+            if knowledge_base_ids is None:
+                raise ValueError("enforce_circles needs the caller's knowledge_base_ids")
+            visible = visible_document_ids(asker_id)
+            doc_stmt = doc_stmt.where(Document.id.in_(visible))
+            chunk_stmt = chunk_stmt.where(DocumentChunk.document_id.in_(visible))
+        doc_count = await self.db.scalar(doc_stmt)
         completed_docs = await self.db.scalar(
-            select(func.count(Document.id)).where(Document.status == DOC_STATUS_COMPLETED)
+            doc_stmt.where(Document.status == DOC_STATUS_COMPLETED)
         )
-        chunk_count = await self.db.scalar(
-            select(func.count(DocumentChunk.id))
-        )
-        kb_count = await self.db.scalar(
-            select(func.count(KnowledgeBase.id))
-        )
+        chunk_count = await self.db.scalar(chunk_stmt)
+        if knowledge_base_ids is not None:
+            kb_count = len(knowledge_base_ids)
+        else:
+            kb_count = await self.db.scalar(select(func.count(KnowledgeBase.id)))
 
         return {
             "document_count": doc_count or 0,

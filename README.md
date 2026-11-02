@@ -139,9 +139,13 @@ Multi-source room-level presence tracking:
 ```bash
 git clone https://github.com/ebongard/renfield.git && cd renfield
 cp .env.example .env                          # configure your settings
-docker compose up -d                          # start the stack
+bin/generate-secrets.sh                       # create secrets/* (compose refuses to start without them)
+bin/stage-backend-build.sh                    # stage satellite source + wakeword models into the backend build context
+docker compose up -d --build                  # build and start the stack
 docker exec -it renfield-ollama ollama pull qwen3:8b  # download LLM
 ```
+
+> Re-run `bin/stage-backend-build.sh` before every backend rebuild after changing `src/satellite/` or `data/wakeword-models/`. The script also seeds `config/mail_accounts.yaml` from the shipped default when it is missing (an existing file is kept).
 
 Open **http://localhost:3000** and start chatting.
 

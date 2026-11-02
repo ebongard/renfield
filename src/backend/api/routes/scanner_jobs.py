@@ -38,6 +38,7 @@ from services.api_rate_limiter import limiter
 from services.database import get_db
 from services.folder_ingest import resolve_folder_ingest_client
 from services.scanner_jobs import (
+    BUTTON_CALLER,
     JOB_ID_PATTERN,
     SCAN_JOB_EVENT_CONTRACT_VERSION,
     TERMINAL_STATUSES,
@@ -52,10 +53,6 @@ router = APIRouter()
 # final only when ``detail.reason`` equals this string — a cross-repo contract,
 # hence a named constant and never an inline literal.
 FOLDER_INGEST_DISABLED_REASON = "folder_ingest_disabled"
-
-#: Caller of a scan started by the blue button on the device.
-#: Must match `BUTTON_CALLER` in renfield-mcp-scanner/button.py.
-BUTTON_CALLER = "button"
 
 #: Marker of a 409 that is FINAL -- the far side may stop retrying.
 #:
@@ -165,7 +162,9 @@ async def scan_job_event(
         )
     if event.status not in TERMINAL_STATUSES:
         return {"status": "ignored", "detail": "not a terminal status"}
-    outcome = await handle_job_event(db, event.model_dump())
+    # The AUTHENTICATED client goes along: a button scan's fixed recipient is
+    # keyed by it (#1390), never by anything in the body.
+    outcome = await handle_job_event(db, event.model_dump(), ingest_client=client)
     if outcome == "unknown_job" and event.caller == BUTTON_CALLER:
         # 🛑 For the BUTTON this refusal is final, and only for it. A completion
         # notice is bound to the `session_id` of the requesting chat
@@ -174,9 +173,9 @@ async def scan_job_event(
         # against an answer that could not change.
         #
         # The DOCUMENT is unaffected: it arrives over the separate ingest
-        # path and was filed long ago. All that remains open is WHO a
-        # completion notice would go to -- a button press names no recipient
-        # (#1390).
+        # path and was filed long ago. Reaching here means this client has no
+        # (valid) `SCANNER_UNATTENDED_RECIPIENT_<CLIENT_ID>` -- the service
+        # already logged a WARNING naming the client (#1390).
         logger.info(
             f"scanner: button scan {event.job_id} ({event.status}) without a "
             f"report address — document is filed, no report is sent"
