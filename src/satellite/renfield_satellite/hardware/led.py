@@ -43,7 +43,7 @@ class LEDPattern(str, Enum):
     ERROR = "error"         # Red blink
     SUCCESS = "success"     # Green flash
     BOOT = "boot"           # Rainbow cycle
-    # Speech was heard but not understood (#1386): two short purple blinks,
+    # Speech was heard but not understood (#1386): two short magenta blinks,
     # then dark until the satellite restores IDLE. A false wake gets no cue.
     NOT_UNDERSTOOD = "not_understood"
 
@@ -87,6 +87,11 @@ COLORS = {
     "white": Color(255, 255, 255),
     "purple": Color(128, 0, 255),
 }
+
+#: The NOT_UNDERSTOOD cue colour. Deliberately NOT in ``COLORS``: every entry
+#: there is selectable as ``led.idle_color`` (purple included), and the cue must
+#: differ from every colour a device can show in any state.
+CUE_COLOR = Color(255, 0, 255)  # magenta
 
 
 class LEDController:
@@ -319,8 +324,8 @@ class LEDController:
                 self._animate_rainbow(frame)
 
             elif pattern == LEDPattern.NOT_UNDERSTOOD:
-                # Two short purple blinks, capped by the (night-dimmed) brightness
-                self.set_all(COLORS["purple"] if cue_blink_on(frame) else COLORS["off"])
+                # Two short magenta blinks, capped by the (night-dimmed) brightness
+                self.set_all(CUE_COLOR if cue_blink_on(frame) else COLORS["off"])
 
             else:
                 self.set_all(COLORS["off"])
@@ -520,9 +525,8 @@ class GPIOLEDController:
             elif pattern == LEDPattern.BOOT:
                 self._animate_rainbow(frame)
             elif pattern == LEDPattern.NOT_UNDERSTOOD:
-                purple = COLORS["purple"]
                 if cue_blink_on(frame):
-                    self._set_color(purple.r, purple.g, purple.b)
+                    self._set_color(CUE_COLOR.r, CUE_COLOR.g, CUE_COLOR.b)
                 else:
                     self._set_color(0, 0, 0)
             else:
@@ -589,8 +593,8 @@ class XVF3800LEDController:
         LEDPattern.ERROR: (3, 0xff0000),      # Solid red
         LEDPattern.SUCCESS: (3, 0x00ff00),    # Solid green
         LEDPattern.BOOT: (2, None),           # Rainbow
-        # The XMOS has no blink effect: solid purple for the cue's duration.
-        LEDPattern.NOT_UNDERSTOOD: (3, 0x8000ff),
+        # The XMOS has no blink effect: solid magenta (CUE_COLOR) for the cue.
+        LEDPattern.NOT_UNDERSTOOD: (3, 0xff00ff),
     }
 
     def __init__(

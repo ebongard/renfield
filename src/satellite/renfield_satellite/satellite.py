@@ -968,8 +968,11 @@ class Satellite:
         if self.camera and self.camera.available:
             self._pending_snapshot = asyncio.create_task(self.camera.capture())
 
-        # Start listening - flag will be cleared in _reset_session when done
-        self._set_state(SatelliteState.LISTENING)
+        # Start listening - flag will be cleared in _reset_session when done.
+        # Reset the turn state BEFORE entering LISTENING: `_set_state` can block
+        # the loop (stopping the LED animation thread joins it for up to 0.5 s)
+        # while the audio thread already streams LISTENING chunks; a reset after
+        # it would wipe their count and their speech verdict (the grace period).
         self._silence_chunks = 0
         self._recorded_chunks = 0
         self._vad_speech_seen = False
@@ -978,6 +981,7 @@ class Satellite:
         # previous turn, minutes ago.
         self.vad.reset()
         self._listening_start = time.time()
+        self._set_state(SatelliteState.LISTENING)
 
         # Notify server
         self._session_id = await self.ws_client.send_wakeword_detected(keyword, confidence)

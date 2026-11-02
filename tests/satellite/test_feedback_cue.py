@@ -24,6 +24,7 @@ from renfield_satellite import satellite as satellite_mod
 from renfield_satellite.hardware import led as led_mod
 from renfield_satellite.hardware.led import (
     COLORS,
+    CUE_COLOR,
     GPIOLEDController,
     LEDController,
     LEDPattern,
@@ -105,6 +106,39 @@ def test_speech_after_the_grace_period_is_reported():
     _feed(sat, [False] * GRACE_CHUNKS + [True] * 3 + [False] * SILENCE_CHUNKS)
     assert "silence" in _end_reasons(sat)
     assert sat._vad_speech_seen is True
+
+
+async def test_speech_during_the_state_change_survives_the_reset():
+    """Review P3: `_set_state(LISTENING)` can block the loop (stopping the LED
+    animation thread joins it for up to 0.5 s) while the audio thread already
+    streams LISTENING chunks. The turn state must be reset BEFORE the state
+    change, or a chunk processed meanwhile loses its count and its speech
+    verdict — exactly the grace-period region the report exists for.
+
+    The real `_set_state` runs; the fake LED controller plays one audio chunk
+    with speech from inside `set_pattern`, as the audio thread would."""
+    sat = _listening_satellite()
+    sat._state = SatelliteState.IDLE
+    sat._wakeword_pending = True
+    sat._last_wakeword = None
+    sat._session_counter = MagicMock()
+    sat.ws_client = MagicMock(is_connected=True)
+    sat.ws_client.send_wakeword_detected = AsyncMock(return_value="s2")
+    sat.camera = None
+    sat.display = None
+    sat._vad_speech_seen = True    # left over from the previous turn
+    sat._recorded_chunks = 99
+
+    class _LedsThatYield:
+        def set_pattern(self, pattern):
+            if pattern == LEDPattern.LISTENING:
+                _feed(sat, [True])
+
+    sat.leds = _LedsThatYield()
+    await sat._on_wakeword_detected("hey_renfield", 0.9)
+    assert sat._state == SatelliteState.LISTENING
+    assert sat._recorded_chunks == 1, "the chunk streamed during the state change counts"
+    assert sat._vad_speech_seen is True, "its speech verdict survives"
 
 
 async def test_a_wake_word_turn_starts_without_speech_seen():
@@ -334,11 +368,33 @@ def test_the_cue_blinks_twice_then_stays_dark():
     assert cue_blink_on(-1) is False
 
 
-def test_the_cue_color_is_used_by_no_state_pattern():
-    """Distinct: purple is not the colour of any state pattern."""
-    used = {(0, 0, 255), (0, 255, 0), (255, 255, 0), (0, 255, 255), (255, 0, 0)}
-    purple = COLORS["purple"]
-    assert (purple.r, purple.g, purple.b) not in used
+def _rgb(c):
+    return (c.r, c.g, c.b)
+
+
+def test_the_cue_colour_is_no_selectable_colour():
+    """Distinct from everything a device can show otherwise. `led.idle_color`
+    may name ANY entry of `COLORS` (`COLORS.get(idle_color, blue)`; purple is
+    one of them, the Esszimmer pod runs yellow), and the state patterns use
+    entries of `COLORS` too — so the cue colour must be outside `COLORS`."""
+    assert _rgb(CUE_COLOR) not in {_rgb(c) for c in COLORS.values()}
+
+
+def test_the_configured_idle_colours_are_all_in_colors():
+    """The invariant above only holds if every idle colour the fleet actually
+    configures goes through `COLORS`: the Ansible template default and the pod
+    ConfigMap (host_vars are gitignored; they can only name `COLORS` entries
+    or fall back to blue)."""
+    import pathlib
+    import re
+
+    repo = pathlib.Path(__file__).resolve().parents[2]
+    template = (repo / "src/satellite/provisioning/templates/satellite.yaml.j2").read_text()
+    pod = (repo / "k8s/satellite-esszimmer.yaml").read_text()
+    names = set(re.findall(r"led_idle_color \| default\('(\w+)'\)", template))
+    names |= set(re.findall(r'idle_color:\s*"(\w+)"', pod))
+    assert names >= {"blue", "yellow"}, names
+    assert names <= set(COLORS), names
 
 
 def _one_frame(ctrl, monkeypatch):
@@ -352,15 +408,14 @@ def _one_frame(ctrl, monkeypatch):
     ctrl._animation_loop()
 
 
-def test_apa102_cue_is_purple_at_the_dimmed_brightness(monkeypatch):
+def test_apa102_cue_is_the_cue_colour_at_the_dimmed_brightness(monkeypatch):
     """Night dimming: the cue is capped by the controller's brightness, which
     the backend lowers at night (`led_config`)."""
     ctrl = LEDController(num_leds=3, brightness=20)
     ctrl.brightness = 5  # a night push
     _one_frame(ctrl, monkeypatch)
-    purple = COLORS["purple"]
     assert [(c.r, c.g, c.b, c.brightness) for c in ctrl._colors] == [
-        (purple.r, purple.g, purple.b, 5),
+        (CUE_COLOR.r, CUE_COLOR.g, CUE_COLOR.b, 5),
     ] * 3
 
 
@@ -381,14 +436,13 @@ def test_apa102_cue_is_dark_between_blinks(monkeypatch):
     assert all((c.r, c.g, c.b) == (0, 0, 0) for c in ctrl._colors)
 
 
-def test_gpio_cue_is_purple_scaled_by_brightness(monkeypatch):
+def test_gpio_cue_is_the_cue_colour_scaled_by_brightness(monkeypatch):
     ctrl = GPIOLEDController(brightness=31)
     ctrl.brightness = 5
     colors: list[tuple[int, int, int]] = []
     monkeypatch.setattr(ctrl, "_set_color", lambda r, g, b: colors.append((r, g, b)))
     _one_frame(ctrl, monkeypatch)
-    purple = COLORS["purple"]
-    assert colors == [(purple.r, purple.g, purple.b)]
+    assert colors == [_rgb(CUE_COLOR)]
 
 
 def test_gpio_cue_is_dark_between_blinks(monkeypatch):
@@ -416,9 +470,10 @@ def test_xvf3800_cue_is_a_distinct_solid_colour():
     ctrl._run = MagicMock()
     ctrl.set_pattern(LEDPattern.NOT_UNDERSTOOD)
     calls = [c.args for c in ctrl._run.call_args_list]
-    assert calls == [("LED_EFFECT", "3"), ("LED_COLOR", "0x8000ff")]
+    hex_cue = (CUE_COLOR.r << 16) | (CUE_COLOR.g << 8) | CUE_COLOR.b
+    assert calls == [("LED_EFFECT", "3"), ("LED_COLOR", f"0x{hex_cue:06x}")]
     others = {color for p, (_e, color) in ctrl._PATTERN_MAP.items() if p != LEDPattern.NOT_UNDERSTOOD}
-    assert 0x8000FF not in others
+    assert hex_cue not in others
 
 
 def test_every_pattern_is_mapped_on_the_xvf3800():
