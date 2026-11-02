@@ -52,7 +52,7 @@ def test_deploy_without_registry_still_refuses():
     assert proc.returncode != 0
     assert "set RENFIELD_REGISTRY" in proc.stderr
     # Refused before the first step, not somewhere inside the run.
-    assert "preflight" not in proc.stdout
+    assert "=== preflight" not in proc.stdout
 
 
 @pytest.mark.parametrize("flag", ["--help", "-h"])
@@ -72,8 +72,56 @@ def test_voice_release_usage_without_tag_needs_no_registry():
     assert "set RENFIELD_REGISTRY" not in proc.stderr
 
 
+@pytest.mark.parametrize("args", [
+    ("v0.4.0", "--help"),
+    ("v0.4.0", "--dry-run", "-h"),
+])
+def test_voice_release_help_in_any_position_starts_nothing(args):
+    """`vX --help` used to start a REAL release; help must win wherever it stands."""
+    proc = _run(_VOICE, *args)
+    assert proc.returncode == 0, proc.stderr
+    assert "Usage:" in proc.stdout
+    assert "=== guardrails" not in proc.stdout
+    assert "RENFIELD_REGISTRY" not in proc.stderr
+
+
+@pytest.mark.parametrize("args", [
+    ("v0.4.0", "--dryrun"),
+    ("v0.4.0", "--dry-run", "extra"),
+    ("--dry-run", "v0.4.0"),
+])
+def test_voice_release_rejects_unknown_arguments(args):
+    proc = _run(_VOICE, *args)
+    assert proc.returncode == 2
+    assert "usage:" in proc.stderr
+    assert "=== guardrails" not in proc.stdout
+
+
+@pytest.mark.parametrize("args", [
+    ("--backend-tag", "x", "--skip-frontend", "--help"),
+    ("--skip-frontend", "--help", "--backend-tag", "x"),
+])
+def test_deploy_help_in_any_position_starts_nothing(args):
+    proc = _run(_DEPLOY, *args)
+    assert proc.returncode == 0, proc.stderr
+    assert "Usage:" in proc.stdout
+    assert "=== preflight" not in proc.stdout
+
+
+@pytest.mark.parametrize("args", [
+    ("--backend-tag", "--help", "--skip-frontend"),
+    ("--skip-frontend", "--backend-tag"),
+    ("--backend-tag", "x", "--skip-frontend", "--bogus"),
+])
+def test_deploy_rejects_a_flag_as_value_and_unknown_arguments(args):
+    """`--backend-tag --help` must not take "--help" as the tag and deploy it."""
+    proc = _run(_DEPLOY, *args)
+    assert proc.returncode == 2
+    assert "=== preflight" not in proc.stdout
+
+
 def test_voice_release_without_registry_still_refuses():
     proc = _run(_VOICE, "v9.9.9", "--dry-run")
     assert proc.returncode != 0
     assert "set RENFIELD_REGISTRY" in proc.stderr
-    assert "guardrails" not in proc.stdout
+    assert "=== guardrails" not in proc.stdout
