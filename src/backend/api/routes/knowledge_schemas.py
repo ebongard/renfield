@@ -4,7 +4,9 @@ Pydantic schemas for Knowledge API
 Extracted from knowledge.py for better maintainability.
 """
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_serializer
 
 # --- Knowledge Base Models ---
 
@@ -52,14 +54,37 @@ class KBPermissionCreate(BaseModel):
 
 
 class KBPermissionResponse(BaseModel):
+    """One entry of a KB's share list -- the contract of the frontend's
+    ``KbShare`` (``src/frontend/src/api/resources/knowledge.ts``,
+    ``isKbLevelShare``).
+
+    ``kind="kb_share"``: a ``kb_shares`` row -- ``permission`` is its level and
+    ``documents`` is ABSENT from the JSON. ``kind="document_grants"``: a person
+    WITHOUT a KB share who still holds grants on documents of this KB (a legacy
+    share the backfill did not convert, #1446) -- ``permission`` is null (no KB
+    level), ``can_delete`` is always false, ``documents`` counts the documents
+    the grants open. Both kinds are revoked the same way
+    (DELETE .../permissions/{id}). ``kind`` is required: every row says which
+    it is.
+    """
+
     id: int
     user_id: int
     username: str
-    permission: str
+    kind: Literal["kb_share", "document_grants"]
+    permission: Literal["read", "write", "admin"] | None
+    documents: int | None = None
     granted_by: int | None
     granted_by_username: str | None
     created_at: str
     can_delete: bool = False
+
+    @model_serializer(mode="wrap")
+    def _omit_documents_on_a_share(self, handler):
+        data = handler(self)
+        if self.documents is None:
+            data.pop("documents", None)
+        return data
 
 
 # --- Document Models ---

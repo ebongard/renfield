@@ -8,7 +8,7 @@ stored nothing at all, so Bob could not even upload.
 
 The share is now a ``kb_shares`` row, evaluated at query time by the document
 filters in ``circle_sql`` and by ``CircleResolver.can_access_atom``. Legacy
-per-document grants are kept and still count until the owner-run backfill.
+per-document grants are kept; they open their documents but give no KB level (#1446).
 
 Real Postgres: every branch here is Postgres SQL.
 """
@@ -216,31 +216,43 @@ class TestRevokeAndLevels:
         assert await ks.get_user_kb_permission_level(db_session, haus, bob.id) == "read"
         assert (await ks.list_kb_shares(db_session, haus))[0]["permission"] == "read"
 
-    async def test_downgrade_takes_effect_over_a_legacy_write_grant(self, db_session, people):
-        """ACL level = MAX(kb_shares, grants) — so share_kb aligns the legacy grants."""
+    async def test_a_legacy_write_grant_does_not_raise_the_share_level(self, db_session, people):
+        """#1446: the KB level is the kb_shares row alone. A write grant on one
+        document neither raises it nor is touched by share_kb."""
         alice, bob, _ = people
         haus = await _kb(db_session, alice.id, "Haus")
         doc = await _add_doc(db_session, haus, "alt")
         await _legacy_grant(db_session, doc, bob.id, alice.id, level="write")
-        assert await ks.get_user_kb_permission_level(db_session, haus, bob.id) == "write"
+        assert await ks.get_user_kb_permission_level(db_session, haus, bob.id) is None
 
         await ks.share_kb(db_session, haus, bob.id, "read", granted_by=alice.id)
 
         assert await ks.get_user_kb_permission_level(db_session, haus, bob.id) == "read"
         assert await ks.get_user_kb_permission_levels(db_session, bob.id) == {haus: "read"}
+        level = (await db_session.execute(text(
+            "SELECT permission_level FROM atom_explicit_grants WHERE atom_id = :a"),
+            {"a": doc.atom_id})).scalar_one()
+        assert level == "write"
 
 
 class TestLegacyGrantsAndBackfill:
-    async def test_legacy_grant_counts_before_the_backfill(self, db_session, people):
+    async def test_legacy_grant_opens_its_document_not_the_kb(self, db_session, people):
+        """#1446: before the backfill a legacy grant opens its document only —
+        no KB in the list, no KB level, in the owner's share list only as
+        document grants."""
         alice, bob, _ = people
         haus = await _kb(db_session, alice.id, "Haus")
         old = await _add_doc(db_session, haus, "alt")
         await _legacy_grant(db_session, old, bob.id, alice.id, level="write")
 
         assert old.id in await _visible_docs(db_session, bob.id)
-        assert await ks.get_user_kb_permission_level(db_session, haus, bob.id) == "write"
-        assert await ks.list_user_shared_kb_ids(db_session, bob.id) == {haus}
-        assert [s["permission"] for s in await ks.list_kb_shares(db_session, haus)] == ["write"]
+        assert await _resolver_sees(db_session, bob.id, old)
+        assert await ks.get_user_kb_permission_level(db_session, haus, bob.id) is None
+        assert await ks.list_user_shared_kb_ids(db_session, bob.id) == set()
+        # In the owner's list only as document grants (no level), so it can be revoked.
+        assert [(s["user_id"], s["kind"], s["permission"], s["documents"])
+                for s in await ks.list_kb_shares(db_session, haus)] == [
+            (bob.id, "document_grants", None, 1)]
         # The gap the backfill closes: a later document is not covered by a
         # legacy-only share.
         later = await _add_doc(db_session, haus, "spaeter")
@@ -290,7 +302,7 @@ class TestLegacyGrantsAndBackfill:
         deleted = await ks.revert_kb_share_backfill(db_session, run.inserted)
         assert deleted == 1
         assert (await db_session.execute(text("SELECT COUNT(*) FROM kb_shares"))).scalar() == 1
-        # Back to legacy-only: the grants still give access to the old documents.
+        # Back to legacy-only: the grants still open the old documents (not the KB).
         assert {d1.id, d2.id} <= await _visible_docs(db_session, bob.id)
         assert later.id not in await _visible_docs(db_session, bob.id)
 

@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import TextualSelect
 
 from models.database import Document
-from services.circle_sql import document_chunks_circles_filter
+from services.circle_sql import documents_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
 from utils.log_safety import error_text_without_content
@@ -167,8 +167,8 @@ _VISIBLE_FROM = "FROM documents d LEFT JOIN knowledge_bases kb ON d.knowledge_ba
 def _document_reach_clause(asker_id: int | None) -> tuple[str, dict[str, Any]]:
     """The circle filter for DOCUMENT rows (owner / public / grant / tier reach /
     KB share), over ``_VISIBLE_FROM``. ``None`` reduces to the public rung."""
-    return document_chunks_circles_filter(
-        asker_id if asker_id is not None else 0, chunk_alias="d", doc_alias="d", kb_alias="kb"
+    return documents_circles_filter(
+        asker_id if asker_id is not None else 0, doc_alias="d", kb_alias="kb"
     )
 
 

@@ -126,10 +126,16 @@ export default function KbShareDialog({ kb, isOpen, onClose }: KbShareDialogProp
                   <span className="grow text-sm font-medium text-gray-900 dark:text-white">
                     {share.username || t('knowledge.shares.unnamedUser', { id: share.user_id })}
                   </span>
-                  {!isKbLevelShare(share) ? (
+                  {share.kind === 'document_grants' ? (
                     // Only per-document grants: no KB level, no switch — read-only.
                     <span className="text-xs text-gray-500 dark:text-gray-400">
                       {t('knowledge.shares.documentGrants', { count: share.documents ?? 0 })}
+                    </span>
+                  ) : !isKbLevelShare(share) ? (
+                    // A KB share whose stored level the backend does not know: it
+                    // grants nothing; shown neutrally, revocable, no switch.
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {t('knowledge.shares.unknownLevel')}
                     </span>
                   ) : (
                   <>

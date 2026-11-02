@@ -378,7 +378,8 @@ class KnowledgeBase(Base):
     # evaluated at query time, so it covers documents added to the KB later.
     # Per-document AtomExplicitGrant rows written by older share code (and by
     # pc20260420_circles_v1_schema.py from the dropped `kb_permissions`) are
-    # kept and still count — see services/kb_shares_service.py.
+    # kept: they open their documents, but give NO KB level (#1446) — see
+    # services/kb_shares_service.py.
 
 
 class Project(Base):
@@ -1357,9 +1358,10 @@ class KBShare(Base):
 
     Before this table existed a share was ONLY its per-document
     ``atom_explicit_grants`` rows, so sharing an empty KB stored nothing and a
-    later document was never covered. Those rows are kept and still count
-    (``kb_shares_service``); ``bin/backfill_kb_shares.py`` derives the missing
-    ``kb_shares`` rows from them.
+    later document was never covered. Those rows are kept and still open their
+    documents, but the KB level comes ONLY from this table (#1446);
+    ``bin/backfill_kb_shares.py`` derives the missing ``kb_shares`` rows from them
+    (never for pairs that look moved — those need the owner).
     """
     __tablename__ = "kb_shares"
 

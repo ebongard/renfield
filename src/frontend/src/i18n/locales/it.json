@@ -731,6 +731,7 @@
       "addButton": "Condividi",
       "documentGrants_one": "Accesso a {{count}} singolo documento",
       "documentGrants_other": "Accesso a {{count}} singoli documenti",
+      "unknownLevel": "livello sconosciuto",
       "unnamedUser": "Persona #{{id}}",
       "userIdPlaceholder": "ID utente",
       "pickUser": "Scegli una persona …"

@@ -129,10 +129,11 @@ async def check_kb_access(
     2. kb.all permission → full access
     3. Owner → full access
     4. Public KB → read access for users with kb.shared
-    5. KB share (kb_shares / legacy grants) → read and write at that level;
-       "delete" (documents) ONLY with the share's `can_delete` switch, whatever
-       the level; "delete_kb" (the KB itself) never through a share — owner and
-       kb.all only; an unknown action is denied
+    5. KB share (the kb_shares row only; a document grant does not count,
+       #1446) → read and write at that level; "delete" (documents) ONLY with
+       the share's `can_delete` switch, whatever the level; "delete_kb" (the
+       KB itself) never through a share — owner and kb.all only; an unknown
+       action is denied
     6. kb.own permission → access to own KBs only
     """
     # Auth disabled = full access
@@ -174,7 +175,7 @@ async def check_kb_access(
     if required_action == "delete_kb":
         return False
 
-    # KB share: kb_shares row or legacy per-document grants (MAX level).
+    # KB share: the kb_shares row only (a document grant opens its document, #1446).
     required_level = _SHARE_LEVELS.get(required_action)
     if required_level is None:
         return False  # an unknown action is denied, never read as "read"
@@ -274,7 +275,7 @@ async def get_user_kb_permission(
     if kb.owner_id == user.id:
         return "owner"
 
-    # KB share: kb_shares row or legacy per-document grants (MAX level).
+    # KB share: the kb_shares row only (a document grant opens its document, #1446).
     from services.kb_shares_service import get_user_kb_permission_level
     level = await get_user_kb_permission_level(db, kb.id, user.id)
     if level:
@@ -1700,8 +1701,10 @@ async def list_kb_permissions(
     """
     List all permissions for a knowledge base. Owner or admin only.
 
-    One row per grantee: the kb_shares row merged with any legacy
-    per-document grants (MAX level), see kb_shares_service.list_kb_shares.
+    One row per ``kb_shares`` grantee (``kind="kb_share"``), plus one per person
+    who holds only grants on documents of the KB (``kind="document_grants"``, no
+    KB level, a document count; #1446) -- they still read those documents, so the
+    owner must see and be able to revoke them (kb_shares_service.list_kb_shares).
     The `id` field in the response is the granted_to_user_id (same thing
     the revoke endpoint's {permission_id} path param now accepts).
     """
@@ -1740,7 +1743,9 @@ async def list_kb_permissions(
             id=s["user_id"],
             user_id=s["user_id"],
             username=perm_user.username if perm_user else "Unknown",
+            kind=s["kind"],
             permission=s["permission"],
+            documents=s["documents"],
             granted_by=s["granted_by"],
             granted_by_username=granter.username if granter else None,
             created_at=s["granted_at"].isoformat() if s["granted_at"] else "",
@@ -1820,7 +1825,7 @@ async def share_knowledge_base(
         can_delete=data.can_delete,
     )
 
-    # Fetch the aggregated share row to echo back
+    # Fetch the share row to echo back
     shares = await list_kb_shares(db, kb_id)
     share_row = next((s for s in shares if s["user_id"] == data.user_id), None)
     granted_at = share_row["granted_at"].isoformat() if share_row and share_row["granted_at"] else ""
@@ -1829,6 +1834,7 @@ async def share_knowledge_base(
         id=data.user_id,
         user_id=data.user_id,
         username=target_user.username,
+        kind="kb_share",
         permission=data.permission,
         granted_by=user.id if user else None,
         granted_by_username=user.username if user else None,
@@ -1849,7 +1855,10 @@ async def revoke_kb_permission(
     Revoke a user's access to a knowledge base. Owner or admin only.
 
     Lane C: `permission_id` is now the `granted_to_user_id` (matches the
-    `id` field returned by the list endpoint).
+    `id` field returned by the list endpoint). Revokes both kinds of entry: the
+    kb_shares row and the person's grants on the KB's documents. A
+    ``document_grants`` entry has no delete switch, so the switch rule does not
+    apply; who may revoke is the same as for a share.
     """
     kb = await rag.get_knowledge_base(kb_id)
     if not kb:

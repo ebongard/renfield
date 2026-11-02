@@ -12,6 +12,7 @@ import { screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { server } from '../mocks/server';
 import { renderWithProviders } from '../test-utils';
 import KbShareDialog from '../../../../src/frontend/src/components/knowledge/KbShareDialog';
+import { isKbLevelShare } from '../../../../src/frontend/src/api/resources/knowledge';
 import type { KnowledgeBaseRow, KbShare } from '../../../../src/frontend/src/api/resources/knowledge';
 import { TEST_CONFIG } from '../config';
 
@@ -208,5 +209,66 @@ describe('KbShareDialog', () => {
     expect(
       await screen.findByText('Only the owner may change a share that carries the right to delete'),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * The rows exactly as `GET /bases/{id}/permissions` emits them (backend
+ * `KBPermissionResponse`, pinned by `test_owner_sees_and_revokes_a_document_grant_only_person`
+ * in tests/backend/test_kb_document_grant_scope_pg.py): `kind` on EVERY row,
+ * `documents` only on `document_grants`, `permission: null` there.
+ */
+const BACKEND_KB_SHARE: KbShare = {
+  id: 2, user_id: 2, username: 'bob', kind: 'kb_share', permission: 'write',
+  granted_by: 1, granted_by_username: 'alice', created_at: '2026-11-01T00:00:00', can_delete: false,
+};
+const BACKEND_DOCUMENT_GRANTS: KbShare = {
+  id: 4, user_id: 4, username: 'dave', kind: 'document_grants', permission: null, documents: 2,
+  granted_by: 1, granted_by_username: 'alice', created_at: '2026-10-01T00:00:00', can_delete: false,
+};
+
+describe('KbShareDialog against the backend row shape', () => {
+  beforeEach(() => {
+    server.resetHandlers();
+  });
+
+  it('tells the two kinds apart with isKbLevelShare', () => {
+    expect(isKbLevelShare(BACKEND_KB_SHARE)).toBe(true);
+    expect(isKbLevelShare(BACKEND_DOCUMENT_GRANTS)).toBe(false);
+  });
+
+  it('renders a kb_share row as before and a document_grants row without level or switch, revocable', async () => {
+    const captured = wire([BACKEND_KB_SHARE, BACKEND_DOCUMENT_GRANTS]);
+    renderWithProviders(<KbShareDialog kb={OWNER_KB} isOpen onClose={() => {}} />);
+    await screen.findByText('dave', { selector: 'span' });
+
+    // kb_share: level select and the owner's switch.
+    expect(screen.getByLabelText('Stufe für bob')).toHaveValue('write');
+    expect(within(rowOf('bob')).getByRole('checkbox', { name: 'darf löschen' })).not.toBeChecked();
+
+    // document_grants: the count, no level, no switch, a revoke button.
+    const dave = rowOf('dave');
+    expect(within(dave).getByText('Zugriff auf 2 einzelne Dokumente')).toBeInTheDocument();
+    expect(within(dave).queryByRole('combobox')).toBeNull();
+    expect(within(dave).queryByRole('checkbox')).toBeNull();
+    fireEvent.click(within(dave).getByRole('button', { name: 'Freigabe für dave entziehen' }));
+    await waitFor(() => expect(captured.deletes).toEqual(['4']));
+  });
+
+  it('shows a kb_share with a level the backend does not know neutrally, revocable', async () => {
+    // The backend serves an unknown stored level as `permission: null` on a
+    // kb_share row (no `documents`): it grants nothing.
+    const odd: KbShare = { ...BACKEND_KB_SHARE, id: 3, user_id: 3, username: 'carol', permission: null };
+    const captured = wire([odd]);
+    renderWithProviders(<KbShareDialog kb={OWNER_KB} isOpen onClose={() => {}} />);
+    await screen.findByText('carol', { selector: 'span' });
+
+    const row = rowOf('carol');
+    expect(within(row).getByText('unbekannte Stufe')).toBeInTheDocument();
+    expect(within(row).queryByText(/einzelne Dokument/)).toBeNull();
+    expect(within(row).queryByRole('combobox')).toBeNull();
+    expect(within(row).queryByRole('checkbox')).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: 'Freigabe für carol entziehen' }));
+    await waitFor(() => expect(captured.deletes).toEqual(['3']));
   });
 });
