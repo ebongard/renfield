@@ -515,6 +515,9 @@ async def list_documents(
     """List documents -- by recency, OR (with ``q``) as a ranked hybrid search
     (name + layer-A facts + content) that also finds documents beyond the
     100-most-recent window."""
+    # Without a KB id no KB read check scopes the recency list, so (auth on, no
+    # kb.all) it gets the per-document reach filter the `q` search gate applies.
+    recency_circles = False
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -530,6 +533,8 @@ async def list_documents(
             # If no KB filter, only users with kb.own+ can list
             elif not has_permission(user_perms, Permission.KB_OWN):
                 raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
+            else:
+                recency_circles = True
     if q and q.strip():
         from services.document_search import search_documents
         documents = await search_documents(
@@ -554,6 +559,8 @@ async def list_documents(
             offset=offset,
             sort_by=sort,
             order=order,
+            asker_id=(user.id if user else None),
+            enforce_circles=recency_circles,
         )
 
     # Batch-compute Simba-uploaded membership for the page (one query) so the

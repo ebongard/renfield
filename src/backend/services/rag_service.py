@@ -911,16 +911,29 @@ class RAGService(AtomOwnerResolverMixin):
         offset: int = 0,
         sort_by: str | None = None,
         order: str = "desc",
+        *,
+        asker_id: int | None,
+        enforce_circles: bool,
     ) -> list[Document]:
         """List documents.
 
         ``sort_by`` ∈ {name, imported, document_date} orders the FULL result set
         before paginating (so the sort is correct across pages, not just the page).
         Default (None) = recency (created_at desc). NULL document_date sorts last.
+
+        ``enforce_circles`` keeps only the documents ``asker_id`` may reach (the
+        same document filter as the ``q`` search gate), in SQL and before the
+        LIMIT/OFFSET. Both have NO default on purpose: a listing that forgets the
+        switch must fail, not silently return every user's documents.
         """
         # Hide superseded documents (a KB near-dup loser resolved as 'supersede',
         # #1170) — recoverable soft-delete, excluded from the list.
         stmt = select(Document).where(Document.superseded_by_document_id.is_(None))
+
+        if enforce_circles:
+            from services.document_search import visible_document_ids
+
+            stmt = stmt.where(Document.id.in_(visible_document_ids(asker_id)))
 
         if knowledge_base_id:
             stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
