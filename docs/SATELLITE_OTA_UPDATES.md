@@ -189,11 +189,27 @@ Drei Regeln sichern das ab:
    `update_progress`-, `update_complete`- und `update_failed`-Meldung zurück.
    Eine Meldung mit **fremder** Kennung ist ein Nachzügler eines früheren Laufs
    und wird verworfen — sie kann einen inzwischen neu gestarteten Lauf nicht
-   mehr beenden. Eine Kennung ohne bekannten Lauf (etwa nach einem
-   Backend-Neustart) wird ebenso verworfen. Eine Meldung **ohne** Kennung stammt
-   von älterer Firmware und wird wie bisher angenommen, denn über genau diesen
-   Weg aktualisiert sich die Flotte; für solche Geräte bleibt die alte Grenze
-   bestehen (`test_a_stray_terminal_frame_without_run_id_still_ends_the_current_run`).
+   mehr beenden. Eine Meldung **ohne** Kennung stammt von älterer Firmware und
+   wird wie bisher angenommen, denn über genau diesen Weg aktualisiert sich die
+   Flotte; für solche Geräte bleibt die alte Grenze bestehen
+   (`test_a_stray_terminal_frame_without_run_id_still_ends_the_current_run`).
+
+   **Ein WS-Neuaufbau behält den Lauf.** Der Satellitenprozess behält seine
+   Kennung über eine neue Verbindung hinweg; das Backend trägt deshalb Kennung
+   und Laufzustand (Status, Stufe, Fortschritt, Fehler, Startzeit) auf den neuen
+   Eintrag über — beim schnellen Neuaufbau vom alten Eintrag, sonst aus dem beim
+   Abmelden bzw. bei der Heartbeat-Räumung geparkten Zustand. Kommt der Satellit
+   während eines laufenden Updates mit einer **anderen** Version zurück, war die
+   Installation erfolgreich und der Neustart hat die Endmeldung verschluckt: der
+   Lauf wird als `completed` geschlossen. **Ein Backend-Neustart verliert den
+   Lauf dagegen bewusst**: eine danach eintreffende Kennung gehört zu keinem
+   bekannten Lauf und wird verworfen.
+
+   Der Satellit setzt die Kennung erst, wenn er den Lauf tatsächlich
+   angenommen hat. Eine Anfrage, die auf einen noch laufenden Lauf trifft,
+   lehnt er unter IHRER Kennung mit `stage: "idle"` und
+   `error: "update already in progress"` ab — nicht mit Stufe und Fehler des
+   laufenden Laufs.
 3. **Zeitgrenze als Auffangnetz.** Meldet ein Lauf innerhalb von
    `SATELLITE_UPDATE_TIMEOUT` (900 s) keinen Endzustand — etwa weil die
    Verbindung mitten im Install abriss —, beendet ihn der Kehraus als
@@ -284,7 +300,14 @@ Backend bringt sie an EINER Stelle in den erwarteten Typ und kappt Texte
 (`device_text`/`device_int`/… in `satellite_manager`, #1279) — ebenso die Felder
 von `register` und `heartbeat`. Lässt sich ein Eintrag der Satellitenliste
 trotzdem nicht bauen, erscheint er mit Platzhalterwerten und `corrupt: true`,
-statt `GET /api/satellites` für die ganze Flotte scheitern zu lassen.
+statt `GET /api/satellites` für die ganze Flotte scheitern zu lassen. Die
+Platzhalter sehen nie frisch aus: Laufzeit und Heartbeat-Alter stehen auf `-1`
+(„unbekannt“, die Admin-Seite zeigt „—“ und ein Abzeichen „Daten unlesbar“),
+die Zeitstempel sind die eigenen des Backends. Nur ein fehlerhafter WERT
+(`ValidationError`, `TypeError`, `ValueError`, `KeyError`) wird so abgefangen;
+ein Fehler im Backend selbst bleibt ein ehrlicher 500. Eine `satellite_id`, die
+keine nichtleere Zeichenkette von höchstens 128 Zeichen ist, weist schon die
+`register`-Behandlung ab (`invalid-satellite-id`).
 
 ## Manuelles Deployment
 
