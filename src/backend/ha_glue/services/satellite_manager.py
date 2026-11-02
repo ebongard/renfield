@@ -26,6 +26,44 @@ from loguru import logger
 from ha_glue.services.opus_transport import frame_packets
 from utils.config import settings
 
+# ---------------------------------------------------------------------------
+# Device-supplied values (#1279)
+#
+# Every field below arrives as JSON from a LAN device and ends up in the
+# roster, from which the ADMIN REST models are built. Pydantic v2 does not
+# coerce a dict into `str` or a string into `int`, so ONE wrong type used to
+# surface as a ValidationError at response-build time. These helpers are the
+# single place where such a value is brought into the declared type: a value
+# of the wrong type is replaced by the field's default, never passed through.
+# ---------------------------------------------------------------------------
+
+MAX_DEVICE_TEXT_CHARS = 64
+
+
+def device_text(value: object, cap: int = MAX_DEVICE_TEXT_CHARS) -> str | None:
+    """Coerce any device-supplied value into a bounded string, or None."""
+    if value is None or value == "":
+        return None
+    text = value if isinstance(value, str) else str(value)
+    return text[:cap]
+
+
+def device_int(value: object, default: int) -> int:
+    """An int, or the default. `bool` is an int subclass and is refused."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+def device_bool(value: object, default: bool) -> bool:
+    """A real JSON boolean, or the default."""
+    return value if isinstance(value, bool) else default
+
+
+def device_float(value: object) -> float | None:
+    """A number, or None. `bool` is refused, as in `device_int`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
 
 class SatelliteState(str, Enum):
     """Satellite operational states"""
@@ -109,6 +147,19 @@ class SatelliteInfo:
     # cleared the moment it reaches a terminal state, so `cleanup_stale` can
     # tell a genuinely running update from one that never terminated (#1209).
     update_started_at: float | None = None
+    # The id the backend minted for the current run and sent in the
+    # `update_request` (#1280). A satellite that knows the protocol echoes it in
+    # every `update_progress` / `update_complete` / `update_failed`; a frame
+    # carrying a DIFFERENT id is a straggler from an earlier run and is dropped.
+    # Kept after the run ends, so a late frame of THIS run still matches: a late
+    # `update_progress` then hits the terminal-state guard in
+    # `apply_update_progress`, while `update_complete` / `update_failed` are
+    # recorded as the run's real outcome. Survives a WS reconnect (see
+    # `_RUN_STATE_FIELDS`); a backend restart loses it by design.
+    update_run_id: str | None = None
+    # The version the current run installs. Only a satellite that comes back
+    # on exactly THIS version after a reconnect has finished the run.
+    update_target_version: str | None = None
 
 
 @dataclass
@@ -152,6 +203,9 @@ class SatelliteManager:
 
     def __init__(self):
         self.satellites: dict[str, SatelliteInfo] = {}
+        # OTA run state of satellites that disconnected with a run on record,
+        # kept until they register again (see `_RUN_STATE_FIELDS`).
+        self._parked_update_runs: dict[str, dict[str, Any]] = {}
         self.sessions: dict[str, SatelliteSession] = {}
         self._lock = asyncio.Lock()
         # On-demand camera snapshot requests: request_id → Future[image_b64|None].
@@ -219,19 +273,33 @@ class SatelliteManager:
                     pass  # Connection may already be closed
 
             # Create capability object
+            # Typed field by field (#1279): the dict is the device's JSON.
+            if not isinstance(capabilities, dict):
+                capabilities = {}
             caps = SatelliteCapabilities(
-                local_wakeword=capabilities.get("local_wakeword", True),
-                speaker=capabilities.get("speaker", True),
-                led_count=capabilities.get("led_count", 3),
-                button=capabilities.get("button", True),
-                led_type=capabilities.get("led_type"),
-                mic_count=capabilities.get("mic_count", 1),
-                has_camera=capabilities.get("has_camera", False),
-                has_display=capabilities.get("has_display", False),
-                has_enviro=capabilities.get("has_enviro", False),
+                local_wakeword=device_bool(capabilities.get("local_wakeword"), True),
+                speaker=device_bool(capabilities.get("speaker"), True),
+                led_count=device_int(capabilities.get("led_count"), 3),
+                button=device_bool(capabilities.get("button"), True),
+                led_type=device_text(capabilities.get("led_type")),
+                mic_count=device_int(capabilities.get("mic_count"), 1),
+                has_camera=device_bool(capabilities.get("has_camera"), False),
+                has_display=device_bool(capabilities.get("has_display"), False),
+                has_enviro=device_bool(capabilities.get("has_enviro"), False),
             )
 
             # Register satellite
+            # The OTA run outlives the connection (#1280 review): the satellite
+            # process keeps its run id across a WS reconnect, so a fresh entry
+            # without it would drop every remaining frame of the run, the final
+            # one included, and the admin would never learn the outcome.
+            old_sat = self.satellites.get(satellite_id)
+            carried_run = (
+                self._run_state_of(old_sat) if old_sat is not None
+                else self._parked_update_runs.pop(satellite_id, None)
+            )
+            self._parked_update_runs.pop(satellite_id, None)
+
             self.satellites[satellite_id] = SatelliteInfo(
                 satellite_id=satellite_id,
                 room=room,
@@ -241,6 +309,10 @@ class SatelliteManager:
                 version=version,
                 authenticated=authenticated,
             )
+            if carried_run:
+                self._restore_run_state(
+                    self.satellites[satellite_id], carried_run, version
+                )
 
             logger.info(f"✅ Satellite registered: {satellite_id} in {room} (v{version})")
             logger.info(f"   Capabilities: wakeword={caps.local_wakeword}, speaker={caps.speaker}, leds={caps.led_count}")
@@ -285,6 +357,9 @@ class SatelliteManager:
                 await self._end_session_internal(sat.current_session_id)
 
             del self.satellites[satellite_id]
+            # A run on record outlives the connection; `register` picks it up.
+            if sat.update_status != UpdateStatus.NONE:
+                self._parked_update_runs[satellite_id] = self._run_state_of(sat)
             logger.info(f"👋 Satellite unregistered: {satellite_id}")
 
             # Push liveness so the kiosk drops the departed satellite.
@@ -821,29 +896,33 @@ class SatelliteManager:
             sat = self.satellites[satellite_id]
             sat.last_heartbeat = time.time()
 
-            # Update version if provided
+            # Update version if provided — bounded like every other
+            # device-supplied field (#1279).
             if version and version != "unknown":
-                sat.version = version
+                self.set_version(satellite_id, version)
 
-            # Update metrics if provided
-            if metrics:
+            # Update metrics if provided. Each value is brought into the type
+            # the response model declares; a wrong type becomes the default.
+            if isinstance(metrics, dict) and metrics:
+                is_speech = metrics.get("is_speech")
+                last_wakeword = metrics.get("last_wakeword")
                 sat.metrics = {
-                    "audio_rms": metrics.get("audio_rms"),
-                    "audio_db": metrics.get("audio_db"),
-                    "is_speech": metrics.get("is_speech"),
-                    "cpu_percent": metrics.get("cpu_percent"),
-                    "memory_percent": metrics.get("memory_percent"),
-                    "temperature": metrics.get("temperature"),
-                    "last_wakeword": metrics.get("last_wakeword"),
-                    "session_count_1h": metrics.get("session_count_1h", 0),
-                    "error_count_1h": metrics.get("error_count_1h", 0),
+                    "audio_rms": device_float(metrics.get("audio_rms")),
+                    "audio_db": device_float(metrics.get("audio_db")),
+                    "is_speech": is_speech if isinstance(is_speech, bool) else None,
+                    "cpu_percent": device_float(metrics.get("cpu_percent")),
+                    "memory_percent": device_float(metrics.get("memory_percent")),
+                    "temperature": device_float(metrics.get("temperature")),
+                    "last_wakeword": last_wakeword if isinstance(last_wakeword, dict) else None,
+                    "session_count_1h": device_int(metrics.get("session_count_1h"), 0),
+                    "error_count_1h": device_int(metrics.get("error_count_1h"), 0),
                 }
 
                 # Track history
                 self._add_event(satellite_id, "heartbeat", {
                     "state": sat.state.value,
-                    "audio_rms": metrics.get("audio_rms"),
-                    "is_speech": metrics.get("is_speech"),
+                    "audio_rms": sat.metrics["audio_rms"],
+                    "is_speech": sat.metrics["is_speech"],
                 })
 
     def _add_event(self, satellite_id: str, event_type: str, details: dict[str, Any] = None):
@@ -967,9 +1046,7 @@ class SatelliteManager:
             # guard) turns ONE bad entry into a 500 for the whole admin list.
             sat.update_status = status
             sat.update_stage = self._bounded_text(stage, self._MAX_UPDATE_STAGE_CHARS)
-            sat.update_progress = (
-                progress if isinstance(progress, int) and not isinstance(progress, bool) else 0
-            )
+            sat.update_progress = device_int(progress, 0)
             sat.update_error = self._bounded_error(error)
             # Stamp the start of a run, and clear it on any terminal state. The
             # first IN_PROGRESS write wins, so progress frames during a run do
@@ -1004,13 +1081,7 @@ class SatelliteManager:
     _MAX_UPDATE_STAGE_CHARS = 64
     _MAX_VERSION_CHARS = 64
 
-    @staticmethod
-    def _bounded_text(value: object, cap: int) -> str | None:
-        """Coerce any device-supplied value into a bounded string, or None."""
-        if value is None or value == "":
-            return None
-        text = value if isinstance(value, str) else str(value)
-        return text[:cap]
+    _bounded_text = staticmethod(device_text)
 
     @classmethod
     def _bounded_error(cls, message: object) -> str | None:
@@ -1022,10 +1093,7 @@ class SatelliteManager:
         and `list_satellites` has no per-entry guard, so ONE bad entry 500s the
         whole admin list.
         """
-        if message is None or message == "":
-            return None
-        text = message if isinstance(message, str) else str(message)
-        return text[:cls._MAX_UPDATE_ERROR_CHARS]
+        return device_text(message, cls._MAX_UPDATE_ERROR_CHARS)
 
     def apply_update_progress(
         self, satellite_id: str, stage: str, progress: int, message: str = ""
@@ -1065,7 +1133,7 @@ class SatelliteManager:
 
         # The frame is JSON from a LAN device; neither field is trustworthy.
         stage = stage if isinstance(stage, str) else str(stage)
-        progress = progress if isinstance(progress, int) and not isinstance(progress, bool) else 0
+        progress = device_int(progress, 0)
 
         terminal = self._TERMINAL_UPDATE_STAGES.get(stage)
         if terminal is not None:
@@ -1083,6 +1151,97 @@ class SatelliteManager:
         self.set_update_status(
             satellite_id, UpdateStatus.IN_PROGRESS, stage=stage, progress=progress
         )
+
+    # The run state a WS reconnect carries over (#1280 review). Without it the
+    # new roster entry starts with no run id, and every remaining frame of the
+    # run — the final one included — is dropped as a straggler.
+    _RUN_STATE_FIELDS = (
+        "update_run_id",
+        "update_status",
+        "update_stage",
+        "update_progress",
+        "update_error",
+        "update_started_at",
+        "update_target_version",
+    )
+
+    @classmethod
+    def _run_state_of(cls, sat: SatelliteInfo) -> dict[str, Any] | None:
+        """Snapshot of a satellite's OTA run, or None when there is none."""
+        if sat.update_status == UpdateStatus.NONE:
+            return None
+        state = {name: getattr(sat, name) for name in cls._RUN_STATE_FIELDS}
+        state["version"] = sat.version
+        return state
+
+    def _restore_run_state(
+        self, sat: SatelliteInfo, state: dict[str, Any], new_version: str
+    ) -> None:
+        """Put a carried-over run onto a freshly registered entry.
+
+        A run still IN_PROGRESS whose satellite comes back on the run's TARGET
+        version was installed: the restart into the new code swallowed the
+        final frames. It is closed as COMPLETED — left running, the stuck-run
+        sweep would fail a successful update 15 minutes later. On any other
+        version (the old one after a WS blip, or a third one from a manual
+        reinstall) the run stays IN_PROGRESS; the sweep remains the net for a
+        run that never ends.
+        """
+        for name in self._RUN_STATE_FIELDS:
+            setattr(sat, name, state[name])
+        if (
+            sat.update_status == UpdateStatus.IN_PROGRESS
+            and sat.update_target_version is not None
+            and new_version == sat.update_target_version
+        ):
+            self.set_update_status(
+                sat.satellite_id, UpdateStatus.COMPLETED, stage="completed", progress=100
+            )
+
+    def begin_update_run(
+        self, satellite_id: str, target_version: str | None = None
+    ) -> str | None:
+        """Start a new OTA run: mint its id and mark it IN_PROGRESS (#1280).
+
+        `target_version` is the version the run installs; it decides whether a
+        satellite that reconnects mid-run has finished it.
+
+        Returns the id to send in the `update_request`, or None when the
+        satellite is not registered.
+        """
+        sat = self.satellites.get(satellite_id)
+        if sat is None:
+            return None
+        sat.update_run_id = uuid.uuid4().hex
+        sat.update_target_version = target_version
+        self.set_update_status(
+            satellite_id, UpdateStatus.IN_PROGRESS, stage="initiating", progress=0
+        )
+        return sat.update_run_id
+
+    def accepts_update_frame(self, satellite_id: str, run_id: object) -> bool:
+        """Whether an OTA frame belongs to the run currently on record (#1280).
+
+        * No `run_id` in the frame: a satellite on firmware that predates the
+          id. Accepted, exactly as before — the fleet updates over this very
+          path, so refusing it would strand every old device.
+        * A `run_id`: accepted only when it is the id of the run on record. A
+          different one is a straggler from an earlier run; with no run on
+          record (e.g. the backend restarted) it belongs to a run this process
+          never started. Both are dropped.
+        """
+        if run_id is None:
+            return True
+        sat = self.satellites.get(satellite_id)
+        if sat is None:
+            return False
+        if sat.update_run_id is not None and run_id == sat.update_run_id:
+            return True
+        logger.info(
+            f"Stray OTA frame from {satellite_id} discarded "
+            f"(run {device_text(run_id)!r}, current {sat.update_run_id!r})"
+        )
+        return False
 
     def set_version(self, satellite_id: str, version: object) -> None:
         """Store a device-reported version, bounded.
@@ -1310,6 +1469,8 @@ class SatelliteManager:
                     await self._end_session_internal(sat.current_session_id, reason="disconnect")
                 room, room_id, websocket = sat.room, sat.room_id, sat.websocket
                 del self.satellites[sat_id]
+                if sat.update_status != UpdateStatus.NONE:
+                    self._parked_update_runs[sat_id] = self._run_state_of(sat)
                 # Push liveness so the kiosk drops a satellite that timed out.
                 await self._broadcast_satellite_liveness(
                     sat_id, room, room_id, online=False

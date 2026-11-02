@@ -24,6 +24,7 @@ from ha_glue.services.opus_transport import (
     BinaryFrameError,
     parse_audio_frame,
 )
+from ha_glue.services.satellite_manager import MAX_DEVICE_TEXT_CHARS, device_text
 from ha_glue.services.voice_empty_turn import (
     SATELLITE_VAD_FLOOR_SECONDS,
     feedback_cue_for,
@@ -330,6 +331,59 @@ def _rate_verdict(raw: dict, rate_key: str, satellite_id: str | None, rate_limit
 
     rate_limiter.record_violation(rate_key, reason)
     return False, reason
+
+
+def _belongs_to_current_run(manager, satellite_id: str, data: dict) -> bool:
+    """Gate for the three OTA frames (`update_progress`, `update_complete`,
+    `update_failed`), so all of them apply the same run-id rule (#1280).
+
+    The rule itself lives in `SatelliteManager.accepts_update_frame`; a frame
+    without `run_id` (older firmware) passes as before.
+    """
+    return manager.accepts_update_frame(satellite_id, data.get("run_id"))
+
+
+MAX_SATELLITE_ID_CHARS = 128
+
+
+def _register_satellite_id(data: dict) -> str | None:
+    """The satellite id from a register frame, or None when it is unusable.
+
+    Absent → ``"unknown"``, as before. Anything that is not a non-empty string
+    of bounded length is refused rather than coerced: `str(5)` would make
+    ``"5"`` match a handshake identity the device never presented.
+    """
+    satellite_id = data.get("satellite_id", "unknown")
+    if not isinstance(satellite_id, str) or not satellite_id:
+        return None
+    if len(satellite_id) > MAX_SATELLITE_ID_CHARS:
+        return None
+    return satellite_id
+
+
+def _register_fields(data: dict) -> tuple[str, dict, str, str]:
+    """Room, capabilities, language and version from a register frame, typed.
+
+    The frame is a LAN device's JSON (#1279). Each of these values is stored in
+    the roster and served by the ADMIN API, whose response models declare
+    them as `str` / a capabilities object — a dict for a room or a list for
+    the capabilities used to reach those models unchanged.
+    """
+    def _text(key: str, cap: int, default: str) -> str:
+        # A value of the wrong type is replaced by the default, never turned
+        # into text: `str({...})` would become a room the DB then auto-creates.
+        value = data.get(key)
+        if not isinstance(value, str):
+            return default
+        return device_text(value, cap) or default
+
+    room = _text("room", MAX_DEVICE_TEXT_CHARS, "Unknown Room")
+    capabilities = data.get("capabilities")
+    if not isinstance(capabilities, dict):
+        capabilities = {}
+    language = _text("language", 16, settings.default_language)
+    version = _text("version", MAX_DEVICE_TEXT_CHARS, "unknown")
+    return room, capabilities, language, version
 
 
 async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) -> bool:
@@ -733,11 +787,26 @@ async def satellite_websocket(
 
             # Handle registration
             if msg_type == "register":
-                satellite_id = data.get("satellite_id", "unknown")
-                room = data.get("room", "Unknown Room")
-                capabilities = data.get("capabilities", {})
-                language = data.get("language", settings.default_language)
-                version = data.get("version", "unknown")
+                # Validated into a local first: a bad id in a SECOND register
+                # frame must not overwrite the id this connection already
+                # holds — the `finally` below releases the limiter slot and
+                # the roster entry under that id.
+                claimed_id = _register_satellite_id(data)
+                if claimed_id is None:
+                    # The id is the identity every later check binds to (the
+                    # handshake identity, the enrollment row, the roster key).
+                    # Coercing a non-string would invent an identity the device
+                    # never claimed, so the frame is refused instead (#1279).
+                    logger.warning(
+                        f"🚫 Satellite register rejected from {ip_address}: invalid satellite_id"
+                    )
+                    await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, "invalid-satellite-id")
+                    await websocket.close(
+                        code=WSAuthError.UNAUTHORIZED, reason="invalid-satellite-id"
+                    )
+                    return
+                satellite_id = claimed_id
+                room, capabilities, language, version = _register_fields(data)
                 enrollment_psk = data.get("token")
 
                 # Per-satellite enrollment gate (security review H1). Verify the
@@ -1655,7 +1724,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
             # Handle OTA update progress
             elif msg_type == "update_progress":
-                if satellite_id:
+                if satellite_id and _belongs_to_current_run(satellite_manager, satellite_id, data):
                     stage = data.get("stage", "unknown")
                     progress = data.get("progress", 0)
                     message = data.get("message", "")
@@ -1667,7 +1736,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
             # Handle OTA update complete
             elif msg_type == "update_complete":
-                if satellite_id:
+                if satellite_id and _belongs_to_current_run(satellite_manager, satellite_id, data):
                     from ha_glue.services.satellite_manager import UpdateStatus
                     success = data.get("success", False)
                     old_version = data.get("old_version", "unknown")
@@ -1697,7 +1766,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
             # Handle OTA update failed
             elif msg_type == "update_failed":
-                if satellite_id:
+                if satellite_id and _belongs_to_current_run(satellite_manager, satellite_id, data):
                     from ha_glue.services.satellite_manager import UpdateStatus
                     stage = data.get("stage", "unknown")
                     error = data.get("error", "Unknown error")

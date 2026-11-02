@@ -14,7 +14,9 @@
 # therefore has a recorded response shape in tests/backend/test_mcp_compact.py
 # (RECORDED_SHAPES), built from the MCP source — add one with each new rule.
 # A rule that reduces a non-empty payload to nothing falls back to the
-# uncompacted payload and logs a WARNING (services/mcp_compact.py).
+# uncompacted payload and logs a WARNING (services/mcp_compact.py); so does a
+# rule that keeps its scalar keys but loses a whitelisted list (`results[]`
+# renamed, or every item's fields renamed).
 # Keep "error" in each rule: an error envelope must reach the agent intact.
 
 paperless:

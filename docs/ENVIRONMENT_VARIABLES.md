@@ -1530,6 +1530,8 @@ Das Backend mountet die Shares NICHT — die Bytes reisen im Multipart-Body. Sie
 ```bash
 FOLDER_INGEST_ENABLED=false           # Feature-Schalter (Push-Route + internal.ingest_file)
 SCANNER_INGEST_CLIENT_IDS=            # Ingest-Client-IDs (kommagetrennt), die Scan-Job-Ergebnisse an /api/scanner/job-event melden dürfen — das Folder-Ingest-Credential des Scanners; leer → keine (fail-closed)
+SCANNER_UNATTENDED_RECIPIENT_<CLIENT_ID>=  # #1390: Empfänger der Fertigmeldung eines KNOPF-Scans, Form `<user_id>:<session_id>`; <CLIENT_ID> = Ingest-Client-ID in Großbuchstaben, `-` → `_` (rfi-scanner → ..._RFI_SCANNER). Nutzer MUSS der Eigentümer sein, für den der Mandant ablegt, und die Konversation besitzen, die privat ist (Stufe 0, kein Grant) — sonst endgültig `refused`. Leer → 409 `no_recipient_for_caller` + WARNING wie bisher
+SCANNER_UNATTENDED_ROOM_<CLIENT_ID>=  # #1390: Raum-ID für die Ansage „Der Scan ist fertig, N Seite(n).“ (kein Titel, kein Dokumentdetail); leer oder ungültig → keine Ansage, die Meldung selbst wird trotzdem zugestellt
 FOLDER_INGEST_KB_NAME=Eingang         # Name des Ziel-Eingangs (je Eigentümer bei Bedarf angelegt)
 FOLDER_INGEST_TARGET_USER=            # Owner der auto-abgelegten Dokumente (Username/ID; leer → Admin/erster User)
 FOLDER_INGEST_DEFAULT_TIER=0          # Circle-Tier beim Anlegen (0=self … 4=public)

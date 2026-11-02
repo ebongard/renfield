@@ -10,6 +10,9 @@ ASCII access-check flow:
 
     can_access_atom(asker, atom, ctx):
         │
+        ├── auth on + kb_document / document_fact atom
+        │       → the SAME circle_sql predicate the retrieval paths use
+        │         (documents_circles_filter / document_facts_circles_filter)
         ├── asker.id == atom.owner_user_id  → True   (owner sees all)
         ├── tier == public_tier_index       → True   (public visible to everyone)
         ├── explicit grant exists for asker → True   (per-resource exception
@@ -44,6 +47,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
+    ATOM_TYPE_DOCUMENT_FACT,
     ATOM_TYPE_KB_DOCUMENT,
     AtomExplicitGrant,
     Circle,
@@ -54,6 +58,8 @@ from models.database import (
     Atom as AtomModel,
 )
 from services.atom_types import Atom, DimensionSpec
+from services.circle_sql import document_facts_circles_filter, documents_circles_filter
+from utils.config import settings
 
 # Sentinel for "asker is not in any of this owner's circles".
 # Stored in the cache to differentiate from "cache miss".
@@ -248,6 +254,16 @@ class CircleResolver:
         """
         asker_id = asker.id if isinstance(asker, User) else asker
 
+        # Documents and their facts: reach is decided by the SAME SQL predicate
+        # the retrieval paths apply (#1463). The branches below read the atom
+        # (its owner, its own grants) where the document filters read the KB
+        # owner, grants on the PARENT document and the KB share; a grantee then
+        # found a fact by search that this check refused. Policies of these
+        # atoms carry only the tier dimension, which the SQL filter covers.
+        # Auth off keeps the branch logic below unchanged.
+        if settings.auth_enabled and atom.atom_type in _DOCUMENT_ATOM_TYPES:
+            return await self._document_atom_reachable(atom, asker_id)
+
         # Owner sees everything they own.
         if asker_id == atom.owner_user_id:
             return True
@@ -266,8 +282,9 @@ class CircleResolver:
         if await self.has_explicit_grant(atom.atom_id, asker_id):
             return True
 
-        # A KB-level share covers every document of the KB, evaluated now (the
-        # same branch the circle_sql document filters carry).
+        # A KB-level share covers every document of the KB, evaluated now. Only
+        # reached with auth off: with auth on, documents and facts took the
+        # circle_sql path above.
         if atom.atom_type == ATOM_TYPE_KB_DOCUMENT and await self.has_kb_share(
             atom.atom_id, asker_id
         ):
@@ -282,6 +299,33 @@ class CircleResolver:
             return False  # not in any of owner's circles → only public visible (handled above)
 
         return PolicyEvaluator.satisfies(atom.policy, memberships, dimensions)
+
+    async def _document_atom_reachable(self, atom: Atom, asker_id: int) -> bool:
+        """``kb_document`` / ``document_fact`` reach through the circle_sql filter.
+
+        No source row (an orphan atom) → False: nothing a retrieval path could
+        return either. Not cached, like ``has_kb_share``: a share, revoke, move or
+        tier change alters the answer.
+        """
+        if atom.atom_type == ATOM_TYPE_KB_DOCUMENT:
+            clause, params = documents_circles_filter(asker_id)
+            sql = (
+                "SELECT 1 FROM documents d "
+                "LEFT JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id "
+                f"WHERE d.atom_id = :reach_atom_id AND ({clause}) LIMIT 1"
+            )
+        else:
+            clause, params = document_facts_circles_filter(asker_id)
+            sql = (
+                "SELECT 1 FROM document_facts df "
+                "JOIN documents d ON d.id = df.document_id "
+                "LEFT JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id "
+                f"WHERE df.atom_id = :reach_atom_id AND ({clause}) LIMIT 1"
+            )
+        row = (await self.db.execute(
+            sa_text(sql), {**params, "reach_atom_id": atom.atom_id},
+        )).first()
+        return row is not None
 
     async def get_max_visible_tier(
         self,
@@ -333,6 +377,9 @@ class CircleResolver:
         """
         cls._membership_cache.pop((circle_owner_id, member_user_id), None)
 
+
+# Atom types whose reach the document filters in circle_sql decide.
+_DOCUMENT_ATOM_TYPES = frozenset({ATOM_TYPE_KB_DOCUMENT, ATOM_TYPE_DOCUMENT_FACT})
 
 # Default home dimension config: single 'tier' ladder with the standard 5 tiers.
 # Used when an owner has no circles row yet (fresh user, AUTH_ENABLED=false, etc.).

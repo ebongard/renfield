@@ -15,11 +15,19 @@ Trust boundary. The requester (user + conversation) is recorded from the
 AUTHENTICATED turn when the tool returns, keyed by the scanner's job_id. The event
 carries no user identity at all, so a push token can never write into somebody's
 chat — a job_id this instance did not record is simply ignored.
+
+The one exception is the scanner's own BUTTON (#1390): a button press has no
+turn, so nobody is ever recorded. For it alone an operator may name a fixed
+recipient per ingest client (`SCANNER_UNATTENDED_RECIPIENT_<CLIENT_ID>`). The
+client id comes from the authenticated TOKEN, never from the event body, and the
+recipient must be the owner this client files documents for -- a completion
+notice never reaches somebody who may not see the document.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 from typing import Any
@@ -58,6 +66,19 @@ _JOB_ID = re.compile(JOB_ID_PATTERN)
 _TITLE_MAX_CHARS = 200
 
 TERMINAL_STATUSES = frozenset({"done", "unrouted", "failed", "interrupted"})
+
+#: Caller of a scan started by the blue button on the device.
+#: Must match `BUTTON_CALLER` in renfield-mcp-scanner/button.py.
+BUTTON_CALLER = "button"
+
+#: Per ingest client: `<user_id>:<session_id>` of the conversation a button
+#: scan's outcome is written into, and the room id its short form is spoken in.
+#: Read from the environment at USE, keyed by the AUTHENTICATED client id --
+#: one entry per client, so a third instance is no special case. Unset = no
+#: fallback, byte-identical to before #1390.
+UNATTENDED_RECIPIENT_ENV = "SCANNER_UNATTENDED_RECIPIENT_{client}"
+UNATTENDED_ROOM_ENV = "SCANNER_UNATTENDED_ROOM_{client}"
+_UNATTENDED_RECIPIENT = re.compile(r"(\d+):(\S{1,255})")
 
 
 def extract_job_id(result: dict | None) -> str | None:
@@ -154,6 +175,9 @@ _TEXT = {
             "unrouted": "Der Scan ist fertig, das Ziel ist aber noch offen.",
             "failed": "Der Scan ist fehlgeschlagen.",
             "interrupted": "Der Scan wurde unterbrochen.",
+            # Button scans only: the person at the device hears the count.
+            # Only the NUMBER from the event -- no title, no document detail.
+            "done_pages": "Der Scan ist fertig, {pages} Seite(n).",
         },
     },
     "en": {
@@ -192,6 +216,7 @@ _TEXT = {
             "unrouted": "The scan is done, but its destination is still open.",
             "failed": "The scan failed.",
             "interrupted": "The scan was interrupted.",
+            "done_pages": "The scan is done, {pages} page(s).",
         },
     },
 }
@@ -397,16 +422,23 @@ def _render_outcome(text: dict, status: str, title: str, result: dict) -> str:
     return text["failed"].format(title=title_part, error=error)
 
 
-async def _announce_in_origin_room(requester: dict, status: str) -> None:
+async def _announce_in_origin_room(requester: dict, status: str, result: dict) -> None:
     """Speak a short, fixed outcome sentence in the room a voice request came
     from. Best-effort: the message is already in the conversation; this is the
     channel for someone standing at the scanner who never opens that chat.
 
-    Deliberately no title or document detail — it is spoken into a shared room."""
+    Deliberately no title or document detail — it is spoken into a shared room.
+    A button scan (`unattended`) names the page COUNT when it is done: the number
+    is the only thing taken from the event, and only as an `int`."""
     room_id = requester.get("room_id")
     if not isinstance(room_id, int):
         return
-    text = (_TEXT.get(settings.default_language) or _TEXT["en"])["spoken"].get(status)
+    spoken = (_TEXT.get(settings.default_language) or _TEXT["en"])["spoken"]
+    text = spoken.get(status)
+    pages = result.get("pages")
+    if (requester.get("unattended") and status == "done"
+            and isinstance(pages, int) and not isinstance(pages, bool)):
+        text = spoken["done_pages"].format(pages=pages)
     if not text:
         return
     try:
@@ -467,6 +499,150 @@ async def _outcome_already_in_conversation(db: Any, session_id: str, job_id: str
     return found is not None
 
 
+def _client_env(template: str, client_id: str) -> str:
+    """The per-client setting `template` for `client_id`, stripped; "" when unset.
+
+    Ingest client ids are `[a-z0-9][a-z0-9-]*`, so upper-casing and `-` → `_`
+    is injective: `rfi-scanner` → `..._RFI_SCANNER`."""
+    suffix = re.sub(r"[^A-Za-z0-9]", "_", client_id).upper()
+    return os.environ.get(template.format(client=suffix), "").strip()
+
+
+def _unattended_room(client_id: str) -> int | None:
+    """The configured announcement room of this client, or None (no announcement)."""
+    raw = _client_env(UNATTENDED_ROOM_ENV, client_id)
+    if not raw:
+        return None
+    # 🛑 ASCII digits only, and never an exception: `"²".isdigit()` is True and
+    # `int("²")` raises. This runs BEFORE the delivery, so a typo here must only
+    # skip the announcement, never turn every button scan into a retried 500.
+    if raw.isascii() and raw.isdecimal() and int(raw) > 0:
+        return int(raw)
+    logger.warning(
+        f"scanner: {UNATTENDED_ROOM_ENV.format(client='<CLIENT_ID>')} for ingest client "
+        f"{client_id!r} is not a room id — no announcement"
+    )
+    return None
+
+
+async def _conversation_is_private(db: Any, conversation: Any) -> bool:
+    """Whether the conversation reaches no further than the document does: tier
+    0 (`self`) on the row AND on every atom of it (`atoms.policy` is
+    canonical), and no explicit grant.
+
+    Tier 0 is the document's own default reach; a circle member at depth 0
+    reaches both alike, so this is "not shared beyond the document", not
+    "owner-only".
+
+    🛑 The completion message carries the document id, the target and a button
+    to the document; the owner decision (#1390) is that it does not go further
+    than the document. A shared thread -- a room history at tier 2, or one
+    granted to a single person -- would hand it to every member.
+
+    🛑 The atoms are found the way the READ path finds them
+    (`circle_sql.conversations_circles_filter`: ``source_table='conversations'
+    AND source_id = c.id``), plus ``conversations.atom_id``. Following only the
+    pointer would let a drifted second atom carry a grant the reader honours.
+    Fail-closed: an atom without a readable tier counts as shared."""
+    if conversation.circle_tier != 0:
+        return False
+    from sqlalchemy import or_, select
+
+    from models.database import Atom, AtomExplicitGrant
+
+    match = (Atom.source_table == "conversations") & (Atom.source_id == str(conversation.id))
+    if conversation.atom_id is not None:
+        match = or_(match, Atom.atom_id == conversation.atom_id)
+    atoms = (await db.execute(select(Atom.atom_id, Atom.policy).where(match))).all()
+    for atom in atoms:
+        if not isinstance(atom.policy, dict) or atom.policy.get("tier") != 0:
+            return False
+    if not atoms:
+        return True
+    grant = (
+        await db.execute(
+            select(AtomExplicitGrant.atom_id)
+            .where(AtomExplicitGrant.atom_id.in_([a.atom_id for a in atoms]))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return grant is None
+
+
+async def _unattended_requester(db: Any, ingest_client: Any, job_id: str) -> dict | str | None:
+    """The fixed recipient of a BUTTON scan's outcome (#1390).
+
+    Returns the requester record (same shape `remember_scan_requester` writes),
+    ``"refused"`` when the configured conversation is not the document owner's
+    -- final, nothing is written -- or None when nothing (valid) is configured,
+    which keeps the final 409 of before.
+
+    🛑 WHO is never read from the event. The client id is the one the TOKEN
+    authenticated, and the configured user must be the owner this client files
+    documents for (`resolve_owner_user_id`, exactly as the push route resolves
+    it) AND own the conversation, which must be PRIVATE
+    (`_conversation_is_private`). Otherwise the notice -- document id, target,
+    a button to it -- would reach somebody who may not see the document.
+    """
+    client_id = str(getattr(ingest_client, "client_id", "") or "")
+    raw = _client_env(UNATTENDED_RECIPIENT_ENV, client_id)
+    env_name = UNATTENDED_RECIPIENT_ENV.format(client="<CLIENT_ID>")
+    if not raw:
+        logger.warning(
+            f"scanner: button scan {job_id} from ingest client {client_id!r} has no "
+            f"recipient ({env_name} unset) — the document is filed, no report is sent"
+        )
+        return None
+    match = _UNATTENDED_RECIPIENT.fullmatch(raw)
+    if match is None:
+        logger.warning(
+            f"scanner: {env_name} for ingest client {client_id!r} is not "
+            f"'<user_id>:<session_id>' — button scan {job_id} is not reported"
+        )
+        return None
+    user_id, session_id = int(match[1]), match[2]
+
+    from sqlalchemy import select
+
+    from models.database import Conversation
+    from services.folder_ingest import resolve_owner_user_id
+
+    owner_user_id = await resolve_owner_user_id(db, getattr(ingest_client, "owner", None))
+    if owner_user_id != user_id:
+        logger.warning(
+            f"scanner: button scan {job_id} refused — {env_name} of ingest client "
+            f"{client_id!r} names user {user_id}, but the client files documents for "
+            f"{owner_user_id}"
+        )
+        return "refused"
+    conversation = (
+        await db.execute(
+            select(Conversation.id, Conversation.user_id, Conversation.circle_tier,
+                   Conversation.atom_id)
+            .where(Conversation.session_id == session_id)
+        )
+    ).one_or_none()
+    if conversation is None or conversation.user_id != user_id:
+        logger.warning(
+            f"scanner: button scan {job_id} refused — the conversation in {env_name} of "
+            f"ingest client {client_id!r} does not exist or is not owned by user {user_id}"
+        )
+        return "refused"
+    if not await _conversation_is_private(db, conversation):
+        logger.warning(
+            f"scanner: button scan {job_id} refused — the conversation in {env_name} of "
+            f"ingest client {client_id!r} is shared (tier above 0 or an explicit grant)"
+        )
+        return "refused"
+    return {
+        "user_id": user_id,
+        "session_id": session_id,
+        "title": "",
+        "room_id": _unattended_room(client_id),
+        "unattended": True,
+    }
+
+
 async def _release_claim(redis: Any, claim_key: str, token: str) -> None:
     """Free the claim only if it is still ours. Best-effort: the TTL frees it anyway."""
     try:
@@ -484,7 +660,9 @@ async def _mark_reported(redis: Any, reported_key: str, outcome: str) -> None:
         logger.warning(f"scanner: could not cache the delivery marker {reported_key}: {exc}")
 
 
-async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
+async def handle_job_event(
+    db: Any, event: dict, *, redis: Any = None, ingest_client: Any = None,
+) -> str:
     """Deliver one terminal job event. Returns the outcome for the route's reply.
 
     - ``unknown_job``: not recorded here (other instance, expired, or forged) — ignored.
@@ -493,6 +671,13 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     - ``duplicate``: already delivered (or refused); the scanner is retrying a lost reply.
     - ``delivered``: appended to the requesting conversation and pushed live.
     - ``refused``: the conversation belongs to another user — final, not retried.
+
+    A BUTTON scan (``caller == "button"``) is never recorded: a button press has
+    no turn. Only for it, and only when nothing is recorded, the fixed recipient
+    of the authenticated ``ingest_client`` stands in (`_unattended_requester`);
+    the delivery below is the same chain. The event's ``caller`` only decides
+    WHETHER to fall back, never WHO receives: a chat scan whose outcome outran
+    its requester record must keep waiting for that record (409, retried).
 
     Delivery guarantee. The scanner sends at-least-once (it retries anything but
     a 2xx/401/403/404 for 24 h); this side makes the message idempotent on the
@@ -527,14 +712,23 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     key = _KEY.format(job_id=job_id)
     raw = await redis.get(key)
     if raw is None:
-        logger.info(f"scanner: event for unknown job {job_id} ({status}) ignored")
-        return "unknown_job"
-    try:
-        requester = json.loads(raw)
+        if ingest_client is None or event.get("caller") != BUTTON_CALLER:
+            logger.info(f"scanner: event for unknown job {job_id} ({status}) ignored")
+            return "unknown_job"
+        fallback = await _unattended_requester(db, ingest_client, job_id)
+        if fallback is None:
+            return "unknown_job"
+        if fallback == "refused":
+            return "refused"
+        requester = fallback
         session_id = requester["session_id"]
-    except (ValueError, KeyError, TypeError):
-        logger.warning(f"scanner: unreadable requester record for job {job_id} — ignored")
-        return "unknown_job"
+    else:
+        try:
+            requester = json.loads(raw)
+            session_id = requester["session_id"]
+        except (ValueError, KeyError, TypeError):
+            logger.warning(f"scanner: unreadable requester record for job {job_id} — ignored")
+            return "unknown_job"
 
     reported_key = f"{key}:reported"
     if await redis.get(reported_key) is not None:
@@ -622,9 +816,10 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     await publish_user_event(
         redis, target, EVENT_SCAN_JOB_FINISHED, reason=status, session_id=session_id,
     )
-    await _announce_in_origin_room(requester, status)
+    await _announce_in_origin_room(requester, status, result)
+    via = " (unattended recipient)" if requester.get("unattended") else ""
     logger.info(
         f"scanner: job {job_id} ({status})"
-        f"{describe_failure_for_log(status, result)} reported to its conversation"
+        f"{describe_failure_for_log(status, result)} reported to its conversation{via}"
     )
     return "delivered"

@@ -232,6 +232,20 @@ async def send_message(
                 # later (e.g. a background scan reporting its outcome back here).
                 executor = ActionExecutor(mcp_manager=mcp_manager, session_id=session_id)
 
+                # Conversation context variables (#1447), as on the WS path:
+                # what earlier turns' tools returned, for follow-up questions.
+                # The conversation is the caller's (checked above).
+                from services.context_extractor import render_context_vars_text
+                conv_service = ConversationService(db)
+                context_vars_text = render_context_vars_text(
+                    await conv_service.load_context_vars(
+                        session_id, user_id=user_id,
+                        enforce_ownership=settings.auth_enabled,
+                    )
+                )
+                turn_context_vars: dict = {}
+                tool_summaries: list = []
+
                 async for step in agent.run(
                     message=chat_request.message,
                     ollama=ollama,
@@ -240,9 +254,13 @@ async def send_message(
                     user_permissions=user_permissions,
                     user_id=user_id,
                     corrected_intent=chat_request.corrected_intent,
+                    context_vars_text=context_vars_text,
+                    context_vars_out=turn_context_vars,
                 ):
                     if step.step_type == "final_answer":
                         response_text = step.content
+                    elif step.step_type == "tool_result" and step.success and step.data:
+                        tool_summaries.append((step.tool, step.data))
 
                 if not response_text:
                     response_text = "Entschuldigung, ich konnte die Anfrage nicht bearbeiten."
@@ -266,6 +284,14 @@ async def send_message(
                 db.add(assistant_msg)
                 conversation.updated_at = datetime.now(UTC).replace(tzinfo=None)
                 await db.commit()
+
+                # After the turn is saved, like the WS path.
+                await conv_service.save_turn_context_vars(
+                    session_id, turn_context_vars,
+                    tool_summaries=tool_summaries,
+                    user_id=user_id,
+                    enforce_ownership=settings.auth_enabled,
+                )
 
                 return ChatResponse(
                     message=response_text,
