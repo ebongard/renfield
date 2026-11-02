@@ -3133,24 +3133,54 @@ class TestAgentLoopAnswerWithoutAction:
         assert steps[-1].content == "Nach Retry"
         assert repairs == []
 
-    @pytest.mark.unit
-    async def test_parse_failure_warning_carries_no_answer_text(self):
+    @staticmethod
+    async def _run_capturing(agent, ollama, level):
         from loguru import logger as loguru_logger
 
-        warnings: list[str] = []
-        sink = loguru_logger.add(lambda m: warnings.append(str(m)), level="WARNING")
+        lines: list[str] = []
+        sink = loguru_logger.add(lambda m: lines.append(str(m)), level=level)
         try:
-            ollama = self._ollama(['{"action": "final_answer", "answer": "Kontonummer 4711 geheim'])
-            agent = AgentService(self._registry(), max_steps=5)
             await collect_steps(agent, message="x", ollama=ollama, executor=AsyncMock())
         finally:
             loguru_logger.remove(sink)
+        return lines
 
-        parse_lines = [w for w in warnings if "JSON parse failed" in w]
+    @pytest.mark.unit
+    async def test_parse_failure_warning_carries_no_answer_text(self):
+        """Every record >= INFO of the run, not only the parse-failure line."""
+        ollama = self._ollama(['{"action": "final_answer", "answer": "Kontonummer 4711 geheim'])
+        agent = AgentService(self._registry(), max_steps=5)
+        lines = await self._run_capturing(agent, ollama, "INFO")
+
+        parse_lines = [w for w in lines if "JSON parse failed" in w]
         assert len(parse_lines) == 1
         assert "open_string=True" in parse_lines[0]
-        assert "Kontonummer" not in parse_lines[0]
-        assert "4711" not in parse_lines[0]
+        assert any("LLM response: len=" in w for w in lines), "the step line must still be there"
+        for line in lines:
+            assert "Kontonummer" not in line, line
+            assert "4711" not in line, line
+
+    @pytest.mark.unit
+    async def test_a_valid_answer_and_the_retry_leave_no_text_at_info(self):
+        """The per-step and the retry line: fingerprint at INFO, text at DEBUG."""
+        ollama = self._ollama([
+            "",
+            '{"action": "final_answer", "answer": "Kontonummer 4711 geheim", "reason": "ok"}',
+        ])
+        agent = AgentService(self._registry(), max_steps=5)
+        info = await self._run_capturing(agent, ollama, "INFO")
+        assert any("retry: len=" in w and "keys=['action', 'answer', 'reason']" in w for w in info)
+        for line in info:
+            assert "Kontonummer" not in line, line
+
+        ollama = self._ollama([
+            "",
+            '{"action": "final_answer", "answer": "Kontonummer 4711 geheim", "reason": "ok"}',
+        ])
+        debug = await self._run_capturing(AgentService(self._registry(), max_steps=5), ollama, "DEBUG")
+        assert any("retry text:" in w and "Kontonummer" in w for w in debug), (
+            "the raw text must stay available for a DEBUG run"
+        )
 
     @pytest.mark.unit
     def test_schema_repair_metric_failure_never_raises(self, monkeypatch):

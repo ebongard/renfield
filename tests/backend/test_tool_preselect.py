@@ -114,6 +114,34 @@ class TestToolPreSelection:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_unusable_response_is_logged_without_its_text(self):
+        """A free answer instead of a list carries user content: the WARNING
+        names its type and fingerprint, the text goes to DEBUG only (#1381)."""
+        from loguru import logger as loguru_logger
+
+        agent = _make_agent(10)
+        client = _make_mock_client('"Kontonummer 4711 geheim"')
+        lines: list[tuple[str, str]] = []
+        sink = loguru_logger.add(
+            lambda m: lines.append((m.record["level"].name, str(m))), level="DEBUG",
+        )
+        try:
+            with patch("services.agent_service.prompt_manager") as pm, \
+                 patch("services.agent_service.get_classification_chat_kwargs", return_value={}):
+                pm.get.return_value = "preselect prompt"
+                result = await agent._preselect_tools("Test", client, "model")
+        finally:
+            loguru_logger.remove(sink)
+
+        assert result is None
+        warning = [m for lvl, m in lines if lvl == "WARNING" and "unusable response" in m]
+        assert len(warning) == 1
+        assert "str len=" in warning[0]
+        assert not any("Kontonummer" in m for lvl, m in lines if lvl != "DEBUG")
+        assert any("Kontonummer" in m for lvl, m in lines if lvl == "DEBUG")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_no_valid_tools_falls_back(self):
         """If LLM returns tool names not in registry, fall back."""
         agent = _make_agent(10)

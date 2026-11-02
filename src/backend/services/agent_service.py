@@ -955,6 +955,22 @@ def _char_class(ch: str) -> str:
     return "other"
 
 
+def _response_fingerprint(raw: str) -> str:
+    """Length and a short hash of an LLM response — never its text.
+
+    What INFO and above may say about a raw model response: it carries the
+    answer to the user. The text itself goes to DEBUG only.
+    """
+    text = raw.strip()
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return f"len={len(text)} sha256={digest}"
+
+
+def _response_keys(raw: str) -> list[str]:
+    """Which agent schema keys occur in a raw response (fixed vocabulary)."""
+    return [k for k in _AGENT_SCHEMA_KEYS if re.search(rf'"{k}"\s*:', raw)]
+
+
 def _describe_unparsable(raw: str) -> str:
     """Fingerprint an unparsable agent response WITHOUT its content (#1381).
 
@@ -967,8 +983,7 @@ def _describe_unparsable(raw: str) -> str:
     across log lines.
     """
     text = raw.strip()
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-    parts = [f"len={len(text)}", f"sha256={digest}"]
+    parts = [_response_fingerprint(text)]
     try:
         json.loads(text)
         parts.append("direct=not_an_object")
@@ -993,7 +1008,7 @@ def _describe_unparsable(raw: str) -> str:
             depth += 1
         elif ch == "}":
             depth -= 1
-    keys = [k for k in _AGENT_SCHEMA_KEYS if re.search(rf'"{k}"\s*:', text)]
+    keys = _response_keys(text)
     parts += [
         f"starts={_char_class(text[0]) if text else 'eof'}",
         f"ends={_char_class(text[-1]) if text else 'eof'}",
@@ -1454,10 +1469,12 @@ class AgentService:
                 # that is exactly the incident the signature is meant to
                 # clear up.
                 logger.warning(
-                    "Tool pre-selection unusable response (in={}): {!r} "
+                    "Tool pre-selection unusable response (in={}): {} {} "
                     "— using all {} tools",
-                    input_signature, response_text[:100], len(tool_names),
+                    input_signature, type(selected).__name__,
+                    _response_fingerprint(response_text), len(tool_names),
                 )
+                logger.debug("Tool pre-selection unusable response text: {!r}", response_text[:100])
                 return None
 
             # Re-add any structural prerequisites the LLM pruned (e.g. it picked
@@ -2364,7 +2381,13 @@ class AgentService:
 
                 # Track token usage
                 context.track_tokens(prompt, response_text)
-                logger.info(f"🤖 Agent step {step_num} LLM response ({len(response_text)} chars): {response_text[:500]}")
+                # INFO says what came back, never the text: the response is
+                # the answer to the user. The text is for DEBUG runs only.
+                logger.info(
+                    f"🤖 Agent step {step_num} LLM response: "
+                    f"{_response_fingerprint(response_text)} keys={_response_keys(response_text)}"
+                )
+                logger.debug(f"🤖 Agent step {step_num} LLM response text: {response_text[:500]}")
             except TimeoutError:
                 await agent_circuit_breaker.record_failure()
                 logger.warning(f"⏰ Agent step {step_num} timed out after {self.step_timeout}s")
@@ -2452,7 +2475,11 @@ class AgentService:
                         _record_schema_repair("answer_without_action")
                         parsed = repaired
                     context.track_tokens(nudge, response_text)
-                    logger.info(f"🔄 Agent step {step_num} retry ({len(response_text)} chars): {response_text[:200]}")
+                    logger.info(
+                        f"🔄 Agent step {step_num} retry: "
+                        f"{_response_fingerprint(response_text)} keys={_response_keys(response_text)}"
+                    )
+                    logger.debug(f"🔄 Agent step {step_num} retry text: {response_text[:200]}")
                 except Exception as e:
                     logger.warning(f"🔄 Agent step {step_num} retry failed: {e}")
 
