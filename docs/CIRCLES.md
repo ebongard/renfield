@@ -123,6 +123,8 @@ neither (the recency list) the same document filter as the search gate, `documen
 IN-subquery before `LIMIT`/`OFFSET` so pages stay full. `kb.all` and auth-off list everything. Until 2026-11-02 the
 recency list had no filter, so any `kb.own` holder listed every user's document rows. `RAGService.list_documents`
 takes `asker_id` + `enforce_circles` without defaults. Proof: `tests/backend/test_document_list_circles_pg.py`.
+`GET /api/knowledge/stats` counts the same way: below `kb.all` (auth on) documents and chunks through `visible_document_ids`, KBs through the KB-list rule (`knowledge._readable_knowledge_bases`, as `GET /bases`); `kb.all` and auth-off count globally. Until 2026-11-02 every `kb.own` holder got the global counts. `RAGService.get_stats` takes `asker_id`, `enforce_circles`, `knowledge_base_ids` without defaults. Proof: `tests/backend/test_knowledge_stats_circles_pg.py`.
+The per-KB `document_count` of `GET /bases` and `GET /bases/{id}` counts the same way (`RAGService._kb_document_count`; `list_knowledge_bases` and `count_kb_documents` take `asker_id` + `enforce_circles` without defaults): a public KB of another user no longer reveals how many tier-self documents its owner keeps there. Same proof file.
 Known divergence, not a leak (#1469): a KB with `is_public=true` opens its documents to `kb.shared` holders via `?knowledge_base_id` and the detail page, but not in the unfiltered list, because `is_public` does not change `circle_tier`.
 
 Attaching is a write on the conversation: `POST /api/chat/upload` applies the chat's own message-write rule to its
