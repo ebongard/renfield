@@ -199,9 +199,15 @@ Drei Regeln sichern das ab:
    und Laufzustand (Status, Stufe, Fortschritt, Fehler, Startzeit) auf den neuen
    Eintrag über — beim schnellen Neuaufbau vom alten Eintrag, sonst aus dem beim
    Abmelden bzw. bei der Heartbeat-Räumung geparkten Zustand. Kommt der Satellit
-   während eines laufenden Updates mit einer **anderen** Version zurück, war die
-   Installation erfolgreich und der Neustart hat die Endmeldung verschluckt: der
-   Lauf wird als `completed` geschlossen. **Ein Backend-Neustart verliert den
+   während eines laufenden Updates mit genau der **Zielversion** des Laufs
+   zurück, war die Installation erfolgreich und der Neustart hat die Endmeldung
+   verschluckt: der Lauf wird als `completed` geschlossen. Mit jeder anderen
+   Version (der alten nach einem Verbindungsabriss, einer dritten nach einer
+   Hand-Installation) bleibt er `in_progress`, bis eine Endmeldung oder die
+   Zeitgrenze ihn beendet. Auch ein **beendeter** Lauf (`completed`/`failed`)
+   wird übertragen: Fehlermeldung und Status bleiben in der Admin-Ansicht stehen,
+   bis der nächste Lauf beginnt — früher setzte jeder Neuaufbau sie auf `none`
+   zurück. **Ein Backend-Neustart verliert den
    Lauf dagegen bewusst**: eine danach eintreffende Kennung gehört zu keinem
    bekannten Lauf und wird verworfen.
 
