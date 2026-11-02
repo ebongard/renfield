@@ -18,6 +18,7 @@ from services.database import AsyncSessionLocal, init_db
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -105,19 +106,29 @@ async def _reconcile_credentials_boot():
         logger.warning(f"credential-reconciler boot pass failed: {e}")
 
 
+_KB_SHARES_CHECK_TIMEOUT_S = 30.0
+
+
 async def _warn_uncovered_kb_shares() -> None:
     """Boot warning for the #1446 precondition: a KB share comes ONLY from
     ``kb_shares``. A legacy per-document grant whose (KB, user) pair has no row
     there no longer gives KB level -- the grantee lost the KB in his list and
     every KB-level right until ``bin/backfill_kb_shares.py`` has run. Counts only;
-    never acts (suspicious pairs need the owner's decision). Auth off: no-op."""
+    never acts (suspicious pairs need the owner's decision). Auth off: no-op.
+
+    The query is quadratic in the legacy grants while the backfill has not run,
+    so it is bounded (``_KB_SHARES_CHECK_TIMEOUT_S``) and runs off the startup
+    path (:func:`_schedule_kb_shares_warning`)."""
     if not settings.auth_enabled:
         return
     try:
         from services.kb_shares_service import uncovered_legacy_pairs
 
-        async with AsyncSessionLocal() as db_session:
-            pairs = await uncovered_legacy_pairs(db_session)
+        async def _check():
+            async with AsyncSessionLocal() as db_session:
+                return await uncovered_legacy_pairs(db_session)
+
+        pairs = await asyncio.wait_for(_check(), _KB_SHARES_CHECK_TIMEOUT_S)
         if pairs.clean or pairs.suspicious:
             logger.warning(
                 f"⚠️  kb_shares: {len(pairs.clean)} legacy (KB, user) pair(s) without a "
@@ -125,8 +136,20 @@ async def _warn_uncovered_kb_shares() -> None:
                 "owner -- those grantees have no KB-level access. Run "
                 "bin/backfill_kb_shares.py (dry run first)."
             )
+    except TimeoutError:
+        logger.warning(
+            f"kb_shares precondition check failed: no answer within "
+            f"{_KB_SHARES_CHECK_TIMEOUT_S:.0f}s -- run bin/backfill_kb_shares.py (dry run)"
+        )
     except Exception as e:
-        logger.warning(f"kb_shares precondition check failed: {e}")
+        logger.warning(f"kb_shares precondition check failed: {error_text_without_content(e)}")
+
+
+def _schedule_kb_shares_warning() -> None:
+    """Run :func:`_warn_uncovered_kb_shares` in the background: a warning must
+    not hold up the startup. Tracked in ``_startup_tasks`` (cancelled on
+    shutdown); the coroutine logs its own failures."""
+    _startup_tasks.append(asyncio.create_task(_warn_uncovered_kb_shares()))
 
 
 async def _init_auth():
@@ -759,7 +782,7 @@ async def lifespan(app: "FastAPI"):
     # Self-heal DB-stored integration tokens from their authoritative Secret source
     # so a DB wipe doesn't leave folder/email-ingest pushes 403ing (2026-07 incident).
     await _reconcile_credentials_boot()
-    await _warn_uncovered_kb_shares()
+    _schedule_kb_shares_warning()
 
     # Stage 2: Independent services (parallel)
     await asyncio.gather(

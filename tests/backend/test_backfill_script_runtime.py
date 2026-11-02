@@ -605,6 +605,8 @@ class TestKbSharesAdopt:
             from services.kb_shares_service import KBShareBackfillResult
             return KBShareBackfillResult(
                 pairs_with_grants=2, already_shared=0, clean_missing=1,
+                clean=[{"kb_id": 3, "user_id": 4, "grants": 2,
+                        "permission": "write", "reasons": []}],
                 suspicious=[{"kb_id": 5, "user_id": 6, "grants": 1,
                              "permission": "read", "reasons": ["split_batch"]}],
             )
@@ -617,4 +619,7 @@ class TestKbSharesAdopt:
             assert asyncio.run(module._run(args)) == 0
         assert "missing: 2 (clean: 1, suspicious: 1)" in caplog.text
         assert "SUSPICIOUS (owner decides) | kb_id=5 user_id=6" in caplog.text
+        # The owner sees every pair --commit would convert, before it does.
+        assert "CLEAN (converted by --commit) | kb_id=3 user_id=4 | grants=2 | level=write" \
+            in caplog.text
         assert "--adopt KB_ID:USER_ID --commit" in caplog.text

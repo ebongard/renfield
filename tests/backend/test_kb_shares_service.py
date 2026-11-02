@@ -97,33 +97,44 @@ async def test_revoke_kb_share_rowcount_none_returns_zero():
 @pytest.mark.unit
 async def test_list_kb_shares_returns_the_kb_shares_rows():
     db = MagicMock()
-    fake_result = MagicMock()
-    fake_result.fetchall.return_value = [
-        MagicMock(user_id=10, permission_level="admin", granted_by=1, granted_at=datetime(2026, 1, 1)),
-        MagicMock(user_id=11, permission_level="write", granted_by=1, granted_at=datetime(2026, 2, 1)),
-        MagicMock(user_id=12, permission_level="read", granted_by=2, granted_at=datetime(2026, 3, 1)),
+    shares = MagicMock()
+    shares.fetchall.return_value = [
+        MagicMock(user_id=12, permission_level="read", granted_by=2, granted_at=datetime(2026, 3, 1),
+                  can_delete=False),
+        MagicMock(user_id=10, permission_level="admin", granted_by=1, granted_at=datetime(2026, 1, 1),
+                  can_delete=True),
     ]
-    db.execute = AsyncMock(return_value=fake_result)
+    residual = MagicMock()
+    residual.fetchall.return_value = [
+        MagicMock(user_id=11, documents=3, granted_by=1, granted_at=datetime(2026, 2, 1)),
+    ]
+    db.execute = AsyncMock(side_effect=[shares, residual])
 
     rows = await kb_shares_service.list_kb_shares(db, kb_id=42)
 
-    assert len(rows) == 3
-    perms = {r["user_id"]: r["permission"] for r in rows}
-    assert perms == {10: "admin", 11: "write", 12: "read"}
+    assert [(r["user_id"], r["kind"], r["permission"], r["documents"], r["can_delete"])
+            for r in rows] == [
+        (10, "kb_share", "admin", None, True),
+        (11, "document_grants", None, 3, False),
+        (12, "kb_share", "read", None, False),
+    ]
 
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_list_kb_shares_reads_kb_shares_only():
-    """#1446: a grant on a document is no KB share — the owner's share list
-    (and the revoke ids it hands out) comes from kb_shares alone."""
+async def test_list_kb_shares_levels_come_from_kb_shares_only():
+    """#1446: the KB level in the list comes from kb_shares alone; a person with
+    only document grants is listed WITHOUT a level, and only if no kb_shares row
+    covers them (the residual query excludes those)."""
     db = MagicMock()
     db.execute = AsyncMock(return_value=MagicMock(fetchall=lambda: []))
     await kb_shares_service.list_kb_shares(db, kb_id=1)
 
-    sql = str(db.execute.call_args.args[0])
-    assert "FROM kb_shares ks" in sql
-    assert "atom_explicit_grants" not in sql
+    share_sql, residual_sql = (str(c.args[0]) for c in db.execute.call_args_list)
+    assert "FROM kb_shares ks" in share_sql
+    assert "atom_explicit_grants" not in share_sql
+    assert "permission_level" not in residual_sql
+    assert "NOT EXISTS (SELECT 1 FROM kb_shares ks" in residual_sql
 
 
 @pytest.mark.asyncio

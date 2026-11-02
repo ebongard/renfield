@@ -19,7 +19,13 @@ keeps the documents but loses the KB in his list and every KB-level right
 its grants, so a grant may have travelled into another KB; converting it would
 share the whole destination KB. The dry run lists these pairs as SUSPICIOUS
 (ids, counts, level, reasons — see ``UNCOVERED_PAIRS_SQL``); the owner adopts one
-explicitly with ``--adopt KB_ID:USER_ID --commit`` (logged, revertible).
+explicitly with ``--adopt KB_ID:USER_ID --commit`` (logged, revertible). The
+owner moving between her own KBs leaves no trace when (a) the source KB was
+shared again after the move, (b) the siblings or the source KB were deleted
+since, or (c) every document moved together; the flags for a destination KB
+younger than the grant and for a single grant in a KB that now holds more
+documents catch the usual shape. They cannot catch everything, so the dry run
+also lists every CLEAN pair it would convert: read it before ``--commit``.
 
 - Default is a DRY RUN: counts only, no writes.
 - Idempotent: an existing kb_shares row is never touched (ON CONFLICT DO NOTHING),
@@ -132,6 +138,12 @@ def _report_suspicious(suspicious: list[dict]) -> None:
                     s["permission"], ",".join(s["reasons"]))
 
 
+def _report_clean(clean: list[dict]) -> None:
+    for c in clean:
+        logger.info("  CLEAN (converted by --commit) | kb_id=%s user_id=%s | grants=%s | "
+                    "level=%s", c["kb_id"], c["user_id"], c["grants"], c["permission"])
+
+
 def _claim_log(path_arg: str | None, prefix: str) -> Path | None:
     """Claim the log BEFORE the insert commits: a log that cannot be written
     afterwards would leave inserted rows that no --revert can name."""
@@ -185,6 +197,7 @@ async def _run(args: argparse.Namespace) -> int:
                     "| missing: %d (clean: %d, suspicious: %d)", mode,
                     result.pairs_with_grants, result.already_shared, result.missing,
                     result.clean_missing, len(result.suspicious))
+        _report_clean(result.clean)
         _report_suspicious(result.suspicious)
         if result.suspicious:
             logger.info("Suspicious pairs are NEVER inserted by this run: their grants may "

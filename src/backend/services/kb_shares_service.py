@@ -18,9 +18,12 @@ them with the share (they cannot be told apart from a single-document grant, and
 left behind they would keep the old documents readable after the revoke).
 Their KB level is carried over into ``kb_shares`` by ``bin/backfill_kb_shares.py``,
 which MUST run before this code is deployed (``uncovered_legacy_pairs`` = 0 clean
-pairs). Pairs the backfill cannot trust (``SUSPICIOUS_PAIRS_SQL``: a grant that may
-have moved with its document into another KB before #1464) are never converted on
-their own; the owner adopts them one by one (``adopt_kb_share_pairs``).
+pairs). Pairs the backfill cannot trust (the flags in ``UNCOVERED_PAIRS_SQL``: a
+grant that may have moved with its document into another KB before #1464) are
+never converted on their own; the owner adopts them one by one
+(``adopt_kb_share_pairs``). Until then such a grantee still reads those documents,
+so ``list_kb_shares`` lists them (``kind="document_grants"``) for the owner to see
+and revoke.
 
 Public surface:
     share_kb(db, kb_id, target_user_id, permission_level, granted_by, *, can_delete=None)
@@ -66,11 +69,21 @@ _LEGACY_GRANTS_FROM = (
 # One row per (kb_id, user_id) that holds a legacy grant on a document of the KB
 # and has NO kb_shares row: the pairs whose KB level the code no longer derives
 # (#1446). Columns: kb_id, user_id, grants, rank (MAX level), granted_by and
-# granted_at of the most recent grant, and the three suspicion flags.
+# granted_at of the most recent grant, and the suspicion flags.
 #
 # A grant may have moved with its document into ANOTHER KB before #1464 (the
 # move did not delete grants then). The data model has no move trace, so the
-# flags are indirect -- false alarms are preferred over false shares:
+# flags are indirect -- false alarms are preferred over false shares. The owner
+# moving between her own KBs never sets foreign_granter, and these moves leave
+# no trace in the source KB:
+#   (a) the source KB was shared again after the move (the old share_kb gave
+#       the remaining documents a new granted_at, so split_batch is false);
+#   (b) the sibling documents or the source KB were deleted since;
+#   (c) every document of the source KB moved together into the destination.
+# The destination is then typically a newer KB ("Privat": one document moved
+# in, private uploads after it, which partial does not see), hence the last two
+# flags. All timestamps are naive UTC (models._utcnow); a NULL created_at sets
+# no flag.
 #   foreign_granter  a grant was given by someone other than the CURRENT KB
 #                    owner (also flags shares an admin made: owner decides);
 #   partial          a document of the KB that existed when the grant was given
@@ -79,9 +92,14 @@ _LEGACY_GRANTS_FROM = (
 #                    document of the KB in one statement;
 #   split_batch      the same share statement (same user, granter and
 #                    granted_at) also produced grants on documents that are now
-#                    in a DIFFERENT KB, so a document left its share's KB.
-# Not detectable: a moved grant whose share's KB held only that one document,
-# by its own owner, into a KB that was empty at the time.
+#                    in a DIFFERENT KB, so a document left its share's KB;
+#   kb_younger_than_grant  the KB was created after one of the grants: the
+#                    grant cannot stem from a share of THIS KB (cases a-c);
+#   single_grant     one grant in a KB that now holds more documents -- the
+#                    shape of one moved document (also flags a legacy share of a
+#                    one-document KB that grew since: a false alarm).
+# Not detectable: a single moved document, by its own owner, into a KB older
+# than the grant that still holds only that document.
 UNCOVERED_PAIRS_SQL = (
     "WITH legacy AS ("
     "  SELECT d.knowledge_base_id AS kb_id, g.granted_to_user_id AS user_id, "
@@ -112,7 +130,10 @@ UNCOVERED_PAIRS_SQL = (
     "         WHERE l2.user_id = u.user_id AND l2.kb_id <> u.kb_id "
     "           AND l2.granted_at = u.granted_at "
     "           AND l2.granted_by IS NOT DISTINCT FROM u.granted_by"
-    "       )) AS split_batch "
+    "       )) AS split_batch, "
+    "       BOOL_OR(kb.created_at > u.granted_at) AS kb_younger_than_grant, "
+    "       (COUNT(*) = 1 AND (SELECT COUNT(*) FROM documents d3 "
+    "                          WHERE d3.knowledge_base_id = u.kb_id) > 1) AS single_grant "
     "FROM uncovered u JOIN knowledge_bases kb ON kb.id = u.kb_id "
     "GROUP BY u.kb_id, u.user_id "
     "ORDER BY u.kb_id, u.user_id"
@@ -207,28 +228,71 @@ async def revoke_kb_share(
     return (share.rowcount or 0) + (grants.rowcount or 0)
 
 
+SHARE_KIND_KB = "kb_share"
+SHARE_KIND_DOCUMENT_GRANTS = "document_grants"
+
+
 async def list_kb_shares(db: AsyncSession, kb_id: int) -> list[dict[str, Any]]:
-    """One row per ``kb_shares`` grantee of the KB (permission, can_delete,
-    granted_by, granted_at). Document grants are not KB shares and are not listed
-    (#1446)."""
-    result = await db.execute(
+    """Everyone the KB's documents are shared with, for the owner's share list.
+
+    ``kind="kb_share"``: one row per ``kb_shares`` grantee (permission,
+    can_delete, granted_by, granted_at; ``documents`` None).
+    ``kind="document_grants"``: a grantee WITHOUT a kb_shares row who still holds
+    grants on documents of the KB (a legacy share the backfill did not convert,
+    #1446). No KB level (``permission`` None), never ``can_delete``;
+    ``documents`` = how many documents the grants open, granted_by / granted_at
+    of the most recent one. Listed so the owner sees who still reads those
+    documents and can revoke it (``revoke_kb_share`` removes the grants).
+    Sorted by user_id; a user appears once.
+    """
+    shares = (await db.execute(
         text(
             "SELECT ks.user_id, ks.permission_level, ks.granted_by, ks.granted_at, "
             "       ks.can_delete "
-            "FROM kb_shares ks WHERE ks.kb_id = :kb_id ORDER BY ks.user_id"
+            "FROM kb_shares ks WHERE ks.kb_id = :kb_id"
         ),
         {"kb_id": kb_id},
-    )
-    return [
+    )).fetchall()
+    residual = (await db.execute(
+        text(
+            "SELECT g.granted_to_user_id AS user_id, COUNT(DISTINCT d.id) AS documents, "
+            "       (ARRAY_AGG(g.granted_by ORDER BY g.granted_at DESC NULLS LAST))[1] "
+            "         AS granted_by, "
+            "       MAX(g.granted_at) AS granted_at "
+            f"{_LEGACY_GRANTS_FROM}"
+            "  AND d.knowledge_base_id = :kb_id "
+            "  AND NOT EXISTS (SELECT 1 FROM kb_shares ks "
+            "                  WHERE ks.kb_id = :kb_id AND ks.user_id = g.granted_to_user_id) "
+            "GROUP BY g.granted_to_user_id"
+        ),
+        {"kb_id": kb_id},
+    )).fetchall()
+    rows = [
         {
             "user_id": row.user_id,
-            "permission": row.permission_level,
+            "kind": SHARE_KIND_KB,
+            # An unknown stored level grants nothing (get_user_kb_permission_levels
+            # drops it): listed without a level, still revocable.
+            "permission": row.permission_level if row.permission_level in _PERM_RANK else None,
+            "documents": None,
             "granted_by": row.granted_by,
             "granted_at": row.granted_at,
             "can_delete": bool(row.can_delete),
         }
-        for row in result.fetchall()
+        for row in shares
+    ] + [
+        {
+            "user_id": row.user_id,
+            "kind": SHARE_KIND_DOCUMENT_GRANTS,
+            "permission": None,
+            "documents": int(row.documents),
+            "granted_by": row.granted_by,
+            "granted_at": row.granted_at,
+            "can_delete": False,
+        }
+        for row in residual
     ]
+    return sorted(rows, key=lambda r: r["user_id"])
 
 
 async def get_user_kb_permission_level(
@@ -310,6 +374,11 @@ async def get_user_kb_permission_levels(
 # =============================================================================
 
 
+_SUSPICION_FLAGS = (
+    "foreign_granter", "partial", "split_batch", "kb_younger_than_grant", "single_grant",
+)
+
+
 @dataclass
 class LegacyPair:
     """A (kb, user) pair with legacy grants and no kb_shares row. Ids, counts and
@@ -341,8 +410,7 @@ async def uncovered_legacy_pairs(db: AsyncSession) -> LegacyPairs:
     ``clean == []``; suspicious pairs are reported, never counted against it."""
     out = LegacyPairs()
     for row in (await db.execute(text(UNCOVERED_PAIRS_SQL))).fetchall():
-        reasons = [name for name in ("foreign_granter", "partial", "split_batch")
-                   if getattr(row, name)]
+        reasons = [name for name in _SUSPICION_FLAGS if getattr(row, name)]
         pair = LegacyPair(
             kb_id=int(row.kb_id), user_id=int(row.user_id), grants=int(row.grants),
             permission=_RANK_TO_PERM[int(row.rank)], granted_by=row.granted_by,
@@ -359,6 +427,8 @@ class KBShareBackfillResult:
     pairs_with_grants: int = 0     # distinct (kb, user) pairs holding a legacy grant
     already_shared: int = 0        # of those, already a kb_shares row
     clean_missing: int = 0         # uncovered pairs the backfill converts
+    clean: list[dict[str, Any]] = field(default_factory=list)
+    # those clean pairs, listed for the owner before --commit (same shape as suspicious)
     suspicious: list[dict[str, Any]] = field(default_factory=list)
     # uncovered pairs only the owner may adopt:
     # {"kb_id", "user_id", "grants", "permission", "reasons"}
@@ -416,6 +486,7 @@ async def backfill_kb_shares(db: AsyncSession, *, dry_run: bool) -> KBShareBackf
     result = KBShareBackfillResult(
         pairs_with_grants=int(total), already_shared=int(total) - uncovered,
         clean_missing=len(pairs.clean),
+        clean=[p.as_log() for p in pairs.clean],
         suspicious=[p.as_log() for p in pairs.suspicious],
     )
     if dry_run:
@@ -456,6 +527,12 @@ async def revert_kb_share_backfill(db: AsyncSession, inserted: list[dict[str, An
     switch since (the backfill writes FALSE). Legacy grants were never touched: after a
     revert they open their documents again, but not the KB (#1446). Also reverts
     an ``adopt_kb_share_pairs`` run. Returns the number of deleted rows.
+
+    Known overlap: a backfill that runs again after the share was revoked
+    (or the row deleted otherwise) writes the SAME granted_at (the MAX of the
+    legacy grants) -- so reverting the OLD log also deletes that new row. That
+    is harmless: the new row is backfill output of the same grants too, and a
+    further backfill run recreates it.
     """
     deleted = 0
     for row in inserted:

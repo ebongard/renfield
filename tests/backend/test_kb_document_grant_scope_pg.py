@@ -55,9 +55,13 @@ async def people(db_session: AsyncSession, monkeypatch):
     return alice, bob, admin
 
 
-async def _kb(db: AsyncSession, owner_id: int, name: str) -> KnowledgeBase:
+async def _kb(db: AsyncSession, owner_id: int, name: str,
+              created_at: datetime | None = None) -> KnowledgeBase:
+    """A KB; ``created_at`` back-dates it (a legacy share is older than "now")."""
     kb = KnowledgeBase(name=name, is_active=True, owner_id=owner_id,
                        default_circle_tier=TIER_SELF)
+    if created_at is not None:
+        kb.created_at = created_at
     db.add(kb)
     await db.commit()
     return kb
@@ -157,7 +161,10 @@ class TestDocumentGrantScope:
 
         assert haus.id not in await _listed_kbs(db_session, bob)
         assert await _kb_rights(db_session, haus, bob) == (False, False)  # no upload right
-        assert await ks.list_kb_shares(db_session, haus.id) == []
+        # Listed for the owner as what it is: grants on documents, no KB level.
+        assert [(r["user_id"], r["kind"], r["permission"], r["documents"], r["can_delete"])
+                for r in await ks.list_kb_shares(db_session, haus.id)] == [
+            (bob.id, "document_grants", None, 1, False)]
         assert await _sees_doc(db_session, bob.id, brief)
         assert not await _sees_doc(db_session, bob.id, other)
 
@@ -169,8 +176,88 @@ class TestDocumentGrantScope:
 
         assert (await _listed_kbs(db_session, bob))[haus.id] == "write"
         assert await _kb_rights(db_session, haus, bob) == (True, True)
-        assert [s["permission"] for s in await ks.list_kb_shares(db_session, haus.id)] == ["write"]
+        assert [(s["kind"], s["permission"], s["documents"])
+                for s in await ks.list_kb_shares(db_session, haus.id)] == [
+            ("kb_share", "write", None)]
         assert await _sees_doc(db_session, bob.id, brief)
+
+
+    async def test_owner_sees_and_revokes_a_document_grant_only_person(
+        self, db_session, people,
+    ):
+        """GET /bases/{id}/permissions lists a person who holds only document
+        grants (no KB level, a count); DELETE revokes them under the same rules
+        as a share: the owner and an admin grantee may, a read grantee may not."""
+        from main import app
+        from services.auth_service import get_optional_user
+        from services.database import get_db
+
+        alice, bob, _ = people
+        carol = await _user(db_session, "carol", ["kb.own", "kb.shared"])
+        dave = await _user(db_session, "dave", ["kb.own", "kb.shared"])
+        haus = await _kb(db_session, alice.id, "Haus")
+        brief = await _doc(db_session, haus, "brief")
+        await _doc(db_session, haus, "anderes")
+        await db_session.execute(text(
+            "INSERT INTO atom_explicit_grants (atom_id, granted_to_user_id, permission_level, "
+            "granted_by, granted_at) VALUES (:a, :to, 'write', :by, NOW())"),
+            {"a": brief.atom_id, "to": bob.id, "by": alice.id})
+        await db_session.commit()
+        await ks.share_kb(db_session, haus.id, carol.id, "admin", granted_by=alice.id)
+        await ks.share_kb(db_session, haus.id, dave.id, "read", granted_by=alice.id)
+
+        acting: list[User] = [alice]
+
+        async def _db():
+            yield db_session
+
+        app.dependency_overrides[get_db] = _db
+        app.dependency_overrides[get_optional_user] = lambda: acting[0]
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app),
+                                   base_url="http://test") as c:
+                url = f"/api/knowledge/bases/{haus.id}/permissions"
+                res = await c.get(url)
+                assert res.status_code == 200
+                rows = {r["user_id"]: r for r in res.json()}
+                assert {k: rows[bob.id][k] for k in
+                        ("id", "username", "kind", "permission", "documents", "can_delete",
+                         "granted_by", "granted_by_username")} == {
+                    "id": bob.id, "username": "bob", "kind": "document_grants",
+                    "permission": None, "documents": 1, "can_delete": False,
+                    "granted_by": alice.id, "granted_by_username": "alice"}
+                assert rows[bob.id]["created_at"]
+                # The exact JSON shape the frontend's KbShare reads (isKbLevelShare):
+                # `documents` only on document_grants, `kind` on every row.
+                common = {"id", "user_id", "username", "kind", "permission", "granted_by",
+                          "granted_by_username", "created_at", "can_delete"}
+                assert set(rows[bob.id]) == common | {"documents"}
+                assert set(rows[carol.id]) == common
+                assert {k: rows[carol.id][k] for k in ("kind", "permission", "can_delete")} == {
+                    "kind": "kb_share", "permission": "admin", "can_delete": False}
+                # A stored level the code does not know is listed without one.
+                await db_session.execute(text(
+                    "UPDATE kb_shares SET permission_level = 'owner' WHERE user_id = :u"),
+                    {"u": dave.id})
+                await db_session.commit()
+                odd = next(r for r in (await c.get(url)).json() if r["user_id"] == dave.id)
+                assert (odd["kind"], odd["permission"]) == ("kb_share", None)
+                await ks.share_kb(db_session, haus.id, dave.id, "read", granted_by=alice.id)
+                # The share endpoint's echo is a kb_share row of the same shape.
+                echo = (await c.post(f"/api/knowledge/bases/{haus.id}/share",
+                                     json={"user_id": dave.id, "permission": "read"})).json()
+                assert set(echo) == common and echo["kind"] == "kb_share"
+
+                acting[0] = dave  # a read grantee manages nothing
+                assert (await c.delete(f"{url}/{bob.id}")).status_code == 403
+                acting[0] = carol  # an admin grantee may revoke, as for a share
+                assert (await c.delete(f"{url}/{bob.id}")).status_code == 200
+                assert (await c.delete(f"{url}/{bob.id}")).status_code == 404
+                acting[0] = alice
+                assert bob.id not in {r["user_id"] for r in (await c.get(url)).json()}
+        finally:
+            app.dependency_overrides.clear()
+        assert not await _sees_doc(db_session, bob.id, brief)
 
 
 class TestBackfillCarriesLegacySharesOver:
@@ -179,7 +266,7 @@ class TestBackfillCarriesLegacySharesOver:
         becomes a kb_shares row: the KB list, the level and the documents are
         what the legacy grants gave before #1446 — plus later documents."""
         alice, bob, _ = people
-        haus = await _kb(db_session, alice.id, "Haus")
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(60))
         d1 = await _doc(db_session, haus, "a", created_at=_t(30))
         d2 = await _doc(db_session, haus, "b", created_at=_t(20))
         await _old_share_kb(db_session, haus, bob.id, alice.id, "write", _t(10))
@@ -188,6 +275,10 @@ class TestBackfillCarriesLegacySharesOver:
         before = await ks.uncovered_legacy_pairs(db_session)
         assert [(p.kb_id, p.user_id, p.reasons) for p in before.clean] == [(haus.id, bob.id, [])]
         assert before.suspicious == []
+        # The dry run shows the owner every clean pair before --commit converts it.
+        dry = await ks.backfill_kb_shares(db_session, dry_run=True)
+        assert dry.clean == [{"kb_id": haus.id, "user_id": bob.id, "grants": 2,
+                              "permission": "write", "reasons": []}]
         assert haus.id not in await _listed_kbs(db_session, bob)  # the precondition gap
 
         run = await ks.backfill_kb_shares(db_session, dry_run=False)
@@ -206,8 +297,8 @@ class TestBackfillCarriesLegacySharesOver:
         """Alice shared "Haus" with Bob, then (before #1464) moved a document to
         "Privat". Converting the moved grant would share all of "Privat"."""
         alice, bob, _ = people
-        haus = await _kb(db_session, alice.id, "Haus")
-        privat = await _kb(db_session, alice.id, "Privat")
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(60))
+        privat = await _kb(db_session, alice.id, "Privat", created_at=_t(60))
         d1 = await _doc(db_session, haus, "bleibt", created_at=_t(40))
         d2 = await _doc(db_session, haus, "wandert", created_at=_t(40))
         geheim = await _doc(db_session, privat, "geheim", created_at=_t(40))
@@ -233,11 +324,98 @@ class TestBackfillCarriesLegacySharesOver:
         assert await _sees_doc(db_session, bob.id, d1)
         assert await _sees_doc(db_session, bob.id, d2)
 
+    async def _flags(self, db_session) -> dict[tuple[int, int], set[str]]:
+        pairs = await ks.uncovered_legacy_pairs(db_session)
+        return {(p.kb_id, p.user_id): set(p.reasons) for p in pairs.clean + pairs.suspicious}
+
+    async def _assert_never_converted(self, db_session, kb, bob) -> None:
+        run = await ks.backfill_kb_shares(db_session, dry_run=False)
+        assert (kb.id, bob.id) not in {(r["kb_id"], r["user_id"]) for r in run.inserted}
+        assert await ks.get_user_kb_permission_level(db_session, kb.id, bob.id) is None
+
+    async def test_moved_then_source_shared_again_is_suspicious(self, db_session, people):
+        """(a) Alice moved a Haus document into the newer "Privat", then shared
+        Haus again (the old share_kb gave the rest a new granted_at): no
+        split_batch, no foreign granter -- the KB being younger than the grant is
+        the trace."""
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(90))
+        await _doc(db_session, haus, "bleibt", created_at=_t(80))
+        wandert = await _doc(db_session, haus, "wandert", created_at=_t(80))
+        await _old_share_kb(db_session, haus, bob.id, alice.id, "read", _t(70))
+        privat = await _kb(db_session, alice.id, "Privat", created_at=_t(60))
+        await _move_pre_1464(db_session, wandert, privat)
+        await _doc(db_session, privat, "geheim")  # private upload after the move
+        await db_session.execute(text(
+            "UPDATE atom_explicit_grants g SET granted_at = :at FROM atoms a, documents d "
+            "WHERE g.atom_id = a.atom_id AND a.source_id = d.id::text "
+            "AND a.source_table = 'documents' AND d.knowledge_base_id = :kb"),
+            {"at": _t(50), "kb": haus.id})  # Haus shared again after the move
+        await db_session.commit()
+
+        flags = await self._flags(db_session)
+        assert "kb_younger_than_grant" in flags[(privat.id, bob.id)]
+        assert not {"split_batch", "foreign_granter", "partial"} & flags[(privat.id, bob.id)]
+        assert flags[(haus.id, bob.id)] == set()  # the source share itself is clean
+        await self._assert_never_converted(db_session, privat, bob)
+
+    async def test_moved_then_siblings_deleted_is_suspicious(self, db_session, people):
+        """(b) The sibling documents (and with them their grants) are gone: no
+        split_batch is left to see."""
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(90))
+        geht = await _doc(db_session, haus, "geloescht", created_at=_t(80))
+        wandert = await _doc(db_session, haus, "wandert", created_at=_t(80))
+        await _old_share_kb(db_session, haus, bob.id, alice.id, "write", _t(70))
+        privat = await _kb(db_session, alice.id, "Privat", created_at=_t(60))
+        await _move_pre_1464(db_session, wandert, privat)
+        await db_session.execute(text("DELETE FROM atom_explicit_grants WHERE atom_id = :a"),
+                                 {"a": geht.atom_id})
+        await db_session.execute(text("DELETE FROM document_chunks WHERE document_id = :d"),
+                                 {"d": geht.id})
+        await db_session.execute(text("DELETE FROM documents WHERE id = :d"), {"d": geht.id})
+        await db_session.commit()
+
+        flags = await self._flags(db_session)
+        assert "kb_younger_than_grant" in flags[(privat.id, bob.id)]
+        assert "split_batch" not in flags[(privat.id, bob.id)]
+        await self._assert_never_converted(db_session, privat, bob)
+
+    async def test_whole_kb_moved_together_is_suspicious(self, db_session, people):
+        """(c) Every Haus document moved into the newer "Privat": the source KB
+        holds nothing, the destination looks like a complete share."""
+        alice, bob, _ = people
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(90))
+        docs = [await _doc(db_session, haus, f"d{i}", created_at=_t(80)) for i in range(2)]
+        await _old_share_kb(db_session, haus, bob.id, alice.id, "read", _t(70))
+        privat = await _kb(db_session, alice.id, "Privat", created_at=_t(60))
+        for doc in docs:
+            await _move_pre_1464(db_session, doc, privat)
+
+        flags = await self._flags(db_session)
+        assert "kb_younger_than_grant" in flags[(privat.id, bob.id)]
+        await self._assert_never_converted(db_session, privat, bob)
+
+    async def test_one_grant_in_a_kb_that_holds_more_is_suspicious(self, db_session, people):
+        """The typical shape even into an OLDER, then empty KB: one moved document
+        and private uploads after it (partial does not see those)."""
+        alice, bob, _ = people
+        privat = await _kb(db_session, alice.id, "Privat", created_at=_t(100))
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(90))
+        wandert = await _doc(db_session, haus, "wandert", created_at=_t(80))
+        await _old_share_kb(db_session, haus, bob.id, alice.id, "read", _t(70))
+        await _move_pre_1464(db_session, wandert, privat)
+        await _doc(db_session, privat, "geheim")
+
+        flags = await self._flags(db_session)
+        assert flags[(privat.id, bob.id)] == {"single_grant"}
+        await self._assert_never_converted(db_session, privat, bob)
+
     async def test_a_share_made_by_someone_else_than_the_owner_is_suspicious(
         self, db_session, people,
     ):
         alice, bob, admin = people
-        haus = await _kb(db_session, alice.id, "Haus")
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(60))
         await _doc(db_session, haus, "a", created_at=_t(20))
         await _old_share_kb(db_session, haus, bob.id, admin.id, "read", _t(10))
 
@@ -282,8 +460,8 @@ class TestBootWarning:
         import api.lifecycle as lifecycle
 
         alice, bob, admin = people
-        haus = await _kb(db_session, alice.id, "Haus")
-        werk = await _kb(db_session, alice.id, "Werkstatt")
+        haus = await _kb(db_session, alice.id, "Haus", created_at=_t(60))
+        werk = await _kb(db_session, alice.id, "Werkstatt", created_at=_t(60))
         await _doc(db_session, haus, "a", created_at=_t(20))
         await _doc(db_session, werk, "w", created_at=_t(20))
         await _old_share_kb(db_session, haus, bob.id, alice.id, "read", _t(10))
@@ -306,6 +484,56 @@ class TestBootWarning:
         assert len(lines) == 1
         assert "1 legacy (KB, user) pair(s)" in lines[0]
         assert "1 suspicious pair(s)" in lines[0]
+
+    async def test_runs_in_the_background_and_is_bounded(self, monkeypatch, people):
+        import asyncio
+
+        from loguru import logger
+
+        import api.lifecycle as lifecycle
+        import services.kb_shares_service as kss
+
+        async def _slow(_db):
+            await asyncio.sleep(5)
+
+        class _Session:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(lifecycle, "AsyncSessionLocal", _Session)
+        monkeypatch.setattr(kss, "uncovered_legacy_pairs", _slow)
+        monkeypatch.setattr(lifecycle, "_KB_SHARES_CHECK_TIMEOUT_S", 0.05)
+        monkeypatch.setattr(lifecycle, "_startup_tasks", [])
+        lines: list[str] = []
+        sink = logger.add(lambda m: lines.append(str(m)), level="WARNING")
+        try:
+            lifecycle._schedule_kb_shares_warning()  # returns at once
+            assert len(lifecycle._startup_tasks) == 1
+            await lifecycle._startup_tasks[0]
+        finally:
+            logger.remove(sink)
+        assert any("no answer within" in line for line in lines)
+
+    async def test_a_failing_check_logs_no_sql(self, monkeypatch, people):
+        from loguru import logger
+
+        import api.lifecycle as lifecycle
+
+        def _boom():
+            raise RuntimeError("db down [SQL: SELECT secret FROM x]")
+
+        monkeypatch.setattr(lifecycle, "AsyncSessionLocal", _boom)
+        lines: list[str] = []
+        sink = logger.add(lambda m: lines.append(str(m)), level="WARNING")
+        try:
+            await lifecycle._warn_uncovered_kb_shares()
+        finally:
+            logger.remove(sink)
+        assert any("check failed: db down" in line for line in lines)
+        assert not any("secret" in line for line in lines)
 
     async def test_a_failing_check_only_warns(self, monkeypatch, people):
         from loguru import logger

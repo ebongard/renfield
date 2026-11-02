@@ -614,6 +614,10 @@ class TestWhoSetsTheDeleteSwitch:
         alice, bob, _ = people
         carol = await _user(db_session, "carol", ["kb.own", "kb.shared"])
         haus = await _kb(db_session, alice.id, "Haus")
+        # A legacy share's KB is older than its grants (else the backfill flags
+        # the pair kb_younger_than_grant and leaves it to the owner, #1446).
+        await db_session.execute(text(
+            "UPDATE knowledge_bases SET created_at = '2026-09-01' WHERE id = :k"), {"k": haus})
         doc = await _add_doc(db_session, haus, "alt")
         for grantee in (bob.id, carol.id):
             await db_session.execute(text(

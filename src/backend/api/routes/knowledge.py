@@ -1658,8 +1658,10 @@ async def list_kb_permissions(
     """
     List all permissions for a knowledge base. Owner or admin only.
 
-    One row per ``kb_shares`` grantee (kb_shares_service.list_kb_shares). A
-    grant on a single document is no KB share and is not listed (#1446).
+    One row per ``kb_shares`` grantee (``kind="kb_share"``), plus one per person
+    who holds only grants on documents of the KB (``kind="document_grants"``, no
+    KB level, a document count; #1446) -- they still read those documents, so the
+    owner must see and be able to revoke them (kb_shares_service.list_kb_shares).
     The `id` field in the response is the granted_to_user_id (same thing
     the revoke endpoint's {permission_id} path param now accepts).
     """
@@ -1698,7 +1700,9 @@ async def list_kb_permissions(
             id=s["user_id"],
             user_id=s["user_id"],
             username=perm_user.username if perm_user else "Unknown",
+            kind=s["kind"],
             permission=s["permission"],
+            documents=s["documents"],
             granted_by=s["granted_by"],
             granted_by_username=granter.username if granter else None,
             created_at=s["granted_at"].isoformat() if s["granted_at"] else "",
@@ -1787,6 +1791,7 @@ async def share_knowledge_base(
         id=data.user_id,
         user_id=data.user_id,
         username=target_user.username,
+        kind="kb_share",
         permission=data.permission,
         granted_by=user.id if user else None,
         granted_by_username=user.username if user else None,
@@ -1807,7 +1812,10 @@ async def revoke_kb_permission(
     Revoke a user's access to a knowledge base. Owner or admin only.
 
     Lane C: `permission_id` is now the `granted_to_user_id` (matches the
-    `id` field returned by the list endpoint).
+    `id` field returned by the list endpoint). Revokes both kinds of entry: the
+    kb_shares row and the person's grants on the KB's documents. A
+    ``document_grants`` entry has no delete switch, so the switch rule does not
+    apply; who may revoke is the same as for a share.
     """
     kb = await rag.get_knowledge_base(kb_id)
     if not kb:

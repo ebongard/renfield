@@ -238,7 +238,8 @@ class TestRevokeAndLevels:
 class TestLegacyGrantsAndBackfill:
     async def test_legacy_grant_opens_its_document_not_the_kb(self, db_session, people):
         """#1446: before the backfill a legacy grant opens its document only —
-        no KB in the list, no KB level, not in the owner's share list."""
+        no KB in the list, no KB level, in the owner's share list only as
+        document grants."""
         alice, bob, _ = people
         haus = await _kb(db_session, alice.id, "Haus")
         old = await _add_doc(db_session, haus, "alt")
@@ -248,7 +249,10 @@ class TestLegacyGrantsAndBackfill:
         assert await _resolver_sees(db_session, bob.id, old)
         assert await ks.get_user_kb_permission_level(db_session, haus, bob.id) is None
         assert await ks.list_user_shared_kb_ids(db_session, bob.id) == set()
-        assert await ks.list_kb_shares(db_session, haus) == []
+        # In the owner's list only as document grants (no level), so it can be revoked.
+        assert [(s["user_id"], s["kind"], s["permission"], s["documents"])
+                for s in await ks.list_kb_shares(db_session, haus)] == [
+            (bob.id, "document_grants", None, 1)]
         # The gap the backfill closes: a later document is not covered by a
         # legacy-only share.
         later = await _add_doc(db_session, haus, "spaeter")
