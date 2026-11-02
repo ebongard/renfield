@@ -527,6 +527,30 @@ class TestLostListFallsBack:
         assert not warnings_logged
 
     @pytest.mark.unit
+    def test_error_envelope_with_a_list_beside_it_is_no_mismatch(
+        self, shipped_rules, warnings_logged,
+    ):
+        """An error's `hints` list is not a renamed `results` — compacted as before."""
+        payload = {"error": "Unknown correspondent: 'Nobody'", "hints": ["Stadtwerke", "Bank"]}
+        compacted = compact_mcp_result("mcp.paperless.search_documents", _as_mcp_result(payload))
+
+        assert json.loads(compacted["message"]) == {"error": payload["error"]}
+        assert not warnings_logged
+
+    @pytest.mark.unit
+    def test_list_turned_into_an_object_passes_through_uncompacted(
+        self, shipped_rules, warnings_logged,
+    ):
+        payload = {"summary": {"n": 1}, "results": {"1": {"id": 1, "title": "Abschlagsplan"}}}
+        result = _as_mcp_result(payload)
+        compacted = compact_mcp_result("mcp.paperless.search_documents", result)
+
+        assert compacted["message"] == result["message"]
+        assert len(warnings_logged) == 2
+        assert "expected a list, got an object" in warnings_logged[0]
+        assert "Abschlagsplan" not in warnings_logged[0]
+
+    @pytest.mark.unit
     def test_missing_parent_level_is_no_mismatch(self, shipped_rules, warnings_logged):
         """The n8n error envelope has no `data` at all: nothing to compare."""
         payload = {"success": False, "error": "boom", "hints": ["retry"]}
