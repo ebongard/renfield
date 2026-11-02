@@ -472,6 +472,8 @@ class TestDeleteIsTheOwnersSwitch:
             rag=RAGService(db_session), user=alice, db=db_session)) == {haus: True, werk: True}
         assert flags(await list_knowledge_bases(
             rag=RAGService(db_session), user=admin, db=db_session)) == {haus: True, werk: True}
+        # The batch helper on no KBs asks nothing.
+        assert await ks.get_user_kb_delete_switches(db_session, bob.id, []) == set()
 
 
 class TestWhoSetsTheDeleteSwitch:
