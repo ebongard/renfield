@@ -31,8 +31,9 @@ from __future__ import annotations
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import or_, select, text
+from sqlalchemy import Integer, column, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.selectable import TextualSelect
 
 from models.database import Document
 from services.circle_sql import documents_circles_filter
@@ -158,21 +159,41 @@ def _rrf(ranked_lists: list[list[int]], k: int) -> list[int]:
     return [doc_id for doc_id, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)]
 
 
+# The document reach predicate runs over this FROM: ``d`` = documents, ``kb`` =
+# its knowledge base (LEFT JOIN, so null-KB documents keep the atom-owner branch).
+_VISIBLE_FROM = "FROM documents d LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id"
+
+
+def _document_reach_clause(asker_id: int | None) -> tuple[str, dict[str, Any]]:
+    """The circle filter for DOCUMENT rows (owner / public / grant / tier reach /
+    KB share), over ``_VISIBLE_FROM``. ``None`` reduces to the public rung."""
+    return documents_circles_filter(
+        asker_id if asker_id is not None else 0, doc_alias="d", kb_alias="kb"
+    )
+
+
+def visible_document_ids(asker_id: int | None) -> TextualSelect:
+    """``SELECT d.id`` of every document the asker may see — an IN-subquery for a
+    caller that lists documents with its own ORM statement (the recency list of
+    ``GET /api/knowledge/documents``), so the filter applies BEFORE its
+    LIMIT/OFFSET. Same predicate as the search gate below, by construction."""
+    clause, params = _document_reach_clause(asker_id)
+    return (
+        text(f"SELECT d.id {_VISIBLE_FROM} WHERE ({clause})")
+        .bindparams(**params)
+        .columns(column("id", Integer))
+    )
+
+
 async def _visible_ids(db: AsyncSession, ids: list[int], asker_id: int | None) -> set[int]:
     """The subset of ``ids`` the asker may see under circles — the single
     enforcement gate (D2). Postgres only; on sqlite / auth-off the caller skips
     the gate entirely (see search_documents)."""
     if not ids:
         return set()
-    clause, params = documents_circles_filter(
-        asker_id if asker_id is not None else 0, doc_alias="d", kb_alias="kb"
-    )
+    clause, params = _document_reach_clause(asker_id)
     params["ids"] = ids
-    sql = text(
-        "SELECT d.id FROM documents d "
-        "LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id "
-        f"WHERE d.id = ANY(:ids) AND ({clause})"
-    )
+    sql = text(f"SELECT d.id {_VISIBLE_FROM} WHERE d.id = ANY(:ids) AND ({clause})")
     rows = (await db.execute(sql, params)).fetchall()
     return {r[0] for r in rows}
 

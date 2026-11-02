@@ -237,6 +237,18 @@ WHERE a.source_id NOT LIKE '\_\_pending\_\_%' ESCAPE '\'
 GROUP BY a.atom_type;
 ```
 
+### Listing documents is a read through the document filter
+
+`GET /api/knowledge/documents` has three branches under auth: with `q` the search gate of `search_documents`; with a
+`knowledge_base_id` the KB-level `check_kb_access(kb, user, "read", db)`, after which the whole KB is listed; with
+neither (the recency list) the same document filter as the search gate, `document_search.visible_document_ids`, as an
+IN-subquery before `LIMIT`/`OFFSET` so pages stay full. `kb.all` and auth-off list everything. Until 2026-11-02 the
+recency list had no filter, so any `kb.own` holder listed every user's document rows. `RAGService.list_documents`
+takes `asker_id` + `enforce_circles` without defaults. Proof: `tests/backend/test_document_list_circles_pg.py`.
+`GET /api/knowledge/stats` counts the same way: below `kb.all` (auth on) documents and chunks through `visible_document_ids`, KBs through the KB-list rule (`knowledge._readable_knowledge_bases`, as `GET /bases`); `kb.all` and auth-off count globally. Until 2026-11-02 every `kb.own` holder got the global counts. `RAGService.get_stats` takes `asker_id`, `enforce_circles`, `knowledge_base_ids` without defaults. Proof: `tests/backend/test_knowledge_stats_circles_pg.py`.
+The per-KB `document_count` of `GET /bases` and `GET /bases/{id}` counts the same way (`RAGService._kb_document_count`; `list_knowledge_bases` and `count_kb_documents` take `asker_id` + `enforce_circles` without defaults): a public KB of another user no longer reveals how many tier-self documents its owner keeps there. Same proof file.
+Known divergence, not a leak (#1469): a KB with `is_public=true` opens its documents to `kb.shared` holders via `?knowledge_base_id` and the detail page, but not in the unfiltered list, because `is_public` does not change `circle_tier`.
+
 Attaching is a write on the conversation: `POST /api/chat/upload` applies the chat's own message-write rule to its
 `session_id` (`chat_upload._may_write_session` → `ConversationService.reaches`, exactly as `save_message` with
 `enforce_ownership`). An existing conversation must be in reach, so a member may attach to a shared room thread they
