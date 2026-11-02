@@ -38,15 +38,28 @@
 set -euo pipefail
 
 BUILD_HOST="${RENFIELD_BUILD_HOST:-evdb@192.168.1.159}"
-REGISTRY="${RENFIELD_REGISTRY:?set RENFIELD_REGISTRY, e.g. export RENFIELD_REGISTRY=your-registry.example/renfield}"
-IMAGE="$REGISTRY/voice-server"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VSDIR="$REPO_ROOT/voice-server"
 
+# --help in ANY position wins: `v0.4.0 --help` must never start a real release.
+for arg in "$@"; do
+  [[ "$arg" == "-h" || "$arg" == "--help" ]] && { sed -n '2,37p' "$0"; exit 0; }
+done
 TAG="${1:-}"
 DRY_RUN=0
-[[ "${2:-}" == "--dry-run" ]] && DRY_RUN=1
 [[ -z "$TAG" ]] && { sed -n '2,20p' "$0"; exit 2; }
+# Anything but exactly `<tag> [--dry-run]` is refused: an unrecognised second
+# argument (a typo of --dry-run) used to fall through to a REAL release.
+if [[ "$TAG" == -* || $# -gt 2 || ( $# -eq 2 && "$2" != "--dry-run" ) ]]; then
+  echo "usage: $0 vX.Y.Z [--dry-run]   (got: $*)" >&2
+  exit 2
+fi
+[[ $# -eq 2 ]] && DRY_RUN=1
+
+# Required only after the usage paths above, so the usage is readable without
+# first setting the variable it documents (#1399).
+REGISTRY="${RENFIELD_REGISTRY:?set RENFIELD_REGISTRY, e.g. export RENFIELD_REGISTRY=your-registry.example/renfield}"
+IMAGE="$REGISTRY/voice-server"
 
 log()  { printf '\n\033[1;36m=== %s ===\033[0m\n' "$*"; }
 fail() { printf '\033[1;31mREFUSED: %s\033[0m\n' "$*" >&2; exit 1; }
