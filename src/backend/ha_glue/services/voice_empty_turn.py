@@ -15,14 +15,21 @@ The kinds:
 - ``no_audio``: the satellite sent ``audio_end`` with nothing buffered.
 - ``stt_error``: the speech-to-text call failed. Until #1386 a voice-server
   failure came back as ``""`` and was counted as an empty transcription.
-- ``vad_floor``: the device stopped on silence at the EARLIEST moment its VAD
-  allows (grace period + silence window). Its VAD saw no speech after the grace
-  period: the signature of a false wake. NOT proof of one: the VAD ignores the
-  grace period, so a short command spoken entirely inside it ends at the floor
-  too.
-- ``vad_heard_speech``: stopped on silence, but later than the floor — the VAD
-  kept the turn open on something it took for speech, and STT returned nothing.
-  Unintelligible speech, or a non-speech sound loud enough for the VAD.
+- ``vad_floor``: stopped on silence and the VAD saw no speech — the signature
+  of a false wake.
+- ``vad_heard_speech``: stopped on silence, the VAD saw speech, and STT
+  returned nothing. Unintelligible speech, or a non-speech sound loud enough
+  for the VAD. The one kind that earns the satellite an LED cue
+  (``feedback_cue_for``); a false wake gets none.
+
+How ``vad_floor`` and ``vad_heard_speech`` are told apart: a satellite from
+v1.4.13 on reports in ``audio_end`` whether its VAD saw speech in ANY chunk of
+the turn (``vad_speech_seen``), and that report decides. An older satellite
+sends no such field; then the recording length decides (fallback): a turn that
+ends at the EARLIEST moment the VAD allows (grace period + silence window) saw
+no speech after the grace period. That fallback cannot see a short command
+spoken entirely inside the grace period — it ends at the floor too — which is
+why the field exists. The fleet updates over OTA gradually, so both coexist.
 - ``cap_reached``: stopped at ``max_recording_seconds`` and still no text.
 - ``button``: ended with the button.
 - ``unknown_end``: no or an unknown turn-end reason (legacy clients, browser
@@ -92,14 +99,21 @@ def classify_empty_turn(
     audio_seconds: float,
     stt_failed: bool = False,
     floor_seconds: float | None = None,
+    vad_speech_seen: bool | None = None,
 ) -> str:
-    """Name why a turn produced no text. ``floor_seconds=None``: no VAD floor
-    is known for this source, so a silence end is not split by length."""
+    """Name why a turn produced no text.
+
+    ``vad_speech_seen``: the device's own VAD report (``None`` = not reported,
+    an older satellite); when present it decides a silence end.
+    ``floor_seconds=None``: no VAD floor is known for this source, so an
+    unreported silence end is not split by length."""
     if stt_failed:
         return "stt_error"
     if audio_seconds <= 0:
         return "no_audio"
     if turn_end_reason == "silence":
+        if vad_speech_seen is not None:
+            return "vad_heard_speech" if vad_speech_seen else "vad_floor"
         if floor_seconds is None:
             return "unknown_end"
         # Half a chunk of slack, deliberately not one: the length is a
@@ -124,6 +138,26 @@ def classify_empty_turn(
     return "unknown_end"
 
 
+def vad_speech_seen_from(value: object) -> bool | None:
+    """The ``vad_speech_seen`` field of an ``audio_end`` frame, or ``None``.
+
+    Only a real JSON boolean counts. A missing field (a satellite before
+    v1.4.13) or any other value falls back to the length rule — a string
+    ``"false"`` is truthy and must never read as "speech seen"."""
+    return value if isinstance(value, bool) else None
+
+
+#: The LED cue a satellite gets for an empty turn of this kind, if any. Only
+#: speech that was heard but not understood earns one; a false wake stays
+#: dark (#1386: 92 empty turns a week, most of them false wakes).
+FEEDBACK_CUES = {"vad_heard_speech": "not_understood"}
+
+
+def feedback_cue_for(detail: dict | None) -> str | None:
+    """The cue for an empty turn's detail (``record_empty_turn``'s return)."""
+    return FEEDBACK_CUES.get((detail or {}).get("empty_kind"))
+
+
 def record_empty_turn(
     *,
     source: str,
@@ -133,6 +167,7 @@ def record_empty_turn(
     audio_seconds: float,
     stt_failed: bool = False,
     floor_seconds: float | None = None,
+    vad_speech_seen: bool | None = None,
 ) -> dict:
     """Classify, log and count one empty turn.
 
@@ -144,10 +179,13 @@ def record_empty_turn(
         audio_seconds=audio_seconds,
         stt_failed=stt_failed,
         floor_seconds=floor_seconds,
+        vad_speech_seen=vad_speech_seen,
     )
+    speech = "-" if vad_speech_seen is None else str(vad_speech_seen).lower()
     logger.warning(
         f"🔇 Empty voice turn ({source}) session={session_id} room={room or '-'} "
-        f"kind={kind} turn_end={turn_end_reason or '-'} audio={audio_seconds:.2f}s"
+        f"kind={kind} turn_end={turn_end_reason or '-'} audio={audio_seconds:.2f}s "
+        f"vad_speech={speech}"
     )
     try:
         from utils.metrics import record_voice_empty_turn

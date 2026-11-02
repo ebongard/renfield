@@ -141,6 +141,9 @@ class WSAudioEndMessage(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=128)
     reason: str = Field(default="unknown", max_length=64)
     request_id: str | None = Field(None, max_length=64)
+    # Satellite v1.4.13+: whether its VAD saw speech in any chunk of the turn
+    # (#1386). Absent on older satellites and on browser devices.
+    vad_speech_seen: bool | None = None
 
 
 class WSWakewordDetectedMessage(BaseModel):

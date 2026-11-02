@@ -191,6 +191,9 @@ class WebSocketClient:
         # Backend-pushed LED brightness (night-dimming). Carried both as a live
         # `led_config` message and inside register_ack (mid-night reconnect).
         self._on_led_config: Optional[Callable[[int], None]] = None
+        # Backend-pushed feedback cue (#1386), e.g. "not_understood": speech was
+        # heard but produced no text. Shown on the LEDs only, never spoken.
+        self._on_feedback_cue: Callable[[str], None] | None = None
         # Async callback returning JPEG bytes (or None) for an on-demand snapshot.
         self._capture_snapshot: Optional[Callable[[], Any]] = None
         # Async callback(params) -> list[dict] for an on-demand BT discovery scan.
@@ -299,6 +302,10 @@ class WebSocketClient:
     def on_led_config(self, callback: Callable[[int], None]):
         """Register callback for backend-pushed LED brightness (0-31)"""
         self._on_led_config = callback
+
+    def on_feedback_cue(self, callback: Callable[[str], None]):
+        """Register callback for a backend-pushed feedback cue (#1386)"""
+        self._on_feedback_cue = callback
 
     def on_bt_scan_request(self, callback: Callable[[Dict[str, Any]], Any]):
         """Register async callback(params)->list[dict] for a backend-requested
@@ -732,6 +739,12 @@ class WebSocketClient:
                 except (TypeError, ValueError) as e:
                     print(f"Invalid led_config brightness: {e}")
 
+        elif msg_type == "feedback_cue":
+            # Backend: the last turn heard speech but understood nothing (#1386).
+            cue = data.get("cue")
+            if self._on_feedback_cue and isinstance(cue, str):
+                self._on_feedback_cue(cue)
+
         elif msg_type == "capture_snapshot":
             # Backend asked for an on-demand camera snapshot (e.g. occupancy
             # check before a private announcement). Reply asynchronously so we
@@ -949,6 +962,7 @@ class WebSocketClient:
         session_id: str,
         reason: str = "silence",
         image_b64: str | None = None,
+        vad_speech_seen: bool | None = None,
     ):
         """
         Notify server that audio streaming has ended.
@@ -957,6 +971,8 @@ class WebSocketClient:
             session_id: Current session ID
             reason: Why audio ended (silence, button, timeout)
             image_b64: Optional base64-encoded JPEG snapshot for visual queries
+            vad_speech_seen: Whether the VAD saw speech in any chunk of the
+                turn (#1386). ``None`` leaves the field out (cancel path).
         """
         if not self.is_connected:
             return
@@ -988,6 +1004,8 @@ class WebSocketClient:
         }
         if image_b64:
             msg["image"] = image_b64
+        if vad_speech_seen is not None:
+            msg["vad_speech_seen"] = bool(vad_speech_seen)
 
         await self._send(msg)
 

@@ -43,6 +43,9 @@ class LEDPattern(str, Enum):
     ERROR = "error"         # Red blink
     SUCCESS = "success"     # Green flash
     BOOT = "boot"           # Rainbow cycle
+    # Speech was heard but not understood (#1386): two short purple blinks,
+    # then dark until the satellite restores IDLE. A false wake gets no cue.
+    NOT_UNDERSTOOD = "not_understood"
 
 
 @dataclass
@@ -58,6 +61,19 @@ class Color:
         # APA102 format: 0xE0 + brightness (5 bits), then BGR
         bright = 0xE0 | (self.brightness & 0x1F)
         return bytes([bright, self.b, self.g, self.r])
+
+
+#: Frames of the NOT_UNDERSTOOD cue: on, off, on, then dark. At the ~20 FPS
+#: animation loop that is two blinks of ~0.2 s within the first ~0.6 s.
+_CUE_BLINK_FRAMES = 4
+_CUE_BLINKS = 2
+
+
+def cue_blink_on(frame: int) -> bool:
+    """Whether the NOT_UNDERSTOOD cue is lit at animation frame ``frame``."""
+    if frame < 0 or frame >= _CUE_BLINK_FRAMES * 2 * _CUE_BLINKS:
+        return False
+    return (frame // _CUE_BLINK_FRAMES) % 2 == 0
 
 
 # Predefined colors
@@ -302,6 +318,10 @@ class LEDController:
                 # Rainbow cycle
                 self._animate_rainbow(frame)
 
+            elif pattern == LEDPattern.NOT_UNDERSTOOD:
+                # Two short purple blinks, capped by the (night-dimmed) brightness
+                self.set_all(COLORS["purple"] if cue_blink_on(frame) else COLORS["off"])
+
             else:
                 self.set_all(COLORS["off"])
                 time.sleep(0.1)
@@ -499,6 +519,12 @@ class GPIOLEDController:
                 self._animate_flash(frame, 0, 255, 0)
             elif pattern == LEDPattern.BOOT:
                 self._animate_rainbow(frame)
+            elif pattern == LEDPattern.NOT_UNDERSTOOD:
+                purple = COLORS["purple"]
+                if cue_blink_on(frame):
+                    self._set_color(purple.r, purple.g, purple.b)
+                else:
+                    self._set_color(0, 0, 0)
             else:
                 self._set_color(0, 0, 0)
                 time.sleep(0.1)
@@ -563,6 +589,8 @@ class XVF3800LEDController:
         LEDPattern.ERROR: (3, 0xff0000),      # Solid red
         LEDPattern.SUCCESS: (3, 0x00ff00),    # Solid green
         LEDPattern.BOOT: (2, None),           # Rainbow
+        # The XMOS has no blink effect: solid purple for the cue's duration.
+        LEDPattern.NOT_UNDERSTOOD: (3, 0x8000ff),
     }
 
     def __init__(
