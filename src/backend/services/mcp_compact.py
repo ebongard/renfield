@@ -104,8 +104,9 @@ def _compact_json_text(text: Any, field_paths: list[str], tool_name: str) -> str
     nothing for months after the MCP wrapped its list into {"summary", "results"},
     and the agent answered "nothing found" to every search). Handing the agent an
     empty object is worse than the uncompacted payload, so the payload stays and
-    a WARNING names the mismatch. Only the payload's top-level keys are logged,
-    never its content.
+    a WARNING names the mismatch. Only keys are logged, never values. The same
+    holds for a rule that keeps its scalar keys but loses a whitelisted list
+    (``_lost_array_paths``).
 
     The "uncompacted" payload is bounded for the PROMPT, not at the source: the
     message was truncated by the MCP client (``_truncate_response``), the data
@@ -131,6 +132,15 @@ def _compact_json_text(text: Any, field_paths: list[str], tool_name: str) -> str
         )
         return None
 
+    lost = _lost_array_paths(parsed, compacted, field_paths)
+    if lost:
+        logger.warning(
+            f"MCP compaction rule for {tool_name} lost the list behind {lost} of a "
+            f"non-empty payload — rule does not match the response shape, "
+            f"passing the payload through uncompacted"
+        )
+        return None
+
     if isinstance(parsed, dict) and isinstance(compacted, dict) and _TRUNCATION_KEY in parsed:
         compacted = {**compacted, _TRUNCATION_KEY: parsed[_TRUNCATION_KEY]}
     return json.dumps(compacted, ensure_ascii=False)
@@ -143,6 +153,69 @@ def _is_hollow(value: Any) -> bool:
     if isinstance(value, list):
         return all(_is_hollow(item) for item in value)
     return False
+
+
+def _lost_array_paths(parsed: Any, compacted: Any, field_paths: list[str]) -> list[str]:
+    """Whitelisted lists the payload carries but the compaction dropped (#1448).
+
+    The hollow check above only fires when a rule keeps NOTHING. The shipped
+    rules always keep a top-level key as well (``summary``, ``success``), so a
+    renamed list -- ``results`` -> ``documents``, ``data.workflows`` ->
+    ``data.items`` -- would be dropped while the rest survives, and the agent
+    reads "no results". A list counts as lost when, at the level where the rule
+    expects it:
+
+    - the rule's key is MISSING while that level holds some other non-empty
+      list (the list was renamed), or
+    - the key holds a non-empty list whose every item compacted to nothing
+      (the item fields were renamed), or
+    - the key holds a non-empty OBJECT that compacted to nothing (the list
+      became a mapping).
+
+    An absent key is not a mismatch in an error envelope (a top-level
+    ``error`` key: its ``hints``/``suggestions`` lists are not the results) nor
+    with no list beside it (a payload without results). Only the rule's own
+    path and the payload's KEYS are returned, never its values. Checked on dict
+    payloads, at the first ``[]`` of each path.
+    """
+    if not isinstance(parsed, dict):
+        return []
+    # Truthy, not mere presence: `"error": null` / `""` is a success payload.
+    is_error_envelope = bool(parsed.get("error"))
+
+    lost: list[str] = []
+    seen: set[str] = set()
+    for path in field_paths:
+        head, sep, _ = path.partition("[]")
+        if not sep or head in seen:
+            continue
+        seen.add(head)
+        *parents, key = head.split(".")
+
+        source, target = parsed, compacted
+        for part in parents:
+            source = source.get(part) if isinstance(source, dict) else None
+            target = target.get(part) if isinstance(target, dict) else None
+        if not isinstance(source, dict):
+            continue
+
+        if key not in source:
+            if is_error_envelope:
+                continue    # its lists (hints, suggestions) are not the results
+            other_lists = sorted(k for k, v in source.items() if isinstance(v, list) and v)
+            if other_lists:
+                lost.append(f"{head}[] (missing; lists here: {other_lists[:10]})")
+            continue
+
+        value = source[key]
+        kept = target.get(key) if isinstance(target, dict) else None
+        if _is_hollow(value) or not _is_hollow(kept or []):
+            continue
+        if isinstance(value, list):
+            lost.append(f"{head}[] (every item compacted to nothing)")
+        elif isinstance(value, dict):
+            lost.append(f"{head}[] (expected a list, got an object)")
+    return lost
 
 
 def _resolve_tool_name(namespaced: str) -> tuple[str, str] | None:

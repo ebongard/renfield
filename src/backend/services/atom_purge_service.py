@@ -13,7 +13,7 @@ The procedure (atomic per atom_id):
        audio + transcript pointers) carry the same CASCADE. That is the point,
        not an accident — an Art. 17 erasure that left the conversation standing
        would not be an erasure — but the blast radius is larger than it was.
-    4. COMMIT.
+    4. COMMIT (unless the caller owns the transaction: ``commit=False``).
 
 Why this isn't a database trigger:
     - Portable across postgres, MySQL, MSSQL, sqlite (the trigger DDL
@@ -53,11 +53,17 @@ class AtomPurgeService:
     """Sole authorized path for deleting atoms."""
 
     @staticmethod
-    async def purge(session: AsyncSession, *, atom_id: str, reason: str) -> int:
+    async def purge(
+        session: AsyncSession, *, atom_id: str, reason: str, commit: bool = True,
+    ) -> int:
         """Archive legal_hold provenance + delete the atom.
 
-        Returns the count of provenance rows moved to the archive.
-        Raises if the atom doesn't exist (caller's bug, not ours to mask).
+        ``commit=False`` leaves the commit to the caller, so a purge can share one
+        transaction with the deletion of the source rows it belongs to (document
+        delete: the facts' atoms, the document row and its own atom go together).
+
+        Returns the count of provenance rows moved to the archive. An atom that
+        does not exist is not an error: nothing is archived or deleted (returns 0).
         """
         if not atom_id:
             raise ValueError("atom_id is required")
@@ -104,5 +110,6 @@ class AtomPurgeService:
         # kg_entities.atom_id, conversation_memories.atom_id, etc.
         await session.execute(delete(Atom).where(Atom.atom_id == atom_id))
 
-        await session.commit()
+        if commit:
+            await session.commit()
         return len(hold_rows)

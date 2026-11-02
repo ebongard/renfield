@@ -378,7 +378,8 @@ class KnowledgeBase(Base):
     # evaluated at query time, so it covers documents added to the KB later.
     # Per-document AtomExplicitGrant rows written by older share code (and by
     # pc20260420_circles_v1_schema.py from the dropped `kb_permissions`) are
-    # kept and still count — see services/kb_shares_service.py.
+    # kept: they open their documents, but give NO KB level (#1446) — see
+    # services/kb_shares_service.py.
 
 
 class Project(Base):
@@ -853,6 +854,13 @@ class ChatUpload(Base):
     error_message = Column(Text, nullable=True)
     knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=True)
     file_path = Column(String(512), nullable=True)
+    # Who attached the file (#1459): set server-side from the authenticated
+    # caller, never from a request field. NULL on rows from before the column
+    # existed and under auth off without a user — those keep the owner-only
+    # rule for filing (/index, /email).
+    uploaded_by_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
     created_at = Column(DateTime, default=_utcnow)
 
 
@@ -1357,9 +1365,10 @@ class KBShare(Base):
 
     Before this table existed a share was ONLY its per-document
     ``atom_explicit_grants`` rows, so sharing an empty KB stored nothing and a
-    later document was never covered. Those rows are kept and still count
-    (``kb_shares_service``); ``bin/backfill_kb_shares.py`` derives the missing
-    ``kb_shares`` rows from them.
+    later document was never covered. Those rows are kept and still open their
+    documents, but the KB level comes ONLY from this table (#1446);
+    ``bin/backfill_kb_shares.py`` derives the missing ``kb_shares`` rows from them
+    (never for pairs that look moved — those need the owner).
     """
     __tablename__ = "kb_shares"
 
@@ -1372,6 +1381,9 @@ class KBShare(Base):
     permission_level = Column(String(16), nullable=False, default=KB_PERM_READ)
     granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     granted_at = Column(DateTime, nullable=False, default=_utcnow)
+    # Deleting (documents, the KB) is NOT implied by any level: the KB owner (or
+    # kb.all) grants it per share (pc20261102). Only they may set or clear it.
+    can_delete = Column(Boolean, nullable=False, default=False, server_default="false")
 
     __table_args__ = (
         Index("idx_kb_shares_user", "user_id"),
