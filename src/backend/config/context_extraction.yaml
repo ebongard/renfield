@@ -16,7 +16,10 @@
 # it, and against the tool's CURRENT response shape: a path into an older shape
 # resolves to nothing, silently. A path that resolves to nothing CLEARS its key
 # in the conversation (the keys of one tool describe ONE item, #1447), so a
-# zero-hit search forgets the previous "last" item. Every rule here has a recorded response shape in
+# zero-hit search forgets the previous "last" item. Intended consequence: a
+# call reported as success whose payload is an error envelope (n8n's
+# {"success": false, ...}), or a search an internal flow runs (e.g. a filing
+# step looking up a document), also becomes the current item and clears it. Every rule here has a recorded response shape in
 # tests/backend/test_context_extractor.py (RECORDED_SHAPES), built from the
 # MCP source — add one with each new rule.
 

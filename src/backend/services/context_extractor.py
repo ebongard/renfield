@@ -72,7 +72,8 @@ def bound_context_vars(raw: dict[str, Any]) -> dict[str, Any]:
 
     Drops keys that are not public identifiers (see ``_KEY_RE``); collapses
     whitespace and caps string length, list length and the turn's total size
-    (``MAX_TURN_CHARS``, first keys win). A value that is ``None`` or not a
+    (``MAX_TURN_CHARS``, first keys win; a key past the cap is cleared). A
+    value that is ``None`` or not a
     scalar / list of scalars becomes ``None`` — the delete marker of
     ``merge_context_vars``: the current item has no usable value for that
     key, so an older item's value must not stand in for it.
@@ -88,7 +89,10 @@ def bound_context_vars(raw: dict[str, Any]) -> dict[str, Any]:
             continue
         size = len(key) + len(json.dumps(clean, ensure_ascii=False))
         if used + size > MAX_TURN_CHARS:
-            logger.debug(f"Context var {key!r} dropped: turn size cap reached")
+            # Cleared, not skipped: skipping would leave the OLDER item's value
+            # under this key next to the new item's other keys.
+            logger.debug(f"Context var {key!r} cleared: turn size cap reached")
+            bounded[key] = None
             continue
         bounded[key] = clean
         used += size

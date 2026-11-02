@@ -80,10 +80,20 @@ class TestBoundContextVars:
     def test_turn_total_is_capped_first_keys_win(self):
         raw = {f"k{i}": "v" * MAX_VALUE_CHARS for i in range(30)}
         out = bound_context_vars(raw)
-        assert 0 < len(out) < 30
-        assert list(out) == [f"k{i}" for i in range(len(out))]
-        size = sum(len(k) + len(json.dumps(v)) for k, v in out.items())
+        kept = [k for k, v in out.items() if v is not None]
+        assert 0 < len(kept) < 30
+        assert kept == [f"k{i}" for i in range(len(kept))]
+        size = sum(len(k) + len(json.dumps(out[k])) for k in kept)
         assert size <= MAX_TURN_CHARS
+
+    def test_a_key_past_the_cap_is_cleared_not_skipped(self):
+        """Skipping it would keep the OLDER item's value next to the new keys."""
+        raw = {f"k{i}": "v" * MAX_VALUE_CHARS for i in range(30)}
+        out = bound_context_vars(raw)
+        assert set(out) == set(raw)
+        assert out["k29"] is None
+        merged = merge_context_vars({"k29": "altes Objekt"}, out)
+        assert "k29" not in merged
 
     def test_the_shipped_rules_fit_the_turn_cap(self):
         """Measured, not assumed: every shipped rule's variable at the value cap
@@ -582,7 +592,7 @@ def test_every_agent_entry_point_collects_context_vars():
     assert not missing, f"agent entry point without context_vars_out: {missing}"
 
 
-_PERSIST_CALLS ={"_persist_turn_context_vars", "save_turn_context_vars"}
+_PERSIST_CALLS = {"_persist_turn_context_vars", "save_turn_context_vars"}
 #: Entry points whose collected dict leaves by RETURN, not by a persist call:
 #: the orchestrator's sub-agent hands it to `run_orchestrated` via the result,
 #: whose caller (the chat handler) persists it — held by TestOrchestrator.
@@ -747,6 +757,27 @@ class TestReadGate:
         for uid in (2, None):
             assert await svc.load_context_vars("cv-read", user_id=uid, enforce_ownership=True) == {}
             assert await svc.load_summary("cv-read", user_id=uid, enforce_ownership=True) is None
+
+    async def test_a_member_reaching_the_shared_thread_reads(self, db_session, make_user):
+        """Reach, not ownership: a member of the owner's circle at the thread's
+        tier (a shared room thread) gets the vars and the summary."""
+        from tests.backend.test_shared_conversations_boundaries import _member_of
+
+        await make_user(1)
+        await make_user(3)
+        svc = ConversationService(db_session)
+        await svc.save_message("cv-room", "user", "wie spät", user_id=1, circle_tier=2)
+        await svc.save_context_vars("cv-room", {"last_media_name": "Inception"})
+        conv = (await db_session.execute(
+            select(Conversation).where(Conversation.session_id == "cv-room"))).scalar_one()
+        conv.summary = "Raumverlauf"
+        await db_session.commit()
+
+        assert await svc.load_context_vars("cv-room", user_id=3, enforce_ownership=True) == {}
+        await _member_of(db_session, 1, 3, 2)
+        assert await svc.load_context_vars("cv-room", user_id=3, enforce_ownership=True) == {
+            "last_media_name": "Inception"}
+        assert await svc.load_summary("cv-room", user_id=3, enforce_ownership=True) == "Raumverlauf"
 
     async def test_auth_off_and_missing_session_are_unchanged(self, db_session, make_user):
         svc = await self._setup(db_session, make_user)

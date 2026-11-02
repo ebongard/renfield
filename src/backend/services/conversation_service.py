@@ -1003,7 +1003,9 @@ class ConversationService:
         model's. Fires the ``extract_context_vars`` plugin hook first — a
         handler returns a dict of further variables (or None), merged over the
         YAML-extracted ones. Everything passes ``bound_context_vars`` before it
-        is stored. Returns what was written (``{}`` when nothing was).
+        is stored. Returns what was written — values set AND ``None`` delete
+        markers for keys the current item has no value for (``{}`` when
+        nothing was written).
         """
         from services.context_extractor import bound_context_vars
         from utils.hooks import run_hooks
