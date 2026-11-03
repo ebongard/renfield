@@ -2405,8 +2405,8 @@ KG_MERGE_REASON_CROSS_TYPE = "cross_type"  # entity TYPES disjoint (place vs org
 #
 # NOT "everything the reconciler refuses to auto-merge" — that set is far larger
 # and bulk-folding it is the point of the cluster view: a `gray_zone` pair carries
-# `block_auto_merge` from `_name_collision_low_signal` (same name, no description
-# to tell them apart) and is exactly what the owner decides once. `gray_zone` says
+# `block_auto_merge` from `_embedding_match_low_signal` (no description to tell
+# them apart) and is exactly what the owner decides once. `gray_zone` says
 # "probably the same thing, a machine should not decide alone"; `name_typo` says
 # "maybe two different PEOPLE, one character apart". Only the second kind belongs
 # in here.

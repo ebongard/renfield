@@ -955,7 +955,7 @@ class Settings(BaseSettings):
     kg_reconciler_candidate_threshold: float = Field(default=0.85, ge=0.5, le=1.0)   # Cosine to consider a pair at all
     kg_reconciler_auto_merge_threshold: float = Field(default=0.95, ge=0.5, le=1.0)  # Same-tier auto-merge bar (>= candidate)
     kg_reconciler_max_per_run: int = Field(default=50, ge=1, le=500)             # Safety cap per user per run
-    kg_reconciler_embed_backfill_per_run: int = Field(default=50, ge=0, le=500)  # Re-embed up to N null-embedding entities per pass (#6); 0 disables
+    kg_reconciler_embed_backfill_per_run: int = Field(default=50, ge=0, le=500)  # Re-embed up to N null-embedding entities per pass (#6); 0 disables. A pre-run candidate estimate must count these: a dry-run self-join over `embedding IS NOT NULL` is systematically optimistic (#1329)
     # KG conflation tripwire (read-only early warning, services/kg_conflation_monitor.py).
     # Logs + gauges DISTINCT-name same-type pairs embedding >= threshold (a forming
     # generic-centroid magnet); never mutates. Expected count: 0.

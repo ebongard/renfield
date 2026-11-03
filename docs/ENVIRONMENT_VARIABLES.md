@@ -2117,7 +2117,12 @@ Entitaeten und ruft `KgReconcilerService.run_for_user(user_id)`. Jeder Lauf ist
 per-User durch einen nicht-blockierenden Advisory-Lock serialisiert (ein zweiter
 ueberlappender Lauf findet den Lock gehalten und endet als No-op). Zu Beginn
 werden bis zu `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` aktive Entitaeten ohne
-Embedding nach-eingebettet — sonst blieben sie im Self-Join unsichtbar. Ein
+Embedding nach-eingebettet — sonst blieben sie im Self-Join unsichtbar.
+**Wer die Kandidaten eines Laufs vorab abschätzen will, muss diesen Backfill
+mitdenken:** ein Trockenlauf des Self-Joins mit `embedding IS NOT NULL` sieht
+nur die Zeilen, die schon eine Einbettung haben, und ist damit systematisch zu
+optimistisch — der Lauf erzeugt die übrigen Einbettungen erst selbst (#1329:
+Vorabmessung 0 Nicht-Personen-Paare, im Lauf zwei Auto-Merges). Ein
 halfvec-Embedding-Self-Join findet dann Duplikat-Paare desselben Users (Cosine
 >= `KG_RECONCILER_CANDIDATE_THRESHOLD`); Winner = mehr Erwaehnungen, tie-break
 aelteres `first_seen_at`.

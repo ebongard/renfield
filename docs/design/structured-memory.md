@@ -107,8 +107,8 @@ of the same documents, so they embed far above the 0.85 candidate bar: `place "K
 "X-Idra Systems GmbH"` measured at **0.895**, with eight such pairs pending in xidra and one in the household. The
 damage is not one bad row — the review queue groups pairs into connected components, so a single cross-type edge
 drags a whole cluster of company spellings into the town, where "fold all" would have merged them. Above 0.95 the
-pair would have auto-merged outright: `_name_collision_low_signal` does not apply once both sides carry their own
-description, and a counter-test confirmed the subset case folding automatically without the guard.
+pair would have auto-merged outright: the low-signal brake (then `_name_collision_low_signal`) did not apply once both
+sides carry their own description, and a counter-test confirmed the subset case folding automatically without the guard.
 
 The guard mirrors the person-guard's shape: if the two sides' **primary** types disagree (`_types_compatible`), the
 pair is dropped — **unless the names are related** (equal or whitespace-token-subset). That is the one shape in which a foreign type means a *mis-typed duplicate* rather than two
@@ -199,7 +199,8 @@ Operational details:
 - Each pass is serialized per-user by a non-blocking advisory lock (`_RECONCILER_LOCK_NS`); an overlapping run is a
   no-op.
 - Each pass first re-embeds up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else they stay
-  invisible to the self-join).
+  invisible to the self-join). Consequence for any pre-run estimate: a dry-run self-join over `embedding IS NOT NULL`
+  sees only rows that already have one and is systematically optimistic (#1329).
 - Approving a proposal whose counterpart a concurrent approve already merged closes it as `superseded`, not
   `approved`.
 - Scheduler `_schedule_kg_reconciler` (run_at_boot).
@@ -236,7 +237,11 @@ Two additive, backward-compatible params:
   person-fact never links a place of the same name.
 
 Plus a reconciler **same-name gate**: a pair sharing a normalized name with empty/identical descriptions never
-auto-merges → review, closing the conflation feedback.
+auto-merges → review, closing the conflation feedback. #1329 widened it to the **low-signal gate**
+(`_embedding_match_low_signal`): the name comparison no longer opens it. An empty or identical description blocks
+the auto-merge whatever the names — on xidra "Product A - 1.2.4" had folded into "Product A - 1.2.3", both described
+"Ein Release mit Status IN_PROGRESS" — and so do names that differ only in digit-bearing tokens (versions,
+ordinals, years), even with distinct descriptions. Such pairs remain `gray_zone` proposals.
 
 ### 3b — the bridge itself
 

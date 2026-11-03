@@ -613,8 +613,8 @@ chosen option = disable-embedding-for-person + prompt + de-magnetize backfill):
   re-requires name-relatedness for persons (defense in depth). 19/19 PG. See
   [[reference_person_names_embedding_cluster]].
 - **Residual follow-ups:**
-  - (a) person OCR-variant dedup is now entirely review-gated (the reconciler same-name gate
-    doesn't surface differing *spellings* — only normalized-equal names); acceptable per the
+  - (a) person OCR-variant dedup is now entirely review-gated (the reconciler low-signal gate,
+    widened in #1329 beyond normalized-equal names); acceptable per the
     chosen tradeoff but watch document-extraction duplicate persons.
   - (c) ~~the unfiltered `name_map` endpoint-name leak in
     `get_relevant_atoms`/`get_relevant_context`~~ **FIXED 2026-06-06**

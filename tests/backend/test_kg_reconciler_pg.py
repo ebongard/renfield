@@ -22,6 +22,7 @@ from models.database import (
     KG_MERGE_PROPOSAL_SUPERSEDED,
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_CROSS_TYPE,
+    KG_MERGE_REASON_GRAY_ZONE,
     KG_MERGE_REASON_NAME_TYPO,
     KGEntity,
     KgMergeProposal,
@@ -96,9 +97,13 @@ class TestFindPairs:
 
 class TestRunForUser:
     async def test_same_tier_high_sim_auto_merges(self, pg_db_session, monkeypatch):
+        # Distinct descriptions on both sides: without them the pair is
+        # low-signal and goes to review instead (#1329).
         owner = await _make_user(pg_db_session, "rec_auto")
-        a = await _entity(pg_db_session, owner, "Alice", tier=0, mention=2, emb=_unit(6))
-        b = await _entity(pg_db_session, owner, "Alice B.", tier=0, mention=9, emb=_unit(6))
+        a = await _entity(pg_db_session, owner, "Alice", tier=0, mention=2, emb=_unit(6),
+                          desc="Nachbarin, spielt Cello")
+        b = await _entity(pg_db_session, owner, "Alice B.", tier=0, mention=9, emb=_unit(6),
+                          desc="wohnt nebenan, Musikerin")
         rec = _recon(pg_db_session, monkeypatch)
 
         report = await rec.run_for_user(owner.id)
@@ -172,8 +177,10 @@ class TestRunForUser:
         # #6: entities born without an embedding are invisible to the self-join;
         # the pass backfills them first, so they become reconcilable same run.
         owner = await _make_user(pg_db_session, "rec_backfill")
-        a = await _entity(pg_db_session, owner, "Alice", tier=0, mention=2, emb=None)
-        b = await _entity(pg_db_session, owner, "Alice B.", tier=0, mention=9, emb=None)
+        a = await _entity(pg_db_session, owner, "Alice", tier=0, mention=2, emb=None,
+                          desc="Nachbarin, spielt Cello")
+        b = await _entity(pg_db_session, owner, "Alice B.", tier=0, mention=9, emb=None,
+                          desc="wohnt nebenan, Musikerin")
         rec = _recon(pg_db_session, monkeypatch)  # _get_embedding -> _unit(3) for both
 
         # before backfill: NULL embeddings -> no candidate pairs at all
@@ -398,8 +405,10 @@ class TestPersonGuard:
         # "Jutta" ⊆ "Jutta van den Bongard" (token subset) -> a legitimate dedup
         # candidate; same-tier + cosine 1.0 -> auto-merge (the reconciler's purpose).
         owner = await _make_user(pg_db_session, "rec_pg_related")
-        await _entity(pg_db_session, owner, "Jutta", tier=0, mention=2, emb=_unit(6))
-        await _entity(pg_db_session, owner, "Jutta van den Bongard", tier=0, mention=9, emb=_unit(6))
+        await _entity(pg_db_session, owner, "Jutta", tier=0, mention=2, emb=_unit(6),
+                      desc="Ehefrau")
+        await _entity(pg_db_session, owner, "Jutta van den Bongard", tier=0, mention=9,
+                      emb=_unit(6), desc="verheiratet, wohnt in Bonn")
         rec = _recon(pg_db_session, monkeypatch)
 
         report = await rec.run_for_user(owner.id)
@@ -410,9 +419,9 @@ class TestPersonGuard:
         # same-tier still auto-merge (embedding IS meaningful for non-persons).
         owner = await _make_user(pg_db_session, "rec_pg_org")
         await _entity(pg_db_session, owner, "Acme GmbH", etype="organization",
-                      tier=0, mention=2, emb=_unit(6))
+                      tier=0, mention=2, emb=_unit(6), desc="Lieferant")
         await _entity(pg_db_session, owner, "Globex AG", etype="organization",
-                      tier=0, mention=9, emb=_unit(6))
+                      tier=0, mention=9, emb=_unit(6), desc="Kunde")
         rec = _recon(pg_db_session, monkeypatch)
 
         report = await rec.run_for_user(owner.id)
@@ -521,9 +530,9 @@ class TestPersonGuard:
         # meaningful for non-persons).
         owner = await _make_user(pg_db_session, "rec_pg_org_typo")
         await _entity(pg_db_session, owner, "Acme GmbH", etype="organization",
-                      tier=0, mention=2, emb=_unit(6))
+                      tier=0, mention=2, emb=_unit(6), desc="Lieferant")
         await _entity(pg_db_session, owner, "Acme GmbG", etype="organization",
-                      tier=0, mention=9, emb=_unit(6))
+                      tier=0, mention=9, emb=_unit(6), desc="Rechnungssteller")
         rec = _recon(pg_db_session, monkeypatch)
         pairs = await rec.find_duplicate_pairs(owner.id)
         assert len(pairs) == 1 and pairs[0].name_typo is False
@@ -1399,3 +1408,73 @@ class TestWeakEdgeTriangle:
         assert res.blocked_total == 4
         assert len(res.blocked_pairs) == 3          # shown
         assert "+1 more" in res.notes[0]            # and the rest as a number
+
+
+class TestLowSignalBrake:
+    """#1329: near-identical names + no independent signal never auto-merge.
+
+    Field case (xidra): "Product A - 1.2.4" ~ "Product A - 1.2.3", both `thing`,
+    both "Ein Release mit Status IN_PROGRESS", cosine >= 0.95 — two releases
+    folded silently. Every pair here is same-tier at cosine 1.0, so without the
+    brake each would auto-merge. The pair must still reach the owner.
+    """
+
+    GENERIC = "Ein Release mit Status IN_PROGRESS"
+
+    async def _run(self, db, monkeypatch, user, a, b):
+        owner = await _make_user(db, user)
+        ea = await _entity(db, owner, a[0], tier=2, mention=4, emb=_unit(6),
+                           etype="thing", desc=a[1])
+        eb = await _entity(db, owner, b[0], tier=2, mention=9, emb=_unit(6),
+                           etype="thing", desc=b[1])
+        rec = _recon(db, monkeypatch)
+        report = await rec.run_for_user(owner.id)
+        return owner, ea, eb, report
+
+    async def _assert_review_only(self, db, owner, ea, eb, report):
+        assert (report.auto_merged, report.proposed) == (0, 1)
+        for e in (ea, eb):
+            row = (await db.execute(select(KGEntity).where(KGEntity.id == e.id))).scalar_one()
+            assert row.is_active is True and row.canonical_id is None
+        prop = (await db.execute(
+            select(KgMergeProposal).where(KgMergeProposal.user_id == owner.id)
+        )).scalar_one()
+        assert prop.status == KG_MERGE_PROPOSAL_PENDING
+        assert {prop.loser_entity_id, prop.winner_entity_id} == {ea.id, eb.id}
+        # Same tier, compatible type, not a person typo -> the plain review label.
+        assert prop.reason == KG_MERGE_REASON_GRAY_ZONE
+
+    async def test_field_case_identical_generic_descriptions(self, pg_db_session, monkeypatch):
+        owner, ea, eb, report = await self._run(
+            pg_db_session, monkeypatch, "ls_field",
+            ("Product A - 1.2.4", self.GENERIC), ("Product A - 1.2.3", self.GENERIC))
+        await self._assert_review_only(pg_db_session, owner, ea, eb, report)
+
+    async def test_version_difference_blocks_despite_distinct_descriptions(
+        self, pg_db_session, monkeypatch
+    ):
+        owner, ea, eb, report = await self._run(
+            pg_db_session, monkeypatch, "ls_version",
+            ("Product A - 1.2.4", "Bugfix-Release"),
+            ("Product A - 1.2.3", "Feature-Release mit neuer Oberfläche"))
+        await self._assert_review_only(pg_db_session, owner, ea, eb, report)
+
+    async def test_differing_names_one_empty_description(self, pg_db_session, monkeypatch):
+        owner, ea, eb, report = await self._run(
+            pg_db_session, monkeypatch, "ls_empty",
+            ("Fa. Müller", None), ("Müller GmbH", "Schreinerei in Bonn"))
+        await self._assert_review_only(pg_db_session, owner, ea, eb, report)
+
+    async def test_negative_control_real_signal_still_auto_merges(
+        self, pg_db_session, monkeypatch
+    ):
+        # Distinct names without a digit difference, distinct non-empty
+        # descriptions: the brake must not fire — it is not "block everything".
+        _owner, ea, eb, report = await self._run(
+            pg_db_session, monkeypatch, "ls_control",
+            ("Fa. Müller", "Lieferant für Holz"), ("Müller GmbH", "Schreinerei in Bonn"))
+        assert (report.auto_merged, report.proposed) == (1, 0)
+        loser = (await pg_db_session.execute(
+            select(KGEntity).where(KGEntity.id == ea.id)
+        )).scalar_one()
+        assert loser.is_active is False and loser.canonical_id == eb.id
