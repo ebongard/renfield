@@ -388,6 +388,10 @@ Für Entwicklung oder schnelle Updates ohne OTA:
    - **Permission denied**: Sudoers-Konfiguration prüfen
    - **Checksum mismatch**: Netzwerkproblem, erneut versuchen
    - **Backup failed**: Speicherplatz prüfen
+   - **Unknown packages in requirements**: Die neue Abhängigkeit fehlt in der geltenden Allowlist —
+     entweder nicht in `safe_packages.txt` eingetragen, oder das Gerät läuft noch auf einer Version
+     vor #1210 bzw. das Paket war nicht signiert (dann gilt die Liste des laufenden Codes). Siehe
+     „Neue Abhängigkeiten per OTA (#1210)"; Ausweg für alte Geräte: Ansible `--tags app`.
 
 ### Manueller Rollback
 
@@ -408,6 +412,59 @@ sudo systemctl start renfield-satellite
 - **Automatisches Backup**: Vor jeder Installation
 - **Automatischer Rollback**: Bei jedem Fehler nach Backup
 - **Keine Root-Installation**: Update läuft als normaler User
+- **Abhängigkeits-Allowlist**: `pip` installiert nur Projekte aus `safe_packages.txt`, mit `--no-deps`;
+  Optionszeilen (`-…`) und URL-Verweise in `requirements.txt` werden abgelehnt.
+
+### Neue Abhängigkeiten per OTA (#1210)
+
+Die Allowlist ist eine **Datendatei** im Paket, `renfield_satellite/update/safe_packages.txt`
+(ein Projektname je Zeile, `#` leitet Kommentare ein; sie wird gelesen, nie importiert oder
+ausgeführt). Der laufende Code lädt seine eigene Fassung beim Import nach
+`UpdateManager.SAFE_PACKAGES` — eine einzige Quelle für beide Rollen.
+
+Welche Liste ein Update prüft, entscheidet `_select_safe_packages`:
+
+| Fall | Geprüft gegen |
+|------|---------------|
+| Signatur in DIESEM Lauf geprüft **und** Datei im signierten Manifest gelistet **und** Hash der gelesenen Bytes stimmt | Liste des **neuen** Pakets |
+| unsigniertes Paket (Checksum-only, `require_signature` aus) | Liste des **laufenden** Codes |
+| signiertes Manifest listet die Datei nicht (älteres Paketformat) | Liste des laufenden Codes |
+| Datei gelistet, aber unlesbar oder ungültig (kein bloßer Projektname, leer, kein UTF-8) | Liste des laufenden Codes |
+| Datei liegt im Paket, fehlt aber im Manifest | Abbruch vor der Installation (`unexpected file`) |
+| Datei nach dem Signieren verändert oder entfernt | Abbruch vor der Installation (`hash mismatch` / `missing file`) |
+
+Nie „alles erlauben", nie eine Vereinigung mit einer ungeprüften Liste. Die laufende Liste
+bleibt während des ganzen Laufs die im Speicher geladene — auch nachdem die neuen Dateien schon
+kopiert sind.
+
+**Die Regel greift erst ab der Version, die sie enthält.** Sie wirkt nur für Updates, die ein
+Satellit installiert, der diesen Code BEREITS ausführt. Deshalb darf die Version, die diese Logik
+einführt, selbst keine neue Abhängigkeit mitbringen (trifft zu). Ein Gerät auf einer älteren
+Version, das eine neue Abhängigkeit braucht, bekommt sie weiterhin per Ansible
+(`ansible-playbook … --tags app`, dazu die Abhängigkeiten im venv).
+
+Wer eine Abhängigkeit hinzufügt, trägt sie in `requirements.txt` UND `safe_packages.txt` ein und
+signiert neu; `tests/satellite/test_update_security.py::test_shipped_requirements_pass_validation`
+prüft beide gegeneinander. Vor dem Eintrag die PEP-503-Normalform prüfen (Trennzeichen werden zu
+EINEM `-` zusammengefasst, nie gelöscht).
+
+**`--no-deps`: transitive Abhängigkeiten kommen NICHT mit.** Der Installer ruft
+`pip install -r requirements.txt --no-deps` auf, damit `pip` nichts nachlädt, was die Allowlist
+nicht gesehen hat. Bringt eine neue Abhängigkeit eigene Abhängigkeiten mit, die im venv des
+Satelliten noch fehlen, wird jede davon NICHT installiert — das Update meldet Erfolg, und der
+Import scheitert erst beim Neustart. Deshalb jede transitive Abhängigkeit ebenfalls in BEIDE
+Dateien eintragen (`requirements.txt` und `safe_packages.txt`). Prüfen lässt sich die Liste in
+einem frischen venv mit `pip install <paket>` und anschließendem `pip list`.
+
+### Paket entpacken: nur reguläre Dateien und Verzeichnisse
+
+`_safe_extract` prüft JEDES Element des Archivs, bevor irgendetwas geschrieben wird: Pfade außerhalb
+des Zielverzeichnisses und jeder andere Typ als reguläre Datei oder Verzeichnis (symbolischer oder
+harter Link, FIFO, Gerätedatei) brechen das Update ab. Das Entpacken läuft VOR der
+Signaturprüfung; ein Symlink, gefolgt von einer gleichnamigen Datei, schriebe sonst durch den
+Link an beliebige Stellen. `filter='data'` (PEP 706) wird zusätzlich genutzt, wo vorhanden, ist aber
+auf der Flotte nicht garantiert (Pi OS bookworm: Python 3.11.2, der Backport kam mit 3.11.4). Ein
+OTA-Paket enthält keine Links; `src/satellite` darf deshalb keine enthalten.
 
 ## Dateien
 
@@ -452,7 +509,8 @@ Design + the 4 resolved decisions: `docs/private/security/satellite-trust-design
   satellite version was not bumped between 2026-08-22 and 2026-09-04, so no update was ever attempted —
   which hid both a missing allowlist entry (`opuslib`; every OTA would have failed with "Unknown
   packages in requirements") and the stale `RELEASE_MANIFEST` signature. The allowlist living in the
-  running code instead of in the package is tracked as #1210 (`docs/BACKLOG_INVENTORY.md`).
+  running code instead of in the package was #1210; it is now a data file taken from the signed
+  package (see „Neue Abhängigkeiten per OTA (#1210)" above).
 
 ### Satellite enrollment credential (security review H1 — full fix)
 

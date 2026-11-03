@@ -1,0 +1,62 @@
+# Allowlist of PyPI projects the OTA installer may `pip install --no-deps`
+# from a package's requirements.txt (issue #1210).
+#
+# DATA, never code: one project name per line, `#` starts a comment. The
+# installer parses this file; it never imports or executes anything from it.
+#
+# Two readers:
+#   - the RUNNING satellite loads its own copy at import time (UpdateManager.SAFE_PACKAGES);
+#   - during an OTA, the copy inside the NEW package is used instead, but ONLY
+#     when that package's release signature verified in the same run AND this
+#     file is listed in the signed manifest with a matching hash. Otherwise the
+#     running list applies (fail closed). So a release may add a dependency here
+#     and in requirements.txt at the same time.
+#
+# MUST cover src/satellite/requirements.txt — a missing entry makes the
+# installer reject the satellite's OWN dependency and roll the update back
+# (the bug that blocked every OTA: soundcard / pymicro- / pyopen-wakeword /
+# bleak were missing and RPi.GPIO failed name matching). The regression test
+# tests/satellite/test_update_security.py::test_shipped_requirements_pass_validation
+# parses the real requirements.txt against this file; a red run there is a real
+# bug, not test rot.
+#
+# Names are stored as written and compared after PEP 503 canonicalisation, so
+# RPi.GPIO, rpi-gpio and rpi_gpio all match. Before adding a name, check its
+# canonical form collides with nothing an attacker could register on PyPI:
+# separators collapse to ONE `-`, they are never deleted (`s.o.u.n.d.c.a.r.d`
+# is a distinct project from `soundcard`).
+
+websockets
+aiohttp
+numpy
+onnxruntime
+openwakeword
+pymicro-wakeword
+pyopen-wakeword
+webrtcvad
+noisereduce
+spidev
+soundcard
+bleak
+lgpio
+python-mpv
+psutil
+pyyaml
+zeroconf
+sounddevice
+pyaudio
+scipy
+librosa
+RPi.GPIO
+cryptography
+
+# Binary Opus transport (C1). Shipped in requirements.txt since the Opus
+# rollout but never added here, so EVERY OTA failed at the install step with
+# "Unknown packages in requirements: ['opuslib>=3.0.1']" and rolled back. It
+# went unnoticed because the satellite version was not bumped between
+# 2026-08-22 and 2026-09-04, so no update was ever attempted — the same blind
+# spot that hid the stale RELEASE_MANIFEST signature.
+# `opuslib` canonicalises to `opuslib` and collides with nothing here;
+# `opus-lib` / `opus_lib` / `opus.lib` collapse to `opus-lib`, a DIFFERENT
+# canonical name, so this entry does not allow a look-alike project.
+opuslib

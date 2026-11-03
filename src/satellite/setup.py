@@ -17,6 +17,8 @@ setup(
     description="Raspberry Pi voice assistant satellite for Renfield",
     author="Renfield Team",
     packages=find_packages(),
+    # The OTA dependency allowlist is a data file the update manager reads (#1210).
+    package_data={"renfield_satellite.update": ["safe_packages.txt"]},
     python_requires=">=3.9",
     install_requires=requirements,
     entry_points={

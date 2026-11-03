@@ -34,6 +34,53 @@ import urllib.request
 logger = logging.getLogger(__name__)
 
 
+# The OTA package allowlist (#1210). A data file, never imported code: a new
+# package's copy is only trusted when the release signature covers it.
+SAFE_PACKAGES_FILENAME = "safe_packages.txt"
+# Path of the allowlist inside an OTA package / the signed manifest's file list.
+SAFE_PACKAGES_RELPATH = f"renfield_satellite/update/{SAFE_PACKAGES_FILENAME}"
+# A bare PEP 508 project name. Anything else (version specifiers, extras, URLs,
+# options) makes the whole file invalid rather than being silently skipped.
+_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def parse_safe_packages(text: str) -> frozenset:
+    """Parse an allowlist file: one project name per line, ``#`` comments.
+
+    Raises ValueError on any line that is not a bare project name, and on a
+    list without a single entry, so a malformed file is never half-applied.
+    """
+    names = set()
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if not _PROJECT_NAME_RE.match(line):
+            raise ValueError(f"line {lineno}: not a bare project name: {line!r}")
+        names.add(line)
+    if not names:
+        raise ValueError("allowlist has no entries")
+    return frozenset(names)
+
+
+def _load_running_safe_packages() -> frozenset:
+    """The allowlist shipped with the RUNNING code.
+
+    A missing or broken file must not stop the satellite from starting (this
+    module is imported at boot), so it degrades to an EMPTY list: every
+    requirement is then rejected and an OTA fails closed at the install step.
+    """
+    path = Path(__file__).with_name(SAFE_PACKAGES_FILENAME)
+    try:
+        return parse_safe_packages(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        logger.error(
+            "OTA package allowlist %s unreadable (%s) — every OTA dependency "
+            "install will be REJECTED until it is restored", path, e,
+        )
+        return frozenset()
+
+
 class UpdateStage(str, Enum):
     """Update process stages"""
     IDLE = "idle"
@@ -284,13 +331,17 @@ class UpdateManager:
             # integrity. Done BEFORE the backup + install so a rejection aborts
             # without touching the installed code (no needless rollback). Aborts
             # on any tamper/mismatch, or when a signature is required but absent.
-            self._verify_signature(extract_path, request)
+            verified_manifest = self._verify_signature(extract_path, request)
+
+            # 4b. Pick the dependency allowlist (#1210): the new package's own
+            # list only when the signature above verified it, else the running one.
+            safe_packages = self._select_safe_packages(extract_path, verified_manifest)
 
             # 5. Create backup (only now that the package is authenticated)
             self._create_backup()
 
             # 6. Install (70-90%)
-            self._install_package(extract_path)
+            self._install_package(extract_path, safe_packages=safe_packages)
 
             # 7. Restart service (90-100%)
             self._report_progress(UpdateStage.RESTARTING, 90, "Restarting service...")
@@ -452,12 +503,15 @@ class UpdateManager:
         except Exception as e:
             raise UpdateError(UpdateStage.VERIFYING, str(e))
 
-    def _verify_signature(self, extract_path: Path, request: "UpdateRequest"):
+    def _verify_signature(self, extract_path: Path, request: "UpdateRequest") -> Optional[dict]:
         """Verify the signed release manifest against the extracted tree (H6).
 
         Fail-closed when ``require_signature`` is set; otherwise verify only when
         a signature is present (an unsigned/legacy release still installs on the
         checksum alone, but a present-but-INVALID signature always aborts).
+
+        Returns the parsed manifest when — and only when — the signature AND the
+        tree hashes verified in this call; None for an unsigned release.
         """
         import json as _json
 
@@ -473,7 +527,7 @@ class UpdateManager:
                 "OTA package is UNSIGNED (no release manifest) — installing on the "
                 "checksum alone. Set require_signature once the fleet has release keys."
             )
-            return
+            return None
 
         # A signature is present → it MUST verify (even when not required).
         from renfield_satellite.update.release_manifest import (
@@ -514,6 +568,49 @@ class UpdateManager:
             )
 
         self._report_progress(UpdateStage.VERIFYING, 55, "Release signature verified")
+        return manifest
+
+    def _select_safe_packages(self, extract_path: Path, verified_manifest: Optional[dict]) -> frozenset:
+        """The allowlist the new package's requirements are checked against (#1210).
+
+        The NEW package's ``safe_packages.txt`` is used only when all of these
+        hold: the release signature verified in THIS run (``verified_manifest``
+        is what ``_verify_signature`` returned), the file is LISTED in that
+        signed manifest, and the bytes read here hash to the listed value. The
+        hash is recomputed over exactly the bytes that get parsed, so a file
+        swapped after ``verify_extracted`` cannot slip in. In every other case
+        the RUNNING code's list applies — never "allow all", never a union.
+        A listed file whose bytes no longer match is an attack, not a fallback:
+        the update aborts.
+        """
+        running = self.SAFE_PACKAGES
+        if not verified_manifest:
+            logger.info("OTA allowlist: running list (release signature not verified)")
+            return running
+        want = (verified_manifest.get("files") or {}).get(SAFE_PACKAGES_RELPATH)
+        if not want:
+            logger.warning(
+                "OTA allowlist: %s is not listed in the signed manifest — using the running list",
+                SAFE_PACKAGES_RELPATH,
+            )
+            return running
+        try:
+            data = (extract_path / SAFE_PACKAGES_RELPATH).read_bytes()
+        except OSError as e:
+            logger.warning("OTA allowlist: signed list unreadable (%s) — using the running list", e)
+            return running
+        if hashlib.sha256(data).hexdigest() != want:
+            raise UpdateError(
+                UpdateStage.VERIFYING,
+                f"{SAFE_PACKAGES_RELPATH} does not match the signed manifest — refusing to install",
+            )
+        try:
+            signed = parse_safe_packages(data.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as e:
+            logger.warning("OTA allowlist: signed list invalid (%s) — using the running list", e)
+            return running
+        logger.info("OTA allowlist: signed list from the package (%d entries)", len(signed))
+        return signed
 
     def _create_backup(self):
         """Back up only the parts of the install the update will replace.
@@ -574,24 +671,44 @@ class UpdateManager:
             raise UpdateError(UpdateStage.EXTRACTING, str(e))
 
     def _safe_extract(self, tar: tarfile.TarFile, extract_path: Path):
-        """Extract tar archive with path traversal protection (Zip Slip prevention)"""
+        """Extract tar archive with path traversal protection (Zip Slip prevention).
+
+        Every member is checked BEFORE anything is written. Only regular files
+        and directories are allowed: an OTA package never contains links or
+        special files, and a symlink member followed by a same-named regular
+        file writes through the link to anywhere on disk — before the signature
+        is verified. The name check alone cannot see that, and `filter='data'`
+        is not guaranteed on the fleet's Python (3.11.2 on Pi OS bookworm
+        predates the PEP 706 backport in 3.11.4), so the type check is
+        unconditional.
+        """
         resolved_base = extract_path.resolve()
         for member in tar.getmembers():
+            if not (member.isfile() or member.isdir()):
+                raise UpdateError(
+                    UpdateStage.EXTRACTING,
+                    f"Disallowed archive member type (link or special file): {member.name}"
+                )
             member_path = (extract_path / member.name).resolve()
             if not str(member_path).startswith(str(resolved_base) + os.sep) and member_path != resolved_base:
                 raise UpdateError(
                     UpdateStage.EXTRACTING,
                     f"Path traversal detected in archive: {member.name}"
                 )
-        # Use data filter on Python 3.12+ for additional safety
+        # Use the data filter where available (3.12+, backported to 3.11.4) as
+        # defence in depth on top of the checks above.
         try:
             tar.extractall(extract_path, filter='data')
         except TypeError:
             # Python <3.12 doesn't support filter parameter
             tar.extractall(extract_path)
 
-    def _install_package(self, extract_path: Path):
-        """Install the extracted package"""
+    def _install_package(self, extract_path: Path, safe_packages: Optional[frozenset] = None):
+        """Install the extracted package.
+
+        ``safe_packages`` is the allowlist chosen by ``_select_safe_packages``;
+        None means the running list.
+        """
         self._report_progress(UpdateStage.INSTALLING, 70, "Installing update...")
 
         try:
@@ -627,7 +744,7 @@ class UpdateManager:
             req_file = self.install_path / "requirements.txt"
             if req_file.exists():
                 try:
-                    self._install_requirements(req_file)
+                    self._install_requirements(req_file, safe_packages)
                 except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
                     # Continue even if pip fails - dependencies might already be installed
                     print("[Update] Warning: pip install failed, continuing anyway")
@@ -639,39 +756,13 @@ class UpdateManager:
         except Exception as e:
             raise UpdateError(UpdateStage.INSTALLING, str(e))
 
-    # Known-safe packages that may appear in satellite requirements.
-    # MUST stay in sync with src/satellite/requirements.txt — a missing entry
-    # makes the OTA installer reject the satellite's OWN dependency and roll the
-    # whole update back (the bug that blocked every OTA: soundcard / pymicro- /
-    # pyopen-wakeword / bleak were missing and RPi.GPIO failed name matching).
-    # Stored as written; compared after PEP 503 canonicalization, so RPi.GPIO,
-    # rpi-gpio and rpi_gpio all match. The regression test parses the real
-    # requirements.txt against this set.
-    SAFE_PACKAGES = frozenset({
-        "websockets", "aiohttp", "numpy", "onnxruntime",
-        "openwakeword", "pymicro-wakeword", "pyopen-wakeword",
-        "webrtcvad", "noisereduce", "spidev", "soundcard", "bleak",
-        "lgpio", "python-mpv", "psutil", "pyyaml", "zeroconf",
-        "sounddevice", "pyaudio", "scipy", "librosa", "RPi.GPIO",
-        "cryptography",
-        # Binary Opus transport (C1). Shipped in requirements.txt since the Opus
-        # rollout but never added here, so EVERY OTA failed at the install step
-        # with "Unknown packages in requirements: ['opuslib>=3.0.1']" and rolled
-        # back. It went unnoticed because the satellite version was not bumped
-        # between 2026-08-22 and 2026-09-04, so no update was ever attempted —
-        # the same blind spot that hid the stale RELEASE_MANIFEST signature.
-        #
-        # tests/satellite/test_update_security.py::test_shipped_requirements_pass_validation
-        # HAS been reporting this the whole time. It was mistaken for pre-existing
-        # test rot. It was not.
-        #
-        # Canonicalisation check before adding a name to a security allowlist:
-        # `opuslib` canonicalises to `opuslib` and collides with nothing here.
-        # `opus-lib` / `opus_lib` / `opus.lib` collapse to `opus-lib` — a
-        # DIFFERENT canonical name — so this entry does not implicitly allow a
-        # look-alike project an attacker could register on PyPI.
-        "opuslib",
-    })
+    # Known-safe packages that may appear in satellite requirements. The list is
+    # DATA in safe_packages.txt next to this module (rationale lives there),
+    # loaded ONCE at import: this in-memory copy is the "running list" and stays
+    # the old one for the whole OTA run, even after _install_package has
+    # overwritten the file on disk. Never re-read it from install_path during an
+    # update — that would trust the new, possibly unverified, file.
+    SAFE_PACKAGES = _load_running_safe_packages()
 
     @staticmethod
     def _canonical_pkg(name: str) -> str:
@@ -685,9 +776,13 @@ class UpdateManager:
         """
         return re.sub(r"[-_.]+", "-", name.split("[")[0].strip().lower())
 
-    def _install_requirements(self, req_file: Path):
-        """Install requirements with package whitelist validation"""
-        safe = {self._canonical_pkg(p) for p in self.SAFE_PACKAGES}
+    def _install_requirements(self, req_file: Path, safe_packages: Optional[frozenset] = None):
+        """Install requirements with package allowlist validation.
+
+        ``safe_packages`` defaults to the running list (``SAFE_PACKAGES``).
+        """
+        allowlist = self.SAFE_PACKAGES if safe_packages is None else safe_packages
+        safe = {self._canonical_pkg(p) for p in allowlist}
         # Parse and validate packages
         packages = []
         with open(req_file, "r") as f:
