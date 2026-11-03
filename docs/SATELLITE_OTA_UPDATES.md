@@ -83,7 +83,7 @@ Der Satellite benötigt passwortlosen sudo-Zugriff für den Service-Neustart:
 | `/api/satellites/versions` | GET | Alle Versionen abrufen |
 | `/api/satellites/{id}/update` | POST | Update auslösen |
 | `/api/satellites/{id}/update-status` | GET | Update-Status abfragen |
-| `/api/satellites/update-package` | GET | Update-Paket herunterladen |
+| `/api/satellites/update-package` | GET | Update-Paket herunterladen (ADMIN **oder** Download-Ticket, s. u.) |
 
 ### Beispiel: Versionen abrufen
 
@@ -261,9 +261,45 @@ drei scharf, deshalb sind die beiden älteren dabei kalibriert worden:
 }
 ```
 
+Bei `AUTH_ENABLED=true` trägt `package_url` ein Download-Ticket:
+`/api/satellites/update-package?satellite_id=<id>&ticket=<ticket>` (s. „Download-Berechtigung").
+
 `run_id` (#1280) gibt der Satellit in allen drei Rückmeldungen unverändert
 zurück. Ältere Firmware ignoriert das Feld und sendet keine Kennung; ein älteres
 Backend sendet keine, dann fehlt sie auch in den Rückmeldungen.
+
+### Download-Berechtigung (auth-on)
+
+`GET /api/satellites/update-package` ist ADMIN-geschützt. Ein Satellit hat kein
+Benutzerkonto, und die Flotte (1.4.12) lädt das Paket mit einer nackten
+`urllib`-Anfrage — ohne Header, `package_url` genau so, wie sie im
+`update_request` stand (relativer Pfad → Basis-URL + Pfad). Seit dem
+auth-on-Cutover des Haushalts endete deshalb jedes OTA mit
+`HTTP Error 401: Unauthorized` (behoben 2026-11-02).
+
+Die Berechtigung des Satelliten ist seine eigene, per PSK authentisierte
+WebSocket-Verbindung: `initiate_update` erzeugt beim Senden des `update_request`
+über genau diese Verbindung ein Ticket (`ha_glue/services/satellite_ota_ticket.py`)
+und schreibt es in die URL — der einzige Kanal, den ein 1.4.12-Gerät unverändert
+zurückträgt. Eigenschaften:
+
+- 256 Bit (`secrets.token_urlsafe(32)`), gültig `TICKET_TTL_SECONDS` = 600 s.
+- Gebunden an (`satellite_id`, Version, Prüfsumme); die Route prüft gegen das
+  Paket, das sie tatsächlich ausliefert — ein Neubau dazwischen macht es wertlos.
+- **Einmalig:** Einlösung per atomarem Redis-`GETDEL`, also auch über mehrere
+  Backend-Replikate. Jede Vorlage verbraucht das Ticket, auch eine mit falscher
+  `satellite_id`. Ein 503 (kein Paket) verbraucht es nicht.
+- In Redis liegt nur der SHA-256 des Tickets (Schlüssel `sat_ota_ticket:<hash>`).
+  Der Parameter `ticket` steht in `utils.log_safety.SECRET_QUERY_PARAMS`, die
+  uvicorn-Zugriffszeile zeigt `ticket=[REDACTED]`.
+- Ohne Ticket und ohne ADMIN → 401 (bzw. 403 ohne ADMIN-Recht), wie zuvor.
+  Ungültiges/abgelaufenes/benutztes Ticket → 401 und eine WARNING ohne Ticketwert;
+  ein vorgelegtes Ticket entscheidet allein (kein Rückfall auf die Sitzung).
+- Ist Redis nicht erreichbar, wird **kein** `update_request` gesendet.
+- `AUTH_ENABLED=false`: kein Ticket, `package_url` und Route byte-identisch zu vorher.
+
+Die Echtheit des Codes garantiert weiterhin das signierte Manifest (H6); das
+Ticket entscheidet nur, wer die Bytes holen darf.
 
 ### Satellite → Server: Fortschritt
 
@@ -377,7 +413,7 @@ sudo systemctl start renfield-satellite
 
 | Datei | Beschreibung |
 |-------|--------------|
-| `src/backend/services/satellite_update_service.py` | Backend Update-Service |
+| `src/backend/ha_glue/services/satellite_update_service.py` | Backend Update-Service |
 | `src/satellite/renfield_satellite/update/update_manager.py` | Satellite Update-Manager |
 | `src/frontend/src/pages/SatellitesPage.jsx` | Frontend Update-UI |
 | `bin/deploy-satellite.sh` | Manuelles Deployment-Script |
