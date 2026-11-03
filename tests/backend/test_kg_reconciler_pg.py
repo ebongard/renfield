@@ -980,7 +980,7 @@ class TestTypeGuard:
 
     Every entity here carries the SAME embedding (cosine 1.0, above the 0.95
     auto bar) and the same tier, and both sides carry DISTINCT descriptions so
-    the name-collision brake (_name_collision_low_signal) cannot be what stops
+    the low-signal brake (_embedding_match_low_signal) cannot be what stops
     the merge. Without the type guard each of these auto-merges.
     """
 
@@ -1552,6 +1552,64 @@ class TestLowSignalBrake:
                 user_id=owner.id, loser_entity_id=loser.id, winner_entity_id=winner.id,
                 similarity=1.0, loser_tier=2, winner_tier=2, reason=reason,
                 status=KG_MERGE_PROPOSAL_PENDING,
+            ))
+        await pg_db_session.flush()
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[hub.id, r3.id, r4.id],
+            survivor_id=hub.id, decision="merge", resolved_by=owner.id,
+        )
+        assert res.merged == 0
+        assert res.refusal_code == "cluster_has_undecidable_pair"
+        assert res.blocked_total == 1
+        assert await _count_pending(pg_db_session, owner.id) == 3
+
+    async def test_legacy_gray_zone_version_pair_is_weak_by_its_live_names(
+        self, pg_db_session, monkeypatch
+    ):
+        """A pair pending from before #1329 carries `gray_zone`. The fold derives
+        the identifier weakness from the live names and refuses it all the same."""
+        owner = await _make_user(pg_db_session, "ls_legacy")
+        r3 = await _entity(pg_db_session, owner, "Product A - 1.2.3", tier=2, mention=9,
+                           emb=_unit(6), etype="thing", desc=self.GENERIC)
+        r4 = await _entity(pg_db_session, owner, "Product A - 1.2.4", tier=2, mention=2,
+                           emb=_unit(6), etype="thing", desc=self.GENERIC)
+        pg_db_session.add(KgMergeProposal(
+            user_id=owner.id, loser_entity_id=r4.id, winner_entity_id=r3.id,
+            similarity=1.0, loser_tier=2, winner_tier=2, reason=KG_MERGE_REASON_GRAY_ZONE,
+            status=KG_MERGE_PROPOSAL_PENDING,
+        ))
+        await pg_db_session.flush()
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[r3.id, r4.id],
+            survivor_id=r3.id, decision="merge", resolved_by=owner.id,
+        )
+        assert res.merged == 0
+        assert res.skipped_weak_edge == 1
+        assert res.refusal_code == "no_foldable_pair"
+        row = (await pg_db_session.execute(select(KGEntity).where(KGEntity.id == r4.id))).scalar_one()
+        assert row.is_active is True and row.canonical_id is None
+        assert await _count_pending(pg_db_session, owner.id) == 1
+
+    async def test_legacy_gray_zone_version_edge_refuses_the_whole_fold(
+        self, pg_db_session, monkeypatch
+    ):
+        """Same, inside a foldable component: the #1334 whole-fold refusal."""
+        owner = await _make_user(pg_db_session, "ls_legacy_tri")
+        hub = await _entity(pg_db_session, owner, "Product A", tier=2, mention=9,
+                            emb=_unit(6), etype="thing")
+        r3 = await _entity(pg_db_session, owner, "Product A - 1.2.3", tier=2, mention=2,
+                           emb=_unit(6), etype="thing")
+        r4 = await _entity(pg_db_session, owner, "Product A - 1.2.4", tier=2, mention=1,
+                           emb=_unit(6), etype="thing")
+        for loser, winner in ((r3, hub), (r4, hub), (r4, r3)):
+            pg_db_session.add(KgMergeProposal(
+                user_id=owner.id, loser_entity_id=loser.id, winner_entity_id=winner.id,
+                similarity=1.0, loser_tier=2, winner_tier=2,
+                reason=KG_MERGE_REASON_GRAY_ZONE, status=KG_MERGE_PROPOSAL_PENDING,
             ))
         await pg_db_session.flush()
         rec = _recon(pg_db_session, monkeypatch)

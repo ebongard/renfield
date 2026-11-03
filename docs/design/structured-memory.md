@@ -248,8 +248,11 @@ a whole release series in one click. Label precedence `cross_tier` > `cross_type
 `gray_zone`. The inline `resolve_entity` embedding step refuses the same digit-only difference (shared predicate in
 `services/kg_name_signals.py`, a leaf module because the reconciler imports the graph service), so a new release no
 longer folds into its predecessor at the 0.85 bar; it is created and proposed. Pairs already pending before #1329
-keep `gray_zone` — `_repoint_after_fold` does not rewrite reasons and the self-join skips pending pairs — so an
-old release cluster in the queue is still bulk-foldable until the owner decides it.
+keep `gray_zone` — `_repoint_after_fold` does not rewrite reasons and the self-join skips pending pairs — so the
+weakness is ALSO derived from the live names, the way the cross-type bar reads the live types: `resolve_cluster`
+counts such a pair as `skipped_weak_edge` (and it triggers the whole-fold refusal), the view's `groupProposals`
+never makes it an edge, and the card labels it `name_identifier`. No relabel migration needed; the TS copy of the
+rule lives in `src/frontend/src/utils/nameSignals.ts`.
 
 ### 3b — the bridge itself
 

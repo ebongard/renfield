@@ -90,6 +90,21 @@ describe('MergeProposalCard', () => {
     expect(document.activeElement).toBe(reject);
   });
 
+  it('a legacy gray_zone pair whose names differ only in a number reads as name_identifier', () => {
+    // Pending from before #1329: stored as gray_zone. Derived from the live
+    // names, like cross_type from the live types.
+    const p = proposal({
+      reason: 'gray_zone',
+      loser: brief({ id: 10, name: 'Product A - 1.2.4', entity_type: 'thing', circle_tier: 0 }),
+      winner: brief({ id: 20, name: 'Product A - 1.2.3', entity_type: 'thing', circle_tier: 0 }),
+    });
+    renderWithRouter(<MergeProposalCard proposal={p} onApprove={vi.fn()} onReject={vi.fn()} />);
+    expect(screen.getByText('Namen unterscheiden sich nur in einer Nummer')).toBeInTheDocument();
+    expect(screen.queryByText('ähnlich, aber unsicher')).not.toBeInTheDocument();
+    expect(screen.getByRole('note')).toHaveTextContent(/nur in einer Nummer oder Version/);
+    expect(screen.getByRole('button', { name: 'Zusammenführen' }).className).toContain('btn-secondary');
+  });
+
   it('gray_zone shows no number notice', () => {
     const p = proposal({
       reason: 'gray_zone',

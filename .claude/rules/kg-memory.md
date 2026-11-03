@@ -86,7 +86,9 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
 - **#1333, the fourth bar: a WEAK pair never takes part** (`skipped_weak_edge`). `name_typo` = "maybe two different
   PEOPLE, one edit apart", `name_identifier` (#1329) = names differ only in a number (a release series) — a bulk fold
   hands that judgement to a click showing a count, not the names. `KG_MERGE_WEAK_REASONS` and the frontend
-  `WEAK_REASONS` list both. Pairs pending from before #1329 keep `gray_zone` (nothing re-labels them). **NOT
+  `WEAK_REASONS` list both. Pairs pending from before #1329 keep `gray_zone`, so the
+  bar ALSO derives it from the live names (backend `resolve_cluster`, frontend `isWeak` + card label via
+  `utils/nameSignals.ts` — keep both copies of the rule in step). **NOT
   everything the reconciler refuses to auto-merge**: a `gray_zone` pair carries `block_auto_merge` from
   `_embedding_match_low_signal` too, and folding those is the whole point (243 pending on the household). The bar reads
   the persisted `reason`, not `block_auto_merge` (a find-time flag that never reaches the queue).

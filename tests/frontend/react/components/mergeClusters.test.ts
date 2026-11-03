@@ -185,6 +185,18 @@ describe('groupProposals — schwache Kanten', () => {
     expect(singles.map((p) => p.id).sort()).toEqual(ps.map((p) => p.id).sort());
   });
 
+  it('a legacy gray_zone pair is weak when the names differ only in a number', () => {
+    // Pending from before #1329, stored as gray_zone: the view derives the
+    // weakness from the live names, as the service does.
+    const r3 = ent(1, 'Product A - 1.2.3', 2, 9, 'thing');
+    const r4 = ent(2, 'Product A - 1.2.4', 2, 4, 'thing');
+    const r5 = ent(3, 'Product A - 1.2.5', 2, 1, 'thing');
+    const ps = [pair(r4, r3), pair(r5, r4), pair(r5, r3)];
+    const { clusters, singles } = groupProposals(ps);
+    expect(clusters).toHaveLength(0);
+    expect(singles.map((p) => p.id).sort()).toEqual(ps.map((p) => p.id).sort());
+  });
+
   it('a gray_zone pair is still an edge', () => {
     const a = ent(1, 'Anna', 2, 1);
     const b = ent(2, 'Anna', 2, 9);

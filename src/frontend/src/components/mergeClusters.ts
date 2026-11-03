@@ -1,5 +1,6 @@
 import type { MergeProposal, MergeProposalEntityBrief } from '../api/resources/knowledgeGraph';
 import type { MergeCluster } from './MergeClusterCard';
+import { namesDifferOnlyInDigitTokens } from '../utils/nameSignals';
 
 /**
  * Group pending proposals into clusters — connected components over the pairs.
@@ -74,8 +75,11 @@ function sameType(p: MergeProposal): boolean {
  */
 const WEAK_REASONS = new Set(['name_typo', 'name_identifier']);
 
+// Derived from the live names as well, like the service: pairs pending from
+// before #1329 carry `gray_zone` for "… 1.2.3" / "… 1.2.4", and nothing
+// re-labels a pending pair.
 function isWeak(p: MergeProposal): boolean {
-  return WEAK_REASONS.has(p.reason);
+  return WEAK_REASONS.has(p.reason) || namesDifferOnlyInDigitTokens(p.loser.name, p.winner.name);
 }
 
 export function groupProposals(proposals: MergeProposal[]): GroupedProposals {

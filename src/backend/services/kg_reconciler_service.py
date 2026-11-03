@@ -813,7 +813,14 @@ class KgReconcilerService:
             # NOT the same as "the reconciler refuses to auto-merge it":
             # `gray_zone` pairs carry `block_auto_merge` too and folding those in
             # bulk is precisely what this method is for.
-            if (p.reason or "") in KG_MERGE_WEAK_REASONS:
+            # The identifier test is ALSO derived from the live names, like the
+            # type test above: pairs pending from before #1329 carry `gray_zone`
+            # for "… 1.2.3" / "… 1.2.4", and nothing re-labels a pending pair.
+            if ((p.reason or "") in KG_MERGE_WEAK_REASONS
+                    or names_differ_only_in_digit_tokens(
+                        p.loser.name if p.loser else None,
+                        p.winner.name if p.winner else None,
+                    )):
                 res.skipped_weak_edge += 1
                 undecidable.append(p)
                 continue
