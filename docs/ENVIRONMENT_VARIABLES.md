@@ -2531,10 +2531,29 @@ AUTH_PROVIDER_TIMEOUT_SECONDS=10.0
 # unauthenticated (Legacy). In renfield-env-private.
 # INTERNAL_AUTH_VERIFY_SECRET=
 
+# Lokaler Passwort-Provider `db` (bcrypt gegen die users-Tabelle, #1345).
+# Default an → unverändert. Aus → LDAP ist die Autorität für Zugangsdaten: ein
+# (auch veraltetes) lokales Passwort meldet nicht mehr an. Aus verlangt ein
+# vollständig konfiguriertes LDAP (LDAP_AUTH_ENABLED=true, LDAP_URL,
+# LDAP_AUTH_USER_BASE_DN), sonst Boot-Abbruch; und einen post_authenticate-
+# Konsumenten (Identitäts-Plugin), der das LDAP-Ergebnis einem Renfield-Nutzer
+# zuordnet — fehlt er (oder das Paket ldap3) nach dem Plugin-Laden, bricht der
+# Start ebenfalls ab. Bei aus legt der Erststart KEINEN lokalen Default-Admin an
+# (WARNING im Log). Sitzungen aus der Zeit davor enden mit dem Umlegen von selbst:
+# bei aus wird jedes Token (Zugriff, Refresh, WebSocket) abgewiesen, das nicht
+# den Anspruch `nodb` trägt, den nur Token aus der db-aus-Zeit bekommen — kein
+# Abmelde-Schritt nötig. Geräte-Konten (Kiosk) melden sich mit lokalem Passwort
+# an und brauchen dann einen Verzeichnis-Eintrag.
+DB_AUTH_ENABLED=true
+
 # LDAP credential provider (authn only — no group→role mapping yet).
 # Default off → DB-only behavior unchanged.
 LDAP_AUTH_ENABLED=false
-LDAP_URL=                              # ldaps://host:636 or ldap://host:389
+LDAP_URL=                              # nur ldaps://host:636 — ldap:// bricht den Boot ab (kein StartTLS, #1345)
+# Das Server-Zertifikat wird IMMER geprüft (Kette + Hostname; ldaps:// allein
+# schützt nicht vor einem Mann in der Mitte). CA-Bündel (PEM) für eine eigene
+# CA; leer = System-CA-Speicher. Gesetzt, aber keine Datei → Boot-Abbruch.
+LDAP_CA_CERT_FILE=
 LDAP_BIND_DN=                          # service account DN for the user search
 LDAP_BIND_PASSWORD=
 LDAP_AUTH_USER_BASE_DN=                # subtree searched for the user
@@ -2586,6 +2605,7 @@ VITE_SSO_LEGACY_FRAGMENT=true
 - `VOICE_AUTH_ENABLED`: `false`
 - `VOICE_AUTH_MIN_CONFIDENCE`: `0.7` · `VOICE_SECOND_FACTOR_TTL_SECONDS`: `180` (Zusatzfaktor, s. oben)
 - `AUTH_PROVIDER_TIMEOUT_SECONDS`: `10.0`
+- `DB_AUTH_ENABLED`: `true` (aus nur mit vollständigem LDAP + Identitäts-Konsument, sonst Boot-Abbruch) · `LDAP_CA_CERT_FILE`: leer (System-CA-Speicher)
 - `LDAP_AUTH_ENABLED`: `false` · `LDAP_AUTH_USER_FILTER`: `(uid={username})` · `LDAP_CONNECT_TIMEOUT`: `5` · `LDAP_RECEIVE_TIMEOUT`: `10`
 - `OAUTH_{GOOGLE,GITHUB,APPLE}_ENABLED`: `false` (all social providers disabled by default — enabling is a config-only change)
 - `SSO_HANDOFF_ENABLED`: `false` (dark bis der Reva-Emitter auf `?code=` cutovert; Legacy-Fragment-Handler bleibt bis dahin)

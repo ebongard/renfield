@@ -1,8 +1,11 @@
 """LDAP credential provider — authn only.
 
 Ported from Reva's proven ``ldap_auth.py`` (RFC 4515 filter escaping,
-service-account search + user-bind verify, TLS via ``ldaps://``,
-connect/receive timeouts). What is intentionally NOT ported: local Renfield
+service-account search + user-bind verify, connect/receive timeouts).
+Transport (#1345): ``ldaps://`` only — a plain ``ldap://`` URL is refused,
+there is no StartTLS — AND the server certificate is verified (chain against
+``LDAP_CA_CERT_FILE`` or the system store, plus hostname); TLS without
+verification would let a man-in-the-middle accept any password. What is intentionally NOT ported: local Renfield
 user creation/update. Under the registry, identity resolution
 (create-or-link a canonical user) is the ``post_authenticate`` consumer's job
 (Reva). This provider only proves "these credentials are valid for this
@@ -25,7 +28,9 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 from typing import Any
+from urllib.parse import urlsplit
 
 from loguru import logger
 
@@ -46,6 +51,25 @@ def _attr(attrs: dict[str, Any], key: str, default: str = "") -> str:
     if isinstance(val, list):
         return str(val[0]) if val else default
     return str(val) if val else default
+
+
+def _verifying_tls(ldap3: Any, url: str) -> Any:
+    """TLS settings that VERIFY the directory's certificate (#1345).
+
+    ldap3's default ``Tls()`` is ``validate=CERT_NONE``: no chain check, no
+    hostname check — anyone on the path could answer both binds with success,
+    and with ``DB_AUTH_ENABLED=false`` the directory is the sole authority.
+    ``CERT_REQUIRED`` makes ldap3 (2.9.1) verify the chain against
+    ``LDAP_CA_CERT_FILE`` (or the system CA store) and then match the
+    certificate against the URL's host after the handshake (``check_hostname``
+    runs whenever validate is REQUIRED/OPTIONAL). SNI is sent for that host.
+    """
+    return ldap3.Tls(
+        validate=ssl.CERT_REQUIRED,
+        version=ssl.PROTOCOL_TLS_CLIENT,
+        ca_certs_file=settings.ldap_ca_cert_file.strip() or None,
+        sni=urlsplit(url.strip()).hostname,
+    )
 
 
 class LDAPProvider:
@@ -83,16 +107,25 @@ class LDAPProvider:
                 "not configured — declining"
             )
             return None
+        if not settings.ldap_url.strip().lower().startswith("ldaps://"):
+            # The config validator refuses this at boot; this guard covers a
+            # settings object mutated at runtime. No StartTLS → a plain ldap://
+            # bind would send both passwords in clear text (#1345).
+            logger.error(
+                "LDAP auth: LDAP_URL is not ldaps:// — refusing to send "
+                "credentials unencrypted, declining"
+            )
+            return None
 
         safe_username = _escape_ldap_filter(username)
         user_filter = settings.ldap_auth_user_filter.format(
             username=safe_username
         )
 
-        use_ssl = settings.ldap_url.startswith("ldaps://")
         server = Server(
             settings.ldap_url,
-            use_ssl=use_ssl,
+            use_ssl=True,
+            tls=_verifying_tls(ldap3, settings.ldap_url),
             connect_timeout=settings.ldap_connect_timeout,
         )
 

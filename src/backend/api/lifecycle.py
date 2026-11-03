@@ -883,6 +883,15 @@ async def lifespan(app: "FastAPI"):
     await run_hooks("startup", app=app)
     await run_hooks("register_routes", app=app)
 
+    # With the local password provider off, a login needs an identity consumer
+    # registered by a plugin — checked only now that all plugins are loaded.
+    from auth.registry import assert_login_possible
+    try:
+        assert_login_possible()
+    except RuntimeError as e:
+        logger.critical(f"Credential provider check failed: {e}")
+        raise SystemExit(1) from e
+
     # Paperless audit — mounted from platform core (not the ha_glue plugin) so it
     # works on HA-less instances too. Runs after register_routes so it's the single
     # mount owner regardless of whether ha_glue is loaded.

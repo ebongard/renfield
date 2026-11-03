@@ -109,6 +109,19 @@ def validate_password(password: str) -> tuple[bool, str]:
 # JWT Token Utilities
 # =============================================================================
 
+# Claim stamped on every token minted while DB_AUTH_ENABLED=false (#1345).
+# With the local password provider off, decode_token refuses a token WITHOUT it:
+# a session that began under db auth (a local password) does not outlive the
+# switch, without any stored state or operator step. Flag on: no claim is
+# stamped and none is required — token payloads stay byte-identical.
+DB_AUTH_OFF_CLAIM = "nodb"
+
+
+def _stamp_auth_posture(to_encode: dict) -> None:
+    if not settings.db_auth_enabled:
+        to_encode[DB_AUTH_OFF_CLAIM] = True
+
+
 def create_access_token(
     data: dict,
     expires_delta: timedelta | None = None,
@@ -143,6 +156,7 @@ def create_access_token(
     })
     if token_epoch is not None:
         to_encode["epoch"] = token_epoch
+    _stamp_auth_posture(to_encode)
 
     encoded_jwt = jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
     return encoded_jwt
@@ -166,6 +180,7 @@ def create_refresh_token(user_id: int, token_epoch: int | None = None) -> str:
     }
     if token_epoch is not None:
         to_encode["epoch"] = token_epoch
+    _stamp_auth_posture(to_encode)
 
     encoded_jwt = jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
     return encoded_jwt
@@ -218,6 +233,7 @@ def create_ws_token_jwt(
     }
     if token_epoch is not None:
         to_encode["epoch"] = token_epoch
+    _stamp_auth_posture(to_encode)
     return jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
 
 
@@ -225,15 +241,23 @@ def decode_token(token: str) -> dict | None:
     """
     Decode and validate a JWT token.
 
+    With ``DB_AUTH_ENABLED=false`` a token minted before the switch (no
+    ``DB_AUTH_OFF_CLAIM``) is invalid: every reader — REST, refresh, WebSocket,
+    internal verify, logout — goes through here, so no pre-switch session
+    survives (#1345).
+
     Returns:
         Decoded payload if valid, None otherwise
     """
     try:
         payload = jwt.decode(token, settings.secret_key.get_secret_value(), algorithms=[ALGORITHM])
-        return payload
     except JWTError as e:
         logger.debug(f"JWT decode error: {e}")
         return None
+    if not settings.db_auth_enabled and payload.get(DB_AUTH_OFF_CLAIM) is not True:
+        logger.debug("JWT refused: minted before DB_AUTH_ENABLED=false (pre-switch session)")
+        return None
+    return payload
 
 
 # =============================================================================
@@ -706,6 +730,12 @@ async def ensure_admin_user(db: AsyncSession) -> User | None:
     Ensure a default admin user exists.
 
     Creates an admin user with default credentials if no users exist.
+
+    Skipped when ``DB_AUTH_ENABLED=false`` (#1345): the local password provider
+    is out of the walk, so a bootstrap password could never log in — it would
+    be a dead credential, and a live one the day db auth is switched back on,
+    beside the directory's authority. The first admin comes from the directory
+    (identity consumer) or is promoted by an operator.
     """
     # Check if any users exist
     result = await db.execute(select(User).limit(1))
@@ -713,6 +743,14 @@ async def ensure_admin_user(db: AsyncSession) -> User | None:
 
     if existing_user:
         return None  # Users already exist, don't create default admin
+
+    if not settings.db_auth_enabled:
+        logger.warning(
+            "DB_AUTH_ENABLED=false — default admin bootstrap skipped (a local "
+            "password could not log in). Grant the Admin role to a directory "
+            "user instead."
+        )
+        return None
 
     # Get or create admin role
     admin_role = await get_role_by_name(db, "Admin")
