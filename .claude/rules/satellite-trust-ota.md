@@ -33,10 +33,13 @@ Loaded only when OTA-signing / update / enrollment code is read. Long form: `doc
   against the pinned keys → `manifest.version == target_version` → recomputed tree hashes (tamper/injection/missing).
   `update.require_signature` = fail-closed; otherwise verify-if-present — unsigned legacy installs on the checksum, but
   a present-but-invalid signature ALWAYS aborts. The OTA checksum stays an integrity check only.
-- **`SAFE_PACKAGES` lives in the RUNNING code, not in the package.** It must match `src/satellite/requirements.txt`
-  (`tests/satellite/test_update_security.py::test_shipped_requirements_pass_validation` — a red run there is a real
-  bug). A device below the version that adds an allowlist entry can never OTA to that version: its old installer
-  rejects the new dependency and rolls back (#1210) → it needs a manual deploy. Names compare after PEP 503
+- **The dependency allowlist is DATA in the package** (`renfield_satellite/update/safe_packages.txt`, read, never
+  imported); the running code loads its own copy into `SAFE_PACKAGES` at import. An OTA uses the NEW package's copy
+  only when the signature verified in that run AND the file is listed in the signed manifest AND the re-hashed bytes
+  match (`_select_safe_packages`); otherwise the running list — never allow-all, never a union (#1210). It only takes
+  effect for updates installed by a satellite already running it: a device on an older version that needs a new
+  dependency still goes via Ansible `--tags app`. The list must cover `src/satellite/requirements.txt`
+  (`test_update_security.py::test_shipped_requirements_pass_validation` — red = real bug). Names compare after PEP 503
   canonicalisation; never delete separators (look-alike PyPI project = OTA RCE bypass).
 - **Auth-on download = one-time ticket IN `package_url`** (fleet fetches it bare, no header), minted over the PSK WS
   (`satellite_ota_ticket`); never demand a header; `ticket` stays in `log_safety.SECRET_QUERY_PARAMS`.

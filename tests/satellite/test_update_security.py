@@ -166,13 +166,15 @@ class TestInstallRequirements:
     @pytest.mark.satellite
     @patch("subprocess.run")
     def test_shipped_requirements_pass_validation(self, mock_run, update_manager):
-        """The REAL src/satellite/requirements.txt must pass the whitelist.
+        """The REAL src/satellite/requirements.txt must pass the SHIPPED allowlist.
 
         Regression guard for the OTA outage: soundcard / pymicro-wakeword /
         pyopen-wakeword / bleak were missing from SAFE_PACKAGES and RPi.GPIO
         failed dot-normalization, so the installer rejected the satellite's own
-        deps and rolled every update back. This ties the whitelist to the actual
-        shipped requirements so they can't drift apart again.
+        deps and rolled every update back. The default allowlist is the one
+        loaded from renfield_satellite/update/safe_packages.txt — the same file
+        a signed release carries (#1210) — so this ties the shipped
+        requirements to the shipped list and they can't drift apart again.
         """
         mock_run.return_value = MagicMock(returncode=0)
         import renfield_satellite
