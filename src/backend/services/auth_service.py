@@ -109,6 +109,19 @@ def validate_password(password: str) -> tuple[bool, str]:
 # JWT Token Utilities
 # =============================================================================
 
+# Claim stamped on every token minted while DB_AUTH_ENABLED=false (#1345).
+# With the local password provider off, decode_token refuses a token WITHOUT it:
+# a session that began under db auth (a local password) does not outlive the
+# switch, without any stored state or operator step. Flag on: no claim is
+# stamped and none is required — token payloads stay byte-identical.
+DB_AUTH_OFF_CLAIM = "nodb"
+
+
+def _stamp_auth_posture(to_encode: dict) -> None:
+    if not settings.db_auth_enabled:
+        to_encode[DB_AUTH_OFF_CLAIM] = True
+
+
 def create_access_token(
     data: dict,
     expires_delta: timedelta | None = None,
@@ -143,6 +156,7 @@ def create_access_token(
     })
     if token_epoch is not None:
         to_encode["epoch"] = token_epoch
+    _stamp_auth_posture(to_encode)
 
     encoded_jwt = jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
     return encoded_jwt
@@ -166,6 +180,7 @@ def create_refresh_token(user_id: int, token_epoch: int | None = None) -> str:
     }
     if token_epoch is not None:
         to_encode["epoch"] = token_epoch
+    _stamp_auth_posture(to_encode)
 
     encoded_jwt = jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
     return encoded_jwt
@@ -218,6 +233,7 @@ def create_ws_token_jwt(
     }
     if token_epoch is not None:
         to_encode["epoch"] = token_epoch
+    _stamp_auth_posture(to_encode)
     return jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
 
 
@@ -225,15 +241,23 @@ def decode_token(token: str) -> dict | None:
     """
     Decode and validate a JWT token.
 
+    With ``DB_AUTH_ENABLED=false`` a token minted before the switch (no
+    ``DB_AUTH_OFF_CLAIM``) is invalid: every reader — REST, refresh, WebSocket,
+    internal verify, logout — goes through here, so no pre-switch session
+    survives (#1345).
+
     Returns:
         Decoded payload if valid, None otherwise
     """
     try:
         payload = jwt.decode(token, settings.secret_key.get_secret_value(), algorithms=[ALGORITHM])
-        return payload
     except JWTError as e:
         logger.debug(f"JWT decode error: {e}")
         return None
+    if not settings.db_auth_enabled and payload.get(DB_AUTH_OFF_CLAIM) is not True:
+        logger.debug("JWT refused: minted before DB_AUTH_ENABLED=false (pre-switch session)")
+        return None
+    return payload
 
 
 # =============================================================================

@@ -25,6 +25,7 @@ legacy fallback in ``/auth/login``) turns that into a Renfield user id.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 
 from loguru import logger
 
@@ -183,6 +184,10 @@ def build_default_registry() -> ProviderRegistry:
     return registry
 
 
+def _ldap3_available() -> bool:
+    return importlib.util.find_spec("ldap3") is not None
+
+
 def assert_login_possible() -> None:
     """Raise ``RuntimeError`` when no login can ever succeed (#1345).
 
@@ -196,6 +201,14 @@ def assert_login_possible() -> None:
     """
     if settings.db_auth_enabled:
         return
+    # The LDAP provider declines every login when ldap3 is missing (logged,
+    # not raised) — with db off that is a total lockout, so fail the boot.
+    if not _ldap3_available():
+        raise RuntimeError(
+            "DB_AUTH_ENABLED=false but the ldap3 package is not installed — the "
+            "LDAP provider would decline every login, so nobody could log in. "
+            "Install ldap3 in the image or set DB_AUTH_ENABLED=true."
+        )
     if has_hook("post_authenticate") or has_hook("authenticate"):
         return
     raise RuntimeError(

@@ -1563,6 +1563,9 @@ class Settings(BaseSettings):
     #     separate future layer). Default off → DB-only behavior unchanged. ---
     ldap_auth_enabled: bool = False
     ldap_url: str = ""  # ldaps://host:636 only — ldap:// is refused (#1345)
+    # CA bundle (PEM) the directory certificate is verified against; empty →
+    # the system CA store. The certificate is ALWAYS verified (chain + host).
+    ldap_ca_cert_file: str = ""
     ldap_bind_dn: str = ""  # service account DN for the user search
     ldap_bind_password: SecretStr = ""
     ldap_auth_user_base_dn: str = ""  # subtree to search for the user
@@ -2332,7 +2335,10 @@ class Settings(BaseSettings):
 
         HARD FAIL — ``LDAP_AUTH_ENABLED=true`` with an ``LDAP_URL`` that is not
         ``ldaps://``: there is no StartTLS, so a plain ``ldap://`` bind sends
-        the service-account and the user's password unencrypted.
+        the service-account and the user's password unencrypted. ``ldaps://``
+        alone is not the whole guarantee: the provider also VERIFIES the server
+        certificate (``auth.providers.ldap._verifying_tls``); a configured
+        ``LDAP_CA_CERT_FILE`` that is not a file fails here too.
 
         HARD FAIL — ``DB_AUTH_ENABLED=false`` without a fully configured LDAP
         provider (enabled, ``LDAP_URL``, ``LDAP_AUTH_USER_BASE_DN``): LDAP is
@@ -2349,7 +2355,16 @@ class Settings(BaseSettings):
                 f"LDAP_AUTH_ENABLED=true with LDAP_URL={url!r} — only ldaps:// is "
                 "supported (no StartTLS); a plain ldap:// bind would send the "
                 "service-account and user passwords in clear text. Use "
-                "ldaps://host:636."
+                "ldaps://host:636 (the server certificate is verified against "
+                "LDAP_CA_CERT_FILE or the system CA store)."
+            )
+        ca_file = self.ldap_ca_cert_file.strip()
+        if self.ldap_auth_enabled and ca_file and not os.path.isfile(ca_file):
+            raise ValueError(
+                f"LDAP_CA_CERT_FILE={ca_file!r} is not a readable file — the "
+                "directory certificate could not be verified, so every LDAP "
+                "login would fail. Mount the CA bundle or unset the variable "
+                "(system CA store)."
             )
         if not self.db_auth_enabled:
             missing = [
