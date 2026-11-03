@@ -2117,7 +2117,12 @@ Entitaeten und ruft `KgReconcilerService.run_for_user(user_id)`. Jeder Lauf ist
 per-User durch einen nicht-blockierenden Advisory-Lock serialisiert (ein zweiter
 ueberlappender Lauf findet den Lock gehalten und endet als No-op). Zu Beginn
 werden bis zu `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` aktive Entitaeten ohne
-Embedding nach-eingebettet — sonst blieben sie im Self-Join unsichtbar. Ein
+Embedding nach-eingebettet — sonst blieben sie im Self-Join unsichtbar.
+**Wer die Kandidaten eines Laufs vorab abschätzen will, muss diesen Backfill
+mitdenken:** ein Trockenlauf des Self-Joins mit `embedding IS NOT NULL` sieht
+nur die Zeilen, die schon eine Einbettung haben, und ist damit systematisch zu
+optimistisch — der Lauf erzeugt die übrigen Einbettungen erst selbst (#1329:
+Vorabmessung 0 Nicht-Personen-Paare, im Lauf zwei Auto-Merges). Ein
 halfvec-Embedding-Self-Join findet dann Duplikat-Paare desselben Users (Cosine
 >= `KG_RECONCILER_CANDIDATE_THRESHOLD`); Winner = mehr Erwaehnungen, tie-break
 aelteres `first_seen_at`.
@@ -2147,14 +2152,20 @@ Dann:
 
 1. **Same-Tier + Cosine >= `KG_RECONCILER_AUTO_MERGE_THRESHOLD`** → automatischer
    Merge via `merge_entities` (absorbiert surface_forms/Multi-Typ, reparentiert
-   Relationen, Tier = MIN, tombstoned den Loser mit `canonical_id`).
+   Relationen, Tier = MIN, tombstoned den Loser mit `canonical_id`) — **ausser**
+   das Paar traegt kein Signal jenseits der Einbettung (#1329): eine Beschreibung
+   leer oder beide gleich (dann `gray_zone`), oder die Namen unterscheiden sich
+   nur in Tokens mit Ziffer, etwa Versionen, Ordnungszahlen, Jahre (dann
+   `name_identifier`). Beides geht in die Review statt in den Auto-Merge.
 2. **Cross-Tier ODER Grauzone** (aehnlich, aber unter der Auto-Schwelle) **ODER
    Schreibvariante eines Personennamens** (`name_typo`: gleiche Tokens bis auf
    eines, das sich um einen Edit unterscheidet, beide ≥ 4 Zeichen — die einzige
    Ausnahme vom Person-Guard, der Personenpaare mit unverwandten Namen sonst ganz
    verwirft) → ein `kg_merge_proposals`-Eintrag fuer die Owner-Review
    (`/brain/review`). Wird NIE still gemergt — eine Verschmelzung darf
-   Sichtbarkeit nie erhoehen. Cross-Tier hat als Label Vorrang.
+   Sichtbarkeit nie erhoehen. Label-Vorrang: `cross_tier` > `cross_type` >
+   `name_typo` > `name_identifier` > `gray_zone`. `name_typo` und
+   `name_identifier` sind von der Sammelentscheidung je Cluster ausgeschlossen.
 
 Idempotent: Paare mit bereits offenem Proposal werden ausgeschlossen
 (Partial-Unique auf `(loser, winner) WHERE status='pending'`), ebenso Paare,

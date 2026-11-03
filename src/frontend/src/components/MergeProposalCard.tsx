@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { GitMerge } from 'lucide-react';
 import TierBadge from './TierBadge';
 import type { MergeProposal, MergeProposalEntityBrief } from '../api/resources/knowledgeGraph';
+import { namesDifferOnlyInDigitTokens } from '../utils/nameSignals';
 
 /**
  * One entity-merge proposal in the /brain/review queue (Structured Memory
@@ -15,7 +16,13 @@ import type { MergeProposal, MergeProposalEntityBrief } from '../api/resources/k
  *   - cross_tier  → both buttons secondary, Ablehnen focused first, + an
  *                   explicit visibility-change warning (color is never alone).
  *   - cross_type  → same treatment: the two sides are different KINDS of thing.
- *   - gray_zone   → same tier, just below the auto bar → Zusammenführen primary.
+ *   - name_typo / name_identifier → same treatment: maybe two different people
+ *                   (one edit apart) / two different things whose names differ
+ *                   only in a number (versions, ordinals, years — #1329), the
+ *                   latter with an explicit notice.
+ *   - gray_zone   → same tier, probably the same thing: below the auto bar, or
+ *                   above it with no description to tell the two apart (#1329)
+ *                   → Zusammenführen primary.
  *
  * D2 survivor toggle: a radio group picks WHICH entity survives (default = the
  * reconciler's winner = more mentions); onApprove gets the chosen winner id.
@@ -36,9 +43,15 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
   // pair that is "maybe two people" by definition (name_typo — one in-token edit
   // apart), or two different KINDS of thing (cross_type, or simply differing
   // primary types on an older pair proposed before that guard existed — merging
-  // rewrites what the entity IS). The visibility warning stays keyed on the tiers.
+  // rewrites what the entity IS), or names that differ only in a number
+  // (name_identifier — two releases, two accounts). The visibility warning stays
+  // keyed on the tiers.
   const crossType = proposal.loser.entity_type !== proposal.winner.entity_type;
-  const cautious = crossTier || crossType
+  // Derived from the live names too: a pair pending from before #1329 carries
+  // `gray_zone` for "… 1.2.3" / "… 1.2.4" (same rule as the service).
+  const identifier = proposal.reason === 'name_identifier'
+    || namesDifferOnlyInDigitTokens(proposal.loser.name, proposal.winner.name);
+  const cautious = crossTier || crossType || identifier
     || proposal.reason === 'name_typo' || proposal.reason === 'cross_type';
   // What to CALL the pair. A differing primary type is the most useful thing to
   // say about it, whatever reason it was stored with: the pairs that were already
@@ -46,7 +59,11 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
   // uncertain" does not tell the owner that one side is a town and the other a
   // company. Cross-tier still wins — the visibility change is the
   // invariant-bearing fact, same precedence the reconciler uses when labelling.
-  const reasonKey = crossType && !crossTier ? 'cross_type' : proposal.reason;
+  // Likewise a digit-only name difference on an older `gray_zone` pair reads
+  // as `name_identifier`; the stored weaker labels above it keep precedence.
+  const reasonKey = crossType && !crossTier
+    ? 'cross_type'
+    : identifier && proposal.reason === 'gray_zone' ? 'name_identifier' : proposal.reason;
   const pct = Math.round((proposal.similarity ?? 0) * 100);
   const radioName = `merge-${proposal.id}-survivor`;
 
@@ -132,8 +149,15 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
         </p>
       )}
 
+      {identifier && (
+        <p className="merge-notice" role="note">
+          <span aria-hidden="true">⚠</span>
+          <span>{t('circles.mergeProposals.identifierWarning')}</span>
+        </p>
+      )}
+
       <div className={`flex gap-2 ${cautious ? 'flex-row' : 'flex-row-reverse'} justify-end`}>
-        {/* cross_tier / name_typo: Ablehnen first in DOM (focus-first, no merge nudge);
+        {/* cross_tier / cross_type / name_typo / name_identifier: Ablehnen first in DOM (focus-first, no merge nudge);
             gray_zone: Zusammenführen primary, rendered last via flex-row-reverse. */}
         <button
           type="button"

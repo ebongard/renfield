@@ -2395,9 +2395,10 @@ KG_MERGE_PROPOSAL_REJECTED = "rejected"
 KG_MERGE_PROPOSAL_SUPERSEDED = "superseded"
 # Why a proposal exists instead of an auto-merge:
 KG_MERGE_REASON_CROSS_TIER = "cross_tier"  # endpoints at different tiers — needs owner sign-off (D3)
-KG_MERGE_REASON_GRAY_ZONE = "gray_zone"    # similar but below the auto-merge threshold (D10)
+KG_MERGE_REASON_GRAY_ZONE = "gray_zone"    # probably the same thing, but not for a machine to decide alone: below the auto bar (D10) OR above it without a disambiguating description (#1329)
 KG_MERGE_REASON_NAME_TYPO = "name_typo"    # person names that differ by ONE in-token edit — review, never auto-merge (#876 field data)
 KG_MERGE_REASON_CROSS_TYPE = "cross_type"  # entity TYPES disjoint (place vs organization) — review, never auto-merge
+KG_MERGE_REASON_NAME_IDENTIFIER = "name_identifier"  # names differ only in a digit-bearing token (version, ordinal, year) — review, never auto-merge, never bulk-folded (#1329)
 
 # Reasons whose pair might be two different THINGS. `resolve_cluster` refuses to
 # BULK-merge these: the cluster card shows a count, not the two names, and one such
@@ -2405,15 +2406,17 @@ KG_MERGE_REASON_CROSS_TYPE = "cross_type"  # entity TYPES disjoint (place vs org
 #
 # NOT "everything the reconciler refuses to auto-merge" — that set is far larger
 # and bulk-folding it is the point of the cluster view: a `gray_zone` pair carries
-# `block_auto_merge` from `_name_collision_low_signal` (same name, no description
-# to tell them apart) and is exactly what the owner decides once. `gray_zone` says
+# `block_auto_merge` from `_embedding_match_low_signal` (no description to tell
+# them apart) and is exactly what the owner decides once. `gray_zone` says
 # "probably the same thing, a machine should not decide alone"; `name_typo` says
-# "maybe two different PEOPLE, one character apart". Only the second kind belongs
-# in here.
+# "maybe two different PEOPLE, one character apart", `name_identifier` "two
+# different releases/accounts/years — the names differ only in a number" (#1329:
+# a cluster of "Product A - 1.2.x" would otherwise fold a release series in one
+# click). Only the latter kinds belong in here.
 #
 # The bar reads `reason` because `block_auto_merge` is a find-time flag on
 # `MergeCandidate` and never reaches the queue.
-KG_MERGE_WEAK_REASONS = frozenset({KG_MERGE_REASON_NAME_TYPO})
+KG_MERGE_WEAK_REASONS = frozenset({KG_MERGE_REASON_NAME_TYPO, KG_MERGE_REASON_NAME_IDENTIFIER})
 
 
 class KgMergeProposal(Base):

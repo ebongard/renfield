@@ -69,6 +69,53 @@ describe('MergeProposalCard', () => {
     expect(merge.className).not.toContain('btn-primary');
   });
 
+  it('name_identifier: label + number notice, Ablehnen first, no merge nudge', () => {
+    // #1329: two releases whose names differ only in the version token. Same
+    // no-nudge treatment as name_typo, plus an explicit notice; the
+    // visibility warning stays keyed on the tiers.
+    const p = proposal({
+      reason: 'name_identifier',
+      loser: brief({ id: 10, name: 'Product A - 1.2.4', entity_type: 'thing', circle_tier: 0, mention_count: 4 }),
+      winner: brief({ id: 20, name: 'Product A - 1.2.3', entity_type: 'thing', circle_tier: 0, mention_count: 9 }),
+    });
+    renderWithRouter(<MergeProposalCard proposal={p} onApprove={vi.fn()} onReject={vi.fn()} />);
+    expect(screen.getByText('Namen unterscheiden sich nur in einer Nummer')).toBeInTheDocument();
+    expect(screen.getByRole('note')).toHaveTextContent(/nur in einer Nummer oder Version/);
+    expect(screen.queryByText(/Sichtbarkeit/)).not.toBeInTheDocument();
+    const merge = screen.getByRole('button', { name: 'Zusammenführen' });
+    const reject = screen.getByRole('button', { name: 'Ablehnen' });
+    expect(merge.className).toContain('btn-secondary');
+    expect(merge.className).not.toContain('btn-primary');
+    expect(reject.compareDocumentPosition(merge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.activeElement).toBe(reject);
+  });
+
+  it('a legacy gray_zone pair whose names differ only in a number reads as name_identifier', () => {
+    // Pending from before #1329: stored as gray_zone. Derived from the live
+    // names, like cross_type from the live types.
+    const p = proposal({
+      reason: 'gray_zone',
+      loser: brief({ id: 10, name: 'Product A - 1.2.4', entity_type: 'thing', circle_tier: 0 }),
+      winner: brief({ id: 20, name: 'Product A - 1.2.3', entity_type: 'thing', circle_tier: 0 }),
+    });
+    renderWithRouter(<MergeProposalCard proposal={p} onApprove={vi.fn()} onReject={vi.fn()} />);
+    expect(screen.getByText('Namen unterscheiden sich nur in einer Nummer')).toBeInTheDocument();
+    expect(screen.queryByText('ähnlich, aber unsicher')).not.toBeInTheDocument();
+    expect(screen.getByRole('note')).toHaveTextContent(/nur in einer Nummer oder Version/);
+    expect(screen.getByRole('button', { name: 'Zusammenführen' }).className).toContain('btn-secondary');
+  });
+
+  it('gray_zone shows no number notice', () => {
+    const p = proposal({
+      reason: 'gray_zone',
+      loser: brief({ id: 10, name: 'Anna', circle_tier: 0 }),
+      winner: brief({ id: 20, name: 'Anna', circle_tier: 0 }),
+    });
+    renderWithRouter(<MergeProposalCard proposal={p} onApprove={vi.fn()} onReject={vi.fn()} />);
+    expect(screen.queryByText(/nur in einer Nummer/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Zusammenführen' }).className).toContain('btn-primary');
+  });
+
   it('cross_type: renders the kind-mismatch label, no visibility warning, cautious button', () => {
     // A same-tier pair of two different KINDS of thing — the mis-typed-duplicate
     // shape the reconciler now routes to review instead of folding. Same

@@ -1988,7 +1988,8 @@
         "cross_tier": "unterschiedliche Sichtbarkeit",
         "cross_type": "verschiedene Arten von Dingen",
         "gray_zone": "ähnlich, aber unsicher",
-        "name_typo": "Schreibvariante eines Personennamens"
+        "name_typo": "Schreibvariante eines Personennamens",
+        "name_identifier": "Namen unterscheiden sich nur in einer Nummer"
       },
       "survivorLegend": "Welche Entität soll bleiben?",
       "keepThis": "{{name}} behalten",
@@ -1996,6 +1997,7 @@
       "mentions_other": "{{count}} Erwähnungen",
       "willMerge": "wird zu",
       "visibilityWarning": "Achtung: Sichtbarkeit ändert sich von {{from}} zu {{to}}",
+      "identifierWarning": "Achtung: Die Namen unterscheiden sich nur in einer Nummer oder Version — vermutlich zwei verschiedene Dinge.",
       "merge": "Zusammenführen",
       "reject": "Ablehnen",
       "merged": "Zusammengeführt",

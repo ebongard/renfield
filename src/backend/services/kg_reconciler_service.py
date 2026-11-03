@@ -17,11 +17,16 @@ Policy (the safety core):
     by a single in-token edit, both spellings >= 4 chars (_names_near_typo) —
     survives as a REVIEW proposal (reason name_typo), never an auto-merge.
   - SAME tier AND similarity >= auto-merge threshold -> auto-merge via
-    KnowledgeGraphService.merge_entities (which enforces tier=MIN etc.).
+    KnowledgeGraphService.merge_entities (which enforces tier=MIN etc.) —
+    UNLESS the pair is low-signal (_embedding_match_low_signal: a description
+    empty or both identical, or names differing only in digit-bearing tokens,
+    #1329). Those become review proposals.
   - CROSS tier (could change visibility, D3) OR gray-zone (similar but below
-    the auto bar, D10) OR name_typo -> a KgMergeProposal for owner review on
-    /brain/review. Never silently merged. cross_tier takes precedence as the
-    label (the visibility change is the invariant-bearing fact).
+    the auto bar, D10) OR name_typo OR name_identifier -> a KgMergeProposal for
+    owner review on /brain/review. Never silently merged. Label precedence:
+    cross_tier > cross_type > name_typo > name_identifier > gray_zone (the
+    visibility change is the invariant-bearing fact; the two weak name labels
+    both bar a bulk fold, name_typo is the more specific one).
 
 Idempotent: candidate pairs that already have a PENDING proposal are excluded
 by the find query (and the proposals table carries a partial-unique guard), and
@@ -47,11 +52,13 @@ from models.database import (
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_CROSS_TYPE,
     KG_MERGE_REASON_GRAY_ZONE,
+    KG_MERGE_REASON_NAME_IDENTIFIER,
     KG_MERGE_REASON_NAME_TYPO,
     KG_MERGE_WEAK_REASONS,
     KGEntity,
     KgMergeProposal,
 )
+from services.kg_name_signals import names_differ_only_in_digit_tokens
 from services.knowledge_graph_service import KnowledgeGraphService
 from utils.config import settings
 
@@ -90,22 +97,35 @@ def _resolve_lock_engine(bind) -> AsyncEngine | None:
     return None
 
 
-def _name_collision_low_signal(
+def _embedding_match_low_signal(
     name_a: str | None, name_b: str | None,
     desc_a: str | None, desc_b: str | None,
 ) -> bool:
-    """True when a candidate pair shares a name but lacks signal to tell them apart.
+    """True when nothing but the embedding says the pair is one entity.
 
-    Same normalized name + (either description empty OR identical descriptions) =>
-    the embedding match is essentially a name match, which cannot distinguish two
-    different real entities that happen to share a name. Such pairs must go to
-    owner review, never auto-merge (Phase 3 P3-T2). When BOTH sides carry distinct
-    non-empty descriptions the similarity is meaningful, so auto-merge stays allowed.
+    Such a pair must go to owner review, never auto-merge (Phase 3 P3-T2, #1329).
+    Two independent ways to get there:
+
+    * The descriptions are the only signal besides the name. Either one empty,
+      or both identical (normalized), and the embedding is essentially a NAME
+      match — it cannot tell two different entities apart, whether the names
+      are equal ("Anna" the mother vs "Anna" the friend) or merely close
+      ("Product A - 1.2.4" vs "… 1.2.3", both "Ein Release mit Status
+      IN_PROGRESS").
+    * The names differ only in digit-bearing tokens
+      (``names_differ_only_in_digit_tokens``): a different number names a
+      different thing, however alike the descriptions read. The caller labels
+      that branch ``name_identifier`` on its own, because unlike the first it
+      also bars the pair from a bulk cluster fold.
+
+    Only when both sides carry distinct non-empty descriptions AND the names do
+    not differ by an identifier alone is the similarity meaningful enough for a
+    silent merge.
     """
-    if _norm(name_a) != _norm(name_b):
-        return False
     da, db = _norm(desc_a), _norm(desc_b)
-    return (not da) or (not db) or (da == db)
+    if (not da) or (not db) or (da == db):
+        return True
+    return names_differ_only_in_digit_tokens(name_a, name_b)
 
 
 def _is_person(etype: str | None, etypes_text: str | None) -> bool:
@@ -230,12 +250,14 @@ class MergeCandidate:
     similarity: float
     loser_tier: int
     winner_tier: int
-    # Same canonical name + weak disambiguating signal (a missing or identical
-    # description on either side). The embedding similarity is then driven almost
-    # entirely by the shared name, so two genuinely different people ("Anna" the
-    # mother vs "Anna" the friend) look like a dupe. Never auto-merge these —
-    # route to owner review — else the memory↔entity bridge's backfill would feed
-    # the Jutta/Anna conflation back through the reconciler (Phase 3 P3-T2).
+    # Weak disambiguating signal (see _embedding_match_low_signal): a missing or
+    # identical description on either side, or names that differ only in a
+    # digit-bearing token. The embedding similarity is then driven almost
+    # entirely by the name, so two genuinely different people ("Anna" the
+    # mother vs "Anna" the friend) or releases ("… 1.2.4" vs "… 1.2.3", #1329)
+    # look like a dupe. Never auto-merge these — route to owner review — else the
+    # memory↔entity bridge's backfill would feed the Jutta/Anna conflation back
+    # through the reconciler (Phase 3 P3-T2).
     block_auto_merge: bool = False
     # Person-guard defense-in-depth: whether the pair involves a person and whether
     # the names are related. find_duplicate_pairs already DROPS unrelated-name
@@ -248,6 +270,11 @@ class MergeCandidate:
     # kept as a REVIEW candidate (reason name_typo), never auto-merged — the
     # gate above already refuses it via names_related=False; this is the label.
     name_typo: bool = False
+    # The names differ only in digit-bearing tokens (names_differ_only_in_digit_tokens,
+    # #1329): "… 1.2.4" vs "… 1.2.3" are two releases. Already covered by
+    # block_auto_merge; this is the LABEL (reason name_identifier), which keeps
+    # the pair out of a bulk cluster fold as well — gray_zone would not.
+    name_identifier: bool = False
     # The two sides claim DISJOINT types (a place and an organization). Such a
     # pair only reaches here with related names, which is the mis-TYPED-duplicate
     # shape; it is a review candidate, never an auto-merge (see the type-guard in
@@ -418,16 +445,18 @@ class KgReconcilerService:
             else:
                 winner_id, winner_tier = int(r.id_b), int(r.tier_b or 0)
                 loser_id, loser_tier = int(r.id_a), int(r.tier_a or 0)
+            identifier = names_differ_only_in_digit_tokens(r.name_a, r.name_b)
             out.append(MergeCandidate(
                 loser_id=loser_id, winner_id=winner_id,
                 similarity=float(r.similarity),
                 loser_tier=loser_tier, winner_tier=winner_tier,
-                block_auto_merge=typo or cross_type or _name_collision_low_signal(
+                block_auto_merge=typo or cross_type or identifier or _embedding_match_low_signal(
                     r.name_a, r.name_b, r.desc_a, r.desc_b,
                 ),
                 is_person_pair=is_person,
                 names_related=related,
                 name_typo=typo,
+                name_identifier=identifier,
                 cross_type=cross_type,
                 types_known=bool(_norm(r.etype_a) and _norm(r.etype_b)),
             ))
@@ -453,6 +482,8 @@ class KgReconcilerService:
             reason = KG_MERGE_REASON_CROSS_TYPE
         elif c.name_typo:
             reason = KG_MERGE_REASON_NAME_TYPO
+        elif c.name_identifier:
+            reason = KG_MERGE_REASON_NAME_IDENTIFIER
         else:
             reason = KG_MERGE_REASON_GRAY_ZONE
         self.db.add(KgMergeProposal(
@@ -687,8 +718,8 @@ class KgReconcilerService:
         part. Not "a pair the reconciler refuses to auto-merge" — that is a much
         larger set and folding it in bulk is the whole point of this method: the
         243 `gray_zone` pairs pending on the household graph carry
-        `block_auto_merge` from ``_name_collision_low_signal`` (same name, no
-        description to tell them apart) and they are exactly what the owner
+        `block_auto_merge` from ``_embedding_match_low_signal`` (no description
+        to tell them apart) and they are exactly what the owner
         decides once. The line runs elsewhere: `gray_zone` says "probably the
         same thing, a machine should not decide alone", `name_typo` says "maybe
         two different PEOPLE, one character apart". Only the second kind is
@@ -782,7 +813,14 @@ class KgReconcilerService:
             # NOT the same as "the reconciler refuses to auto-merge it":
             # `gray_zone` pairs carry `block_auto_merge` too and folding those in
             # bulk is precisely what this method is for.
-            if (p.reason or "") in KG_MERGE_WEAK_REASONS:
+            # The identifier test is ALSO derived from the live names, like the
+            # type test above: pairs pending from before #1329 carry `gray_zone`
+            # for "… 1.2.3" / "… 1.2.4", and nothing re-labels a pending pair.
+            if ((p.reason or "") in KG_MERGE_WEAK_REASONS
+                    or names_differ_only_in_digit_tokens(
+                        p.loser.name if p.loser else None,
+                        p.winner.name if p.winner else None,
+                    )):
                 res.skipped_weak_edge += 1
                 undecidable.append(p)
                 continue

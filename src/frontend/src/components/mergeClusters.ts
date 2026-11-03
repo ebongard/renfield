@@ -1,5 +1,6 @@
 import type { MergeProposal, MergeProposalEntityBrief } from '../api/resources/knowledgeGraph';
 import type { MergeCluster } from './MergeClusterCard';
+import { namesDifferOnlyInDigitTokens } from '../utils/nameSignals';
 
 /**
  * Group pending proposals into clusters — connected components over the pairs.
@@ -16,7 +17,8 @@ import type { MergeCluster } from './MergeClusterCard';
  * that touches no component is returned in `crossTierOnly` to be rendered as an
  * ordinary single pair.
  *
- * A pair whose REASON marks it weak (`name_typo` — "maybe two different people")
+ * A pair whose REASON marks it weak (`name_typo` — "maybe two different people",
+ * `name_identifier` — names that differ only in a number, e.g. two releases)
  * is excluded too, and for the sharpest reason of all: the reconciler refuses to
  * auto-merge it, so a bulk fold must not merge it either. Measured on the live
  * household graph 2026-09-24: 11 such pairs pending, SIX of them sitting inside
@@ -56,7 +58,9 @@ function sameType(p: MergeProposal): boolean {
 /**
  * Reasons that mean "maybe two different things" BY DEFINITION. `name_typo` is a
  * review candidate precisely because a machine cannot decide it — two people one
- * character apart. Such a pair must never be an EDGE: it would join two
+ * character apart; `name_identifier` likewise — "Product A - 1.2.4" and
+ * "… 1.2.3" are two releases, and a cluster of them would fold the whole series
+ * in one click (#1329). Such a pair must never be an EDGE: it would join two
  * components that were never compared, and the fold button shows a count, not
  * the two names. The service refuses the same pairs (`KG_MERGE_WEAK_REASONS`);
  * this is the view's half, so a weak pair is visible as its own card instead of
@@ -69,10 +73,13 @@ function sameType(p: MergeProposal): boolean {
  * shows the partial-refusal note. The divergence costs a confusing card, never a
  * merge.
  */
-const WEAK_REASONS = new Set(['name_typo']);
+const WEAK_REASONS = new Set(['name_typo', 'name_identifier']);
 
+// Derived from the live names as well, like the service: pairs pending from
+// before #1329 carry `gray_zone` for "… 1.2.3" / "… 1.2.4", and nothing
+// re-labels a pending pair.
 function isWeak(p: MergeProposal): boolean {
-  return WEAK_REASONS.has(p.reason);
+  return WEAK_REASONS.has(p.reason) || namesDifferOnlyInDigitTokens(p.loser.name, p.winner.name);
 }
 
 export function groupProposals(proposals: MergeProposal[]): GroupedProposals {

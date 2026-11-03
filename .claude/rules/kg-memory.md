@@ -25,7 +25,9 @@ Long form: `docs/design/structured-memory.md`, `docs/design/kg-cross-user-canoni
 
 ## `KnowledgeGraphService.resolve_entity` — cascade order is the contract
 exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + high threshold, `::halfvec`) → create new.
-- Never fold across tiers or on a weak signal inline — that is a reconciler proposal.
+- Never fold across tiers or on a weak signal inline — that is a reconciler proposal. The embedding step also REFUSES a
+  match whose name differs only in digit-bearing tokens (`kg_name_signals.names_differ_only_in_digit_tokens`, #1329:
+  "… 1.2.5" is not "… 1.2.4") → create new; digit-free OCR salvage ("Bnn"→"Bonn") is unaffected.
 - **PERSON entities SKIP the inline embedding match.** The gate is keyed on the multi-type `seed_types`, so a person
   carried as a SECONDARY type counts. Reason: a generic meta-description turns a row into a generic-person centroid
   that any bare name folds into (magnet hub). The embedding is still computed + stored (retrieval, reconciler).
@@ -56,19 +58,23 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   (`dropped_cross_type` / `dropped_person_guard`) — `candidates` counts survivors. The leniency (no type = no
   mismatch) belongs to the DROP only: an AUTO-merge additionally requires `types_known`, else a corrupt empty
   `entity_type` would be compatible with everything at the silent-merge gate.
-- Same-name gate: same normalized name + empty/identical descriptions never auto-merges → review.
+- **Low-signal gate (`_embedding_match_low_signal`, #1329):** never auto-merges → review when EITHER a description is
+  empty or both are identical (normalized) — whatever the names (`gray_zone`) — OR the names differ only in
+  digit-bearing tokens (multiset difference of `_norm().split()`; "1.2.3" is one token): a different number is a
+  different thing (`name_identifier`, weak — see #1333 below). Field case: "Product A - 1.2.4" folded into "… 1.2.3", same generic description.
 - Per-user non-blocking advisory lock `_RECONCILER_LOCK_NS`; an overlapping run is a no-op. Each pass first re-embeds
-  up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else invisible to the self-join).
+  up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else invisible to the self-join) — so a
+  dry-run estimate over `embedding IS NOT NULL` undercounts the run's candidates.
 - Approving a proposal whose counterpart was already merged closes it as `superseded`, not `approved`.
 - **A rejection is final for the reconciler.** The self-join AND `_propose` exclude pairs with a `pending` OR
   `rejected` proposal; a rejected pair never comes back on its own. The only way back is an explicit admin merge
-  (`POST /entities/merge`, `KG_MANAGE`). Label precedence: `cross_tier` > `cross_type` > `name_typo` > `gray_zone`;
+  (`POST /entities/merge`, `KG_MANAGE`). Label precedence: `cross_tier` > `cross_type` > `name_typo` > `name_identifier` > `gray_zone`;
   the card keys its warning on `cross_tier` and DERIVES the label from the live types when they differ (rows pending
   from before the guard carry `gray_zone` and would otherwise read "similar but uncertain").
 - Routes are `KG_VIEW`, own graph only, per-proposal ownership 404. Scheduler `_schedule_kg_reconciler`.
 - **The queue's unit is the CLUSTER, not the pair** (`resolve_cluster`, `POST /merge-proposals/cluster`). Measured
   2026-09-24: 1 391 pending, 2 ever resolved — 1 365 pairs over 952 entities in 199 name clusters, and every pair
-  above the auto bar had identical names + no description (the same-name gate above, working as designed). Two
+  above the auto bar had identical names + no description (the low-signal gate above, working as designed). Two
   invariants make a bulk decision safe: **only same-tier pairs take part** (a cross-tier pair changes reach and is
   reported back in `skipped_cross_tier`, never swept — which also makes `tier = MIN` a no-op), and **the fold set is
   derived from the PROPOSALS, not from the request** (else the route merges two arbitrary entities on demand). #1330
@@ -78,9 +84,13 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   tier, so calling them a visibility skip was a lie. The frontend groups by connected components over the pairs, NOT
   by name (a pair can hold two spellings), and does not chain across differing primary types either.
 - **#1333, the fourth bar: a WEAK pair never takes part** (`skipped_weak_edge`). `name_typo` = "maybe two different
-  PEOPLE, one edit apart" — a bulk fold hands that judgement to a click showing a count, not the names. **NOT
+  PEOPLE, one edit apart", `name_identifier` (#1329) = names differ only in a number (a release series) — a bulk fold
+  hands that judgement to a click showing a count, not the names. `KG_MERGE_WEAK_REASONS` and the frontend
+  `WEAK_REASONS` list both. Pairs pending from before #1329 keep `gray_zone`, so the
+  bar ALSO derives it from the live names (backend `resolve_cluster`, frontend `isWeak` + card label via
+  `utils/nameSignals.ts` — keep both copies of the rule in step). **NOT
   everything the reconciler refuses to auto-merge**: a `gray_zone` pair carries `block_auto_merge` from
-  `_name_collision_low_signal` too, and folding those is the whole point (243 pending on the household). The bar reads
+  `_embedding_match_low_signal` too, and folding those is the whole point (243 pending on the household). The bar reads
   the persisted `reason`, not `block_auto_merge` (a find-time flag that never reaches the queue).
   🛑 Refusing the EDGE is not enough, and this holds for BOTH pairwise bars — weak AND cross-type. Neither relation
   is transitive (`thing` is a wildcard: `organization`~`thing` and `place`~`thing` pass, `organization`~`place` does

@@ -198,7 +198,7 @@ class ClusterResolveResponse(BaseModel):
 class MergeProposalResponse(BaseModel):
     id: int
     similarity: float
-    reason: str            # cross_tier | cross_type | gray_zone | name_typo
+    reason: str            # cross_tier | cross_type | gray_zone | name_typo | name_identifier
     status: str            # pending | approved | rejected
     created_at: str = ""
     loser: MergeProposalEntityBrief
