@@ -1553,10 +1553,16 @@ class Settings(BaseSettings):
     # ingress-reachable AND coordinate the voice-server secret.
     internal_auth_verify_secret: SecretStr | None = None
 
+    # --- Local password provider (`db`, bcrypt against the users table).
+    #     Default on → unchanged. Off makes LDAP the credential authority: a
+    #     local password no longer logs in (#1345). Off requires a fully
+    #     configured LDAP provider (validator below) — else nobody could log in.
+    db_auth_enabled: bool = True
+
     # --- LDAP credential provider (authn only; group→role authz is a
     #     separate future layer). Default off → DB-only behavior unchanged. ---
     ldap_auth_enabled: bool = False
-    ldap_url: str = ""  # ldaps://host:636 or ldap://host:389
+    ldap_url: str = ""  # ldaps://host:636 only — ldap:// is refused (#1345)
     ldap_bind_dn: str = ""  # service account DN for the user search
     ldap_bind_password: SecretStr = ""
     ldap_auth_user_base_dn: str = ""  # subtree to search for the user
@@ -2317,6 +2323,50 @@ class Settings(BaseSettings):
                 "— open self-registration lets anyone create an account. Set "
                 "ALLOW_REGISTRATION=false unless self-signup is intended."
             )
+        return self
+
+    @model_validator(mode="after")
+    def assert_credential_provider_config(self) -> "Settings":
+        """Fail closed on a credential posture where nobody could log in, or
+        where a directory password would cross the wire in clear text (#1345).
+
+        HARD FAIL — ``LDAP_AUTH_ENABLED=true`` with an ``LDAP_URL`` that is not
+        ``ldaps://``: there is no StartTLS, so a plain ``ldap://`` bind sends
+        the service-account and the user's password unencrypted.
+
+        HARD FAIL — ``DB_AUTH_ENABLED=false`` without a fully configured LDAP
+        provider (enabled, ``LDAP_URL``, ``LDAP_AUTH_USER_BASE_DN``): LDAP is
+        the only other credential provider, so the walk would decline every
+        login. Whether an identity consumer exists to turn an LDAP result into
+        a user is checked at startup, after the plugins are loaded
+        (``auth.registry.assert_login_possible``).
+
+        The default posture (db on, LDAP off) trips nothing.
+        """
+        url = self.ldap_url.strip()
+        if self.ldap_auth_enabled and url and not url.lower().startswith("ldaps://"):
+            raise ValueError(
+                f"LDAP_AUTH_ENABLED=true with LDAP_URL={url!r} — only ldaps:// is "
+                "supported (no StartTLS); a plain ldap:// bind would send the "
+                "service-account and user passwords in clear text. Use "
+                "ldaps://host:636."
+            )
+        if not self.db_auth_enabled:
+            missing = [
+                name
+                for name, ok in (
+                    ("LDAP_AUTH_ENABLED=true", self.ldap_auth_enabled),
+                    ("LDAP_URL", bool(url)),
+                    ("LDAP_AUTH_USER_BASE_DN", bool(self.ldap_auth_user_base_dn.strip())),
+                )
+                if not ok
+            ]
+            if missing:
+                raise ValueError(
+                    "DB_AUTH_ENABLED=false without another credential provider — "
+                    f"missing: {', '.join(missing)}. Nobody could log in. "
+                    "Configure LDAP or set DB_AUTH_ENABLED=true."
+                )
         return self
 
     @model_validator(mode="after")

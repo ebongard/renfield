@@ -706,6 +706,12 @@ async def ensure_admin_user(db: AsyncSession) -> User | None:
     Ensure a default admin user exists.
 
     Creates an admin user with default credentials if no users exist.
+
+    Skipped when ``DB_AUTH_ENABLED=false`` (#1345): the local password provider
+    is out of the walk, so a bootstrap password could never log in — it would
+    be a dead credential, and a live one the day db auth is switched back on,
+    beside the directory's authority. The first admin comes from the directory
+    (identity consumer) or is promoted by an operator.
     """
     # Check if any users exist
     result = await db.execute(select(User).limit(1))
@@ -713,6 +719,14 @@ async def ensure_admin_user(db: AsyncSession) -> User | None:
 
     if existing_user:
         return None  # Users already exist, don't create default admin
+
+    if not settings.db_auth_enabled:
+        logger.warning(
+            "DB_AUTH_ENABLED=false — default admin bootstrap skipped (a local "
+            "password could not log in). Grant the Admin role to a directory "
+            "user instead."
+        )
+        return None
 
     # Get or create admin role
     admin_role = await get_role_by_name(db, "Admin")

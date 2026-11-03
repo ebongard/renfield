@@ -30,6 +30,7 @@ from loguru import logger
 
 from auth.provider_contract import AuthProvider, ProviderResult
 from utils.config import settings
+from utils.hooks import has_hook
 from utils.metrics import record_auth_provider_unreachable
 
 
@@ -180,6 +181,29 @@ def build_default_registry() -> ProviderRegistry:
         )
     )
     return registry
+
+
+def assert_login_possible() -> None:
+    """Raise ``RuntimeError`` when no login can ever succeed (#1345).
+
+    With ``DB_AUTH_ENABLED=false`` the only built-in credential provider left
+    is LDAP, and an LDAP result is a directory subject, not a Renfield user:
+    standalone ``resolve_login`` denies it unless a ``post_authenticate``
+    consumer resolves it (or a legacy ``authenticate`` hook answers first).
+    Without either, every login is a 401 — fail the boot instead. Called by the
+    lifespan AFTER the plugins have registered their hooks; the LDAP half is
+    the config validator's (``Settings.assert_credential_provider_config``).
+    """
+    if settings.db_auth_enabled:
+        return
+    if has_hook("post_authenticate") or has_hook("authenticate"):
+        return
+    raise RuntimeError(
+        "DB_AUTH_ENABLED=false but no post_authenticate consumer (nor a legacy "
+        "authenticate hook) is registered — an LDAP login cannot be resolved to "
+        "a Renfield user, so nobody could log in. Load the identity plugin "
+        "(PLUGIN_MODULES) or set DB_AUTH_ENABLED=true."
+    )
 
 
 def get_registry() -> ProviderRegistry:

@@ -1,7 +1,8 @@
 """LDAP credential provider — authn only.
 
 Ported from Reva's proven ``ldap_auth.py`` (RFC 4515 filter escaping,
-service-account search + user-bind verify, TLS via ``ldaps://``,
+service-account search + user-bind verify, TLS via ``ldaps://`` only — a
+plain ``ldap://`` URL is refused, there is no StartTLS (#1345),
 connect/receive timeouts). What is intentionally NOT ported: local Renfield
 user creation/update. Under the registry, identity resolution
 (create-or-link a canonical user) is the ``post_authenticate`` consumer's job
@@ -83,16 +84,24 @@ class LDAPProvider:
                 "not configured — declining"
             )
             return None
+        if not settings.ldap_url.strip().lower().startswith("ldaps://"):
+            # The config validator refuses this at boot; this guard covers a
+            # settings object mutated at runtime. No StartTLS → a plain ldap://
+            # bind would send both passwords in clear text (#1345).
+            logger.error(
+                "LDAP auth: LDAP_URL is not ldaps:// — refusing to send "
+                "credentials unencrypted, declining"
+            )
+            return None
 
         safe_username = _escape_ldap_filter(username)
         user_filter = settings.ldap_auth_user_filter.format(
             username=safe_username
         )
 
-        use_ssl = settings.ldap_url.startswith("ldaps://")
         server = Server(
             settings.ldap_url,
-            use_ssl=use_ssl,
+            use_ssl=True,
             connect_timeout=settings.ldap_connect_timeout,
         )
 
