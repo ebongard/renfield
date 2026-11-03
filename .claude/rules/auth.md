@@ -21,6 +21,8 @@ Loaded only when an auth file is read. Long form: `docs/design/auth-cookie-sessi
 ## Flags
 - **`AUTH_ENABLED` is the SINGLE auth flag** (REST + WebSocket). `WS_AUTH_ENABLED` is retired; a leftover that
   CONTRADICTS `AUTH_ENABLED` fails boot (a matching leftover only warns).
+- `WS_REQUIRE_SCOPED_QUERY_TOKEN` is `true` on both instances (#1343): a `?token=` on renfield's `/ws/*` must be
+  `scope:ws` (minted by `POST /api/ws/token`); a new WS client that puts a full access JWT in the URL is refused.
 - `SSO_HANDOFF_ENABLED` dark · `AUTH_COOKIE_ENABLED` dark — flag off stays byte-identical to the localStorage-Bearer model.
 - **`SECRET_KEY` is tri-purpose (JWT + Fernet-at-rest + BLE IRKs).** A rotation is DESTRUCTIVE for the stored
   secrets UNLESS the old key is listed in `SECRET_KEY_PREVIOUS` first (MultiFernet: encrypt current, decrypt any),

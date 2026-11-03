@@ -78,6 +78,11 @@ data:
   CORS_ORIGINS: "https://renfield.local"   # gepinnt am Cutover 2026-09-23 (Ingress renfield-https); "*" schaltet den CSWSH-Schutz des WS ab
   TRUSTED_PROXIES: "172.16.0.0/16"  # Cluster-Pod-CIDR, Cutover 2026-09-23 — leer = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)
   API_RATE_LIMIT_STORAGE_URI: "redis://redis:6379"   # geteilt, Cutover 2026-09-23 — vorher per-pod; set to "redis://redis:6379" for shared per-cluster limiting when >1 backend pod runs
+  # #1343: ein Token im URL-Query-String der renfield-/ws/* muss scope:ws tragen. Soak-WARNING
+  # über einen vollen Deploy-Zyklus stumm (beide Instanzen 0, 2026-11-03 07:17–08:50); alle
+  # Browser-Sockets holen ihr Token über POST /api/ws/token. Der Voice-Server ist nicht betroffen
+  # (prüft über /internal/auth/verify, das dieses Flag nicht liest).
+  WS_REQUIRE_SCOPED_QUERY_TOKEN: "true"
   #
   # ── AUTH-ON CUTOVER — do NOT flip piecemeal ─────────────────────────────────
   # BEFORE anything here: roll out the DEVICE half and prove it per satellite
