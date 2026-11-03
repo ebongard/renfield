@@ -671,16 +671,32 @@ class UpdateManager:
             raise UpdateError(UpdateStage.EXTRACTING, str(e))
 
     def _safe_extract(self, tar: tarfile.TarFile, extract_path: Path):
-        """Extract tar archive with path traversal protection (Zip Slip prevention)"""
+        """Extract tar archive with path traversal protection (Zip Slip prevention).
+
+        Every member is checked BEFORE anything is written. Only regular files
+        and directories are allowed: an OTA package never contains links or
+        special files, and a symlink member followed by a same-named regular
+        file writes through the link to anywhere on disk — before the signature
+        is verified. The name check alone cannot see that, and `filter='data'`
+        is not guaranteed on the fleet's Python (3.11.2 on Pi OS bookworm
+        predates the PEP 706 backport in 3.11.4), so the type check is
+        unconditional.
+        """
         resolved_base = extract_path.resolve()
         for member in tar.getmembers():
+            if not (member.isfile() or member.isdir()):
+                raise UpdateError(
+                    UpdateStage.EXTRACTING,
+                    f"Disallowed archive member type (link or special file): {member.name}"
+                )
             member_path = (extract_path / member.name).resolve()
             if not str(member_path).startswith(str(resolved_base) + os.sep) and member_path != resolved_base:
                 raise UpdateError(
                     UpdateStage.EXTRACTING,
                     f"Path traversal detected in archive: {member.name}"
                 )
-        # Use data filter on Python 3.12+ for additional safety
+        # Use the data filter where available (3.12+, backported to 3.11.4) as
+        # defence in depth on top of the checks above.
         try:
             tar.extractall(extract_path, filter='data')
         except TypeError:

@@ -448,6 +448,24 @@ signiert neu; `tests/satellite/test_update_security.py::test_shipped_requirement
 prüft beide gegeneinander. Vor dem Eintrag die PEP-503-Normalform prüfen (Trennzeichen werden zu
 EINEM `-` zusammengefasst, nie gelöscht).
 
+**`--no-deps`: transitive Abhängigkeiten kommen NICHT mit.** Der Installer ruft
+`pip install -r requirements.txt --no-deps` auf, damit `pip` nichts nachlädt, was die Allowlist
+nicht gesehen hat. Bringt eine neue Abhängigkeit eigene Abhängigkeiten mit, die im venv des
+Satelliten noch fehlen, wird jede davon NICHT installiert — das Update meldet Erfolg, und der
+Import scheitert erst beim Neustart. Deshalb jede transitive Abhängigkeit ebenfalls in BEIDE
+Dateien eintragen (`requirements.txt` und `safe_packages.txt`). Prüfen lässt sich die Liste in
+einem frischen venv mit `pip install <paket>` und anschließendem `pip list`.
+
+### Paket entpacken: nur reguläre Dateien und Verzeichnisse
+
+`_safe_extract` prüft JEDES Element des Archivs, bevor irgendetwas geschrieben wird: Pfade außerhalb
+des Zielverzeichnisses und jeder andere Typ als reguläre Datei oder Verzeichnis (symbolischer oder
+harter Link, FIFO, Gerätedatei) brechen das Update ab. Das Entpacken läuft VOR der
+Signaturprüfung; ein Symlink, gefolgt von einer gleichnamigen Datei, schriebe sonst durch den
+Link an beliebige Stellen. `filter='data'` (PEP 706) wird zusätzlich genutzt, wo vorhanden, ist aber
+auf der Flotte nicht garantiert (Pi OS bookworm: Python 3.11.2, der Backport kam mit 3.11.4). Ein
+OTA-Paket enthält keine Links; `src/satellite` darf deshalb keine enthalten.
+
 ## Dateien
 
 | Datei | Beschreibung |

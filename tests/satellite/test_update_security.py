@@ -101,6 +101,129 @@ class TestSafeExtract:
         assert extracted_file.read_text() == "# main module\n"
 
 
+def _legacy_extractall(monkeypatch):
+    """Emulate a Python without PEP 706 (`filter=` raises TypeError; links are
+    followed, as on 3.11.2) so the tests prove OUR member check, not the filter."""
+    real = tarfile.TarFile.extractall
+
+    def extractall(self, path=".", members=None, *, numeric_owner=False, **kw):
+        if "filter" in kw:
+            raise TypeError("extractall() got an unexpected keyword argument 'filter'")
+        return real(self, path, members, numeric_owner=numeric_owner, filter="fully_trusted")
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", extractall)
+
+
+def _tar_bytes(members) -> io.BytesIO:
+    """members: list of (TarInfo, bytes | None)."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for info, data in members:
+            if data is not None:
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+            else:
+                tar.addfile(info)
+    buf.seek(0)
+    return buf
+
+
+def _link(name, target, kind=tarfile.SYMTYPE):
+    info = tarfile.TarInfo(name)
+    info.type = kind
+    info.linkname = target
+    return info
+
+
+def _attack_archives(outside: Path) -> dict:
+    """Archives whose names all pass the traversal check but escape via a link."""
+    return {
+        # symlink dir, then a regular file through it
+        "symlink-dir-then-file": [
+            (_link("renfield_satellite/x", str(outside)), None),
+            (tarfile.TarInfo("renfield_satellite/x/pwn.txt"), b"owned\n"),
+        ],
+        # symlink file, then a same-named regular file
+        "symlink-then-same-name-file": [
+            (_link("renfield_satellite/pwn.txt", str(outside / "pwn.txt")), None),
+            (tarfile.TarInfo("renfield_satellite/pwn.txt"), b"owned\n"),
+        ],
+    }
+
+
+class TestSafeExtractMemberTypes:
+    """Links and special files are rejected BEFORE anything is written (#1210 review)."""
+
+    @pytest.fixture
+    def mgr(self, tmp_path):
+        install = tmp_path / "install"
+        (install / "renfield_satellite").mkdir(parents=True)
+        return UpdateManager(install_path=str(install), backup_path=str(tmp_path / "backup"))
+
+    @pytest.mark.satellite
+    def test_negative_control_attack_archives_really_escape(self, tmp_path, monkeypatch):
+        """Without the member check, a pre-PEP-706 extract writes outside the dir."""
+        _legacy_extractall(monkeypatch)
+        for label, members in _attack_archives(tmp_path / "outside").items():
+            (tmp_path / "outside").mkdir(exist_ok=True)
+            dest = tmp_path / f"plain-{label}"
+            dest.mkdir()
+            with tarfile.open(fileobj=_tar_bytes(members), mode="r:gz") as tar:
+                tar.extractall(dest)  # the old fallback branch
+            assert (tmp_path / "outside" / "pwn.txt").exists(), label
+            (tmp_path / "outside" / "pwn.txt").unlink()
+
+    @pytest.mark.satellite
+    @pytest.mark.parametrize("label", ["symlink-dir-then-file", "symlink-then-same-name-file"])
+    def test_link_attacks_rejected_without_filter_support(self, mgr, tmp_path, monkeypatch, label):
+        _legacy_extractall(monkeypatch)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        members = _attack_archives(outside)[label]
+        with tarfile.open(fileobj=_tar_bytes(members), mode="r:gz") as tar:
+            with pytest.raises(UpdateError, match="Disallowed archive member type"):
+                mgr._safe_extract(tar, dest)
+        assert list(outside.iterdir()) == []
+        assert list(dest.iterdir()) == []  # nothing written at all
+
+    @pytest.mark.satellite
+    @pytest.mark.parametrize("info", [
+        _link("renfield_satellite/a", "/etc/passwd"),
+        _link("renfield_satellite/a", "renfield_satellite/b"),
+        _link("renfield_satellite/h", "renfield_satellite/b", kind=tarfile.LNKTYPE),
+        _link("renfield_satellite/fifo", "", kind=tarfile.FIFOTYPE),
+        _link("renfield_satellite/dev", "", kind=tarfile.CHRTYPE),
+        _link("renfield_satellite/blk", "", kind=tarfile.BLKTYPE),
+    ], ids=["symlink-abs", "symlink-rel", "hardlink", "fifo", "chardev", "blockdev"])
+    def test_single_link_or_special_member_rejected(self, mgr, tmp_path, info):
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        members = [(tarfile.TarInfo("renfield_satellite/b"), b"x\n"), (info, None)]
+        with tarfile.open(fileobj=_tar_bytes(members), mode="r:gz") as tar:
+            with pytest.raises(UpdateError, match="Disallowed archive member type"):
+                mgr._safe_extract(tar, dest)
+        assert list(dest.iterdir()) == []
+
+    @pytest.mark.satellite
+    def test_regular_package_extracts_without_filter_support(self, mgr, tmp_path, monkeypatch):
+        """Positive control: dirs + files still extract on the legacy path."""
+        _legacy_extractall(monkeypatch)
+        d = tarfile.TarInfo("renfield_satellite")
+        d.type = tarfile.DIRTYPE
+        d.mode = 0o755
+        members = [(d, None),
+                   (tarfile.TarInfo("renfield_satellite/main.py"), b"x = 1\n"),
+                   (tarfile.TarInfo("requirements.txt"), b"numpy\n")]
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        with tarfile.open(fileobj=_tar_bytes(members), mode="r:gz") as tar:
+            mgr._safe_extract(tar, dest)
+        assert (dest / "renfield_satellite" / "main.py").read_text() == "x = 1\n"
+        assert (dest / "requirements.txt").read_text() == "numpy\n"
+
+
 # ============================================================================
 # Package Whitelist Validation Tests (_install_requirements)
 # ============================================================================

@@ -40,7 +40,11 @@ Loaded only when OTA-signing / update / enrollment code is read. Long form: `doc
   effect for updates installed by a satellite already running it: a device on an older version that needs a new
   dependency still goes via Ansible `--tags app`. The list must cover `src/satellite/requirements.txt`
   (`test_update_security.py::test_shipped_requirements_pass_validation` — red = real bug). Names compare after PEP 503
-  canonicalisation; never delete separators (look-alike PyPI project = OTA RCE bypass).
+  canonicalisation; never delete separators (look-alike PyPI project = OTA RCE bypass). `--no-deps`: every
+  TRANSITIVE dependency must be listed in both files too, or it is silently not installed.
+- **Extract runs BEFORE signature verification**, so `_safe_extract` admits only regular files + directories (no
+  symlink/hardlink/fifo/device) for every member, unconditionally — `filter='data'` is not guaranteed on the fleet's
+  Python 3.11.2. `src/satellite` must contain no links.
 - **Auth-on download = one-time ticket IN `package_url`** (fleet fetches it bare, no header), minted over the PSK WS
   (`satellite_ota_ticket`); never demand a header; `ticket` stays in `log_safety.SECRET_QUERY_PARAMS`.
 - **OTA cannot update the k8s-pod satellite** (code is in the image layer) — rebuild the image, see `satellites.md`.
