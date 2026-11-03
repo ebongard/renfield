@@ -23,6 +23,7 @@ describe('namesDifferOnlyInDigitTokens', () => {
     ['Product A - 1.2.3', 'product a -  1.2.3'],  // equal after normalisation
     ['1.2.3 Product', 'Product 1.2.3'],           // reordering only
     ['Acme GmbH', 'Acme GmbG'],                   // differing token has no digit
+    ['Raum²', 'Raum³'],                           // superscripts are not decimal digits (parity with isdecimal)
     ['Product A 1.2.3', 'Product B 1.2.4'],       // a non-digit token differs too
   ])('%s / %s is not an identifier difference', (a, b) => {
     expect(namesDifferOnlyInDigitTokens(a, b)).toBe(false);

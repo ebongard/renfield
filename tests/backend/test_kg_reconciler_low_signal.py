@@ -34,6 +34,7 @@ class TestNamesDifferOnlyInDigitTokens:
         ("1.2.3 Product", "Product 1.2.3"),           # reordering only
         ("Acme GmbH", "Acme GmbG"),                   # differing token has no digit
         ("Product A 1.2.3", "Product B 1.2.4"),       # a non-digit token differs too
+        ("Raum²", "Raum³"),                           # superscripts are not decimal digits (parity with \p{Nd})
     ])
     def test_not_an_identifier_difference(self, a, b):
         assert not _names_differ_only_in_digit_tokens(a, b)

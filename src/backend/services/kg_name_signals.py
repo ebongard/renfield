@@ -22,8 +22,13 @@ def names_differ_only_in_digit_tokens(name_a: str | None, name_b: str | None) ->
     well as a changed one; a mere reordering is no difference. A difference in
     any token WITHOUT a digit is left to the other signals — this test only
     claims what the digits alone prove.
+
+    "Digit" means a DECIMAL digit (``str.isdecimal``, Unicode Nd), the same set
+    as the frontend copy's ``\\p{Nd}`` (``utils/nameSignals.ts``): a superscript
+    or circled digit is a footnote marker or an exponent, not a number, and the
+    two copies must agree on which pairs are weak.
     """
     ca = Counter((name_a or "").strip().lower().split())
     cb = Counter((name_b or "").strip().lower().split())
     diff = list((ca - cb).elements()) + list((cb - ca).elements())
-    return bool(diff) and all(any(ch.isdigit() for ch in tok) for tok in diff)
+    return bool(diff) and all(any(ch.isdecimal() for ch in tok) for tok in diff)
