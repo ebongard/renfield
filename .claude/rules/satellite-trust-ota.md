@@ -5,6 +5,7 @@ paths:
   - "src/satellite/RELEASE_MANIFEST.json*"
   - "src/backend/ha_glue/services/satellite_enrollment*"
   - "src/backend/ha_glue/services/satellite_update_service.py"
+  - "src/backend/ha_glue/services/satellite_ota_ticket.py"
   - "src/backend/ha_glue/api/routes/satellite_enrollment.py"
   - "bin/enroll_satellite.py"
 ---
@@ -37,6 +38,8 @@ Loaded only when OTA-signing / update / enrollment code is read. Long form: `doc
   bug). A device below the version that adds an allowlist entry can never OTA to that version: its old installer
   rejects the new dependency and rolls back (#1210) → it needs a manual deploy. Names compare after PEP 503
   canonicalisation; never delete separators (look-alike PyPI project = OTA RCE bypass).
+- **Auth-on download = one-time ticket IN `package_url`** (fleet fetches it bare, no header), minted over the PSK WS
+  (`satellite_ota_ticket`); never demand a header; `ticket` stays in `log_safety.SECRET_QUERY_PARAMS`.
 - **OTA cannot update the k8s-pod satellite** (code is in the image layer) — rebuild the image, see `satellites.md`.
 
 ## Enrollment PSK (`satellites` table, migration `pc20260624`)

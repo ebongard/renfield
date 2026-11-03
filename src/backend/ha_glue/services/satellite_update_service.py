@@ -12,6 +12,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 # Match `__version__ = "1.4.0"` (single or double quotes), tolerating an inline
 # comment / trailing whitespace. Anchored at line start so __version_info__ or a
@@ -24,7 +25,12 @@ _VERSION_VALUE_RE = re.compile(r"^\d+(\.\d+)*$")
 from loguru import logger
 
 from ha_glue.services.satellite_manager import UpdateStatus, get_satellite_manager
+from ha_glue.services.satellite_ota_ticket import TICKET_QUERY_PARAM, issue_ticket
 from ha_glue.utils.config import ha_glue_settings
+from utils.config import settings
+
+#: The package route (`ha_glue.api.routes.satellites.get_update_package`).
+PACKAGE_PATH = "/api/satellites/update-package"
 
 
 class SatelliteUpdateService:
@@ -336,6 +342,26 @@ class SatelliteUpdateService:
                            "run bin/sign_satellite_release.py and rebuild the image.",
             }
 
+        # Download credential (auth on): the package route is ADMIN-gated, and
+        # the device fetches `package_url` with a bare request, no header. Its
+        # credential is this very PSK-authenticated link, so a one-time ticket
+        # bound to this satellite and package travels inside the URL. Auth off
+        # keeps the plain path — the request stays byte-identical.
+        package_url = PACKAGE_PATH
+        if settings.auth_enabled:
+            ticket = await issue_ticket(
+                satellite_id, package_info["version"], package_info["checksum"]
+            )
+            if not ticket:
+                return {
+                    "success": False,
+                    "message": "Could not issue a download ticket (Redis unavailable?)",
+                }
+            package_url = (
+                f"{PACKAGE_PATH}?satellite_id={quote(satellite_id, safe='')}"
+                f"&{TICKET_QUERY_PARAM}={ticket}"
+            )
+
         # Start the run under a fresh id (#1280): the satellite echoes it in its
         # progress/complete/failed frames, so a straggler from an earlier run
         # can no longer end this one. Firmware that predates the id ignores the
@@ -347,7 +373,7 @@ class SatelliteUpdateService:
             await sat.websocket.send_json({
                 "type": "update_request",
                 "target_version": package_info["version"],
-                "package_url": "/api/satellites/update-package",
+                "package_url": package_url,
                 "checksum": package_info["checksum"],
                 "size_bytes": package_info["size"],
                 # Signed release manifest (H6) — None on unsigned releases.

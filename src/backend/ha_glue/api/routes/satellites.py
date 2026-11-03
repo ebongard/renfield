@@ -7,15 +7,18 @@ Includes live status, metrics, session history, and error logs.
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ha_glue.services.satellite_manager import get_satellite_manager
 from ha_glue.services.satellite_update_service import get_satellite_update_service
 from models.database import User
 from models.permissions import Permission
-from services.auth_service import require_permission
+from services.auth_service import get_optional_user, require_permission
+from services.database import get_db
+from utils.config import settings
 
 router = APIRouter()
 
@@ -356,15 +359,29 @@ async def get_versions(_user: User = Depends(require_permission(Permission.ADMIN
 
 
 @router.get("/update-package")
-async def get_update_package(_user: User = Depends(require_permission(Permission.ADMIN))):
+async def get_update_package(
+    ticket: str | None = Query(None),
+    satellite_id: str | None = Query(None),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Download the satellite update package.
 
-    Returns the tarball containing the latest satellite code.
+    Returns the tarball containing the latest satellite code. With auth on the
+    caller is EITHER an ADMIN user OR a satellite presenting the one-time
+    download ticket that ``initiate_update`` minted for it and sent in
+    ``package_url`` over its PSK-authenticated WebSocket (see
+    ``ha_glue.services.satellite_ota_ticket``). Without either → 401/403.
     """
     from fastapi.responses import FileResponse
 
+    from ha_glue.services.satellite_ota_ticket import consume_ticket
     from ha_glue.services.satellite_update_service import get_satellite_update_service
+
+    if settings.auth_enabled and ticket is None:
+        # Unchanged admin gate (401 without a user, 403 without ADMIN).
+        await require_permission(Permission.ADMIN)(user=user, db=db)
 
     update_service = get_satellite_update_service()
     package_info = update_service.get_package_info()
@@ -373,6 +390,22 @@ async def get_update_package(_user: User = Depends(require_permission(Permission
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Update package not available"
+        )
+
+    # The ticket is redeemed only after a package exists, so a 503 does not
+    # burn it; it is checked against the package actually served.
+    if settings.auth_enabled and ticket is not None:
+        grant = await consume_ticket(
+            ticket, satellite_id, package_info["version"], package_info["checksum"]
+        )
+        if grant is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired download ticket",
+            )
+        logger.info(
+            f"📦 Update package v{grant.version} released to satellite "
+            f"{grant.satellite_id} by download ticket"
         )
 
     package_path = package_info["path"]
