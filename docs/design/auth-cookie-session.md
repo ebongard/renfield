@@ -39,16 +39,17 @@ The cross-repo contract is `auth/provider_contract.py` (`ProviderResult` frozen 
 
 **Built-ins (`auth/providers/`):**
 
-- `db` — priority 100, always on, wraps bcrypt.
+- `db` — priority 100, wraps bcrypt; on by default, `DB_AUTH_ENABLED=false` removes it from the walk
+  (LDAP becomes the credential authority, #1345).
 - `ldap` — priority 50, authn-only: no local-user create (that is the identity consumer's job);
-  config-gated.
+  config-gated; `ldaps://` only (no StartTLS — `ldap://` fails boot, #1345).
 - `google` / `github` / `apple` — redirect providers, **`enabled=False` by default**; enabling is
   config-only.
 
 The group→role **authz seam is defined in docstrings only**, not implemented in this delivery
 (`extras["ldap_member_of"]` is carried but unused).
 
-New config: `ldap_auth_*`, `oauth_{google,github,apple}_*`, `auth_provider_timeout_seconds`.
+New config: `db_auth_enabled`, `ldap_auth_*`, `oauth_{google,github,apple}_*`, `auth_provider_timeout_seconds`.
 
 ### JWT HttpOnly-cookie session + CSRF (`AUTH_COOKIE_ENABLED`, dark)
 
