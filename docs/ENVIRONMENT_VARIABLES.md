@@ -2747,10 +2747,18 @@ weiter, nur der Transportweg, der sie preisgibt, wird geschlossen.
 3. Erst wenn die WARNING über einen vollen Deploy-Zyklus stumm bleibt, auf
    `true` flippen.
 
-**Cross-Repo-Abhängigkeit:** Der externe Voice-Server validiert Tokens mit
-eigenem Code (`voice_server/auth.py::_validate_local` prüft weder `type` noch
-`scope`). Dessen Umstellung ist ein eigener Schritt in einem anderen Repository
-und gatet Schritt 3.
+**Stand der Instanzen (#1343):** Haushalt und xidra setzen `true` in ihrer
+ConfigMap (`k8s/configmap.yaml`, `x-ren/k8s/configmap.yaml`). Vor dem Umlegen
+gemessen: Soak-WARNING über einen vollen Deploy-Zyklus auf beiden Instanzen 0
+(2026-11-03); alle Browser-Sockets (Chat, `/ws/user`, Kiosk, Gerät) holen ihr
+Token über `POST /api/ws/token`. Der Code-Default bleibt `false`.
+
+**Voice-Server — nicht betroffen, aber eigener Schritt:** Das Flag gilt nur für
+renfields eigene `/ws/*`. Der Voice-Server prüft im Modus `registry` über
+`/internal/auth/verify`, das dieses Flag nicht liest; im Modus `local` prüft
+`voice_server/auth.py::_validate_local` weder `type` noch `scope`. Einen Scope
+auch dort zu verlangen ist ein eigener Schritt im Voice-Server-Code und gatet
+das Umlegen hier nicht.
 
 ---
 

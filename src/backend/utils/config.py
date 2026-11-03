@@ -1630,9 +1630,12 @@ class Settings(BaseSettings):
     #                     `Authorization: Bearer` header or the auth cookie.
     #
     # Do NOT flip this before the soak WARNING is silent for a full deploy
-    # cycle: the external voice-server validates tokens with its own code
-    # (`voice_server/auth.py::_validate_local` checks neither type nor scope),
-    # so its cutover is a separate, cross-repo step.
+    # cycle. The flag only guards renfield's own /ws/* sockets: the external
+    # voice-server is unaffected either way (in `registry` mode it verifies via
+    # /internal/auth/verify, which does not read this flag; in `local` mode
+    # `voice_server/auth.py::_validate_local` checks neither type nor scope) —
+    # requiring a scope there is a separate, cross-repo step. Both instances
+    # set it to true in their ConfigMap (#1343); the code default stays False.
     ws_require_scoped_query_token: bool = False
     # Lifetime of the short-lived, WS-scoped access JWT the browser fetches from
     # /api/ws/token and passes as ?token= on the WebSocket URL (security audit M2).
