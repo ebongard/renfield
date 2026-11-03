@@ -241,7 +241,15 @@ auto-merges → review, closing the conflation feedback. #1329 widened it to the
 (`_embedding_match_low_signal`): the name comparison no longer opens it. An empty or identical description blocks
 the auto-merge whatever the names — on xidra "Product A - 1.2.4" had folded into "Product A - 1.2.3", both described
 "Ein Release mit Status IN_PROGRESS" — and so do names that differ only in digit-bearing tokens (versions,
-ordinals, years), even with distinct descriptions. Such pairs remain `gray_zone` proposals.
+ordinals, years), even with distinct descriptions. The first kind stays a `gray_zone` proposal (and bulk-foldable:
+"same thing, nothing to tell them apart" is what the cluster view decides at once). The second kind gets its own
+reason `name_identifier`, which is in `KG_MERGE_WEAK_REASONS`: a cluster of "Product A - 1.2.x" would otherwise fold
+a whole release series in one click. Label precedence `cross_tier` > `cross_type` > `name_typo` > `name_identifier` >
+`gray_zone`. The inline `resolve_entity` embedding step refuses the same digit-only difference (shared predicate in
+`services/kg_name_signals.py`, a leaf module because the reconciler imports the graph service), so a new release no
+longer folds into its predecessor at the 0.85 bar; it is created and proposed. Pairs already pending before #1329
+keep `gray_zone` — `_repoint_after_fold` does not rewrite reasons and the self-join skips pending pairs — so an
+old release cluster in the queue is still bulk-foldable until the owner decides it.
 
 ### 3b — the bridge itself
 
