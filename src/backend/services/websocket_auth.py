@@ -290,7 +290,7 @@ async def authenticate_websocket(
     # and cookie paths carry the same JWT without that exposure, so the
     # restriction costs nothing there. Soak first (WARNING only), enforce once
     # `ws_require_scoped_query_token` is flipped; see the config comment for
-    # why the external voice-server gates that flip.
+    # the rollout state (on for both instances, #1343).
     if payload and payload.get("type") == "access" and token_from_url:
         if payload.get("scope") != "ws":
             if settings.ws_require_scoped_query_token:
