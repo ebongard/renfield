@@ -45,9 +45,13 @@ Loaded only when an auth file is read. Long form: `docs/design/auth-cookie-sessi
   `google`/`github`/`apple` (`enabled=False` by default, enabling is config-only).
 - **`DB_AUTH_ENABLED=false` = LDAP is the authority** (no local password logs in). Fail-closed twice: the config
   validator refuses it without a complete LDAP (enabled + `LDAP_URL` + `LDAP_AUTH_USER_BASE_DN`), and
-  `registry.assert_login_possible()` aborts the boot AFTER plugin load without a `post_authenticate`/`authenticate`
-  hook (standalone denies every non-`db` result). The default-admin bootstrap is then SKIPPED (WARNING) — never a
-  local password beside the directory. LDAP is `ldaps://` only: `ldap://` fails boot, the provider declines too.
+  `registry.assert_login_possible()` aborts the boot AFTER plugin load without ldap3 or without a
+  `post_authenticate`/`authenticate` hook (standalone denies every non-`db` result). The default-admin bootstrap is
+  then SKIPPED (WARNING) — never a local password beside the directory.
+- Pre-switch sessions die by themselves: with db off `decode_token` refuses every token without the `nodb` claim,
+  which only tokens minted while db is off carry (no directory link on `users` to key on, no operator step).
+- LDAP transport: `ldaps://` only (`ldap://` fails boot, the provider declines too) AND the certificate is verified
+  (`_verifying_tls`: `CERT_REQUIRED` + hostname) — ldap3's default `Tls()` verifies NOTHING; never drop `tls=`.
 
 ## SSO hand-off (`services/sso_handoff_store.py`, `POST /api/auth/sso/exchange`)
 Single-use 60 s Redis code = a session *reference*, bound to an S256 `code_challenge` + `state`; burned by atomic
