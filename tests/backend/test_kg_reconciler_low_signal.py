@@ -6,10 +6,8 @@ auto-merged two different releases. The old brake only fired on EQUAL names.
 """
 import pytest
 
-from services.kg_reconciler_service import (
-    _embedding_match_low_signal,
-    _names_differ_only_in_digit_tokens,
-)
+from services.kg_name_signals import names_differ_only_in_digit_tokens as _names_differ_only_in_digit_tokens
+from services.kg_reconciler_service import _embedding_match_low_signal
 
 GENERIC = "Ein Release mit Status IN_PROGRESS"
 

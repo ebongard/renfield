@@ -22,9 +22,11 @@ Policy (the safety core):
     empty or both identical, or names differing only in digit-bearing tokens,
     #1329). Those become review proposals.
   - CROSS tier (could change visibility, D3) OR gray-zone (similar but below
-    the auto bar, D10) OR name_typo -> a KgMergeProposal for owner review on
-    /brain/review. Never silently merged. cross_tier takes precedence as the
-    label (the visibility change is the invariant-bearing fact).
+    the auto bar, D10) OR name_typo OR name_identifier -> a KgMergeProposal for
+    owner review on /brain/review. Never silently merged. Label precedence:
+    cross_tier > cross_type > name_typo > name_identifier > gray_zone (the
+    visibility change is the invariant-bearing fact; the two weak name labels
+    both bar a bulk fold, name_typo is the more specific one).
 
 Idempotent: candidate pairs that already have a PENDING proposal are excluded
 by the find query (and the proposals table carries a partial-unique guard), and
@@ -33,7 +35,6 @@ not re-litigate (the only way back is an explicit admin merge).
 """
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -51,11 +52,13 @@ from models.database import (
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_CROSS_TYPE,
     KG_MERGE_REASON_GRAY_ZONE,
+    KG_MERGE_REASON_NAME_IDENTIFIER,
     KG_MERGE_REASON_NAME_TYPO,
     KG_MERGE_WEAK_REASONS,
     KGEntity,
     KgMergeProposal,
 )
+from services.kg_name_signals import names_differ_only_in_digit_tokens
 from services.knowledge_graph_service import KnowledgeGraphService
 from utils.config import settings
 
@@ -94,24 +97,6 @@ def _resolve_lock_engine(bind) -> AsyncEngine | None:
     return None
 
 
-def _names_differ_only_in_digit_tokens(name_a: str | None, name_b: str | None) -> bool:
-    """True when two names differ, and every token they do NOT share contains a digit.
-
-    Tokens are ``_norm(...).split()`` (whitespace only), so "1.2.3" is ONE token.
-    A digit-bearing token is an identifier — a version, an ordinal, a year, a
-    room or account number — and a different identifier names a different
-    thing: "Product A - 1.2.4" vs "Product A - 1.2.3" (#1329 field data, two
-    releases), "Konto 01" vs "Konto 02", "Bericht 2025" vs "Bericht". The
-    comparison is a multiset difference, not positional, so an ADDED or DROPPED
-    number counts as well as a changed one; a mere reordering is no difference.
-    A difference in any token WITHOUT a digit is left to the other signals —
-    this test only claims what the digits alone prove.
-    """
-    ca, cb = Counter(_norm(name_a).split()), Counter(_norm(name_b).split())
-    diff = list((ca - cb).elements()) + list((cb - ca).elements())
-    return bool(diff) and all(any(ch.isdigit() for ch in tok) for tok in diff)
-
-
 def _embedding_match_low_signal(
     name_a: str | None, name_b: str | None,
     desc_a: str | None, desc_b: str | None,
@@ -128,8 +113,10 @@ def _embedding_match_low_signal(
       ("Product A - 1.2.4" vs "… 1.2.3", both "Ein Release mit Status
       IN_PROGRESS").
     * The names differ only in digit-bearing tokens
-      (``_names_differ_only_in_digit_tokens``): a different number names a
-      different thing, however alike the descriptions read.
+      (``names_differ_only_in_digit_tokens``): a different number names a
+      different thing, however alike the descriptions read. The caller labels
+      that branch ``name_identifier`` on its own, because unlike the first it
+      also bars the pair from a bulk cluster fold.
 
     Only when both sides carry distinct non-empty descriptions AND the names do
     not differ by an identifier alone is the similarity meaningful enough for a
@@ -138,7 +125,7 @@ def _embedding_match_low_signal(
     da, db = _norm(desc_a), _norm(desc_b)
     if (not da) or (not db) or (da == db):
         return True
-    return _names_differ_only_in_digit_tokens(name_a, name_b)
+    return names_differ_only_in_digit_tokens(name_a, name_b)
 
 
 def _is_person(etype: str | None, etypes_text: str | None) -> bool:
@@ -283,6 +270,11 @@ class MergeCandidate:
     # kept as a REVIEW candidate (reason name_typo), never auto-merged — the
     # gate above already refuses it via names_related=False; this is the label.
     name_typo: bool = False
+    # The names differ only in digit-bearing tokens (names_differ_only_in_digit_tokens,
+    # #1329): "… 1.2.4" vs "… 1.2.3" are two releases. Already covered by
+    # block_auto_merge; this is the LABEL (reason name_identifier), which keeps
+    # the pair out of a bulk cluster fold as well — gray_zone would not.
+    name_identifier: bool = False
     # The two sides claim DISJOINT types (a place and an organization). Such a
     # pair only reaches here with related names, which is the mis-TYPED-duplicate
     # shape; it is a review candidate, never an auto-merge (see the type-guard in
@@ -453,16 +445,18 @@ class KgReconcilerService:
             else:
                 winner_id, winner_tier = int(r.id_b), int(r.tier_b or 0)
                 loser_id, loser_tier = int(r.id_a), int(r.tier_a or 0)
+            identifier = names_differ_only_in_digit_tokens(r.name_a, r.name_b)
             out.append(MergeCandidate(
                 loser_id=loser_id, winner_id=winner_id,
                 similarity=float(r.similarity),
                 loser_tier=loser_tier, winner_tier=winner_tier,
-                block_auto_merge=typo or cross_type or _embedding_match_low_signal(
+                block_auto_merge=typo or cross_type or identifier or _embedding_match_low_signal(
                     r.name_a, r.name_b, r.desc_a, r.desc_b,
                 ),
                 is_person_pair=is_person,
                 names_related=related,
                 name_typo=typo,
+                name_identifier=identifier,
                 cross_type=cross_type,
                 types_known=bool(_norm(r.etype_a) and _norm(r.etype_b)),
             ))
@@ -488,6 +482,8 @@ class KgReconcilerService:
             reason = KG_MERGE_REASON_CROSS_TYPE
         elif c.name_typo:
             reason = KG_MERGE_REASON_NAME_TYPO
+        elif c.name_identifier:
+            reason = KG_MERGE_REASON_NAME_IDENTIFIER
         else:
             reason = KG_MERGE_REASON_GRAY_ZONE
         self.db.add(KgMergeProposal(

@@ -23,6 +23,7 @@ from models.database import (
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_CROSS_TYPE,
     KG_MERGE_REASON_GRAY_ZONE,
+    KG_MERGE_REASON_NAME_IDENTIFIER,
     KG_MERGE_REASON_NAME_TYPO,
     KGEntity,
     KgMergeProposal,
@@ -403,7 +404,9 @@ class TestPersonGuard:
 
     async def test_related_name_persons_still_reconcile(self, pg_db_session, monkeypatch):
         # "Jutta" ⊆ "Jutta van den Bongard" (token subset) -> a legitimate dedup
-        # candidate; same-tier + cosine 1.0 -> auto-merge (the reconciler's purpose).
+        # candidate; same-tier + cosine 1.0 + distinct descriptions on both sides
+        # -> auto-merge (the reconciler's purpose). Without a description on one
+        # side the pair is low-signal and goes to review (next test).
         owner = await _make_user(pg_db_session, "rec_pg_related")
         await _entity(pg_db_session, owner, "Jutta", tier=0, mention=2, emb=_unit(6),
                       desc="Ehefrau")
@@ -413,6 +416,25 @@ class TestPersonGuard:
 
         report = await rec.run_for_user(owner.id)
         assert report.auto_merged == 1
+
+    async def test_related_name_persons_one_empty_description_go_to_review(
+        self, pg_db_session, monkeypatch
+    ):
+        # #1329: persons usually carry NO description (generic ones are stripped),
+        # so the subset pair has nothing but the name to go on -> gray_zone review.
+        owner = await _make_user(pg_db_session, "rec_pg_related_nodesc")
+        a = await _entity(pg_db_session, owner, "Jutta", tier=0, mention=2, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Jutta van den Bongard", tier=0, mention=9,
+                          emb=_unit(6), desc="verheiratet, wohnt in Bonn")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 1)
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.user_id == owner.id)
+        )).scalar_one()
+        assert prop.reason == KG_MERGE_REASON_GRAY_ZONE
+        assert {prop.loser_entity_id, prop.winner_entity_id} == {a.id, b.id}
 
     async def test_distinct_name_nonpersons_unaffected(self, pg_db_session, monkeypatch):
         # The guard is person-scoped: two distinct-name organizations at cosine 1.0
@@ -1431,7 +1453,7 @@ class TestLowSignalBrake:
         report = await rec.run_for_user(owner.id)
         return owner, ea, eb, report
 
-    async def _assert_review_only(self, db, owner, ea, eb, report):
+    async def _assert_review_only(self, db, owner, ea, eb, report, reason=KG_MERGE_REASON_GRAY_ZONE):
         assert (report.auto_merged, report.proposed) == (0, 1)
         for e in (ea, eb):
             row = (await db.execute(select(KGEntity).where(KGEntity.id == e.id))).scalar_one()
@@ -1441,14 +1463,14 @@ class TestLowSignalBrake:
         )).scalar_one()
         assert prop.status == KG_MERGE_PROPOSAL_PENDING
         assert {prop.loser_entity_id, prop.winner_entity_id} == {ea.id, eb.id}
-        # Same tier, compatible type, not a person typo -> the plain review label.
-        assert prop.reason == KG_MERGE_REASON_GRAY_ZONE
+        assert prop.reason == reason
 
     async def test_field_case_identical_generic_descriptions(self, pg_db_session, monkeypatch):
         owner, ea, eb, report = await self._run(
             pg_db_session, monkeypatch, "ls_field",
             ("Product A - 1.2.4", self.GENERIC), ("Product A - 1.2.3", self.GENERIC))
-        await self._assert_review_only(pg_db_session, owner, ea, eb, report)
+        await self._assert_review_only(pg_db_session, owner, ea, eb, report,
+                                       KG_MERGE_REASON_NAME_IDENTIFIER)
 
     async def test_version_difference_blocks_despite_distinct_descriptions(
         self, pg_db_session, monkeypatch
@@ -1457,7 +1479,8 @@ class TestLowSignalBrake:
             pg_db_session, monkeypatch, "ls_version",
             ("Product A - 1.2.4", "Bugfix-Release"),
             ("Product A - 1.2.3", "Feature-Release mit neuer Oberfläche"))
-        await self._assert_review_only(pg_db_session, owner, ea, eb, report)
+        await self._assert_review_only(pg_db_session, owner, ea, eb, report,
+                                       KG_MERGE_REASON_NAME_IDENTIFIER)
 
     async def test_differing_names_one_empty_description(self, pg_db_session, monkeypatch):
         owner, ea, eb, report = await self._run(
@@ -1478,3 +1501,66 @@ class TestLowSignalBrake:
             select(KGEntity).where(KGEntity.id == ea.id)
         )).scalar_one()
         assert loser.is_active is False and loser.canonical_id == eb.id
+
+    async def test_release_series_is_never_bulk_folded(self, pg_db_session, monkeypatch):
+        """Three releases, end to end: every pair is a name_identifier proposal,
+        and the cluster fold refuses — nothing is merged in one click."""
+        owner = await _make_user(pg_db_session, "ls_series")
+        rels = [
+            await _entity(pg_db_session, owner, f"Product A - 1.2.{n}", tier=2, mention=n,
+                          emb=_unit(6), etype="thing", desc=self.GENERIC)
+            for n in (3, 4, 5)
+        ]
+        rec = _recon(pg_db_session, monkeypatch)
+        # The transitive-cluster guard proposes one pair per run among three rows.
+        for _ in range(3):
+            assert (await rec.run_for_user(owner.id)).auto_merged == 0
+        props = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.user_id == owner.id)
+        )).scalars().all()
+        assert len(props) == 3
+        assert {p.reason for p in props} == {KG_MERGE_REASON_NAME_IDENTIFIER}
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[e.id for e in rels],
+            survivor_id=rels[-1].id, decision="merge", resolved_by=owner.id,
+        )
+        assert res.merged == 0
+        assert res.refusal_code == "no_foldable_pair"
+        assert res.skipped_weak_edge == 3
+        for e in rels:
+            row = (await pg_db_session.execute(select(KGEntity).where(KGEntity.id == e.id))).scalar_one()
+            assert row.is_active is True and row.canonical_id is None
+        assert await _count_pending(pg_db_session, owner.id) == 3
+
+    async def test_identifier_edge_inside_a_foldable_component_refuses_the_whole_fold(
+        self, pg_db_session, monkeypatch
+    ):
+        """The #1334 whole-fold refusal covers name_identifier: two gray_zone
+        edges (e.g. pending from before #1329) put 1.2.3 and 1.2.4 into one
+        component; the identifier edge between them refuses the fold."""
+        owner = await _make_user(pg_db_session, "ls_triangle")
+        hub = await _entity(pg_db_session, owner, "Product A", tier=2, mention=9,
+                            emb=_unit(6), etype="thing")
+        r3 = await _entity(pg_db_session, owner, "Product A - 1.2.3", tier=2, mention=2,
+                           emb=_unit(6), etype="thing")
+        r4 = await _entity(pg_db_session, owner, "Product A - 1.2.4", tier=2, mention=1,
+                           emb=_unit(6), etype="thing")
+        for loser, winner, reason in ((r3, hub, "gray_zone"), (r4, hub, "gray_zone"),
+                                      (r4, r3, KG_MERGE_REASON_NAME_IDENTIFIER)):
+            pg_db_session.add(KgMergeProposal(
+                user_id=owner.id, loser_entity_id=loser.id, winner_entity_id=winner.id,
+                similarity=1.0, loser_tier=2, winner_tier=2, reason=reason,
+                status=KG_MERGE_PROPOSAL_PENDING,
+            ))
+        await pg_db_session.flush()
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[hub.id, r3.id, r4.id],
+            survivor_id=hub.id, decision="merge", resolved_by=owner.id,
+        )
+        assert res.merged == 0
+        assert res.refusal_code == "cluster_has_undecidable_pair"
+        assert res.blocked_total == 1
+        assert await _count_pending(pg_db_session, owner.id) == 3

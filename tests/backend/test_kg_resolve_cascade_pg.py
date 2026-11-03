@@ -128,6 +128,34 @@ class TestEmbeddingStep:
         assert got.id != bonn.id
         assert got.circle_tier == 0
 
+    async def test_version_sibling_is_never_folded_inline(self, pg_db_session, monkeypatch):
+        # #1329: a new release embeds >= the threshold to the previous one, yet
+        # the names differ only in the version token — a different release.
+        # Refused inline; a fresh entity is created (the reconciler proposes).
+        owner = await _make_user(pg_db_session, "rc_emb_version")
+        prev = await _entity(pg_db_session, owner, "Product A - 1.2.4", tier=0,
+                             etype="thing", embedding=_vec(9), mention_count=3)
+        svc = _svc(pg_db_session, monkeypatch, embed=_vec(9))  # cosine 1.0
+
+        got = await svc.resolve_entity("Product A - 1.2.5", "thing", owner.id)
+        assert got.id != prev.id
+        assert got.name == "Product A - 1.2.5"
+        assert got.canonical_id is None
+        assert prev.mention_count == 3  # the sibling was not bumped
+
+    async def test_ocr_salvage_with_digit_in_shared_token_still_folds(
+        self, pg_db_session, monkeypatch
+    ):
+        # Negative control for the refusal above: the differing token carries no
+        # digit (only a SHARED token does), so the salvage still applies.
+        owner = await _make_user(pg_db_session, "rc_emb_ocr_digit")
+        room = await _entity(pg_db_session, owner, "Raum 12 Besprechung", tier=0,
+                             etype="place", embedding=_vec(10))
+        svc = _svc(pg_db_session, monkeypatch, embed=_vec(10))
+
+        got = await svc.resolve_entity("Raum 12 Besprchung", "place", owner.id)
+        assert got.id == room.id
+
 
 class TestCreateNew:
     async def test_new_entity_gets_multitype_and_is_canonical(self, pg_db_session, monkeypatch):

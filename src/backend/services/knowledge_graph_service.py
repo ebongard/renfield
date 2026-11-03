@@ -26,6 +26,7 @@ from models.database import (
     KGRelation,
 )
 from services.atom_owner import AtomOwnerResolverMixin
+from services.kg_name_signals import names_differ_only_in_digit_tokens
 from services.kg_validator import load_heuristics as load_kg_heuristics
 from services.kg_validator import validate_relation as validate_kg_relation
 from services.kg_validity_sql import live_conditions
@@ -600,7 +601,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         embed_match = use_embedding and not is_person
         if embed_match and embedding:
             similar = await self._find_similar_entity(
-                embedding, user_id=user_id, tier=default_tier,
+                embedding, user_id=user_id, tier=default_tier, name=name,
                 entity_type=resolved_type if match_entity_type else None,
             )
             if similar is not None:
@@ -698,6 +699,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         user_id: int | None,
         tier: int | None = None,
         entity_type: str | None = None,
+        name: str | None = None,
     ) -> KGEntity | None:
         """
         Find the nearest existing entity above the similarity threshold.
@@ -709,6 +711,12 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             tier: when set, restrict to same-tier candidates (D11) — never fold a
                 fresh extraction into an entity at a DIFFERENT circle_tier; that
                 cross-tier consolidation is review-gated via the reconciler.
+            name: the new entity's name. When set, a nearest match whose name
+                differs only in digit-bearing tokens is REFUSED (#1329): "Product
+                A - 1.2.5" embeds >= the threshold to the existing "… 1.2.4", yet
+                it is a different release. The caller then creates a fresh entity
+                and the reconciler proposes the pair for review. OCR/typo salvage
+                ("Bnn" -> "Bonn") carries no digit and is unaffected.
         """
         threshold = settings.kg_similarity_threshold
         embedding_str = f"[{','.join(map(str, embedding))}]"
@@ -755,7 +763,11 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             entity_result = await self.db.execute(
                 select(KGEntity).where(KGEntity.id == row.id)
             )
-            return entity_result.scalar_one_or_none()
+            match = entity_result.scalar_one_or_none()
+            if match is not None and name is not None and names_differ_only_in_digit_tokens(name, match.name):
+                logger.debug("KG: refusing embedding match id={} — names differ only in a number", match.id)
+                return None
+            return match
 
         return None
 

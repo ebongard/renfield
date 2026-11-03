@@ -169,6 +169,22 @@ describe('groupProposals — schwache Kanten', () => {
     expect(singles.map((p) => p.id)).toContain(weak.id);
   });
 
+  it('a name_identifier pair is never an edge either (#1329)', () => {
+    // A release series: 1.2.3 ~ 1.2.4 ~ 1.2.5. As edges they would form one
+    // cluster and "fold all" would merge three different releases.
+    const r3 = ent(1, 'Product A - 1.2.3', 2, 9);
+    const r4 = ent(2, 'Product A - 1.2.4', 2, 4);
+    const r5 = ent(3, 'Product A - 1.2.5', 2, 1);
+    const ps = [
+      pair(r4, r3, 'name_identifier'),
+      pair(r5, r4, 'name_identifier'),
+      pair(r5, r3, 'name_identifier'),
+    ];
+    const { clusters, singles } = groupProposals(ps);
+    expect(clusters).toHaveLength(0);
+    expect(singles.map((p) => p.id).sort()).toEqual(ps.map((p) => p.id).sort());
+  });
+
   it('a gray_zone pair is still an edge', () => {
     const a = ent(1, 'Anna', 2, 1);
     const b = ent(2, 'Anna', 2, 9);

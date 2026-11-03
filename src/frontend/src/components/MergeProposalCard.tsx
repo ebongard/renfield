@@ -15,6 +15,10 @@ import type { MergeProposal, MergeProposalEntityBrief } from '../api/resources/k
  *   - cross_tier  → both buttons secondary, Ablehnen focused first, + an
  *                   explicit visibility-change warning (color is never alone).
  *   - cross_type  → same treatment: the two sides are different KINDS of thing.
+ *   - name_typo / name_identifier → same treatment: maybe two different people
+ *                   (one edit apart) / two different things whose names differ
+ *                   only in a number (versions, ordinals, years — #1329), the
+ *                   latter with an explicit notice.
  *   - gray_zone   → same tier, just below the auto bar → Zusammenführen primary.
  *
  * D2 survivor toggle: a radio group picks WHICH entity survives (default = the
@@ -36,9 +40,12 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
   // pair that is "maybe two people" by definition (name_typo — one in-token edit
   // apart), or two different KINDS of thing (cross_type, or simply differing
   // primary types on an older pair proposed before that guard existed — merging
-  // rewrites what the entity IS). The visibility warning stays keyed on the tiers.
+  // rewrites what the entity IS), or names that differ only in a number
+  // (name_identifier — two releases, two accounts). The visibility warning stays
+  // keyed on the tiers.
   const crossType = proposal.loser.entity_type !== proposal.winner.entity_type;
-  const cautious = crossTier || crossType
+  const identifier = proposal.reason === 'name_identifier';
+  const cautious = crossTier || crossType || identifier
     || proposal.reason === 'name_typo' || proposal.reason === 'cross_type';
   // What to CALL the pair. A differing primary type is the most useful thing to
   // say about it, whatever reason it was stored with: the pairs that were already
@@ -132,8 +139,15 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
         </p>
       )}
 
+      {identifier && (
+        <p className="merge-notice" role="note">
+          <span aria-hidden="true">⚠</span>
+          <span>{t('circles.mergeProposals.identifierWarning')}</span>
+        </p>
+      )}
+
       <div className={`flex gap-2 ${cautious ? 'flex-row' : 'flex-row-reverse'} justify-end`}>
-        {/* cross_tier / name_typo: Ablehnen first in DOM (focus-first, no merge nudge);
+        {/* cross_tier / cross_type / name_typo / name_identifier: Ablehnen first in DOM (focus-first, no merge nudge);
             gray_zone: Zusammenführen primary, rendered last via flex-row-reverse. */}
         <button
           type="button"

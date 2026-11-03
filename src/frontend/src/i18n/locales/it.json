@@ -1588,7 +1588,8 @@
         "cross_tier": "visibilità diversa",
         "cross_type": "tipi di cosa diversi",
         "gray_zone": "simile ma incerto",
-        "name_typo": "variante ortografica di un nome di persona"
+        "name_typo": "variante ortografica di un nome di persona",
+        "name_identifier": "i nomi differiscono solo per un numero"
       },
       "survivorLegend": "Quale entità deve rimanere?",
       "keepThis": "Mantieni {{name}}",
@@ -1596,6 +1597,7 @@
       "mentions_other": "{{count}} menzioni",
       "willMerge": "viene unita in",
       "visibilityWarning": "Attenzione: la visibilità cambia da {{from}} a {{to}}",
+      "identifierWarning": "Attenzione: i nomi differiscono solo per un numero o una versione — probabilmente due cose diverse.",
       "merge": "Unisci",
       "reject": "Rifiuta",
       "merged": "Unito",
