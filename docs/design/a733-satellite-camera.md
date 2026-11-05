@@ -247,13 +247,20 @@ group — the fleet has every combination:
 **`src/satellite/provisioning/provision-camera.yml`** is config-driven (targets `all`, gated on
 those vars): a no-op for rpicam hosts, the full host setup for `sunxi_isp`. The bare-metal
 `provision.yml` (`hosts: satellites`) is untouched — the A733 runs the satellite as a **k8s pod**,
-so it's a separate `orangepi_nodes` inventory group that only `provision-camera.yml` targets.
+so it's a separate `orangepi_nodes` inventory group that only `provision-camera.yml` targets
+(in the git-ignored `inventory.yml`; group vars `ansible_user: root`, `camera_enabled: true`,
+`camera_backend: sunxi_isp`; hosts `orangepi-esszimmer`, `orangepi-kueche`).
 ```
 cd src/satellite/provisioning
-ansible-playbook -i inventory.yml provision-camera.yml --limit satellite-esszimmer -e camera_reboot=true
+ansible-playbook -i inventory.yml provision-camera.yml --limit orangepi-esszimmer -e camera_reboot=true
 ```
 The AW ISP `.so`s are Allwinner **proprietary** → staged on the control machine at
-`files/awisp/` (git-ignored), extracted from the OPi desktop image; never committed. So for the
+`files/awisp/` (git-ignored), never committed. Quickest source: copy them from a node that already
+has them (`scp root@<node>:/opt/awisp/{lib/libAWIspApi.so,lib/libisp.so,lib/libisp_ini.so,AWIspApi.h}
+files/awisp/`); otherwise extract them from the OPi desktop image. **Check the camera before
+provisioning:** only an IMX219 enumerates — the Küche node (2026-11-05) got the full host setup
+but carries a Camera Module 3 (IMX708), which the kernel probes and rejects
+(`[imx219]chip found is not an target chip`), so it has no `/dev/video0` and its pod no camera. So for the
 A733: reflash node → k8s node setup → `provision-camera.yml` → reboot → `kubectl apply` the pod →
 camera back. The POD side (device + `/opt/awisp` mounts) is fully git-managed; only these host
 bits + the proprietary libs are out-of-band.
