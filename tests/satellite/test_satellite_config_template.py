@@ -27,7 +27,10 @@ def _render(tmp_path, **host_vars) -> Path:
         led_num=12,
         **host_vars,
     )
-    template = jinja2.Template((PROVISIONING / "templates" / "satellite.yaml.j2").read_text())
+    # Ansible renders templates with trim_blocks=True.
+    template = jinja2.Template(
+        (PROVISIONING / "templates" / "satellite.yaml.j2").read_text(), trim_blocks=True
+    )
     out = tmp_path / "satellite.yaml"
     out.write_text(template.render(**context))
     return out
@@ -56,3 +59,29 @@ def test_classic_rssi_true_renders_as_yaml_true(tmp_path):
     path = _render(tmp_path, ble_classic_rssi=True)
 
     assert load_config(str(path)).ble.classic_rssi is True
+
+
+def _unit_groups(platform: str) -> str:
+    """SupplementaryGroups= of the rendered unit, with satellite_hw_groups resolved
+    the way Ansible resolves it from group_vars."""
+    env = jinja2.Environment(trim_blocks=True)
+    raw = yaml.safe_load((PROVISIONING / "group_vars" / "satellites.yml").read_text())
+    groups = yaml.safe_load(
+        env.from_string(raw["satellite_hw_groups"]).render(satellite_platform=platform)
+    )
+    unit = env.from_string(
+        (PROVISIONING / "templates" / "renfield-satellite.service.j2").read_text()
+    ).render(satellite_hw_groups=groups, ansible_user="evdb", satellite_venv="/v",
+             satellite_base_dir="/b")
+    return next(line for line in unit.splitlines() if line.startswith("SupplementaryGroups="))
+
+
+@pytest.mark.satellite
+def test_pi_unit_keeps_its_hardware_groups():
+    assert _unit_groups("raspberrypi") == "SupplementaryGroups=spi gpio i2c"
+
+
+@pytest.mark.satellite
+def test_orange_pi_unit_names_only_groups_ubuntu_has():
+    # Ubuntu 22.04 on the A733 has no spi/gpio groups; naming one is 216/GROUP.
+    assert _unit_groups("orangepi") == "SupplementaryGroups=i2c video plugdev"
