@@ -623,7 +623,7 @@ den späteren MCP-Server, der dieselbe PDF-Assemblierung vornimmt:
 - **Hardware-Button** — Manuelle Aktivierung
 - **Auto-Discovery** — Backend-Erkennung via Zeroconf/mDNS
 - **OTA-Updates** — Version-Tracking und Update-Pakete
-- **Orange Pi / k8s-Variante** — Esszimmer und Küche laufen als **arm64-/k8s-Pod**-Satelliten: je ein Orange Pi Zero 3W (Allwinner A733) mit USB-ReSpeaker XVF3800, als node-fixierter privilegierter Pod im privaten Cluster (`k8s/satellite-esszimmer.yaml`, `k8s/satellite-kueche.yaml`) statt bare-metal. Ruhe ist auf dem XVF3800 ein langsam atmendes Blau (Gelb bleibt „verarbeitet gerade“); die Flotten-Helligkeit 0–31 wird seit 1.4.16 auf die 0–255 des Chips umgerechnet. Stärkeres Bluetooth (BT 5.4) → gut geeignet als BLE-Präsenz-Anker.
+- **Orange Pi Zero 3W** — Esszimmer und Küche sind je ein Orange Pi Zero 3W (Allwinner A733) mit USB-ReSpeaker XVF3800. Die Küche läuft seit 2026-11-05 **bare-metal** über dasselbe Ansible-Playbook wie die Pis (`satellite_platform: orangepi`), mit OTA wie die übrige Flotte; das Esszimmer ist noch ein node-fixierter privilegierter **k8s-Pod** (`k8s/satellite-esszimmer.yaml`) und zieht als Nächstes um. Ruhe ist auf dem XVF3800 ein langsam atmendes Blau (Gelb bleibt „verarbeitet gerade“); die Flotten-Helligkeit 0–31 wird seit 1.4.16 auf die 0–255 des Chips umgerechnet. Stärkeres Bluetooth (BT 5.4) → gut geeignet als BLE-Präsenz-Anker.
 
 ### Zentrale Wake-Word-Verwaltung
 - Admin-UI für zentrale Konfiguration

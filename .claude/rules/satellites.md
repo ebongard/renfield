@@ -65,22 +65,26 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
 - `RATE_LIMITED` means ONE dropped frame, not a failed session — it must not reset a running turn (#1284).
 - `wakeword.vad_gated` is off by default; turning it on makes the VAD a precondition for the wake word.
 
-## A fleet setting has THREE sources
-Ansible `src/satellite/provisioning/group_vars/satellites.yml` for the Pis **and** the ConfigMaps inside
-`k8s/satellite-esszimmer.yaml` and `k8s/satellite-kueche.yaml` for the pods. #1282 raised the recording limit only in
-group_vars; the pod kept the code default of 15 s. Change `vad_*`, LED or audio values in all three.
+## A fleet setting has more than one source
+Ansible `src/satellite/provisioning/group_vars/satellites.yml` for the Pis and the bare-metal Orange Pis, **and** the
+ConfigMap inside `k8s/satellite-esszimmer.yaml` while the Esszimmer is still a pod. #1282 raised the recording limit
+only in group_vars; the pod kept the code default of 15 s. Change `vad_*`, LED or audio values in every source.
 
-## Esszimmer + Küche = k8s pods, not Pis
-Orange Pi Zero 3W, node-pinned, privileged, `imagePullPolicy: Never`. **OTA cannot update them** (code lives in the
-ephemeral container layer): build natively on each node, `ctr -n k8s.io images import`, `kubectl set image`, then bump
-the tag in the manifest. Keep the node's disk below ~80 % — image GC deletes the unpullable image.
-A new board: `k8s/orangepi-node-prep.sh` → `orangepi-calico-kmods.sh` → `orangepi-node-resilience.sh` → `kubeadm
-join` (camera: `provision-camera.yml`; only an IMX219 works, a Camera Module 3/IMX708 never enumerates). The vendor image bakes `machine-id` + SSH host keys (prep regenerates them) and lacks the ipset/ipip modules
-calico needs (without them calico-node crash-loops and the fanless board runs hot).
+## Orange Pi Zero 3W: leaving k8s for bare-metal (Küche done 2026-11-05, Esszimmer still a pod)
+Why: OTA cannot update a pod (code lives in the ephemeral container layer), and a cluster node with an always-on mic
+needs 6443/10250/VXLAN out of the IoT VLAN. Bare-metal = the Pi playbook with `satellite_platform: orangepi` in
+host_vars (skips `/boot/firmware/config.txt`, Ubuntu groups via `satellite_hw_groups`); OTA then works like on a Pi.
+Traps: systemd refuses a unit naming a missing group (`216/GROUP`); the XVF3800 udev rule needs its add event replayed
+without the Pi's reboot (handler `apply XVF3800 udev rule`, else `xvf_host` "Failed to open device", ring dark);
+`hey_renfield.onnx` is not in git — copy it from another satellite. Host prep stays: `k8s/orangepi-node-prep.sh`
+(identity, rfkill, USB fix, RAM log off), CPU cap from `orangepi-calico-kmods.sh`; camera: `provision-camera.yml`
+(only an IMX219 works, a Camera Module 3/IMX708 never enumerates).
+Until the Esszimmer moves: build its image natively on the node, `ctr -n k8s.io images import`, `kubectl set image`,
+bump the tag in the manifest; keep the node's disk below ~80 % (image GC deletes the unpullable image).
 **XVF3800 ring: two scales.** Fleet brightness (config, night-dimming push) is the APA102's 0..31; the chip's
 `LED_BRIGHTNESS` is 0..255 and dims only breath/rainbow, never solid colours. Passing 0..31 through left the breathing
 idle ring dark on every XVF3800 until 1.4.16 — `XVF3800LEDController.chip_brightness()` converts. Idle = blue breath at
-`LED_SPEED` 1; yellow is PROCESSING, so no room colour for idle on the pods.
+`LED_SPEED` 1; yellow is PROCESSING, so no room colour for idle.
 
 ## BLE presence
 Phones rotate their address; `ble/rpa.py` resolves it with the per-person IRK and **silently no-ops without
