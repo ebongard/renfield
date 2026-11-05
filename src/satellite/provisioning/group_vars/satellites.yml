@@ -6,6 +6,15 @@ ansible_python_interpreter: /usr/bin/python3
 
 # Application paths
 satellite_base_dir: /opt/renfield-satellite
+
+# Board family. "raspberrypi" (default) runs the /boot/firmware/config.txt tasks;
+# "orangepi" (A733, Ubuntu 22.04) skips them — the board boots from
+# /boot/orangepiEnv.txt and its host prep lives in k8s/orangepi-node-prep.sh.
+satellite_platform: raspberrypi
+# Hardware groups of the satellite user (user module + the unit's
+# SupplementaryGroups). Ubuntu on the Orange Pi has no spi/gpio groups, and
+# systemd refuses to start a unit that names a missing group (status 216/GROUP).
+satellite_hw_groups: "{{ ['audio', 'spi', 'gpio', 'i2c'] if satellite_platform == 'raspberrypi' else ['audio', 'i2c', 'video', 'plugdev'] }}"
 satellite_venv: "{{ satellite_base_dir }}/venv"
 satellite_config_dir: "{{ satellite_base_dir }}/config"
 satellite_models_dir: "{{ satellite_base_dir }}/models"

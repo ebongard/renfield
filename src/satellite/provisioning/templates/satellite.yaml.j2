@@ -93,6 +93,10 @@ led:
   # Local default only — the live night brightness is pushed by the backend
   # (led_night_brightness) over the WebSocket; this just documents the fallback.
   night_brightness: {{ led_night_brightness | default(5) }}
+{% if led_min_brightness is defined %}
+  # Floor for backend daypart pushes (a milled faceplate needs the ring lit).
+  min_brightness: {{ led_min_brightness }}
+{% endif %}
   idle_color: "{{ led_idle_color | default('blue') }}"
   # num_leds is emitted for EVERY led_type so the satellite's capability
   # report (sent to the fleet page) reflects this device. Pre-fix the
@@ -145,6 +149,9 @@ ble:
   continuous: {{ ble_continuous | default(false) | lower }}
   smoothing_alpha: {{ ble_smoothing_alpha | default(0.4) }}
   freshness_seconds: {{ ble_freshness_seconds | default(20.0) }}
+{% if ble_classic_rssi is defined %}
+  classic_rssi: {{ ble_classic_rssi | lower }}
+{% endif %}
 {% if enviro_phat_enabled | default(false) %}
 
 enviro:

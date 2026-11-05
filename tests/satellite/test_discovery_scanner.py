@@ -143,13 +143,15 @@ async def test_classic_timeout_yields_empty_no_raise():
 async def test_missing_hcitool_is_ble_only():
     """No hcitool installed -> Classic skipped, only BLE devices returned."""
     pairs = [_ble_pair("11:22:33:44:55:66", "Watch", -40)]
-    scanner = BTDiscoveryScanner()
-    assert scanner.classic_available is False  # shutil.which patched below
 
     with patch("renfield_satellite.ble.discovery_scanner.shutil.which", return_value=None), \
          patch.object(discovery_scanner, "BLEAK_AVAILABLE", True), \
          patch.object(discovery_scanner, "BleakScanner",
                       SimpleNamespace(discover=_fake_discover(pairs))):
+        # Inside the patch: the assertion must not depend on the test host
+        # having hcitool (a satellite does; a dev laptop does not).
+        scanner = BTDiscoveryScanner()
+        assert scanner.classic_available is False
         result = await scanner.discover(ble_duration=1.0, classic_timeout=1.0)
 
     assert len(result) == 1

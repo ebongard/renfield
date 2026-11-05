@@ -28,6 +28,15 @@
         reboot_timeout: 300
         msg: "Rebooting after audio driver installation"
 
+    # The rule matches ACTION=="add": an XVF3800 that is already plugged in keeps
+    # its root-only node until the add event is replayed. A Pi reboots after the
+    # driver step anyway; an Orange Pi does not, and xvf_host then fails with
+    # "Failed to open device" (LED ring stays dark).
+    - name: apply XVF3800 udev rule
+      ansible.builtin.shell: >-
+        udevadm control --reload-rules &&
+        udevadm trigger --action=add --subsystem-match=usb --attr-match=idVendor=2886 --attr-match=idProduct=001a
+
     - name: reload systemd
       ansible.builtin.systemd:
         daemon_reload: true
@@ -75,7 +84,7 @@
       tags: [system]
       ansible.builtin.user:
         name: "{{ ansible_user }}"
-        groups: audio,spi,gpio,i2c
+        groups: "{{ satellite_hw_groups | join(',') }}"
         append: true
 
     - name: Create satellite directories
@@ -181,11 +190,13 @@
         daemon_reload: true
 
     # =========================================================================
-    # BOOT — Boot configuration (config.txt)
+    # BOOT — Boot configuration (config.txt; Raspberry Pi only — an Orange Pi
+    # boots from /boot/orangepiEnv.txt and has no /boot/firmware)
     # =========================================================================
 
     - name: Enable I2S
       tags: [boot]
+      when: satellite_platform == "raspberrypi"
       ansible.builtin.lineinfile:
         path: /boot/firmware/config.txt
         regexp: '^#?\s*dtparam=i2s'
@@ -194,6 +205,7 @@
 
     - name: Enable SPI
       tags: [boot]
+      when: satellite_platform == "raspberrypi"
       ansible.builtin.lineinfile:
         path: /boot/firmware/config.txt
         regexp: '^#?\s*dtparam=spi'
@@ -202,6 +214,7 @@
 
     - name: Enable I2C
       tags: [boot]
+      when: satellite_platform == "raspberrypi"
       ansible.builtin.lineinfile:
         path: /boot/firmware/config.txt
         regexp: '^#?\s*dtparam=i2c_arm'
@@ -210,6 +223,7 @@
 
     - name: Remove w1-gpio overlay (GPIO4 conflict with audio HATs)
       tags: [boot]
+      when: satellite_platform == "raspberrypi"
       ansible.builtin.lineinfile:
         path: /boot/firmware/config.txt
         regexp: '^dtoverlay=w1-gpio'
@@ -354,7 +368,9 @@
     # so it doesn't register a phantom card at boot; a reboot applies the change.
     - name: Remove stale I2S HAT overlays from config.txt (USB mic)
       tags: [driver]
-      when: hat_type == "xvf3800-usb"
+      when:
+        - hat_type == "xvf3800-usb"
+        - satellite_platform == "raspberrypi"
       ansible.builtin.lineinfile:
         path: /boot/firmware/config.txt
         regexp: "^dtoverlay={{ item }}"
@@ -394,6 +410,7 @@
               MODE="0666", TEST=="power/autosuspend", ATTR{power/autosuspend}="-1"
         dest: /etc/udev/rules.d/99-respeaker-xvf3800.rules
         mode: "0644"
+      notify: apply XVF3800 udev rule
 
     # --- XVF3800 on-chip DSP tuning (softened for biometric embeddings) ---
     # The chip boots to conference defaults (AGC-pumped + aggressive DNN-NS +

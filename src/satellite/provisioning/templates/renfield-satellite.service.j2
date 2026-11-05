@@ -25,7 +25,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=HOME=/home/{{ ansible_user }}
 
 # Allow access to hardware
-SupplementaryGroups=spi gpio i2c
+SupplementaryGroups={{ satellite_hw_groups | reject('equalto', 'audio') | join(' ') }}
 
 # Resource limits (Pi Zero 2 W has 512MB RAM)
 # AC108 4-mic driver needs headroom — memory pressure triggers vmalloc kernel crash
