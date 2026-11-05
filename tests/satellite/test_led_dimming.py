@@ -6,7 +6,7 @@ handler) and the WebSocketClient led_config dispatch:
 - sets leds.brightness
 - clamps >31 to 31 and <0 to 0
 - does NOT change the running animation pattern (only scales brightness)
-- XVF3800 path calls _run("LED_BRIGHTNESS", ...)
+- XVF3800 path pushes LED_BRIGHTNESS on the chip's 0..255 scale
 - ws_client dispatches a led_config message / register_ack led_brightness
 
 The Satellite class is heavy to fully construct, so _on_led_config_update is
@@ -32,17 +32,19 @@ class FakeAPA102LEDs:
         self.current_pattern = "idle"  # must stay unchanged by a brightness push
 
 
-class FakeXVF3800LEDs:
-    """Minimal stand-in for XVF3800LEDController.
+def make_xvf3800_leds(brightness=20):
+    """The real XVF3800LEDController with the xvf_host call mocked.
 
     The XMOS chip renders effects in hardware, so a runtime brightness change
-    needs an explicit ``_run("LED_BRIGHTNESS", n)`` call.
+    is a ``LED_BRIGHTNESS`` command — on the chip's 0..255 scale, not the
+    fleet's 0..31 (a fake that echoed the fleet value hid exactly that).
     """
+    from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
-    def __init__(self, brightness=20):
-        self.brightness = brightness
-        self.current_pattern = "speaking"
-        self._run = MagicMock()
+    leds = XVF3800LEDController(brightness=brightness)
+    leds._pattern = LEDPattern.SPEAKING
+    leds._run = MagicMock()
+    return leds
 
 
 def _call_update(leds, brightness, min_brightness=0):
@@ -101,9 +103,9 @@ class TestOnLedConfigUpdate:
 
     @pytest.mark.satellite
     def test_xvf3800_pushes_the_floored_value_to_the_chip(self):
-        leds = FakeXVF3800LEDs(brightness=20)
+        leds = make_xvf3800_leds(brightness=20)
         _call_update(leds, 2, min_brightness=10)
-        leds._run.assert_called_once_with("LED_BRIGHTNESS", "10")
+        leds._run.assert_called_once_with("LED_BRIGHTNESS", "82")  # 10/31 of 255
 
     @pytest.mark.satellite
     def test_does_not_change_pattern(self):
@@ -116,19 +118,21 @@ class TestOnLedConfigUpdate:
 
     @pytest.mark.satellite
     def test_xvf3800_calls_run_led_brightness(self):
-        leds = FakeXVF3800LEDs(brightness=20)
+        from renfield_satellite.hardware.led import LEDPattern
+
+        leds = make_xvf3800_leds(brightness=20)
         _call_update(leds, 7)
         assert leds.brightness == 7
-        leds._run.assert_called_once_with("LED_BRIGHTNESS", "7")
+        leds._run.assert_called_once_with("LED_BRIGHTNESS", "58")  # 7/31 of 255
         # Pattern still untouched.
-        assert leds.current_pattern == "speaking"
+        assert leds.current_pattern == LEDPattern.SPEAKING
 
     @pytest.mark.satellite
     def test_xvf3800_clamps_before_run(self):
-        leds = FakeXVF3800LEDs(brightness=20)
+        leds = make_xvf3800_leds(brightness=20)
         _call_update(leds, 50)
         assert leds.brightness == 31
-        leds._run.assert_called_once_with("LED_BRIGHTNESS", "31")
+        leds._run.assert_called_once_with("LED_BRIGHTNESS", "255")
 
 
 class TestWebSocketClientLedConfigDispatch:

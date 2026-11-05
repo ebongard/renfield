@@ -1417,10 +1417,11 @@ class Satellite:
         old = getattr(self.leds, "brightness", None)
         self.leds.brightness = clamped
 
-        # XVF3800: push the brightness to the XMOS chip at runtime.
-        if hasattr(self.leds, "_run"):
+        # XVF3800: push the brightness to the XMOS chip at runtime (the
+        # controller converts the fleet 0..31 scale to the chip's 0..255).
+        if hasattr(self.leds, "apply_brightness"):
             try:
-                self.leds._run("LED_BRIGHTNESS", str(clamped))
+                self.leds.apply_brightness(clamped)
             except Exception as e:
                 print(f"Failed to set XVF3800 LED brightness: {e}")
 
