@@ -1,0 +1,16 @@
+# Installed by k8s/orangepi-node-prep.sh on the Orange Pi satellite nodes.
+# The XVF3800 fails to enumerate after a warm reboot; unbinding and rebinding the
+# xHCI controller once at boot brings it back. Runs before the kubelet so the
+# satellite pod finds /dev/snd populated.
+[Unit]
+Description=Re-enumerate the USB bus at boot (XVF3800 fails to enumerate after a warm reboot)
+After=systemd-udev-settle.service
+Before=kubelet.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'd=xhci-hcd.40.auto; echo $d > /sys/bus/platform/drivers/xhci-hcd/unbind; sleep 2; echo $d > /sys/bus/platform/drivers/xhci-hcd/bind; sleep 3'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

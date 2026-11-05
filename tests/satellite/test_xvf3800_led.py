@@ -109,6 +109,42 @@ class TestXVF3800LEDControllerPatterns:
 
     @pytest.mark.satellite
     @patch("subprocess.run")
+    def test_set_pattern_idle_uses_configured_idle_color(self, mock_run):
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
+
+        ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host", idle_color="purple")
+        ctrl.set_pattern(LEDPattern.IDLE)
+
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        assert ["/bin/xvf_host", "LED_COLOR", "0x8000ff"] in calls
+        assert ["/bin/xvf_host", "LED_EFFECT", "1"] in calls
+        assert ["/bin/xvf_host", "LED_COLOR", "0x000044"] not in calls
+
+    @pytest.mark.satellite
+    @patch("subprocess.run")
+    def test_set_pattern_idle_unknown_color_keeps_default(self, mock_run):
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
+
+        ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host", idle_color="mauve")
+        ctrl.set_pattern(LEDPattern.IDLE)
+
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        assert ["/bin/xvf_host", "LED_COLOR", "0x000044"] in calls
+
+    @pytest.mark.satellite
+    @patch("subprocess.run")
+    def test_idle_color_only_affects_idle(self, mock_run):
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
+
+        ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host", idle_color="purple")
+        ctrl.set_pattern(LEDPattern.LISTENING)
+
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        assert ["/bin/xvf_host", "LED_COLOR", "0x00ff00"] in calls
+        assert ["/bin/xvf_host", "LED_COLOR", "0x8000ff"] not in calls
+
+    @pytest.mark.satellite
+    @patch("subprocess.run")
     def test_set_pattern_off(self, mock_run):
         from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 

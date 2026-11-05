@@ -628,6 +628,11 @@ class XVF3800LEDController:
         if pattern == self._pattern:
             return
         effect, color = self._PATTERN_MAP.get(pattern, (0, None))
+        if pattern == LEDPattern.IDLE and self.idle_color in COLORS:
+            # Same contract as the APA102/GPIO controllers: the configured idle
+            # colour replaces the default; an unknown name keeps the default.
+            idle = COLORS[self.idle_color]
+            color = (idle.r << 16) | (idle.g << 8) | idle.b
         self._run("LED_EFFECT", str(effect))
         if color is not None:
             self._run("LED_COLOR", f"0x{color:06x}")
