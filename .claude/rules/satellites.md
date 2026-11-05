@@ -76,7 +76,10 @@ needs 6443/10250/VXLAN out of the IoT VLAN. Bare-metal = the Pi playbook with `s
 host_vars (skips `/boot/firmware/config.txt`, Ubuntu groups via `satellite_hw_groups`); OTA then works like on a Pi.
 Traps: systemd refuses a unit naming a missing group (`216/GROUP`); the XVF3800 udev rule needs its add event replayed
 without the Pi's reboot (handler `apply XVF3800 udev rule`, else `xvf_host` "Failed to open device", ring dark);
-`hey_renfield.onnx` is not in git — copy it from another satellite. Host prep stays: `k8s/orangepi-node-prep.sh`
+`hey_renfield.onnx` is not in git — copy it from another satellite. **Leave the cluster BEFORE the IoT VLAN:** while the
+node is a member, kube-proxy DNATs 192.168.1.230:443 to Traefik pod IPs that VLAN 90 cannot reach, so the switch gets
+a .90.x lease and still fails the 443 check (drain + delete node, `kubeadm reset`, disable kubelet/containerd, reboot
+to clear the rules — nothing persists iptables there). Host prep stays: `k8s/orangepi-node-prep.sh`
 (identity, rfkill, USB fix, RAM log off), CPU cap from `orangepi-calico-kmods.sh`; camera: `provision-camera.yml`
 (only an IMX219 works, a Camera Module 3/IMX708 never enumerates).
 Until the Esszimmer moves: build its image natively on the node, `ctr -n k8s.io images import`, `kubectl set image`,
