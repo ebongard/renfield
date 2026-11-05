@@ -17,6 +17,7 @@
 #  - kubelet/kubeadm are pinned to the cluster's minor and held; the kernel is
 #    held because the calico modules are built for exactly this kernel.
 #  - Bluetooth is soft-blocked on the image; BLE presence needs it.
+#  - /var/log is a RAM disk on the image; logs must survive a crash.
 set -euo pipefail
 
 NEW_HOSTNAME="${1:?usage: $0 <hostname>   e.g. orangepi-kueche}"
@@ -24,6 +25,8 @@ KUBE_VERSION="${KUBE_VERSION:-1.35.6}"
 KUBE_MINOR="${KUBE_VERSION%.*}"
 
 [ "$(id -u)" -eq 0 ] || { echo "must run as root" >&2; exit 1; }
+USB_FIX_UNIT="$(dirname "$0")/renfield-usb-fix.service"
+[ -f "$USB_FIX_UNIT" ] || { echo "copy renfield-usb-fix.service next to this script" >&2; exit 1; }
 
 echo "1/8 hostname + fresh machine-id"
 OLD_HOSTNAME=$(hostname)
@@ -60,11 +63,17 @@ EOF
 sysctl --system >/dev/null
 
 echo "5/8 containerd: CRI on + SystemdCgroup"
-cp -n /etc/containerd/config.toml /etc/containerd/config.toml.orig || true
-containerd config default > /etc/containerd/config.toml
-sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-grep -q 'SystemdCgroup = true' /etc/containerd/config.toml
-systemctl restart containerd
+# Only on the vendor config (CRI disabled): regenerating on a re-run would drop
+# later edits and restart containerd under a running satellite pod.
+if ! grep -q 'SystemdCgroup = true' /etc/containerd/config.toml; then
+  cp -n /etc/containerd/config.toml /etc/containerd/config.toml.orig || true
+  containerd config default > /etc/containerd/config.toml
+  sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+  grep -q 'SystemdCgroup = true' /etc/containerd/config.toml
+  systemctl restart containerd
+else
+  echo "   already configured - skipped"
+fi
 
 echo "6/8 kubelet/kubeadm/kubectl $KUBE_VERSION"
 mkdir -p /etc/apt/keyrings
@@ -82,9 +91,14 @@ systemctl enable kubelet
 echo "7/8 hold the kernel (calico modules are built for exactly this kernel)"
 apt-mark hold linux-image-current-sun60iw2 linux-dtb-current-sun60iw2
 
-echo "8/8 Bluetooth on + XVF3800 USB re-enumeration at boot"
+echo "8/8 Bluetooth on + XVF3800 USB re-enumeration at boot + logs on disk"
 rfkill unblock bluetooth
-install -m644 "$(dirname "$0")/renfield-usb-fix.service" /etc/systemd/system/renfield-usb-fix.service
+install -m644 "$USB_FIX_UNIT" /etc/systemd/system/renfield-usb-fix.service
+# The vendor image keeps /var/log on a 50 MB tmpfs (orangepi-ramlog) that is
+# synced only on a clean shutdown: the persistent journal that
+# orangepi-node-resilience.sh sets up would lose exactly the crash it is for.
+# Takes effect at the next boot.
+sed -i 's/^ENABLED=.*/ENABLED=false/' /etc/default/orangepi-ramlog
 systemctl daemon-reload
 systemctl enable renfield-usb-fix.service
 

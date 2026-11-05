@@ -11,9 +11,13 @@ DEST=/lib/modules/$KREL/kernel/net/netfilter/ipset
 BACKUP=/opt/calico-kmods-$KREL
 
 echo "0/6 cap CPU at 1.2 GHz (fanless board; same cap as the Esszimmer)"
+# The vendor cpufrequtils service writes MAX_SPEED at boot and would undo a cap
+# applied before it, so cap its default AND order the unit after it.
+sed -i 's/^MAX_SPEED=.*/MAX_SPEED=1196000/' /etc/default/cpufrequtils
 cat > /etc/systemd/system/cpu-freq-cap.service <<'UNIT'
 [Unit]
 Description=Cap CPU frequency at 1.2 GHz (fanless board)
+After=cpufrequtils.service loadcpufreq.service
 
 [Service]
 Type=oneshot
@@ -24,7 +28,8 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
-systemctl enable --now cpu-freq-cap.service
+systemctl enable cpu-freq-cap.service
+systemctl restart cpu-freq-cap.service
 
 echo "1/6 headers + toolchain"
 [ -f "/lib/modules/$KREL/build/Module.symvers" ] || dpkg -i /opt/linux-headers-current-sun60iw2_1.0.0_arm64.deb
