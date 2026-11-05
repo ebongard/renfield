@@ -586,7 +586,7 @@ class XVF3800LEDController:
     # tests specified breath from the first commit (3087dc74).
     _PATTERN_MAP = {
         LEDPattern.OFF: (0, None),
-        LEDPattern.IDLE: (1, 0x000044),       # Dim blue breath
+        LEDPattern.IDLE: (1, 0x0000ff),       # Blue breath (dimmed by LED_BRIGHTNESS)
         LEDPattern.LISTENING: (3, 0x00ff00),  # Solid green
         LEDPattern.PROCESSING: (1, 0xffff00), # Yellow breath
         LEDPattern.SPEAKING: (3, 0x00ffff),   # Solid cyan
@@ -596,6 +596,16 @@ class XVF3800LEDController:
         # The XMOS has no blink effect: solid magenta (CUE_COLOR) for the cue.
         LEDPattern.NOT_UNDERSTOOD: (3, 0xff00ff),
     }
+
+    #: The fleet brightness scale (config ``led.brightness``, the backend's
+    #: night-dimming push) is the APA102's 5-bit 0..31. The chip's
+    #: LED_BRIGHTNESS is 0..255 and only scales breath/rainbow: passing the
+    #: 0..31 value through left a breathing ring at ~11 % (plus gamma), dark.
+    _FLEET_BRIGHTNESS_MAX = 31
+    _CHIP_BRIGHTNESS_MAX = 255
+    #: LED_SPEED of the breath effect. The firmware default 8 (and 2) breathe
+    #: far faster than the Pi rings pulse; 1 is the slowest that animates.
+    _BREATH_SPEED = 1
 
     def __init__(
         self,
@@ -615,10 +625,21 @@ class XVF3800LEDController:
         if not os.access(self._xvf_host_path, os.X_OK):
             print(f"xvf_host not executable: {self._xvf_host_path}")
             return False
-        # Set initial brightness
-        self._run("LED_BRIGHTNESS", str(self.brightness))
+        self.apply_brightness(self.brightness)
+        self._run("LED_SPEED", str(self._BREATH_SPEED))
         print(f"XVF3800 LED controller opened via {self._xvf_host_path}")
         return True
+
+    @classmethod
+    def chip_brightness(cls, level: int) -> int:
+        """Map a fleet brightness (0..31) onto the chip's LED_BRIGHTNESS (0..255)."""
+        level = min(cls._FLEET_BRIGHTNESS_MAX, max(0, int(level)))
+        return round(level * cls._CHIP_BRIGHTNESS_MAX / cls._FLEET_BRIGHTNESS_MAX)
+
+    def apply_brightness(self, level: int):
+        """Set the fleet brightness (0..31) and push it to the chip."""
+        self.brightness = level
+        self._run("LED_BRIGHTNESS", str(self.chip_brightness(level)))
 
     def close(self):
         self._run("LED_EFFECT", "0")

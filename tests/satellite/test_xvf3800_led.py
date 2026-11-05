@@ -68,6 +68,29 @@ class TestXVF3800LEDControllerOpen:
         assert ctrl.open() is False
 
 
+class TestXVF3800LEDControllerBrightness:
+
+    @pytest.mark.satellite
+    @pytest.mark.parametrize("level, chip", [(0, 0), (5, 41), (20, 165), (28, 230), (31, 255), (99, 255), (-3, 0)])
+    def test_fleet_scale_maps_onto_chip_scale(self, level, chip):
+        from renfield_satellite.hardware.led import XVF3800LEDController
+
+        assert XVF3800LEDController.chip_brightness(level) == chip
+
+    @pytest.mark.satellite
+    @patch("os.access", return_value=True)
+    @patch("os.path.isfile", return_value=True)
+    def test_open_pushes_chip_brightness_and_slow_breath(self, mock_isfile, mock_access):
+        from renfield_satellite.hardware.led import XVF3800LEDController
+
+        ctrl = XVF3800LEDController(brightness=28)
+        with patch.object(ctrl, "_run") as run:
+            assert ctrl.open() is True
+        calls = [c.args for c in run.call_args_list]
+        assert ("LED_BRIGHTNESS", "230") in calls
+        assert ("LED_SPEED", "1") in calls
+
+
 class TestXVF3800LEDControllerPatterns:
 
     @pytest.mark.satellite
@@ -97,14 +120,16 @@ class TestXVF3800LEDControllerPatterns:
 
     @pytest.mark.satellite
     @patch("subprocess.run")
-    def test_set_pattern_idle_dim_blue_breath(self, mock_run):
+    def test_set_pattern_idle_blue_breath(self, mock_run):
         from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         ctrl.set_pattern(LEDPattern.IDLE)
 
         calls = [c.args[0] for c in mock_run.call_args_list]
-        assert ["/bin/xvf_host", "LED_COLOR", "0x000044"] in calls
+        # Full blue: LED_BRIGHTNESS dims the breath, not the colour value
+        # (0x000044 plus a 0..31 brightness on a 0..255 scale stayed dark).
+        assert ["/bin/xvf_host", "LED_COLOR", "0x0000ff"] in calls
         assert ["/bin/xvf_host", "LED_EFFECT", "1"] in calls
 
     @pytest.mark.satellite
@@ -118,7 +143,7 @@ class TestXVF3800LEDControllerPatterns:
         calls = [c.args[0] for c in mock_run.call_args_list]
         assert ["/bin/xvf_host", "LED_COLOR", "0x8000ff"] in calls
         assert ["/bin/xvf_host", "LED_EFFECT", "1"] in calls
-        assert ["/bin/xvf_host", "LED_COLOR", "0x000044"] not in calls
+        assert ["/bin/xvf_host", "LED_COLOR", "0x0000ff"] not in calls
 
     @pytest.mark.satellite
     @patch("subprocess.run")
@@ -129,7 +154,7 @@ class TestXVF3800LEDControllerPatterns:
         ctrl.set_pattern(LEDPattern.IDLE)
 
         calls = [c.args[0] for c in mock_run.call_args_list]
-        assert ["/bin/xvf_host", "LED_COLOR", "0x000044"] in calls
+        assert ["/bin/xvf_host", "LED_COLOR", "0x0000ff"] in calls
 
     @pytest.mark.satellite
     @patch("subprocess.run")

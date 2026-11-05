@@ -77,6 +77,10 @@ the tag in the manifest. Keep the node's disk below ~80 % — image GC deletes t
 A new board: `k8s/orangepi-node-prep.sh` → `orangepi-calico-kmods.sh` → `orangepi-node-resilience.sh` → `kubeadm
 join`. The vendor image bakes `machine-id` + SSH host keys (prep regenerates them) and lacks the ipset/ipip modules
 calico needs (without them calico-node crash-loops and the fanless board runs hot).
+**XVF3800 ring: two scales.** Fleet brightness (config, night-dimming push) is the APA102's 0..31; the chip's
+`LED_BRIGHTNESS` is 0..255 and dims only breath/rainbow, never solid colours. Passing 0..31 through left the breathing
+idle ring dark on every XVF3800 until 1.4.16 — `XVF3800LEDController.chip_brightness()` converts. Idle = blue breath at
+`LED_SPEED` 1; yellow is PROCESSING, so no room colour for idle on the pods.
 
 ## BLE presence
 Phones rotate their address; `ble/rpa.py` resolves it with the per-person IRK and **silently no-ops without
