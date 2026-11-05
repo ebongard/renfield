@@ -65,15 +65,18 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
 - `RATE_LIMITED` means ONE dropped frame, not a failed session — it must not reset a running turn (#1284).
 - `wakeword.vad_gated` is off by default; turning it on makes the VAD a precondition for the wake word.
 
-## A fleet setting has TWO sources
-Ansible `src/satellite/provisioning/group_vars/satellites.yml` for the Pis **and** the ConfigMap inside
-`k8s/satellite-esszimmer.yaml` for the pod. #1282 raised the recording limit only in group_vars; the pod kept the code
-default of 15 s. Change `vad_*`, LED or audio values in both.
+## A fleet setting has THREE sources
+Ansible `src/satellite/provisioning/group_vars/satellites.yml` for the Pis **and** the ConfigMaps inside
+`k8s/satellite-esszimmer.yaml` and `k8s/satellite-kueche.yaml` for the pods. #1282 raised the recording limit only in
+group_vars; the pod kept the code default of 15 s. Change `vad_*`, LED or audio values in all three.
 
-## Esszimmer = k8s pod, not a Pi
-Orange Pi Zero 3W, node-pinned, privileged, `imagePullPolicy: Never`. **OTA cannot update it** (code lives in the
-ephemeral container layer): build natively on the node, `ctr -n k8s.io images import`, `kubectl set image`, then bump
+## Esszimmer + Küche = k8s pods, not Pis
+Orange Pi Zero 3W, node-pinned, privileged, `imagePullPolicy: Never`. **OTA cannot update them** (code lives in the
+ephemeral container layer): build natively on each node, `ctr -n k8s.io images import`, `kubectl set image`, then bump
 the tag in the manifest. Keep the node's disk below ~80 % — image GC deletes the unpullable image.
+A new board: `k8s/orangepi-node-prep.sh` → `orangepi-calico-kmods.sh` → `orangepi-node-resilience.sh` → `kubeadm
+join`. The vendor image bakes `machine-id` + SSH host keys (prep regenerates them) and lacks the ipset/ipip modules
+calico needs (without them calico-node crash-loops and the fanless board runs hot).
 
 ## BLE presence
 Phones rotate their address; `ble/rpa.py` resolves it with the per-person IRK and **silently no-ops without

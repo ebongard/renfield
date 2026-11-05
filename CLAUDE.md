@@ -8,7 +8,7 @@ when a matching file is read — also in subagents) and in `docs/`. See the inde
 
 Renfield is a fully offline-capable, self-hosted **digital assistant** — a personal AI hub for knowledge retrieval, tool access, and smart home control. Serves multiple household users in parallel.
 
-**Tech Stack:** Python 3.11 + FastAPI + SQLAlchemy | React 18 + TypeScript + Vite + Tailwind CSS + PWA | Docker Compose, PostgreSQL 16 + pgvector, Redis 7, Ollama | Satellites: Pi Zero 2 W + ReSpeaker + OpenWakeWord (bare-metal via Ansible), plus one arm64 k8s-pod satellite (Orange Pi Zero 3W, Esszimmer).
+**Tech Stack:** Python 3.11 + FastAPI + SQLAlchemy | React 18 + TypeScript + Vite + Tailwind CSS + PWA | Docker Compose, PostgreSQL 16 + pgvector, Redis 7, Ollama | Satellites: Pi Zero 2 W + ReSpeaker + OpenWakeWord (bare-metal via Ansible), plus two arm64 k8s-pod satellites (Orange Pi Zero 3W: Esszimmer, Küche).
 
 **LLM:** Local models via Ollama (multi-model: chat, intent, RAG, agent, vision, embeddings).
 
@@ -113,7 +113,7 @@ Each rule loads by itself when you read a file of that subsystem. For a question
 
 | Rule | Covers |
 |---|---|
-| `satellites.md` | voice turn + Silero VAD, BLE presence, acoustic commissioning, the Esszimmer pod, "a fleet setting has two sources", no `journalctl` on a Pi Zero |
+| `satellites.md` | voice turn + Silero VAD, BLE presence, acoustic commissioning, the Orange Pi pods, "a fleet setting has three sources", no `journalctl` on a Pi Zero |
 | `satellite-trust-ota.md` | enrollment PSK (H1), signed OTA manifest (H6) — re-sign + bump on every satellite change |
 | `scheduled-tasks.md` | the task engine, built-ins, failure-streak alerting, external watchdog, Paperless index health |
 | `mcp-health.md` | MCP self-detection: timeouts-only health, functional probes, rate-limit signal, k8s probes |
