@@ -71,7 +71,6 @@ data:
                                   # night=5) UP to 28 so the plate stays lit day AND
                                   # night — else register_ack/night-dimming would
                                   # dim it back below the plate's readable threshold
-      idle_color: "yellow"        # Esszimmer identity colour (continuity w/ old sat)
       xvf_host_path: "/opt/renfield-satellite/bin/xvf_host"
     camera:
       enabled: true              # IMX219 on CAM1 (see docs/design/a733-satellite-camera.md)

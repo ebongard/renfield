@@ -72,7 +72,6 @@ data:
                                   # night=5) UP to 28 so the plate stays lit day AND
                                   # night — else register_ack/night-dimming would
                                   # dim it back below the plate's readable threshold
-      idle_color: "purple"        # Küche identity colour (yellow/green/blue taken; cyan/red are states)
       xvf_host_path: "/opt/renfield-satellite/bin/xvf_host"
     camera:
       enabled: false             # no CSI camera on this board (Esszimmer has the IMX219)
@@ -136,7 +135,7 @@ spec:
                     values: ["arm64"]
       containers:
         - name: satellite
-          image: renfield/satellite:kueche-v2
+          image: renfield/satellite:kueche-v3
           imagePullPolicy: Never   # imported into node containerd (k8s.io ns)
           securityContext:
             privileged: true        # raw /dev access for USB audio + xvf_host
