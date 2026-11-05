@@ -35,6 +35,14 @@ each time; the room row is created on first connect (`ROOMS_AUTO_CREATE_FROM_SAT
    not known` for ~2-3s until Avahi's multicast cache warms, then resolve fine.
    The reconnect loop recovers from this (≥ v1.4.1) — see *In-process wedges*
    below for the strand bug where it didn't.
+   **In a separate VLAN (IoT, VLAN 90) mDNS never resolves at all** — multicast
+   does not cross the VLAN boundary — and a DNS override on the router does not
+   help either: `nsswitch.conf` has `files mdns4_minimal [NOTFOUND=return] dns`, so
+   `.local` never reaches DNS. Set `server_static_ip` in the satellite's
+   (git-ignored) `host_vars`; `provision.yml --tags network` writes it into
+   `/etc/hosts`, which is read first. The satellite then needs exactly one
+   firewall opening from the VLAN: TCP 443 to the ingress LB. The zeroconf
+   discovery is not involved — it only runs when `server_url` is empty.
 3. **Device offline.** A powered-off / crashed / WiFi-disassociated Pi shows
    nothing in backend logs. Check it physically: `ping <ip>`, ARP, the LED. A
    4-mic-HAT unit can hit the AC108 + onnxruntime same-process kernel crash —
