@@ -112,6 +112,14 @@
           libisp_ini.so + AWIspApi.h from the OPi Zero 3W desktop image (git-ignored).
           See docs/design/a733-satellite-camera.md.
 
+    - name: sunxi_isp — AW ISP install directory
+      when: *sunxi
+      tags: [awisp]
+      ansible.builtin.file:
+        path: "{{ awisp_dir }}/lib"
+        state: directory
+        mode: "0755"
+
     - name: sunxi_isp — install AW ISP libs + header
       when: *sunxi
       tags: [awisp]

@@ -75,7 +75,7 @@ Orange Pi Zero 3W, node-pinned, privileged, `imagePullPolicy: Never`. **OTA cann
 ephemeral container layer): build natively on each node, `ctr -n k8s.io images import`, `kubectl set image`, then bump
 the tag in the manifest. Keep the node's disk below ~80 % — image GC deletes the unpullable image.
 A new board: `k8s/orangepi-node-prep.sh` → `orangepi-calico-kmods.sh` → `orangepi-node-resilience.sh` → `kubeadm
-join`. The vendor image bakes `machine-id` + SSH host keys (prep regenerates them) and lacks the ipset/ipip modules
+join` (camera: `provision-camera.yml`; only an IMX219 works, a Camera Module 3/IMX708 never enumerates). The vendor image bakes `machine-id` + SSH host keys (prep regenerates them) and lacks the ipset/ipip modules
 calico needs (without them calico-node crash-loops and the fanless board runs hot).
 **XVF3800 ring: two scales.** Fleet brightness (config, night-dimming push) is the APA102's 0..31; the chip's
 `LED_BRIGHTNESS` is 0..255 and dims only breath/rainbow, never solid colours. Passing 0..31 through left the breathing
