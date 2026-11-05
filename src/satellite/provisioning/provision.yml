@@ -8,7 +8,7 @@
 #   ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum -v
 #
 # Tags:
-#   system, boot, driver, python, app, config, models, service
+#   system, network, boot, driver, python, app, config, models, service
 #
 # Run a single phase:
 #   ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --tags config
@@ -58,6 +58,18 @@
         state: present
         update_cache: true
         cache_valid_time: 3600
+
+    # In a separate VLAN mDNS does not reach the backend, and nss-mdns answers
+    # ".local" names itself (mdns4_minimal [NOTFOUND=return]) before DNS is
+    # asked, so a DNS override is not enough. server_static_ip lives in the
+    # git-ignored host_vars; unset, /etc/hosts is left alone.
+    - name: Pin the server hostname in /etc/hosts
+      tags: [system, network]
+      when: server_static_ip is defined
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: "\\s{{ server_url | urlsplit('hostname') | regex_escape }}$"
+        line: "{{ server_static_ip }} {{ server_url | urlsplit('hostname') }}"
 
     - name: Add user to hardware groups
       tags: [system]
