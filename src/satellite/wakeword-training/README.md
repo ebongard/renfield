@@ -260,3 +260,13 @@ testing.
    API). The backend pushes the keyword list to every satellite, which downloads
    the model(s) and loads them. **The global config overrides any local satellite
    wake-word setting** — there is no per-satellite override today.
+
+**A retrained model under the same id reaches the fleet by itself** (satellite
+≥ 1.4.17): the push carries a SHA-256 per model, and a satellite whose file
+differs downloads it again, verifies it and reloads it on the next push or
+reconnect. A failed download keeps the running model. Before 1.4.17 a
+satellite only fetched a model it did not have at all — Fitnessraum and
+Wohnzimmer ran an older `renfield_de` until 2026-11-06 while freshly set-up
+satellites had v5. Check what a device runs with
+`md5sum /opt/renfield-satellite/models/renfield_de.onnx` against the backend's
+`/app/wakeword-models/renfield_de.onnx`.

@@ -627,7 +627,7 @@ den späteren MCP-Server, der dieselbe PDF-Assemblierung vornimmt:
 
 ### Zentrale Wake-Word-Verwaltung
 - Admin-UI für zentrale Konfiguration
-- Automatische Synchronisation per WebSocket an alle Geräte
+- Automatische Synchronisation per WebSocket an alle Geräte — seit Satellit 1.4.17 auch ein neu trainiertes Modell unter demselben Namen (SHA-256 je Modell im Push; abweichende Datei wird geprüft ersetzt und neu geladen)
 - Konfigurierbare Keywords (Alexa, Hey Mycroft, Hey Jarvis, etc.)
 - **Mehrsprachiger Haushalt**: Sowohl Satelliten als auch der Browser-Detektor laden **alle** gepushten Wake-Words gleichzeitig (kommagetrennter Satz, z.B. `renfield_de` + `renfield_en`) — nicht nur das erste.
 
