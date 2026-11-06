@@ -16,8 +16,9 @@ Environment=PYTHONUNBUFFERED=1
 # Allow access to hardware
 SupplementaryGroups=spi gpio i2c
 
-# Resource limits (Pi Zero 2 W has 512MB RAM)
-MemoryMax=300M
+# Resource limits: the same value the Ansible unit renders for a Pi Zero 2 W
+# (provisioning/group_vars satellite_memory_max; an Orange Pi gets 1G there).
+MemoryMax=450M
 
 # Logging
 StandardOutput=journal

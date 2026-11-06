@@ -23,8 +23,10 @@ PROVISIONING = SATELLITE / "provisioning"
 # requirements.txt. Each needs a reason; an empty reason fails the test.
 PROVISIONING_ONLY = {
     "setuptools": "build tool (pkg_resources for webrtcvad); pip/setuptools are kept off the OTA allowlist",
-    "requests": "kept off the OTA allowlist by policy; the satellite code does not import it",
-    "scikit-learn": "pulled in for noisereduce at provisioning; not on the OTA allowlist",
+    # openwakeword is installed --no-deps, so the playbook supplies its dependencies by hand;
+    # dropping one of these from group_vars breaks the ONNX wake word path.
+    "requests": "openwakeword dependency (installed --no-deps); kept off the OTA allowlist by policy",
+    "scikit-learn": "openwakeword dependency (installed --no-deps); not on the OTA allowlist",
 }
 
 
