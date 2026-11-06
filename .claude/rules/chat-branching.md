@@ -87,6 +87,8 @@ builtin `OSError` descendant. No identity (device token) → no replacement: it 
 - **A deleted conversation's session id is never reused (#1485).** A trigger on `conversations` records every deleted
   id in `deleted_conversation_sessions` (FK cascade of an atom purge included — never a call-site list); the boundary
   (`_session_registerable_by`, `session_id_is_reusable`) refuses a recorded id WITHOUT a row for every caller and swaps
-  it. A row recreated under it (satellite room id) follows reach. A live socket notices via `_probe_session_freshness`
-  → reload. Uploads made after the delete move along (`carry_uploads_to_replacement`), older ones never.
+  it. A row recreated under it (satellite room id) follows reach. `save_message` refuses to CREATE a row under a
+  recorded id (`ConversationDeletedError` ⊂ `ConversationNotOwnedError`) — only the satellite passes
+  `allow_deleted_session=True`. A live socket notices via `_probe_session_freshness` → reload. Every rebind of a
+  socket to another id goes through `session_state.bind_session` (drops history + watermark), the `register` frame too. Uploads made after the delete move along (`carry_uploads_to_replacement`), older ones never.
   The harness builds the trigger (`conftest._add_conversation_tombstone_trigger`); `create_all` alone does not.

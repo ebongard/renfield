@@ -130,13 +130,27 @@ browser that still held it; everything that outlives a delete and keys on the id
   and first message (`session_replaced` with a fresh id) and in `POST /api/chat/send`
   (answers under the fresh id). The fresh id is not recorded, so there is no loop.
   An existing row under a recorded id (a satellite recreating its fixed room id)
-  is judged by reach as before; the satellite path itself never checks the record.
+  is judged by reach as before.
+- **Writer:** the boundary alone is not enough — a turn already past it (the probe
+  runs at turn start, the save after the LLM round), a scan outcome and the
+  Paperless announcement write after a delete without crossing it again. So
+  `ConversationService.save_message` refuses to CREATE a row under a recorded id
+  (`ConversationDeletedError`, a subclass of `ConversationNotOwnedError`): the WS
+  turn falls into its replacement path (under auth-off too, where the turn has no
+  identity), the scanner settles `refused`, the Paperless announcement is skipped.
+  Only the satellite opts in (`allow_deleted_session=True`): its room id is fixed
+  per day. The Paperless announcement writes in its own session after the filing
+  committed — a refused `save_message` rolls its session back, and a shared one
+  undid the tracking row and the finalize stamp.
 - **Live socket:** its history is loaded, so only the per-turn freshness probe can
   notice. `_probe_session_freshness` asks the record when the newest message is
   gone; `history_needs_reload(session_deleted=True)` forces the reload where the
-  boundary check runs. A session switch empties the in-memory history (the load
-  only replaced it when it found messages, so the deleted turns used to stay in
-  the prompt).
+  boundary check runs. Every switch to another conversation — the `register`
+  frame the browser sends on each session change, a message naming another id, a
+  replacement — goes through `ConversationSessionState.bind_session`, which drops
+  the in-memory history, its load flag and its watermark. Before, the `register`
+  frame only moved the id: the next message saw the same id, skipped the reload,
+  and the previous conversation's turns went into the new one's prompt.
 - **Uploads:** a file attached under the deleted id AFTER the delete belongs to
   the turn the tab is about to send; it moves to the fresh id (under auth only
   the caller's own). Older uploads stay — moving them would revive part of the
