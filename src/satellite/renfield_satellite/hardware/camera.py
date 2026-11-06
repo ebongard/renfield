@@ -10,8 +10,8 @@ Two capture backends, selected by config (`camera.backend`):
                 capture on sunxi-vin (the Allwinner ISP must run), so this shells out to
                 `/opt/awisp/renfield_isp_capture` (which starts the AW ISP + does the
                 mplane grab → raw I420) and converts I420 → JPEG here. The tool + AW ISP
-                libs live on the host at /opt/awisp (provision-camera.yml).
-                See docs/design/a733-satellite-camera.md.
+                libs are hostPath-mounted into the pod at /opt/awisp
+                (k8s/satellite-esszimmer.yaml). See docs/design/a733-satellite-camera.md.
 
 Both return JPEG bytes, so the caller (`_capture_snapshot_for_request` → the WS
 `snapshot_result`) is backend-agnostic.
@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-# A733 sunxi_isp backend: the capture tool + Allwinner ISP libs on the host.
+# A733 sunxi_isp backend: the capture tool + Allwinner ISP libs (hostPath-mounted).
 _ISP_BIN = "/opt/awisp/renfield_isp_capture"
 _ISP_LIBS = "/opt/awisp/lib"
 _ISP_WARMUP = 8  # frames skipped for ISP 3A (auto-exposure/white-balance) to settle
