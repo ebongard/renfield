@@ -211,6 +211,14 @@ async def _add_generated_search_vectors(conn) -> None:
     await conn.run_sync(ensure_generated_search_vectors)
 
 
+async def _add_conversation_tombstone_trigger(conn) -> None:
+    """`create_all` builds the table but not the trigger that fills it (#1485);
+    the same DDL the migration `pc20261106_conv_tombstones` runs."""
+    from services.conversation_tombstones import ensure_tombstone_trigger
+
+    await conn.run_sync(ensure_tombstone_trigger)
+
+
 # One key for the whole run. `_SCHEMA_READY` is a PROCESS flag, and the first
 # database test of a process DROPS the schema — so two runs against the same
 # database (an xdist worker, or simply a second terminal) would pull the tables
@@ -357,6 +365,7 @@ async def _build_schema(conn) -> None:
     await _reset_public_schema(conn)
     await conn.run_sync(Base.metadata.create_all)
     await _add_generated_search_vectors(conn)
+    await _add_conversation_tombstone_trigger(conn)
 
 
 async def _ensure_schema() -> None:

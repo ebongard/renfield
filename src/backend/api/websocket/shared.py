@@ -224,11 +224,12 @@ _ws_connections: dict[str, WebSocket] = {}
 def history_needs_reload(
     *, history_loaded: bool, known_session_id: str | None, wanted_session_id: str,
     watermark: int | None, newest_in_db: int | None,
+    session_deleted: bool = False,
 ) -> bool:
     """Does this session's history have to be reloaded from the database?
 
     A PURE function, so the rule is testable instead of buried in the
-    handler. Three reasons, and the third is the new one:
+    handler. Four reasons:
 
     1. Never loaded before.
     2. The socket switches session.
@@ -242,8 +243,12 @@ def history_needs_reload(
     🛑 `watermark is None` with a loaded history also means do not reload: the
     mark is only absent when reading the number failed, and turning that into a
     permanent reload cycle would be worse than the state it prevents.
+
+    4. The conversation was deleted elsewhere (#1485). The reload is where the
+       boundary check runs, and that check hands out a fresh id instead of
+       recreating the deleted conversation under the old one.
     """
-    if not history_loaded or known_session_id != wanted_session_id:
+    if not history_loaded or known_session_id != wanted_session_id or session_deleted:
         return True
     if watermark is None or newest_in_db is None:
         return False

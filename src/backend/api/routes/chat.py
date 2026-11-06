@@ -96,6 +96,20 @@ async def conversation_is_callers(conversation, current_user, db: AsyncSession) 
     return await ConversationService(db).reaches(conversation.id, current_user.id)
 
 
+async def session_id_is_reusable(session_id: str, conversation, db: AsyncSession) -> bool:
+    """May a new conversation be created under this client-named id? (#1485)
+
+    Not when a conversation under it was deleted before: the browser that still
+    holds the id would revive the deleted conversation. Same rule as the WS
+    boundary (`chat_handler._session_registerable_by`), for every caller.
+    """
+    if conversation is not None:
+        return True
+    from services.conversation_tombstones import is_deleted_session
+
+    return not await is_deleted_session(db, session_id)
+
+
 @router.post("/send", response_model=ChatResponse)
 @limiter.limit(settings.api_rate_limit_chat)
 async def send_message(
@@ -134,6 +148,9 @@ async def send_message(
                 f"reach: owner={conversation.user_id} caller={current_user.id}"
             )
             conversation = None
+            session_id = str(uuid.uuid4())
+        elif not await session_id_is_reusable(session_id, conversation, db):
+            logger.info("🔁 REST chat named a deleted session id; starting a fresh one")
             session_id = str(uuid.uuid4())
 
         if not conversation:

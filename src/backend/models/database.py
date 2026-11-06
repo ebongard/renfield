@@ -125,6 +125,27 @@ class Conversation(Base):
     user = relationship("User", back_populates="conversations", foreign_keys=[user_id])
     speaker = relationship("Speaker", foreign_keys=[speaker_id])
 
+
+class DeletedConversationSession(Base):
+    """Session ids of deleted conversations (#1485).
+
+    The client mints the session id, so after a delete the browser that still
+    holds it would recreate the conversation under the same id. A row here
+    makes the chat boundary hand out a fresh id instead. Filled by a database
+    trigger on ``conversations`` (``services/conversation_tombstones.py``), so
+    every delete path counts, the FK cascade of an atom purge included. Holds
+    the random id and a timestamp only -- no owner, no content.
+    """
+
+    __tablename__ = "deleted_conversation_sessions"
+
+    session_id = Column(String, primary_key=True)
+    # UTC without a zone, like `_utcnow`; the trigger writes it explicitly.
+    deleted_at = Column(
+        DateTime, nullable=False, server_default=sa_text("timezone('utc', now())"),
+    )
+
+
 class Message(Base):
     """Individual messages"""
     __tablename__ = "messages"

@@ -223,16 +223,22 @@ async def _session_registerable_by(session_id: str, auth_user_id: int | None) ->
     path at all. The same four-branch filter, so there is ONE rule and not a
     second one written in Python.
 
-    Only enforced when auth is enabled AND a JWT caller identity exists; the
-    single-user (auth off) and device/satellite (`user_id=None`) paths keep the
-    legacy always-register behavior.
+    The reach rule is only enforced when auth is enabled AND a JWT caller
+    identity exists; the single-user (auth off) and device/satellite
+    (`user_id=None`) paths keep the legacy always-register behavior for an
+    EXISTING row.
+
+    A session id with NO row that belonged to a deleted conversation is refused
+    for every caller (#1485): the browser that still holds it would otherwise
+    recreate the deleted conversation under the same id. The fresh id
+    `_replacement_session_for` hands out is never recorded, so there is no
+    replacement loop.
     """
-    if not settings.auth_enabled or auth_user_id is None:
-        return True
     from sqlalchemy import select
 
     from models.database import Conversation
     from services.conversation_service import ConversationService
+    from services.conversation_tombstones import is_deleted_session
 
     try:
         async with AsyncSessionLocal() as session:
@@ -242,13 +248,16 @@ async def _session_registerable_by(session_id: str, auth_user_id: int | None) ->
                 )
             )
             row = result.first()
-            # No ROW yet → brand-new session, created for this caller: allowed.
+            # No ROW yet → a brand-new session, created for this caller:
+            # allowed, unless the id belonged to a deleted conversation.
             # An EXISTING row must be within reach. An ownerless one is not
             # (auth-on cutover, P0 Nr. 5): with adoption gone it stays
             # ownerless, every reach branch keys on the owner, so `reaches`
             # refuses it — which is the intended answer, since anyone holding
             # the client-minted id could otherwise register for its pushes.
             if row is None:
+                return not await is_deleted_session(session, session_id)
+            if not settings.auth_enabled or auth_user_id is None:
                 return True
             return await ConversationService(session).reaches(row.id, auth_user_id)
     except Exception as e:
@@ -256,11 +265,63 @@ async def _session_registerable_by(session_id: str, auth_user_id: int | None) ->
         # OUTSIDE the loop — a raised DB error here would tear down the whole
         # chat WS. Fail closed (refuse the push-registration) but never raise, so
         # a transient DB blip can't kill an otherwise-healthy connection.
+        # Where the reach rule does not apply (auth off, device token) the
+        # check only guards against reviving a deleted id, and a blip must not
+        # swap a working conversation for an empty one: allow there.
+        reach_applies = settings.auth_enabled and auth_user_id is not None
         logger.warning(
-            f"⚠️ WS reach check failed for session {session_id}; "
-            f"refusing push-register (connection kept alive): {e}"
+            f"⚠️ WS session check failed for session {session_id}; "
+            f"{'refusing' if reach_applies else 'allowing'} push-register "
+            f"(connection kept alive): {e}"
         )
-        return False
+        return not reach_applies
+
+
+async def _probe_session_freshness(session_id: str) -> tuple[int | None, bool]:
+    """The newest message id of a live session, and whether it was deleted.
+
+    Feeds `history_needs_reload`. "Deleted" is only asked when there is no
+    newest message: a conversation deleted elsewhere while this socket held it
+    (#1485) has none, and the reload is where the boundary check swaps the id.
+    A failure answers ``(None, False)`` -- no measurement, no reload.
+    """
+    try:
+        from services.conversation_service import ConversationService
+        from services.conversation_tombstones import is_deleted_session
+
+        async with AsyncSessionLocal() as db:
+            newest = await ConversationService(db).latest_message_id(session_id)
+            if newest is not None:
+                return newest, False
+            return None, await is_deleted_session(db, session_id)
+    except Exception as e:
+        logger.warning(f"⚠️ Freshness check failed: {e}")
+        return None, False
+
+
+async def _carry_uploads_to_replacement(
+    old_session_id: str, new_session_id: str, auth_user_id: int | None,
+) -> None:
+    """A file attached under a DELETED id goes along to the fresh one (#1485).
+
+    The tab still showed the deleted conversation and uploaded for its next
+    turn; that turn now runs under the new id, and under auth the attachment
+    lookup matches the session (``_fetch_document_context``). Only uploads made
+    after the delete move, and nothing moves for a foreign session
+    (``carry_uploads_to_replacement``). Never fails the turn.
+    """
+    try:
+        from services.conversation_tombstones import carry_uploads_to_replacement
+
+        async with AsyncSessionLocal() as db:
+            moved = await carry_uploads_to_replacement(
+                db, old_session_id, new_session_id, auth_user_id,
+                auth_enabled=settings.auth_enabled,
+            )
+        if moved:
+            logger.info(f"📎 {moved} upload(s) moved to the replacement session")
+    except Exception as e:
+        logger.warning(f"⚠️ Moving uploads to the replacement session failed: {e}")
 
 
 async def _replacement_session_for(
@@ -281,9 +342,11 @@ async def _replacement_session_for(
     if await _session_registerable_by(session_id, auth_user_id):
         return None
     new_id = str(uuid.uuid4())
+    await _carry_uploads_to_replacement(session_id, new_id, auth_user_id)
     await websocket.send_json({"type": "session_replaced", "session_id": new_id})
     logger.info(
-        f"🔁 Session replaced: the named one does not belong to the caller (user={auth_user_id})"
+        f"🔁 Session replaced: the named one is not the caller's or was deleted "
+        f"(user={auth_user_id})"
     )
     return new_id
 
@@ -1373,17 +1436,16 @@ async def websocket_endpoint(
                 # an LLM round (`ix_messages_conversation_id`). `None`
                 # means "no answer" and does NOT reload -- a missing
                 # measurement must not force a reload cycle.
-                _newest = None
+                #
+                # No newest message at all may mean the conversation was
+                # deleted elsewhere while this socket held it (#1485): then
+                # the reload runs the boundary check below, which hands out a
+                # fresh id instead of recreating the deleted conversation.
+                _newest, _deleted = None, False
                 if (session_state.history_loaded
                         and session_state.db_session_id == msg_session_id
                         and session_state.history_watermark is not None):
-                    try:
-                        from services.conversation_service import ConversationService
-                        async with AsyncSessionLocal() as _db_fresh:
-                            _newest = await ConversationService(
-                                _db_fresh).latest_message_id(msg_session_id)
-                    except Exception as _exc:
-                        logger.warning(f"⚠️ Freshness check failed: {_exc}")
+                    _newest, _deleted = await _probe_session_freshness(msg_session_id)
 
                 # The rule lives in `shared.history_needs_reload` -- a pure
                 # function, so it is testable instead of buried here.
@@ -1393,6 +1455,7 @@ async def websocket_endpoint(
                     wanted_session_id=msg_session_id,
                     watermark=session_state.history_watermark,
                     newest_in_db=_newest,
+                    session_deleted=_deleted,
                 ):
                     if _newest is not None:
                         # 🛑 Braces, NOT `%s`: this module's logger is loguru,
@@ -1414,6 +1477,12 @@ async def websocket_endpoint(
                     )
                     if _replacement is not None:
                         msg_session_id = _replacement
+                    if session_state.db_session_id != msg_session_id:
+                        # Another conversation: the live list belongs to the
+                        # previous one. The load below only REPLACES it when
+                        # it finds messages, so a fresh or replaced id would
+                        # otherwise carry the old turns into the prompt.
+                        session_state.conversation_history = []
                     session_state.db_session_id = msg_session_id
                     register_ws_connection(msg_session_id, websocket)
                     try:
