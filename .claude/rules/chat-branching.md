@@ -84,3 +84,9 @@ builtin `OSError` descendant. No identity (device token) → no replacement: it 
 - `DELETE /api/chat/{session_id}/branch/{message_id}`: ownership-gated 404; **refuses an active-path message with 409**;
   subtree delete. Branch-local memories are **soft-deleted + detached** (`is_active=False`, `source_message_id=NULL`) —
   a hard delete hits the `memory_history` RESTRICT FK and orphans the `atoms` row. KG provenance is detached, not deleted.
+- **A deleted conversation's session id is never reused (#1485).** A trigger on `conversations` records every deleted
+  id in `deleted_conversation_sessions` (FK cascade of an atom purge included — never a call-site list); the boundary
+  (`_session_registerable_by`, `session_id_is_reusable`) refuses a recorded id WITHOUT a row for every caller and swaps
+  it. A row recreated under it (satellite room id) follows reach. A live socket notices via `_probe_session_freshness`
+  → reload. Uploads made after the delete move along (`carry_uploads_to_replacement`), older ones never.
+  The harness builds the trigger (`conftest._add_conversation_tombstone_trigger`); `create_all` alone does not.

@@ -109,6 +109,42 @@ advance, memory deactivate, search filter+reindex, **cross-conversation IDOR
 isolation**, SET-NULL deletion) — 16 pass on real PG. Frontend:
 `ChatMessages.branching.test.tsx` + `historyToUiMessage` id carry.
 
+## Deleted conversations stay deleted (#1485)
+
+The browser mints the session id and keeps it in `localStorage`. A conversation
+deleted elsewhere — another tab, another device, `DELETE /conversations/cleanup`,
+an Art.-17 atom purge — was recreated under the same id by the next message of a
+browser that still held it; everything that outlives a delete and keys on the id
+(KG provenance in `source_session_id`, logs) was then attributed to new content.
+
+- **Record:** `deleted_conversation_sessions(session_id, deleted_at)` — the id and a
+  UTC timestamp, no owner, no content. Filled by the trigger
+  `trg_conversations_record_deleted_session` (AFTER DELETE, per row), because the
+  atom purge removes conversations through an `ON DELETE CASCADE` no Python code
+  sees. DDL once in `services/conversation_tombstones.py`, used by the migration
+  `pc20261106_conv_tombstones` and the test harness. No backfill: ids deleted
+  before the migration are recorded nowhere. The table only grows (one short row
+  per deleted conversation); no retention yet.
+- **Boundary:** an id with NO conversation row that is recorded is refused for
+  every caller — auth on or off, JWT or device token — at the WS `register` frame
+  and first message (`session_replaced` with a fresh id) and in `POST /api/chat/send`
+  (answers under the fresh id). The fresh id is not recorded, so there is no loop.
+  An existing row under a recorded id (a satellite recreating its fixed room id)
+  is judged by reach as before; the satellite path itself never checks the record.
+- **Live socket:** its history is loaded, so only the per-turn freshness probe can
+  notice. `_probe_session_freshness` asks the record when the newest message is
+  gone; `history_needs_reload(session_deleted=True)` forces the reload where the
+  boundary check runs. A session switch empties the in-memory history (the load
+  only replaced it when it found messages, so the deleted turns used to stay in
+  the prompt).
+- **Uploads:** a file attached under the deleted id AFTER the delete belongs to
+  the turn the tab is about to send; it moves to the fresh id (under auth only
+  the caller's own). Older uploads stay — moving them would revive part of the
+  deleted conversation.
+- **Frontend:** on `session_replaced` the tab keeps only the turn in flight (last
+  user message onward), or nothing when no turn is running
+  (`ChatPage/context/sessionReplaced.ts`).
+
 ## Background moved from CLAUDE.md (2026-09-20)
 
 - Two defects were caught in `/review` and fixed before merge: the cross-conversation IDOR (see Security) **and a
