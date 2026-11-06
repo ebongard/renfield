@@ -34,7 +34,7 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
 - The document owner-branch in `circle_sql` has an atom-owner fallback so null-KB / global-RAG docs reach their owner —
   ONLY where `kb.owner_id` IS NULL; a KB that names an owner decides alone (#1469, pre-#1460 two-owner rows).
 - 🛑 REST document READS use the same predicate (`services/document_access.py`: filter + `kb.all` + the legacy
-  `is_public`/`kb.shared` branch, owner decision open). Never decide a document read by KB levels again; KB levels
+  `is_public`/`kb.shared` branch, owner decision open) — and NONE without a KB rung above `kb.none` (Gast, Kiosk). Never decide a document read by KB levels again; KB levels
   gate writes, upload, delete, shares (#1469, `docs/CIRCLES.md`).
 - Behavioural change vs pre-circles: `ConversationMemoryService.retrieve()` respects circle reach — tier-2 household
   peers see each other's household-tier memories (it used to filter strictly `user_id == asker_id`).

@@ -12,6 +12,11 @@ KB owner with the null-owner atom fallback, public tier, explicit grant on the
 document, tier reach through the KB owner's circles, KB share), plus two REST
 permissions on top:
 
+- A caller without a KB rung above ``kb.none`` (the ``Gast`` role, the
+  ``Kiosk`` device role, any role with no KB rung at all) reads NO document —
+  the same gate ``/search`` and the document list apply
+  (``holds_no_rung_above``). Without it a public-tier document opened to every
+  token.
 - ``kb.all`` (the admin rung) reads every document — it is a permission, not a
   circle branch, and it already lists, counts and deletes everything.
 - LEGACY, awaiting the owner's decision: a KB with ``is_public = true`` opens
@@ -32,7 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Document, KnowledgeBase, User
-from models.permissions import Permission, has_permission
+from models.permissions import Permission, has_permission, holds_no_rung_above
 from services.document_search import reachable_document_ids
 from utils.config import settings
 
@@ -62,6 +67,8 @@ async def readable_document_ids(
     perms = user.get_permissions()
     if has_permission(perms, Permission.KB_ALL):
         return {d.id for d in docs}
+    if holds_no_rung_above(perms, Permission.KB_NONE):
+        return set()
     readable = await reachable_document_ids(db, [d.id for d in docs], user.id)
     if has_permission(perms, Permission.KB_SHARED):
         rest = [d for d in docs if d.id not in readable and d.knowledge_base_id]

@@ -259,7 +259,10 @@ The per-KB `document_count` of `GET /bases` and `GET /bases/{id}` counts the sam
 A REST read of a document — `GET /documents/{id}`, `GET /documents/batch`, `POST /documents/{id}/search`,
 `GET /api/atoms/documents/{id}/facts`, `check_document_access(..., "read")` — is `services/document_access.py`:
 the `circle_sql` document filter retrieval applies (`document_search.reachable_document_ids`), plus `kb.all`, plus
-the legacy public-KB branch below. A KB filter (`?knowledge_base_id` on the list, `knowledge_base_id` on
+the legacy public-KB branch below — and nothing at all for a caller without a KB rung above `kb.none` (`Gast`,
+the `Kiosk` device role, any role without a KB rung; `holds_no_rung_above`, the gate `/search` and the list
+apply). Without that gate a public-tier document, which the circle filter hands to every asker, opened to every
+token. A KB filter (`?knowledge_base_id` on the list, `knowledge_base_id` on
 `/search`) no longer 403s a caller without a KB share: the list falls to the document filter, `/search` to the
 chunk filter of `rag.search(user_id=…)`. Before, a household-tier document that search returned to a household
 member answered 403 on all of these. Write, reindex, tier, move and delete stay KB-level permissions on top

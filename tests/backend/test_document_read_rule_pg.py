@@ -321,6 +321,33 @@ class TestPermissionsOnTop:
         assert await _detail(db_session, dora, doc.id) == 403    # kb.own only
 
 
+class TestNoKbRungReadsNothing:
+    @pytest.mark.parametrize("permissions", [["kb.none"], [], ["ha.full"]])
+    async def test_guest_and_kiosk_open_no_public_document(
+        self, db_session, people, monkeypatch, permissions,
+    ):
+        """``Gast`` (kb.none) and the ``Kiosk`` device role (no KB rung) are
+        refused like on ``/search`` and the list — even a public-tier document
+        that the circle filter alone would hand to any asker."""
+        alice, _, _, _, _ = people
+        haus = await _kb(db_session, alice.id, "Haus", tier=TIER_PUBLIC)
+        doc = await _doc(db_session, haus, "aushang")
+        guest = await _user(db_session, f"guest-{len(permissions)}-{'-'.join(permissions)}",
+                            permissions)
+        assert await _retrieval_sees(db_session, guest.id, doc.id)  # tier 4 alone
+
+        assert await _detail(db_session, guest, doc.id) == 403
+        assert await _batch(db_session, guest, [doc.id]) == set()
+        assert await _in_doc_search(db_session, guest, doc.id, monkeypatch) == 403
+        assert await _facts(db_session, guest, doc.id) == 403
+
+    async def test_a_kb_rung_still_reads_the_public_document(self, db_session, people):
+        alice, _, _, dora, _ = people
+        haus = await _kb(db_session, alice.id, "Haus", tier=TIER_PUBLIC)
+        doc = await _doc(db_session, haus, "aushang")
+        assert await _detail(db_session, dora, doc.id) == 200
+
+
 class TestSearchWithKbFilter:
     async def test_no_kb_level_refusal_the_search_filters_per_chunk(
         self, db_session, people, monkeypatch,
