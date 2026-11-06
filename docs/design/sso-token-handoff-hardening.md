@@ -5,6 +5,14 @@ Owners: auth. Related: `auth/provider_contract.py`, `auth/registry.py`,
 `api/routes/auth.py`, `src/frontend/src/main.tsx`, the pluggable auth-provider
 registry (CLAUDE.md → "Pluggable auth provider registry").
 
+**Renfield-side emitter (#1344):** for Renfield's own redirect providers
+(google/github/apple, all still off) the emitter exists — `GET /api/auth/sso/start`
+(§4.4, server-side `state` + PKCE verifier for the IdP leg,
+`services/oauth_state_store.py`, browser-bound by an HttpOnly cookie) and
+`GET|POST /api/auth/sso/callback/{provider}` (`api/routes/auth_oauth.py`), which
+issues the hand-off code of §4.1 and redirects to `/auth/callback?code=&state=`.
+The Reva/entra emitter cutover (§6) is unchanged.
+
 ## 1. Problem
 
 After a federated login (Entra/OIDC today; Google/GitHub/Apple when enabled) the
