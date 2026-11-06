@@ -148,3 +148,12 @@ Wiederholung die Schleifenerkennung selbst abbrach — beides, nie nur eines. De
 `AgentStep.abort_reason` mit, NICHT als Inhaltstext: `content` kommt aus dem Prompt-Katalog und ist uebersetzt.
 🛑 **`chat_handler` urteilt an ZWEI Stellen** (Orchestrator- und Einzelrollen-Pfad). Eine zu verdrahten und die
 andere zu vergessen ist der Normalfall des Irrtums; ein AST-Test haelt fest, dass beide die Menge uebergeben.
+
+## LLM server unreachable (#121)
+- `utils/llm_client.is_llm_unreachable` is the ONE classification of "could not connect" (connect error/timeout,
+  refused, ollama's bare `ConnectionError`; the httpx cause decides for openai's flattened types). A read timeout, a
+  dropped connection or a 4xx/5xx answer is NOT unreachable and keeps its own message.
+- Unreachable → `log_llm_unreachable` (ERROR with URL — scheme/host/port only — and how to check it) + the user gets
+  `chat.error_llm_unreachable`, which names NO host: under auth every household member reads it. Agent loop and every
+  `OllamaService` chat path go through it (`llm_failure_text`); an open LLM breaker answers `error_service_unavailable`
+  in the chat language instead of "Fehler: Circuit Breaker aktiv".

@@ -306,6 +306,10 @@ curl http://cuda.local:11434/api/show -d '{
 ### Häufige Fehler
 
 #### Fehler: "Connection refused"
+
+Der Chat zeigt dann „Ich erreiche mein Sprachmodell gerade nicht …“ (ohne Hostnamen). Das Backend-Protokoll
+nennt die URL und den Prüfbefehl: `LLM server unreachable (<Pfad>): cannot connect to <url>. … curl <url>/api/tags`.
+
 ```bash
 # Prüfen ob Ollama läuft
 systemctl status ollama

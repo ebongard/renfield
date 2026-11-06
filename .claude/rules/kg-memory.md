@@ -113,6 +113,10 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   so nothing re-evaluates it.
 - The proposal list carries what the embedding does not — description, edge count, first/last seen — because the owner
   facing two bare identical names is in exactly the position the reconciler refused to decide from.
+- **Review-queue focus (#1349):** no DOM `autoFocus` on a card — one card per proposal let the LAST cautious card win
+  and every remount pulled the focus again. `MergeProposalsSection` focuses the Ablehnen of the TOPMOST cautious single
+  ONCE, on the first loaded queue (`preventScroll`); `isCautiousProposal` (`mergeClusters.ts`) is the one predicate the
+  card's button emphasis and that focus decision share.
 
 ## Conflation tripwire (`KG_CONFLATION_MONITOR_ENABLED`, dark, read-only)
 `services/kg_conflation_monitor.py` flags distinct-name same-type same-tier NON-person pairs only. Persons are excluded
