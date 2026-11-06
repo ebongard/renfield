@@ -127,6 +127,8 @@ class DuplicateCluster(BaseModel):
     duplicates: list[DuplicateEntityInfo]
     cluster_size: int
     entity_type: str
+    # Two members' names differ only in a number (#1329); the merge refuses it.
+    identifier_conflict: bool = False
 
 
 class DuplicateClustersResponse(BaseModel):
@@ -138,6 +140,7 @@ class MergeDuplicatesResponse(BaseModel):
     dry_run: bool
     clusters_found: int
     entities_merged: int
+    clusters_refused: int = 0
     clusters: list[dict] = Field(default_factory=list)
 
 

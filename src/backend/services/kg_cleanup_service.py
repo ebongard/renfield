@@ -13,6 +13,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KGEntity, KGRelation
+from services.kg_name_signals import names_differ_only_in_digit_tokens
 from services.knowledge_graph_service import KnowledgeGraphService
 
 # Prefixes stripped during name normalization (lowercase)
@@ -134,6 +135,13 @@ class KGCleanupService:
         Uses normalized Levenshtein ratio (difflib.SequenceMatcher) to detect
         OCR variants and typos. Returns clusters sorted by size, each with
         a canonical entity (highest mention_count) and its duplicates.
+
+        Names that differ only in digit-bearing tokens ("Product A - 1.2.4" vs
+        "... 1.2.3", #1329) are two things, not a typo: such a pair never
+        becomes a cluster edge. String similarity is not transitive, so both
+        can still land in one cluster via a third spelling; that cluster is
+        marked ``identifier_conflict`` and ``merge_duplicate_clusters`` refuses
+        it as a whole (refusing the edge alone is not enough, cf. #1334).
         """
         if threshold is None:
             threshold = 0.82
@@ -203,6 +211,10 @@ class KGCleanupService:
                     if ratio < threshold:
                         continue
 
+                    # A different number names a different thing (#1329).
+                    if names_differ_only_in_digit_tokens(a_name, b_name):
+                        continue
+
                     # Record match
                     for e in (a_entity, b_entity):
                         entity_info[e.id] = {
@@ -244,11 +256,19 @@ class KGCleanupService:
                 sim = pair_similarity.get(key)
                 duplicates.append({**m, "similarity": sim})
 
+            normed_names = [_normalize_name(m["name"], m["entity_type"]) for m in members]
+            identifier_conflict = any(
+                names_differ_only_in_digit_tokens(normed_names[i], normed_names[j])
+                for i in range(len(normed_names))
+                for j in range(i + 1, len(normed_names))
+            )
+
             clusters.append({
                 "canonical": canonical,
                 "duplicates": duplicates,
                 "cluster_size": len(members),
                 "entity_type": canonical["entity_type"],
+                "identifier_conflict": identifier_conflict,
             })
 
         # Sort by cluster size descending
@@ -270,6 +290,9 @@ class KGCleanupService:
         Auto-merge duplicate clusters found by find_duplicate_clusters().
 
         Picks highest mention_count as canonical, merges others into it.
+        A cluster marked ``identifier_conflict`` (two members' names differ
+        only in a number, #1329) is never merged, only counted in
+        ``clusters_refused``.
         """
         clusters = await self.find_duplicate_clusters(
             entity_type=entity_type,
@@ -282,14 +305,23 @@ class KGCleanupService:
                 "dry_run": dry_run,
                 "clusters_found": 0,
                 "entities_merged": 0,
+                "clusters_refused": 0,
                 "clusters": [],
             }
 
         kg_service = KnowledgeGraphService(self.db)
         merged_count = 0
+        refused_count = 0
         cluster_summaries = []
 
         for cluster in clusters:
+            if cluster.get("identifier_conflict"):
+                refused_count += 1
+                logger.info(
+                    f"KG cleanup: refused cluster around entity {cluster['canonical']['id']} "
+                    f"({cluster['cluster_size']} members): names differ only in a number"
+                )
+                continue
             canonical_id = cluster["canonical"]["id"]
             dup_ids = [d["id"] for d in cluster["duplicates"]]
 
@@ -319,5 +351,6 @@ class KGCleanupService:
             "dry_run": dry_run,
             "clusters_found": len(clusters),
             "entities_merged": merged_count,
+            "clusters_refused": refused_count,
             "clusters": cluster_summaries[:50],  # Limit response size
         }

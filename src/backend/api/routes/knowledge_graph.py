@@ -456,7 +456,7 @@ async def find_duplicate_clusters(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission(Permission.KG_VIEW)),
 ):
-    """Find clusters of likely-duplicate entities via embedding similarity."""
+    """Find clusters of likely-duplicate entities via string similarity."""
     try:
         from services.kg_cleanup_service import KGCleanupService
 
