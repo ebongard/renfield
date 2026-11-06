@@ -731,6 +731,23 @@ class WakeWordDetector:
 
         return False
 
+    def reload_keyword(self, keyword: str) -> bool:
+        """Load a keyword's model file again after it was replaced on disk.
+
+        The new model is loaded first and then swapped in, so detection never
+        runs without the keyword; if it does not load, the running model stays.
+        """
+        if keyword not in self._wake_models:
+            return self.add_keyword(keyword)
+        model_info = self._find_model(keyword, self._discover_models())
+        model = self._load_model(model_info) if model_info else None
+        if not model:
+            print(f"Reload of wake word {keyword} failed, keeping the running model")
+            return False
+        self._wake_models[keyword] = model
+        print(f"Reloaded wake word: {keyword} ({model.model_type}/{model_info['path']})")
+        return True
+
     def remove_keyword(self, keyword: str):
         """Remove a keyword"""
         if keyword in self._wake_models:

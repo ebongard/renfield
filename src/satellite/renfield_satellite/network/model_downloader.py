@@ -5,6 +5,7 @@ Downloads wake word models from the Renfield backend server
 when they are not available locally.
 """
 
+import hashlib
 import os
 import ssl
 from pathlib import Path
@@ -124,12 +125,38 @@ class ModelDownloader:
 
         return None
 
-    async def download_model(self, model_id: str) -> Tuple[bool, Optional[str]]:
+    def local_sha256(self, model_id: str) -> Optional[str]:
+        """SHA-256 (hex) of the local model file, or None if there is none."""
+        path = self.get_model_path(model_id)
+        if path is None:
+            return None
+        try:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def is_model_stale(self, model_id: str, expected_sha256: Optional[str]) -> bool:
+        """True when a local file exists but differs from the server's.
+
+        Without an expected checksum (an older server) nothing is stale.
+        """
+        if not expected_sha256 or not self.is_model_available(model_id):
+            return False
+        return self.local_sha256(model_id) != expected_sha256
+
+    async def download_model(
+        self, model_id: str, expected_sha256: Optional[str] = None
+    ) -> Tuple[bool, Optional[str]]:
         """
         Download a model from the backend server.
 
+        With ``expected_sha256`` the download must match it, and only then
+        replaces the local file (atomically) — a failed or wrong download
+        leaves the current model in place.
+
         Args:
             model_id: The model identifier (e.g., "alexa", "hey_jarvis")
+            expected_sha256: SHA-256 the server announced for this model
 
         Returns:
             Tuple of (success: bool, error_message: Optional[str])
@@ -168,10 +195,20 @@ class ModelDownloader:
                         if "filename=" in cd:
                             fname = cd.split("filename=")[-1].strip('"')
                             ext = Path(fname).suffix or ".onnx"
-                        # Save model file
-                        model_path = self.models_path / f"{model_id}{ext}"
                         content = await response.read()
-                        model_path.write_bytes(content)
+                        if expected_sha256:
+                            got = hashlib.sha256(content).hexdigest()
+                            if got != expected_sha256:
+                                return False, (
+                                    f"Checksum mismatch for {model_id}: "
+                                    f"got {got[:12]}, expected {expected_sha256[:12]}"
+                                )
+                        # Save model file: write aside, then rename, so the
+                        # detector never sees a half-written model.
+                        model_path = self.models_path / f"{model_id}{ext}"
+                        tmp_path = model_path.with_name(model_path.name + ".part")
+                        tmp_path.write_bytes(content)
+                        os.replace(tmp_path, model_path)
                         print(f"✅ Model downloaded: {model_id} ({len(content)} bytes) -> {model_path.name}")
                         return True, None
 

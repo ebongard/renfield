@@ -10,7 +10,7 @@ import base64
 import json
 import ssl
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
@@ -91,6 +91,8 @@ class ServerConfig:
     cooldown_ms: int = 2000
     protocol_version: str = "1.0"
     room_id: Optional[int] = None
+    # {model_id: sha256} of the files the server serves; empty from an older server.
+    model_sha256: Dict[str, str] = field(default_factory=dict)
 
 
 class WebSocketClient:
@@ -507,7 +509,8 @@ class WebSocketClient:
                     threshold=config.get("threshold", 0.5),
                     cooldown_ms=config.get("cooldown_ms", 2000),
                     protocol_version=server_protocol,
-                    room_id=room_id
+                    room_id=room_id,
+                    model_sha256=config.get("model_sha256") or {},
                 )
                 print(f"Registered successfully. Server protocol: {server_protocol}")
                 print(f"Config: wake_words={self._server_config.wake_words}, threshold={self._server_config.threshold}")
@@ -690,6 +693,7 @@ class WebSocketClient:
                 cooldown_ms=config_data.get("cooldown_ms", self._server_config.cooldown_ms if self._server_config else 2000),
                 protocol_version=self._server_config.protocol_version if self._server_config else "1.0",
                 room_id=self._server_config.room_id if self._server_config else None,
+                model_sha256=config_data.get("model_sha256") or {},
             )
             self._server_config = new_config
             print(f"Config update received: wake_words={new_config.wake_words}, threshold={new_config.threshold}")

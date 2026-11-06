@@ -26,6 +26,7 @@ from models.database import (
     SETTING_WAKEWORD_THRESHOLD,
     SystemSetting,
 )
+from services.wakeword_models import model_checksums
 from utils.config import settings
 
 # Available wake word keywords with their metadata
@@ -124,11 +125,16 @@ class WakeWordConfig:
         }
 
     def to_satellite_config(self) -> dict[str, Any]:
-        """Convert to satellite config format"""
+        """Convert to satellite config format.
+
+        `model_sha256` lets a satellite replace a model file it already has
+        when the served one differs; a satellite that predates it ignores it.
+        """
         return {
             "wake_words": self.keyword_list,
             "threshold": self.threshold,
             "cooldown_ms": self.cooldown_ms,
+            "model_sha256": model_checksums(self.keyword_list),
         }
 
 

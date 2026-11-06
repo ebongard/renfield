@@ -4,8 +4,6 @@ Settings API Routes
 Provides configuration endpoints for frontend components.
 Supports both read (all users) and write (admin only) operations.
 """
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from loguru import logger
@@ -21,6 +19,7 @@ from services.wakeword_config_manager import (
     VALID_KEYWORDS,
     get_wakeword_config_manager,
 )
+from services.wakeword_models import find_model_file
 
 router = APIRouter()
 
@@ -232,46 +231,6 @@ async def get_single_device_sync_status(device_id: str):
 # Wake Word Model Endpoints (for satellite model download)
 # =============================================================================
 
-# Path to TFLite models for satellite download
-# These are mounted from data/wakeword-models/ via docker-compose
-TFLITE_MODELS_PATH = Path("/app/wakeword-models")
-
-
-def _find_model_file(model_id: str) -> Path | None:
-    """
-    Find a wake word model file (TFLite or ONNX) for the given model ID.
-
-    Searches in the wakeword-models directory.
-    """
-    if not TFLITE_MODELS_PATH.exists():
-        logger.warning(f"Models path does not exist: {TFLITE_MODELS_PATH}")
-        return None
-
-    # Try exact match first (TFLite, then ONNX)
-    for ext in [".tflite", ".onnx"]:
-        exact_path = TFLITE_MODELS_PATH / f"{model_id}{ext}"
-        if exact_path.exists():
-            return exact_path
-
-    # Try with version suffix
-    for ext in [".tflite", ".onnx"]:
-        versioned_path = TFLITE_MODELS_PATH / f"{model_id}_v0.1{ext}"
-        if versioned_path.exists():
-            return versioned_path
-
-    # Search for any matching file
-    for model_file in TFLITE_MODELS_PATH.glob("*"):
-        if model_file.suffix not in (".tflite", ".onnx"):
-            continue
-        # Skip preprocessing models
-        if model_file.stem in ["melspectrogram", "embedding_model"]:
-            continue
-        # Check if model_id is in the filename
-        if model_id in model_file.stem.lower():
-            return model_file
-
-    return None
-
 
 @router.get("/wakeword/models")
 async def list_available_models():
@@ -285,7 +244,7 @@ async def list_available_models():
 
     for kw in AVAILABLE_KEYWORDS:
         model_id = kw["id"]
-        model_file = _find_model_file(model_id)
+        model_file = find_model_file(model_id)
 
         model_info = {
             "model_id": model_id,
@@ -324,7 +283,7 @@ async def download_model(model_id: str):
             detail=f"Invalid model_id: {model_id}. Must be one of: {VALID_KEYWORDS}"
         )
 
-    model_file = _find_model_file(model_id)
+    model_file = find_model_file(model_id)
 
     if not model_file:
         raise HTTPException(
