@@ -2581,8 +2581,9 @@ LDAP_RECEIVE_TIMEOUT=10
 
 # Social redirect providers — all ship disabled; enabling is config-only
 # (no redeploy), off the credential critical path.
-# Ablauf (#1344): GET /api/auth/sso/start?provider=&code_challenge=&state= →
-# Anbieter → /api/auth/sso/callback/<provider> (GET; Apple per POST) → einmaliger
+# Ablauf (#1344): POST /api/auth/sso/start (JSON {provider, code_challenge,
+# state}, Antwort {authorize_url}; ein fremder Seitenaufruf kann ihn nicht
+# auslösen) → Anbieter → /api/auth/sso/callback/<provider> (GET; Apple per POST) → einmaliger
 # Hand-off-Code → POST /api/auth/sso/exchange. `state` und der PKCE-Verifier
 # des Anbieter-Wegs entstehen auf dem Server, liegen einmalig in Redis
 # (GETDEL) und sind per HttpOnly-Cookie an den Browser gebunden; jeder

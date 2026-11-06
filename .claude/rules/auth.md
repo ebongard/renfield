@@ -63,11 +63,11 @@ Single-use 60 s Redis code = a session *reference*, bound to an S256 `code_chall
 no token ever in Redis or a URL. 404 when the flag is off. Redirects carry only `?code=&state=`.
 
 ## OAuth redirect providers (`api/routes/auth_oauth.py`, #1344)
-`GET /api/auth/sso/start` → IdP → `GET|POST /api/auth/sso/callback/{provider}` → hand-off code above. The IdP
+`POST /api/auth/sso/start` (JSON XHR, answers `{authorize_url}`; never a forgeable top-level GET) → IdP → `GET|POST /api/auth/sso/callback/{provider}` → hand-off code above. The IdP
 `state` + PKCE verifier are made SERVER-side (`services/oauth_state_store`), single-use (`GETDEL`), TTL
 `OAUTH_STATE_TTL_SECONDS`, bound to the browser by the HttpOnly `renfield_oauth_bind` cookie (only its hash in Redis)
 and to the provider. A provider never invents a `state`; it only builds the URL and `exchange_code`s.
-- Every callback failure = the SAME opaque 400. 404 unless `SSO_HANDOFF_ENABLED` AND the provider is enabled AND
+- Every callback failure = the SAME opaque 400. Gate BEFORE input validation (no 422/405 while dark). 404 unless `SSO_HANDOFF_ENABLED` AND the provider is enabled AND
   fully configured (`registry.redirect_provider`); an enabled provider without the hand-off fails boot.
 - Identity resolves ONLY via `login_flow.resolve_provider_result` (same `post_authenticate` as a password login;
   standalone denies). An account needing the voice second factor is REFUSED here (fail closed), never bypassed.

@@ -3,12 +3,17 @@
 Two routes under ``/api/auth`` for the redirect providers (google, github,
 apple — ``auth/providers/``):
 
-``GET /sso/start?provider=&code_challenge=&state=``
+``POST /sso/start`` (JSON ``{provider, code_challenge, state}``)
     The SPA (``utils/pkce.ts::beginPkceLogin``) passes the PKCE challenge and
     state of ITS leg (backend -> SPA hand-off). The backend creates the IdP
     leg's own ``state`` and PKCE verifier (``services/oauth_state_store``),
-    binds them to this browser with an HttpOnly cookie, and redirects to the
-    IdP with ``state`` + S256 ``code_challenge``.
+    binds them to this browser with an HttpOnly cookie, and ANSWERS (no
+    redirect) with ``{"authorize_url": ...}``; the SPA then navigates there.
+    It is a same-origin XHR on purpose: a top-level GET could be forged by a
+    cross-site page, which would plant the attacker's SPA challenge in the
+    victim's browser and mint a hand-off code for the VICTIM's account bound
+    to the ATTACKER's verifier. ``application/json`` forces a CORS preflight,
+    and a cross-site caller cannot read the server-made authorize URL.
 
 ``GET|POST /sso/callback/{provider}``
     Consumes the state (single use), checks the browser binding and the
@@ -21,7 +26,9 @@ apple — ``auth/providers/``):
 Every callback failure answers the SAME opaque 400 — no oracle for which check
 failed. Both routes are 404 unless ``SSO_HANDOFF_ENABLED`` is on AND the
 provider is enabled and fully configured, so with every provider off (the
-default) nothing here exists.
+default) nothing here exists. The gate runs BEFORE any input is validated: a
+request without (or with malformed) parameters is 404 too, never a 422 that
+would name the expected fields.
 """
 from __future__ import annotations
 
@@ -86,15 +93,34 @@ def _opaque_failure(provider) -> JSONResponse:
     return resp
 
 
-@router.get("/sso/start")
+def _is_json(request: Request) -> bool:
+    media_type = request.headers.get("content-type", "").split(";", 1)[0]
+    return media_type.strip().lower() == "application/json"
+
+
+def _text_field(body: object, name: str) -> str | None:
+    value = body.get(name) if isinstance(body, dict) else None
+    return value if isinstance(value, str) else None
+
+
+# GET is listed only to answer it 404 like any unknown path (no 405 telling a
+# prober the route exists); the start step itself is POST only.
+@router.api_route("/sso/start", methods=["GET", "POST"])
 @limiter.limit(settings.api_rate_limit_auth)
-async def oauth_start(
-    request: Request, provider: str, code_challenge: str, state: str,
-):
-    """Begin a redirect login: bind state + PKCE server-side, go to the IdP."""
-    redirect_provider = _usable_provider(provider)
+async def oauth_start(request: Request):
+    """Begin a redirect login: bind state + PKCE server-side, return the IdP URL."""
+    if request.method != "POST" or not settings.sso_handoff_enabled:
+        raise _not_found()
+    try:
+        body = await request.json() if _is_json(request) else None
+    except ValueError:
+        body = None
+    provider = _text_field(body, "provider")
+    redirect_provider = _usable_provider(provider) if provider else None
     if redirect_provider is None:
         raise _not_found()
+    code_challenge = _text_field(body, "code_challenge") or ""
+    state = _text_field(body, "state") or ""
     if not _S256_CHALLENGE_RE.match(code_challenge) or not _SPA_STATE_RE.match(state):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_OPAQUE_DETAIL)
 
@@ -121,7 +147,7 @@ async def oauth_start(
     )
     if not url:
         raise _not_found()
-    resp = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+    resp = JSONResponse({"authorize_url": url}, headers={"Cache-Control": "no-store"})
     resp.set_cookie(
         BINDING_COOKIE,
         start.binding,

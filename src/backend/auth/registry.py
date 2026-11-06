@@ -99,7 +99,7 @@ class ProviderRegistry:
         """Provider ids of every usable redirect provider for *channel* — the
         "Sign in with …" buttons. The authorize URL is NOT built here: it needs
         a server-bound ``state`` + PKCE challenge, which only
-        ``GET /api/auth/sso/start`` creates (#1344)."""
+        ``POST /api/auth/sso/start`` creates (#1344)."""
         return [
             p.provider_id
             for p in self.all()

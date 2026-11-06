@@ -7,8 +7,10 @@ Covers
   exchange against a mocked IdP (``httpx.MockTransport``): Google and Apple via
   the ID token (issuer / audience / expiry checked), GitHub via ``/user`` +
   ``/user/emails``; the Apple client secret is a verifiable ES256 JWT;
-- ``GET /api/auth/sso/start`` + ``GET|POST /api/auth/sso/callback/{provider}``:
-  flag-off 404, missing / foreign / reused / expired state, wrong verifier at
+- ``POST /api/auth/sso/start`` (same-origin JSON, answers the IdP URL — no
+  redirect a cross-site page could trigger) + ``GET|POST
+  /api/auth/sso/callback/{provider}``: flag-off 404 (also without or with
+  malformed parameters, and for a GET), non-JSON start refused, missing / foreign / reused / expired state, wrong verifier at
   the IdP, unresolved identity, inactive account, voice second factor — every
   failure the SAME opaque 400 — and the happy path end to end through
   ``POST /api/auth/sso/exchange``;
@@ -427,9 +429,13 @@ def test_secret_value_accepts_plain_default():
 
 
 async def _start(client, **params):
-    q = {"provider": "google", "code_challenge": _spa_challenge(), "state": _SPA_STATE}
-    q.update(params)
-    return await client.get("/api/auth/sso/start", params=q)
+    body = {"provider": "google", "code_challenge": _spa_challenge(), "state": _SPA_STATE}
+    body.update(params)
+    return await client.post("/api/auth/sso/start", json=body)
+
+
+def _authorize_query(r) -> dict:
+    return {k: v[0] for k, v in parse_qs(urlparse(r.json()["authorize_url"]).query).items()}
 
 
 async def test_start_and_callback_404_while_flags_off(async_client, monkeypatch):
@@ -443,30 +449,81 @@ async def test_start_and_callback_404_while_flags_off(async_client, monkeypatch)
     assert (await async_client.post("/api/auth/sso/callback/google")).status_code == 404
 
 
+@pytest.mark.parametrize("handoff", [False, True])
+@pytest.mark.parametrize("call", [
+    lambda c: c.post("/api/auth/sso/start"),
+    lambda c: c.post("/api/auth/sso/start", json={}),
+    lambda c: c.post("/api/auth/sso/start", json=["google"]),
+    lambda c: c.post("/api/auth/sso/start", json={"provider": 7}),
+    lambda c: c.post("/api/auth/sso/start", content=b"{not json",
+                     headers={"Content-Type": "application/json"}),
+    lambda c: c.get("/api/auth/sso/start"),
+    lambda c: c.get("/api/auth/sso/start", params={"provider": "google"}),
+])
+async def test_start_is_dark_before_any_validation(async_client, monkeypatch, handoff, call):
+    """The gate runs first: no 422 naming the fields, no 405 naming the route."""
+    monkeypatch.setattr(settings, "sso_handoff_enabled", handoff)
+    r = await call(async_client)
+    assert r.status_code == 404, r.text
+    assert r.json() == {"detail": "Not found"}
+
+
+async def test_start_get_is_404_even_with_a_live_provider(async_client, google_on, fake_redis):
+    """The forgeable top-level GET is gone: a cross-site link cannot start a login."""
+    q = {"provider": "google", "code_challenge": _spa_challenge(), "state": _SPA_STATE}
+    r = await async_client.get("/api/auth/sso/start", params=q)
+    assert r.status_code == 404
+    assert "set-cookie" not in r.headers and fake_redis.store == {}
+
+
+@pytest.mark.parametrize("content_type", ["text/plain", "application/x-www-form-urlencoded", None])
+async def test_start_refuses_a_body_a_cross_site_page_can_send(
+    async_client, google_on, fake_redis, content_type,
+):
+    """Only ``application/json`` (preflighted cross-site) is read; a simple
+    request (form, text/plain, a Blob without type) is not a start."""
+    body = json.dumps({"provider": "google", "code_challenge": _spa_challenge(), "state": _SPA_STATE})
+    headers = {"Content-Type": content_type} if content_type else {}
+    r = await async_client.post("/api/auth/sso/start", content=body.encode(), headers=headers)
+    assert r.status_code == 404
+    assert "set-cookie" not in r.headers and fake_redis.store == {}
+
+
 @pytest.mark.parametrize("bad", [
     {"code_challenge": "short"},
     {"code_challenge": "!" * 43},
+    {"code_challenge": None},
     {"state": "short"},
     {"state": "ä" * 20},
+    {"state": 12345678901234567890},
 ])
 async def test_start_rejects_malformed_spa_binding(async_client, google_on, fake_redis, bad):
     r = await _start(async_client, **bad)
     assert r.status_code == 400
+    assert r.json() == {"detail": "Invalid or expired authorization request"}
     assert fake_redis.store == {}
 
 
-async def test_start_redirects_with_server_state_and_pkce(async_client, google_on, fake_redis):
+async def test_start_returns_the_idp_url_with_server_state_and_pkce(async_client, google_on, fake_redis):
     r = await _start(async_client)
-    assert r.status_code == 302
-    loc = urlparse(r.headers["location"])
+    assert r.status_code == 200 and "location" not in r.headers
+    assert r.headers["cache-control"] == "no-store"
+    loc = urlparse(r.json()["authorize_url"])
     assert loc.netloc == "accounts.google.com"
-    q = {k: v[0] for k, v in parse_qs(loc.query).items()}
+    q = _authorize_query(r)
     assert q["code_challenge_method"] == "S256" and len(q["code_challenge"]) == 43
     assert q["state"] != _SPA_STATE                          # the IdP gets the SERVER state
     assert f"oauth:state:{q['state']}" in fake_redis.store  # stored server-side
     cookie = r.headers["set-cookie"]
     assert "renfield_oauth_bind=" in cookie and "HttpOnly" in cookie
     assert "Path=/api/auth/sso/callback" in cookie and "samesite=lax" in cookie.lower()
+
+
+async def test_start_accepts_json_with_charset(async_client, google_on, fake_redis):
+    body = json.dumps({"provider": "google", "code_challenge": _spa_challenge(), "state": _SPA_STATE})
+    r = await async_client.post("/api/auth/sso/start", content=body.encode(),
+                                headers={"Content-Type": "Application/JSON; charset=utf-8"})
+    assert r.status_code == 200 and "authorize_url" in r.json()
 
 
 async def test_start_503_when_state_cannot_be_stored(async_client, google_on, monkeypatch):
@@ -476,7 +533,8 @@ async def test_start_503_when_state_cannot_be_stored(async_client, google_on, mo
 
     monkeypatch.setattr("services.oauth_state_store.get_redis", lambda: _Down())
     r = await _start(async_client)
-    assert r.status_code == 503 and "location" not in r.headers
+    assert r.status_code == 503 and "authorize_url" not in r.text
+    assert "set-cookie" not in r.headers
 
 
 async def _resolving_consumer(user_id):
@@ -487,8 +545,7 @@ async def _resolving_consumer(user_id):
 
 async def _started(client):
     r = await _start(client)
-    q = {k: v[0] for k, v in parse_qs(urlparse(r.headers["location"]).query).items()}
-    return q["state"]
+    return _authorize_query(r)["state"]
 
 
 async def test_callback_happy_path_end_to_end(async_client, db_session, google_on, fake_redis, monkeypatch):
@@ -635,10 +692,10 @@ async def test_apple_form_post_callback(async_client, db_session, apple_on, fake
     _mock_idp(monkeypatch, lambda r: httpx.Response(200, json={"id_token": token}))
 
     r = await _start(async_client, provider="apple")
-    assert r.status_code == 302
+    assert r.status_code == 200
     cookie = r.headers["set-cookie"].lower()
     assert "samesite=none" in cookie and "secure" in cookie  # survives the cross-site POST
-    state = {k: v[0] for k, v in parse_qs(urlparse(r.headers["location"]).query).items()}["state"]
+    state = _authorize_query(r)["state"]
     # httpx' test client does not send Secure cookies over http — attach it by hand.
     bind = async_client.cookies.get("renfield_oauth_bind") or r.cookies.get("renfield_oauth_bind")
     assert bind

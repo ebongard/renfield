@@ -56,7 +56,7 @@ class RedirectProvider:
     """Base for federated/redirect providers (google, github, apple, …).
 
     Not in the credential walk: ``authenticate`` always returns ``None``. The
-    login starts at ``GET /api/auth/sso/start`` and ends at
+    login starts at ``POST /api/auth/sso/start`` and ends at
     ``/api/auth/sso/callback/{provider}`` (``api/routes/auth_oauth.py``): the
     route owns the server-bound ``state`` and the PKCE verifier
     (``services/oauth_state_store``) and hands both in here. A provider only

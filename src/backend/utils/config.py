@@ -1575,7 +1575,7 @@ class Settings(BaseSettings):
 
     # --- Social redirect providers. All ship enabled=False; enabling is a
     #     config-only change (no redeploy). Off the credential critical path.
-    #     Login = GET /api/auth/sso/start → IdP → /api/auth/sso/callback/{id}
+    #     Login = POST /api/auth/sso/start (JSON, returns the IdP URL) → IdP → /api/auth/sso/callback/{id}
     #     → one-time hand-off code (needs SSO_HANDOFF_ENABLED, validator) (#1344).
     # Lifetime of a pending redirect login (server-bound state + PKCE verifier
     # in Redis): the time a person has at the IdP's consent screen.
