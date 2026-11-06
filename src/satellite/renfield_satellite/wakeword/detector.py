@@ -348,8 +348,18 @@ class WakeWordDetector:
         return self._loaded
 
     def _find_model(self, keyword: str, available_models: List[dict]) -> Optional[dict]:
-        """Find a model matching the keyword"""
+        """Find a model matching the keyword.
+
+        An exact id wins: the downloader hashes and replaces `<keyword>.<ext>`
+        exactly, so a fuzzy match on a neighbour (`renfield_de_v5` for
+        `renfield_de`, in glob order) would load a file the update never checks.
+        The substring match stays as the fallback (`alexa` -> `alexa_v0.1`).
+        """
         keyword_lower = keyword.lower().replace("_", "").replace("-", "")
+
+        for model in available_models:
+            if model["id"].lower().replace("_", "").replace("-", "") == keyword_lower:
+                return model
 
         for model in available_models:
             model_id = model["id"].lower().replace("_", "").replace("-", "")

@@ -302,3 +302,26 @@ def test_reload_keeps_the_running_model_when_the_new_one_does_not_load():
 
     assert det.reload_keyword("renfield_de") is False
     assert det._wake_models["renfield_de"] == "old-model"
+
+
+# --- the detector loads the file the update checks ---------------------------
+
+
+def _lookup(ids, keyword):
+    det = object.__new__(WakeWordDetector)
+    found = det._find_model(keyword, [{"id": i} for i in ids])
+    return found and found["id"]
+
+
+@pytest.mark.satellite
+def test_an_exact_model_id_wins_over_a_fuzzy_neighbour():
+    """The downloader hashes renfield_de.<ext>; the detector must load that file."""
+    assert _lookup(["renfield_de_v5", "renfield_de"], "renfield_de") == "renfield_de"
+    assert _lookup(["hey_renfield", "renfield"], "renfield") == "renfield"
+
+
+@pytest.mark.satellite
+def test_the_fuzzy_match_remains_the_fallback():
+    assert _lookup(["alexa_v0.1"], "alexa") == "alexa_v0.1"
+    assert _lookup(["hey_jarvis_v0.1"], "hey-jarvis") == "hey_jarvis_v0.1"
+    assert _lookup(["alexa_v0.1"], "renfield_de") is None
