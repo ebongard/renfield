@@ -103,6 +103,45 @@ async def test_a_matching_download_replaces_the_file(tmp_path, monkeypatch):
 
     assert (ok, err) == (True, None)
     assert (tmp_path / "renfield_de.onnx").read_bytes() == b"v5"
+    assert (tmp_path / "renfield_de.onnx.prev").read_bytes() == b"v3"
+    assert not list(tmp_path.glob("*.part"))
+
+
+@pytest.mark.satellite
+async def test_restore_previous_puts_back_the_replaced_file(tmp_path, monkeypatch):
+    (tmp_path / "renfield_de.onnx").write_bytes(b"v3")
+    dl = _downloader(tmp_path, b"v5", monkeypatch)
+    await dl.download_model("renfield_de", expected_sha256=_sha(b"v5"))
+
+    assert dl.restore_previous("renfield_de") is True
+    assert (tmp_path / "renfield_de.onnx").read_bytes() == b"v3"
+    assert not (tmp_path / "renfield_de.onnx.prev").exists()
+
+
+@pytest.mark.satellite
+def test_restore_previous_without_a_replaced_file_does_nothing(tmp_path):
+    (tmp_path / "renfield_de.onnx").write_bytes(b"v3")
+
+    assert ModelDownloader(models_path=str(tmp_path)).restore_previous("renfield_de") is False
+    assert (tmp_path / "renfield_de.onnx").read_bytes() == b"v3"
+
+
+@pytest.mark.satellite
+async def test_a_failed_write_leaves_no_part_file_and_keeps_the_model(tmp_path, monkeypatch):
+    (tmp_path / "renfield_de.onnx").write_bytes(b"v3")
+    dl = _downloader(tmp_path, b"v5", monkeypatch)
+    real_replace = md_mod.os.replace
+
+    def failing_replace(src, dst):
+        if str(src).endswith(".part"):
+            raise OSError("No space left on device")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(md_mod.os, "replace", failing_replace)
+
+    ok, err = await dl.download_model("renfield_de", expected_sha256=_sha(b"v5"))
+
+    assert ok is False and "No space left" in err
     assert not list(tmp_path.glob("*.part"))
 
 
@@ -170,6 +209,7 @@ def _fake_downloader(stale: bool, download_ok: bool):
     dl.is_model_stale.return_value = stale
     dl.is_model_available.return_value = True
     dl.download_model = AsyncMock(return_value=(download_ok, None if download_ok else "network down"))
+    dl.restore_previous.return_value = True
     return dl
 
 
@@ -188,6 +228,7 @@ async def test_a_stale_model_is_downloaded_and_reloaded():
 
     dl.download_model.assert_awaited_once_with("renfield_de", expected_sha256="new")
     sat.wakeword.reload_keyword.assert_called_once_with("renfield_de")
+    dl.restore_previous.assert_not_called()
     assert sat.ws_client.send_config_ack.await_args.kwargs["success"] is True
 
 
@@ -202,6 +243,25 @@ async def test_a_failed_update_keeps_the_running_model():
     sat.wakeword.remove_keyword.assert_not_called()
     ack = sat.ws_client.send_config_ack.await_args.kwargs
     assert ack["active_keywords"] == ["renfield_de"] and ack["failed_keywords"] == []
+    # ... but the backend must see it: only an unsuccessful ack is logged there.
+    assert ack["success"] is False
+    assert "network down" in ack["error"]
+
+
+@pytest.mark.satellite
+async def test_an_update_that_does_not_load_restores_the_previous_file_and_is_reported():
+    """Else the next restart loads the broken file and the room loses its wake word."""
+    dl = _fake_downloader(stale=True, download_ok=True)
+    sat = _satellite(dl)
+    sat.wakeword.reload_keyword.return_value = False
+
+    await _apply(sat, {"renfield_de": "new"})
+
+    dl.restore_previous.assert_called_once_with("renfield_de")
+    ack = sat.ws_client.send_config_ack.await_args.kwargs
+    assert ack["active_keywords"] == ["renfield_de"]
+    assert ack["success"] is False
+    assert "does not load" in ack["error"]
 
 
 @pytest.mark.satellite

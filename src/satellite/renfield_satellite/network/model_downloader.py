@@ -144,6 +144,27 @@ class ModelDownloader:
             return False
         return self.local_sha256(model_id) != expected_sha256
 
+    @staticmethod
+    def _prev_path(model_path: Path) -> Path:
+        return model_path.with_name(model_path.name + ".prev")
+
+    def restore_previous(self, model_id: str) -> bool:
+        """Put back the file the last download replaced.
+
+        For a model that downloaded fine but does not load: without this the
+        next service restart would load the broken file and lose the keyword.
+        """
+        for ext in (".tflite", ".onnx"):
+            model_path = self.models_path / f"{model_id}{ext}"
+            prev_path = self._prev_path(model_path)
+            if prev_path.exists():
+                try:
+                    os.replace(prev_path, model_path)
+                    return True
+                except OSError:
+                    return False
+        return False
+
     async def download_model(
         self, model_id: str, expected_sha256: Optional[str] = None
     ) -> Tuple[bool, Optional[str]]:
@@ -204,11 +225,17 @@ class ModelDownloader:
                                     f"got {got[:12]}, expected {expected_sha256[:12]}"
                                 )
                         # Save model file: write aside, then rename, so the
-                        # detector never sees a half-written model.
+                        # detector never sees a half-written model. The file it
+                        # replaces is kept as .prev for restore_previous().
                         model_path = self.models_path / f"{model_id}{ext}"
                         tmp_path = model_path.with_name(model_path.name + ".part")
-                        tmp_path.write_bytes(content)
-                        os.replace(tmp_path, model_path)
+                        try:
+                            tmp_path.write_bytes(content)
+                            if model_path.exists():
+                                os.replace(model_path, self._prev_path(model_path))
+                            os.replace(tmp_path, model_path)
+                        finally:
+                            tmp_path.unlink(missing_ok=True)
                         print(f"✅ Model downloaded: {model_id} ({len(content)} bytes) -> {model_path.name}")
                         return True, None
 

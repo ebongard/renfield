@@ -1294,6 +1294,9 @@ class Satellite:
         active_keywords = []
         failed_keywords = []
         replaced_keywords = []
+        # Keywords whose model update failed: they keep running on the
+        # previous model, but the ack must not claim the device is in sync.
+        update_failed = []
         error_msg = None
         expected_shas = config.model_sha256 or {}
 
@@ -1329,6 +1332,9 @@ class Satellite:
                         replaced_keywords.append(keyword)
                     else:
                         print(f"⚠️ Keyword '{keyword}' update failed, keeping the current model: {download_error}")
+                        update_failed.append(keyword)
+                        if not error_msg:
+                            error_msg = f"Model update for {keyword} failed: {download_error}"
                     active_keywords.append(keyword)
                     continue
 
@@ -1355,8 +1361,12 @@ class Satellite:
             # A replaced file only takes effect when its model is loaded again
             # (update_config only loads keywords it does not have yet).
             for keyword in replaced_keywords:
-                if keyword in self.wakeword.active_keywords:
-                    self.wakeword.reload_keyword(keyword)
+                if keyword in self.wakeword.active_keywords and not self.wakeword.reload_keyword(keyword):
+                    restored = model_downloader.restore_previous(keyword)
+                    print(f"⚠️ Keyword '{keyword}': new model does not load, previous file restored={restored}")
+                    update_failed.append(keyword)
+                    if not error_msg:
+                        error_msg = f"Updated model for {keyword} does not load (previous restored: {restored})"
 
             # Apply the configuration with available keywords
             if active_keywords:
@@ -1382,7 +1392,7 @@ class Satellite:
                 active_keywords = self.wakeword.active_keywords
 
         # Send config acknowledgment to server
-        config_success = len(failed_keywords) == 0 and len(active_keywords) > 0
+        config_success = not failed_keywords and not update_failed and len(active_keywords) > 0
         await self.ws_client.send_config_ack(
             success=config_success,
             active_keywords=active_keywords,
