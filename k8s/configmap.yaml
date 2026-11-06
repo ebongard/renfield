@@ -320,6 +320,10 @@ data:
   # Ohne dieses Konto gehoert ein Raumverlauf niemandem und faellt auf Stufe 0
   # zurueck — die geteilten Raumverlaeufe (§8.1) waeren still wirkungslos.
   SATELLITE_DEVICE_ACCOUNT: "Haushalt"
+  # Kamerabild nur bei Sehfragen (2026-11-06): ein Kamera-Satellit fotografiert bei
+  # JEDEM Weckwort; ohne diesen Schalter beantwortet das Vision-Modell jede Frage
+  # mit Bild — im dunklen Raum wurde daraus „ich kann das Bild nicht sehen“.
+  SATELLITE_VISION_QUERY_GATE_ENABLED: "true"
 
   # Registry-Zeile dieser Instanz beim geteilten Voice-Server. Mit auth AN geht
   # der Browser-Handschlag auf den authentifizierten Pfad und muss `?client=`

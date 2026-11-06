@@ -362,6 +362,50 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.warning(f"OCR gibberish check failed: {e}")
             return None
 
+    async def is_visual_query(self, text: str, lang: str | None = None) -> bool | None:
+        """Does a spoken utterance need the camera snapshot that came with it?
+
+        A camera satellite photographs the room on every wake word; sending that
+        image along with an unrelated question made the vision model answer it,
+        and a dark room turned "what time is it?" into "I can't see the image".
+        Returns True (wants to see), False (does not), or None (no verdict /
+        failure / breaker open). Short classification on the fast intent model.
+        """
+        from services.prompt_manager import prompt_manager
+        from utils.llm_client import (
+            extract_response_content,
+            get_classification_chat_kwargs,
+            get_intent_client,
+        )
+
+        model = settings.ollama_intent_model or settings.ollama_model
+        utterance = (text or "").strip()
+        if not model or not utterance:
+            return None
+        if not await llm_circuit_breaker.allow_request():
+            return None
+        prompt = prompt_manager.get("intent", "visual_query_prompt", lang=lang, message=utterance[:500])
+        try:
+            resp = await get_intent_client().chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                options={"num_ctx": settings.ollama_num_ctx},
+                **get_classification_chat_kwargs(model),
+            )
+            await llm_circuit_breaker.record_success()
+        except Exception as e:
+            await llm_circuit_breaker.record_failure()
+            logger.warning(f"Visual query check failed: {e}")
+            return None
+        content = re.sub(r"<think>.*?</think>", "", extract_response_content(resp), flags=re.DOTALL | re.IGNORECASE)
+        words = re.findall(r"[A-ZÄÖÜ]+", content.upper())
+        if words and words[0] in ("JA", "YES"):
+            return True
+        if words and words[0] in ("NEIN", "NO"):
+            return False
+        return None
+
     async def extract_text_from_image(self, image_b64: str) -> str | None:
         """Transcribe ALL text from a document-page image via the vision model.
 

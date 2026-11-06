@@ -73,6 +73,23 @@ de:
   # System message for JSON-only responses
   json_system_message: "Antworte nur mit JSON."
 
+  # Satellite voice turn with a camera snapshot: does the utterance need the image?
+  # Every wake word on a camera satellite takes a snapshot; only a question that
+  # wants to SEE something may go to the vision model with it.
+  visual_query_prompt: |
+    Ein Sprachassistent mit Kamera hat diese Äußerung gehört: "{message}"
+
+    Braucht die Antwort ein aktuelles Kamerabild des Raums?
+    JA nur, wenn die Äußerung etwas SEHEN will: was im Raum zu sehen ist, wer oder was
+    da ist, wie etwas aussieht, ein Gegenstand, den jemand zeigt oder hochhält.
+    ("Was siehst du?", "Wer ist im Raum?", "Was halte ich in der Hand?",
+     "Wie sieht es hier aus?", "Ist das Fenster offen?", "Was ist das hier?")
+    NEIN für alles andere: Fragen, Befehle, Smalltalk, Wissen, Smart Home, Musik,
+    Wetter, Erinnerungen — und für unverständliche oder abgebrochene Äußerungen.
+    ("Wie spät ist es?", "Mach das Licht an", "Wer war Einstein?", "Spiel Musik")
+
+    Antworte mit genau einem Wort: JA oder NEIN.
+
 en:
   # Main intent extraction prompt template
   # Available variables: {message}, {room_context}, {history_context}, {intent_types}, {entity_context}, {examples}, {correction_examples}
@@ -140,6 +157,21 @@ en:
 
   # System message for JSON-only responses
   json_system_message: "Reply with JSON only."
+
+  # See the de block: does a satellite utterance need the camera snapshot?
+  visual_query_prompt: |
+    A voice assistant with a camera heard this utterance: "{message}"
+
+    Does answering it need a current camera image of the room?
+    YES only if the utterance wants to SEE something: what is visible in the room, who
+    or what is there, how something looks, an object someone is showing or holding up.
+    ("What do you see?", "Who is in the room?", "What am I holding?",
+     "How does it look in here?", "Is the window open?", "What is this?")
+    NO for everything else: questions, commands, small talk, knowledge, smart home,
+    music, weather, reminders — and for garbled or cut-off utterances.
+    ("What time is it?", "Turn on the light", "Who was Einstein?", "Play music")
+
+    Answer with exactly one word: YES or NO.
 
 # Language-independent configuration
 llm_options:

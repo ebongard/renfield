@@ -183,6 +183,13 @@ class HaGlueSettings(BaseSettings):
     # slow, and a premature verdict would be a worse lie than a late one.
     satellite_update_timeout: float = Field(default=900.0, ge=60.0, le=86400.0)
 
+    # === Satellite camera on a voice turn ===
+    # A camera satellite photographs the room on every wake word. Off (legacy):
+    # any turn with an image goes to the vision model. On: the intent model first
+    # asks whether the utterance wants to SEE something; only then is the image
+    # used, otherwise the turn is answered without it (also when the check fails).
+    satellite_vision_query_gate_enabled: bool = False
+
     # === Rooms ===
     rooms_auto_create_from_satellite: bool = True  # Auto-create rooms when satellites register
 
