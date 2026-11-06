@@ -95,7 +95,7 @@ def _run_update(tmp_path, package: Path, *, pubkeys, require, manifest=None, sig
 
 
 def _pip_calls(pip) -> list:
-    return [c for c in pip.call_args_list if c.args and c.args[0][:1] == ["pip"]]
+    return [c for c in pip.call_args_list if c.args and c.args[0][1:3] == ["-m", "pip"]]
 
 
 SIGNED_LIST = _running_list_text() + f"\n{NEW_DEP}\n"

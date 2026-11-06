@@ -69,7 +69,8 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
 Every satellite, the Orange Pis included, is provisioned from Ansible
 `src/satellite/provisioning/group_vars/satellites.yml` + host_vars. Until 2026-11-06 the Esszimmer pod had its own
 ConfigMap, and #1282 raised the recording limit only in group_vars (the pod kept 15 s); a second source must not
-come back.
+come back. The service's `MemoryMax` is `satellite_memory_max` there: 450M on a Pi Zero 2 W (512 MB, AC108
+headroom), 1G on the Orange Pis — at 450M their page cache pressed against the cap and an OTA's pip stalled in reclaim.
 
 ## Orange Pi Zero 3W: bare-metal like the Pis (both since 2026-11-05/06, no satellite in k8s any more)
 Why: OTA cannot update a pod (code lives in the ephemeral container layer), and a cluster node with an always-on mic

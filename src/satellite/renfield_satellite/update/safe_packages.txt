@@ -60,3 +60,5 @@ cryptography
 # `opus-lib` / `opus_lib` / `opus.lib` collapse to `opus-lib`, a DIFFERENT
 # canonical name, so this entry does not allow a look-alike project.
 opuslib
+gpiozero
+Pillow

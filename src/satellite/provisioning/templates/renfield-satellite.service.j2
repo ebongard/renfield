@@ -27,9 +27,10 @@ Environment=HOME=/home/{{ ansible_user }}
 # Allow access to hardware
 SupplementaryGroups={{ satellite_hw_groups | reject('equalto', 'audio') | join(' ') }}
 
-# Resource limits (Pi Zero 2 W has 512MB RAM)
-# AC108 4-mic driver needs headroom — memory pressure triggers vmalloc kernel crash
-MemoryMax=450M
+# Resource limits: satellite_memory_max (group_vars) — 450M on a Pi Zero 2 W
+# (512MB RAM; the AC108 4-mic driver needs headroom, memory pressure triggers a
+# vmalloc kernel crash), more on the Orange Pis.
+MemoryMax={{ satellite_memory_max }}
 
 # Logging
 StandardOutput=journal

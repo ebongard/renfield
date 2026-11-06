@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass
@@ -819,8 +820,12 @@ class UpdateManager:
                 f"Unknown packages in requirements: {rejected_names}"
             )
 
+        # The pip of the interpreter that runs the satellite (its venv). A bare
+        # "pip" resolves on PATH, which the unit does not point at the venv: it
+        # found the system pip, installed into the system Python and on an
+        # Orange Pi compiled from source until the timeout.
         subprocess.run(
-            ["pip", "install", "-r", str(req_file), "--no-deps", "--quiet"],
+            [sys.executable, "-m", "pip", "install", "-r", str(req_file), "--no-deps", "--quiet"],
             check=True,
             timeout=120
         )

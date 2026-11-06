@@ -43,6 +43,11 @@ Loaded only when OTA-signing / update / enrollment code is read. Long form: `doc
   (`test_update_security.py::test_shipped_requirements_pass_validation` — red = real bug). Names compare after PEP 503
   canonicalisation; never delete separators (look-alike PyPI project = OTA RCE bypass). `--no-deps`: every
   TRANSITIVE dependency must be listed in both files too, or it is silently not installed.
+- **`requirements.txt` names exactly what the fleet runs** (group_vars `satellite_python_packages` + the dedicated
+  pip tasks; `test_requirements_match_fleet.py`, exemptions need a reason). The installer runs the venv's pip
+  (`sys.executable -m pip`); until 1.4.18 a bare `pip` hit the SYSTEM pip, so no OTA ever installed a dependency
+  into the venv — the drifted list (soundcard, pyopen-wakeword, …) stayed invisible. A fix in the installer only
+  takes effect on the update AFTER the one that ships it.
 - **Extract runs BEFORE signature verification**, so `_safe_extract` admits only regular files + directories (no
   symlink/hardlink/fifo/device) for every member, unconditionally — `filter='data'` is not guaranteed on the fleet's
   Python 3.11.2. `src/satellite` must contain no links.
