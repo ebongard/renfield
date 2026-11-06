@@ -76,6 +76,9 @@ de:
 
   error_fallback: "Entschuldigung, es gab einen Fehler: {error}"
   error_service_unavailable: "Der Dienst ist vorübergehend nicht verfügbar. Bitte versuche es später erneut."
+  # The LLM server could not be reached at all (#121). No host names: the
+  # URL and the troubleshooting hint go to the backend log.
+  error_llm_unreachable: "Ich erreiche mein Sprachmodell gerade nicht – der LLM-Server antwortet nicht. Bitte versuche es gleich noch einmal; hält das an, sollte jemand mit Administrationsrechten prüfen, ob der LLM-Dienst läuft."
 
 en:
   system_prompt: |
@@ -151,6 +154,7 @@ en:
 
   error_fallback: "Sorry, there was an error: {error}"
   error_service_unavailable: "The service is temporarily unavailable. Please try again later."
+  error_llm_unreachable: "I can't reach my language model right now – the LLM server is not responding. Please try again in a moment; if this persists, an administrator should check that the LLM service is running."
 
 # Language-independent configuration
 llm_options:

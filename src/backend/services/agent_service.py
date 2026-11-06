@@ -30,6 +30,8 @@ from utils.llm_client import (
     extract_response_content,
     get_agent_client,
     get_classification_chat_kwargs,
+    is_llm_unreachable,
+    log_llm_unreachable,
     use_openai_for_tier,
 )
 from utils.log_safety import error_text_without_content
@@ -2439,6 +2441,15 @@ class AgentService:
                 return
             except Exception as e:
                 await agent_circuit_breaker.record_failure()
+                if is_llm_unreachable(e):
+                    # #121: name the URL and how to check it in the LOG; the
+                    # user gets a plain sentence, not "[Errno 111] Connection
+                    # refused" behind "LLM error:".
+                    log_llm_unreachable(e, where=f"agent step {step_num}", configured_url=resolved_url)
+                    unreachable = prompt_manager.get("chat", "error_llm_unreachable", lang=lang)
+                    yield AgentStep(step_number=step_num, step_type="error", content=unreachable)
+                    yield self._build_fallback_answer(context, step_num, str(e), lang=lang, content=unreachable)
+                    return
                 logger.error(f"❌ Agent LLM call failed at step {step_num}: {e}")
                 yield AgentStep(
                     step_number=step_num,
@@ -3098,15 +3109,25 @@ class AgentService:
             reason=reason_text,
         )
 
-    def _build_fallback_answer(self, context: AgentContext, step_num: int, error: str, lang: str = "de") -> AgentStep:
-        """Build a fallback answer when an error occurs."""
+    def _build_fallback_answer(
+        self, context: AgentContext, step_num: int, error: str, lang: str = "de",
+        content: str | None = None,
+    ) -> AgentStep:
+        """Build a fallback answer when an error occurs.
+
+        ``content`` replaces the generic "an error occurred: <error>" sentence
+        when the caller already has a better one for the user (an unreachable
+        LLM server, #121).
+        """
         context.outcome = "llm_error"
         if lang == "en":
-            content = f"Sorry, an error occurred while processing: {error}"
             reason = "Error fallback"
+            if content is None:
+                content = f"Sorry, an error occurred while processing: {error}"
         else:
-            content = f"Entschuldigung, bei der Bearbeitung ist ein Fehler aufgetreten: {error}"
             reason = "Fehler-Fallback"
+            if content is None:
+                content = f"Entschuldigung, bei der Bearbeitung ist ein Fehler aufgetreten: {error}"
         return AgentStep(
             step_number=step_num,
             step_type="final_answer",

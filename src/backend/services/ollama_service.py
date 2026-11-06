@@ -20,10 +20,13 @@ from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import llm_circuit_breaker
 from utils.config import settings
 from utils.llm_client import (
+    configured_llm_url,
     extract_response_content,
     get_classification_chat_kwargs,
     get_default_client,
     get_embed_client,
+    is_llm_unreachable,
+    log_llm_unreachable,
 )
 
 _VALID_PERSONALITY_STYLES = {"freundlich", "direkt", "formell", "casual"}
@@ -51,6 +54,49 @@ def _build_personality_context(personality_style: str, personality_prompt: str |
         "chat", "personality_context", lang=lang,
         personality_instructions=instructions,
     )
+
+
+_LLM_UNREACHABLE_DEFAULT = {
+    "de": "Ich erreiche mein Sprachmodell gerade nicht.",
+    "en": "I can't reach my language model right now.",
+}
+
+
+def llm_unreachable_text(lang: str) -> str:
+    """The user-facing answer when the LLM server cannot be reached (#121)."""
+    return prompt_manager.get(
+        "chat", "error_llm_unreachable", lang=lang,
+        default=_LLM_UNREACHABLE_DEFAULT.get(lang, _LLM_UNREACHABLE_DEFAULT["en"]),
+    )
+
+
+def llm_breaker_open_text(lang: str) -> str:
+    """The user-facing answer while the LLM circuit breaker rejects calls.
+
+    It opens after repeated LLM failures — typically the server being down. The
+    answer used to be ``error_fallback`` with the literal error
+    "Circuit Breaker aktiv", German in an English chat and meaningless to the
+    person asking.
+    """
+    return prompt_manager.get(
+        "chat", "error_service_unavailable", lang=lang,
+        default="LLM-Service vorübergehend nicht verfügbar.",
+    )
+
+
+def llm_failure_text(exc: BaseException, *, lang: str, where: str, tier: str, default: str) -> str:
+    """Log an LLM call failure and return the answer the user sees.
+
+    An unreachable server gets the operator log line (URL + how to check it)
+    and a plain answer instead of the raw transport error ("[Errno 111]
+    Connection refused", "All connection attempts failed"). Every other failure
+    keeps the generic ``error_fallback`` it had.
+    """
+    if is_llm_unreachable(exc):
+        log_llm_unreachable(exc, where=where, configured_url=configured_llm_url(tier))
+        return llm_unreachable_text(lang)
+    logger.error(f"{where} error: {exc}")
+    return prompt_manager.get("chat", "error_fallback", lang=lang, default=default, error=str(exc))
 
 
 class OllamaService:
@@ -173,7 +219,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         # Check circuit breaker before LLM call
         if not await llm_circuit_breaker.allow_request():
             logger.warning("🔴 LLM circuit breaker OPEN — rejecting chat request")
-            return prompt_manager.get("chat", "error_fallback", lang=lang, default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
+            return llm_breaker_open_text(lang)
 
         try:
             message = _sanitize_user_input(message)
@@ -196,8 +242,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             return extract_response_content(response) or ""
         except Exception as e:
             await llm_circuit_breaker.record_failure()
-            logger.error(f"Chat error: {e}")
-            return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Entschuldigung, es gab einen Fehler: {e!s}", error=str(e))
+            return llm_failure_text(e, lang=lang, where="Chat", tier="chat", default=f"Entschuldigung, es gab einen Fehler: {e!s}")
 
     async def chat_stream(
         self,
@@ -227,7 +272,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         # Check circuit breaker before LLM call
         if not await llm_circuit_breaker.allow_request():
             logger.warning("🔴 LLM circuit breaker OPEN — rejecting stream request")
-            yield prompt_manager.get("chat", "error_fallback", lang=lang, default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
+            yield llm_breaker_open_text(lang)
             return
 
         try:
@@ -258,8 +303,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             await llm_circuit_breaker.record_success()
         except Exception as e:
             await llm_circuit_breaker.record_failure()
-            logger.error(f"Streaming error: {e}")
-            yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Fehler: {e!s}", error=str(e))
+            yield llm_failure_text(e, lang=lang, where="Streaming", tier="chat", default=f"Fehler: {e!s}")
 
     async def count_people_in_image(self, image_b64: str) -> int | None:
         """Count visible people in an image via the vision model (non-streaming).
@@ -487,7 +531,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         if not await llm_circuit_breaker.allow_request():
             logger.warning("🔴 LLM circuit breaker OPEN — rejecting vision request")
-            yield prompt_manager.get("chat", "error_fallback", lang=lang, default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
+            yield llm_breaker_open_text(lang)
             return
 
         try:
@@ -527,8 +571,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             await llm_circuit_breaker.record_success()
         except Exception as e:
             await llm_circuit_breaker.record_failure()
-            logger.error(f"Vision streaming error: {e}")
-            yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Fehler: {e!s}", error=str(e))
+            yield llm_failure_text(e, lang=lang, where="Vision streaming", tier="vision", default=f"Fehler: {e!s}")
 
     async def extract_intent(
         self,
@@ -1160,8 +1203,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             return extract_response_content(response) or ""
 
         except Exception as e:
-            logger.error(f"RAG chat error: {e}")
-            return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Sorry, there was an error: {e!s}", error=str(e))
+            return llm_failure_text(e, lang=lang, where="RAG chat", tier="chat", default=f"Sorry, there was an error: {e!s}")
 
     async def chat_stream_with_rag(
         self,
@@ -1223,8 +1265,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     yield chunk.message.content
 
         except Exception as e:
-            logger.error(f"RAG streaming error: {e}")
-            yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Error: {e!s}", error=str(e))
+            yield llm_failure_text(e, lang=lang, where="RAG streaming", tier="chat", default=f"Error: {e!s}")
 
     def _build_rag_system_prompt(self, context: str | None = None, lang: str | None = None, memory_context: str | None = None, document_context: str | None = None, personality_style: str | None = None, personality_prompt: str | None = None, time_context: str | None = None) -> str:
         """
