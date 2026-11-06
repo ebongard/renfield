@@ -133,11 +133,13 @@ The restart is guaranteed, not hoped for:
   yields `WARNING … probably still running`, with the `is-active` command to
   check before travelling to the device. Both exit non-zero.
 
-The sidecar records `hat_type` and `mic_capture_mode` for the capture. The
-XVF3800 keeps its capture gain in chip flash rather than in ALSA, so there the
-sidecar has no gain provenance and the script warns — note the
-`xvf3800_tuning` value from `host_vars/satellite-<room>.yml` alongside the
-capture (§2).
+The sidecar records `hat_type` and `mic_capture_mode` for the capture, and the
+capture gain with its origin in `gain_source`: `alsa_mixer` on a HAT codec
+(`amixer`), `xvf3800_chip` on an XVF3800 — which keeps its gain in chip flash
+and has no ALSA capture control, so the helper reads `PP_AGCDESIREDLEVEL` and
+the rest of the gain chain with `xvf_host` — or `none`. On `none` the script
+warns; for an XVF3800 note the `xvf3800_tuning` value from
+`host_vars/satellite-<room>.yml` alongside the capture (§2).
 
 An unknown `hat_type`, a host without one, and a host that is not in the
 Ansible inventory at all are refusals,

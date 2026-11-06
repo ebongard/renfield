@@ -126,3 +126,11 @@ failed capture, so the restart hangs off a trap (EXIT/INT/TERM), `on_exit` first
 by the `systemctl start` child — a second Ctrl-C is the REGULAR case, the slow ssh restart looks like a hang), retries
 3× with a pause, and is confirmed with ONE `systemctl is-active`. **DEAF is only claimed when the STOP was confirmed**;
 a failed stop yields a WARNING that the service is probably still running — the wrong verdict costs a trip.
+Gain provenance follows `hat_type` too: the XVF3800 has no ALSA capture control, so `_ambient_inspect.py` reads its
+gain chain with `xvf_host` (sidecar `gain_source: xvf3800_chip`); `none` means none could be read (#1397).
+
+## Provisioning acceptance
+A check with `ignore_errors` only DEFERS its verdict: every such task in `provision.yml` registers a result that the
+final task "Acceptance — microphone and service" reads, so a run without a mic ends red (#1387; a test enforces it).
+The mic card is the exact id the `asoundrc-<hat_type>.j2` template opens (`mic_alsa_card`, pinned by a test). Never
+let two `when`-alternative tasks share a `register` — the skipped one overwrites the real result.
