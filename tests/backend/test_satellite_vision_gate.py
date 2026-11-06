@@ -82,6 +82,24 @@ async def test_without_image_or_vision_model_nothing_is_asked(monkeypatch, image
     ollama.is_visual_query.assert_not_awaited()
 
 
+@pytest.mark.unit
+async def test_a_turn_an_action_answered_is_not_classified(monkeypatch, vision_on):
+    """"Mach das Licht an" ran an action; the image is not used, so do not pay for the check."""
+    _gate(monkeypatch, True)
+    ollama = _ollama(True)
+
+    assert await should_use_vision(IMAGE, "Mach das Licht an", "de", ollama, answered_by_action=True) is False
+    ollama.is_visual_query.assert_not_awaited()
+
+
+@pytest.mark.unit
+def test_the_gate_is_dark_by_default(monkeypatch):
+    from ha_glue.utils.config import HaGlueSettings
+
+    monkeypatch.delenv("SATELLITE_VISION_QUERY_GATE_ENABLED", raising=False)
+    assert HaGlueSettings(_env_file=None).satellite_vision_query_gate_enabled is False
+
+
 # --- the classifier ----------------------------------------------------------
 
 
@@ -108,7 +126,7 @@ async def _classify(content=None, *, raises=None, allow=True, text="Was siehst d
 @pytest.mark.parametrize("content, expected", [
     ("JA", True), ("Ja.", True), ("YES", True), ("<think>hm</think>\nJA", True),
     ("NEIN", False), ("Nein, das braucht kein Bild.", False), ("NO", False),
-    ("vielleicht", None), ("", None),
+    ("vielleicht", None), ("", None), ("Jahrhundert", None), ("Nobody knows", None),
 ])
 async def test_the_answer_is_read_from_its_first_word(content, expected):
     verdict, _ = await _classify(content)
@@ -122,6 +140,16 @@ async def test_the_prompt_carries_the_utterance_in_the_turns_language():
     prompt = client.chat.await_args.kwargs["messages"][0]["content"]
     assert '"What time is it?"' in prompt
     assert "Answer with exactly one word: YES or NO." in prompt
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("lang", [None, "xx"])
+async def test_an_unknown_language_falls_back_to_the_default_prompt(lang):
+    _, client = await _classify("NEIN", text="Wie spät ist es?", lang=lang)
+
+    prompt = client.chat.await_args.kwargs["messages"][0]["content"]
+    assert '"Wie spät ist es?"' in prompt
+    assert "JA oder NEIN" in prompt
 
 
 @pytest.mark.unit
