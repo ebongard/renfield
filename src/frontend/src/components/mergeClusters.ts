@@ -82,6 +82,26 @@ function isWeak(p: MergeProposal): boolean {
   return WEAK_REASONS.has(p.reason) || namesDifferOnlyInDigitTokens(p.loser.name, p.winner.name);
 }
 
+/**
+ * A proposal on which the SAFE action (Ablehnen) leads: no merge nudge.
+ * High stakes: a visibility change (cross-tier), a pair that is "maybe two
+ * people" by definition (`name_typo`), two different KINDS of thing (differing
+ * primary types — also on an older pair stored before that guard as
+ * `gray_zone`), or names that differ only in a number (`name_identifier`,
+ * likewise derived from the live names).
+ *
+ * One predicate for the card (button emphasis) and the section (which card's
+ * Ablehnen takes the initial focus, #1349), so the two never disagree.
+ */
+export function isCautiousProposal(p: MergeProposal): boolean {
+  return p.loser.circle_tier !== p.winner.circle_tier
+    || !sameType(p)
+    || p.reason === 'name_identifier'
+    || namesDifferOnlyInDigitTokens(p.loser.name, p.winner.name)
+    || p.reason === 'name_typo'
+    || p.reason === 'cross_type';
+}
+
 export function groupProposals(proposals: MergeProposal[]): GroupedProposals {
   // A cross-type pair is never an edge and never a cluster member — it goes
   // straight to the single-pair cards, ahead of the tier split.

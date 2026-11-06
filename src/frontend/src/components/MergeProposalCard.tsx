@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, type Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GitMerge } from 'lucide-react';
 import TierBadge from './TierBadge';
 import type { MergeProposal, MergeProposalEntityBrief } from '../api/resources/knowledgeGraph';
 import { namesDifferOnlyInDigitTokens } from '../utils/nameSignals';
+import { isCautiousProposal } from './mergeClusters';
 
 /**
  * One entity-merge proposal in the /brain/review queue (Structured Memory
@@ -13,7 +14,7 @@ import { namesDifferOnlyInDigitTokens } from '../utils/nameSignals';
  * Reconciler-proposed pairs are ALWAYS the cautious case (cross-tier or
  * gray-zone; same-tier high-confidence dupes auto-merge and never reach here),
  * so the button emphasis never pushes hard toward the merge:
- *   - cross_tier  → both buttons secondary, Ablehnen focused first, + an
+ *   - cross_tier  → both buttons secondary, Ablehnen first in DOM, + an
  *                   explicit visibility-change warning (color is never alone).
  *   - cross_type  → same treatment: the two sides are different KINDS of thing.
  *   - name_typo / name_identifier → same treatment: maybe two different people
@@ -26,33 +27,36 @@ import { namesDifferOnlyInDigitTokens } from '../utils/nameSignals';
  *
  * D2 survivor toggle: a radio group picks WHICH entity survives (default = the
  * reconciler's winner = more mentions); onApprove gets the chosen winner id.
+ *
+ * The card never takes the focus itself (#1349): the queue renders one card
+ * per proposal, and a DOM `autoFocus` on every cautious card let the LAST one
+ * win and fired again on every remount. The section owns the focus decision and
+ * reaches the Ablehnen button through `rejectRef`.
  */
 interface MergeProposalCardProps {
   proposal: MergeProposal;
   onApprove: (winnerId: number) => void;
   onReject: () => void;
   busy?: boolean;
+  /** The Ablehnen button, for the section's one-time initial focus. */
+  rejectRef?: Ref<HTMLButtonElement>;
 }
 
-export default function MergeProposalCard({ proposal, onApprove, onReject, busy = false }: MergeProposalCardProps) {
+export default function MergeProposalCard({
+  proposal, onApprove, onReject, busy = false, rejectRef,
+}: MergeProposalCardProps) {
   const { t } = useTranslation();
   const [winnerId, setWinnerId] = useState<number>(proposal.winner.id);
 
   const crossTier = proposal.loser.circle_tier !== proposal.winner.circle_tier;
-  // No merge nudge when the stakes are high: a visibility change (cross_tier), a
-  // pair that is "maybe two people" by definition (name_typo — one in-token edit
-  // apart), or two different KINDS of thing (cross_type, or simply differing
-  // primary types on an older pair proposed before that guard existed — merging
-  // rewrites what the entity IS), or names that differ only in a number
-  // (name_identifier — two releases, two accounts). The visibility warning stays
-  // keyed on the tiers.
+  // No merge nudge when the stakes are high — one predicate, shared with the
+  // section's focus decision. The visibility warning stays keyed on the tiers.
   const crossType = proposal.loser.entity_type !== proposal.winner.entity_type;
   // Derived from the live names too: a pair pending from before #1329 carries
   // `gray_zone` for "… 1.2.3" / "… 1.2.4" (same rule as the service).
   const identifier = proposal.reason === 'name_identifier'
     || namesDifferOnlyInDigitTokens(proposal.loser.name, proposal.winner.name);
-  const cautious = crossTier || crossType || identifier
-    || proposal.reason === 'name_typo' || proposal.reason === 'cross_type';
+  const cautious = isCautiousProposal(proposal);
   // What to CALL the pair. A differing primary type is the most useful thing to
   // say about it, whatever reason it was stored with: the pairs that were already
   // pending when the type guard landed carry `gray_zone`, and "similar but
@@ -164,14 +168,7 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
           className="btn btn-secondary"
           onClick={onReject}
           disabled={busy}
-          // Deliberate: on a cautious proposal the SAFE action takes the
-          // focus, not the merging one.
-          // 🛑 Known defect, #1349: the list renders one card PER proposal, so
-          // with several cautious proposals all of them claim the focus and the
-          // last one wins. Not solved here, because the fix is a design
-          // decision (the parent component computes the index, or no DOM
-          // autoFocus at all any more).
-          autoFocus={cautious}
+          ref={rejectRef}
         >
           {t('circles.mergeProposals.reject')}
         </button>

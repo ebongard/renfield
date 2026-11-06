@@ -207,3 +207,80 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
     expect(screen.queryByText(/spans more than one tier/i)).not.toBeInTheDocument();
   });
 });
+
+/**
+ * #1349 — initial focus. On a cautious proposal the SAFE action (Ablehnen)
+ * should hold the focus, but the queue renders one card per proposal: a DOM
+ * autoFocus on every cautious card let the LAST one win, and every remount
+ * pulled the focus again. Exactly one Ablehnen — the topmost cautious one —
+ * is focused, once, when the queue is first built.
+ */
+describe('MergeProposalsSection — initial focus (#1349)', () => {
+  const typo = (id: number, a: number, b: number) => ({
+    id, similarity: 0.88, reason: 'name_typo', status: 'pending', created_at: '',
+    loser: ent(a, `Jan ${a}x`, 1), winner: ent(b, `Jan ${a}y`, 4),
+  });
+  const gray = (id: number, a: number, b: number) => ({
+    id, similarity: 0.9, reason: 'gray_zone', status: 'pending', created_at: '',
+    loser: ent(a, 'Berta', 1), winner: ent(b, 'Berta', 4),
+  });
+
+  function mockList(list: { id: number }[]) {
+    let current = list;
+    const rejected: number[] = [];
+    server.use(
+      http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
+        HttpResponse.json({ proposals: current, total: current.length })),
+      http.post(`${BASE}/api/knowledge-graph/merge-proposals/:id/reject`, ({ params }) => {
+        const id = Number(params.id);
+        rejected.push(id);
+        current = current.filter((p) => p.id !== id);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    return rejected;
+  }
+
+  it('focuses exactly the TOPMOST cautious Ablehnen, not the last one', async () => {
+    mockList([typo(20, 101, 102), typo(21, 103, 104), typo(22, 105, 106)]);
+    renderWithProviders(<MergeProposalsSection />);
+
+    const rejects = await screen.findAllByRole('button', { name: 'Ablehnen' });
+    expect(rejects).toHaveLength(3);
+    await waitFor(() => expect(document.activeElement).toBe(rejects[0]));
+  });
+
+  it('rejecting a neighbour (and the refetch it triggers) does not move the focus', async () => {
+    const rejected = mockList([typo(20, 101, 102), typo(21, 103, 104)]);
+    renderWithProviders(<MergeProposalsSection />);
+
+    const rejects = await screen.findAllByRole('button', { name: 'Ablehnen' });
+    await waitFor(() => expect(document.activeElement).toBe(rejects[0]));
+
+    // fireEvent does not move the focus itself, so whatever moves it is ours.
+    fireEvent.click(rejects[1]);
+    await waitFor(() => expect(rejected).toEqual([21]));
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Ablehnen' })).toHaveLength(1);
+    });
+    expect(document.activeElement).toBe(rejects[0]);
+  });
+
+  it('focuses nothing when the first queue holds no cautious proposal', async () => {
+    mockList([gray(30, 201, 202)]);
+    renderWithProviders(<MergeProposalsSection />);
+
+    await screen.findByRole('button', { name: 'Ablehnen' });
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('focuses without scrolling the page', async () => {
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    mockList([typo(20, 101, 102)]);
+    renderWithProviders(<MergeProposalsSection />);
+
+    await screen.findByRole('button', { name: 'Ablehnen' });
+    await waitFor(() => expect(focus).toHaveBeenCalledWith({ preventScroll: true }));
+    focus.mockRestore();
+  });
+});
