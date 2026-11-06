@@ -216,7 +216,16 @@ async def check_document_access(
       by its atom owner or kb.all.
     - anything else (no resolvable owner atom **and** no resolvable KB, incl. an
       orphaned KB id or a doc with no atom) → **deny, fail-closed**
+
+    "read" is NOT decided here by KB levels: it is the retrieval rule
+    (``services.document_access``, the ``circle_sql`` document filter plus
+    ``kb.all`` and the legacy public-KB branch), so a document search returns
+    is a document the detail, batch and search-in-document routes open (#1469).
+    The rules above hold for "write" and "delete".
     """
+    if required_action == "read":
+        from services.document_access import user_may_read_document
+        return await user_may_read_document(db, doc, user)
     if not settings.auth_enabled:
         return True
     if not user:
@@ -556,17 +565,21 @@ async def list_documents(
             raise HTTPException(status_code=401, detail="Authentication required")
         user_perms = user.get_permissions()
         if not has_permission(user_perms, Permission.KB_ALL):
+            kb_read = False
             if knowledge_base_id:
                 result = await db.execute(
                     select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
                 )
                 kb = result.scalar_one_or_none()
-                if kb and not await check_kb_access(kb, user, "read", db):
-                    raise HTTPException(status_code=403, detail="No access to this knowledge base")
-            # If no KB filter, only users with kb.own+ can list
-            elif not has_permission(user_perms, Permission.KB_OWN):
-                raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
-            else:
+                kb_read = kb is not None and await check_kb_access(kb, user, "read", db)
+            # A KB-level read lists the whole KB. Without one, a kb.own holder
+            # still lists the documents of that KB he reaches by the retrieval
+            # rule (tier reach, a document grant) instead of a 403 (#1469).
+            if not kb_read:
+                if not has_permission(user_perms, Permission.KB_OWN):
+                    if knowledge_base_id:
+                        raise HTTPException(status_code=403, detail="No access to this knowledge base")
+                    raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
                 recency_circles = True
     if q and q.strip():
         from services.document_search import search_documents
@@ -797,17 +810,15 @@ async def get_documents_batch(
     result = await db.execute(select(Document).where(Document.id.in_(id_list)))
     documents = result.scalars().all()
 
+    # The read rule of check_document_access(..., "read") for the whole batch in
+    # one pass; no user under auth reads nothing (rows skipped, not a 401).
+    from services.document_access import readable_document_ids
+    readable = await readable_document_ids(db, documents, user)
+
     responses: list[DocumentResponse] = []
     for doc in documents:
-        # Per-doc permission check
-        if settings.auth_enabled:
-            if not user:
-                # Auth enforced at the route level for list endpoints; this
-                # is belt-and-braces. Skip the row rather than 401ing the
-                # whole batch.
-                continue
-            if not await check_document_access(doc, user, "read", db):
-                continue
+        if doc.id not in readable:
+            continue
         kwargs = _doc_to_response_kwargs(doc)
         await _augment_with_progress(doc, kwargs, include_queue_position=True)
         responses.append(DocumentResponse(**kwargs))
@@ -1448,13 +1459,10 @@ async def search_knowledge(
         user_perms = user.get_permissions()
         if holds_no_rung_above(user_perms, Permission.KB_NONE):
             raise HTTPException(status_code=403, detail="No knowledge base access")
-        if request.knowledge_base_id:
-            result = await db.execute(
-                select(KnowledgeBase).where(KnowledgeBase.id == request.knowledge_base_id)
-            )
-            kb = result.scalar_one_or_none()
-            if kb and not await check_kb_access(kb, user, "read", db):
-                raise HTTPException(status_code=403, detail="No access to this knowledge base")
+        # No KB-level 403 for a KB filter (#1469): rag.search applies the
+        # retrieval rule per chunk (user_id below), so a caller without a KB
+        # share still finds the documents of that KB he reaches by tier or
+        # grant, and nothing else.
     results = await rag.search(
         query=request.query,
         top_k=request.top_k,
@@ -1507,13 +1515,10 @@ async def search_knowledge_get(
         user_perms = user.get_permissions()
         if holds_no_rung_above(user_perms, Permission.KB_NONE):
             raise HTTPException(status_code=403, detail="No knowledge base access")
-        if knowledge_base_id:
-            result = await db.execute(
-                select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
-            )
-            kb = result.scalar_one_or_none()
-            if kb and not await check_kb_access(kb, user, "read", db):
-                raise HTTPException(status_code=403, detail="No access to this knowledge base")
+        # No KB-level 403 for a KB filter (#1469): rag.search applies the
+        # retrieval rule per chunk (user_id below), so a caller without a KB
+        # share still finds the documents of that KB he reaches by tier or
+        # grant, and nothing else.
     results = await rag.search(
         query=q,
         top_k=top_k,

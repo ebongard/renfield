@@ -9,7 +9,7 @@ title, generated title, KB, status, dates).
 It now applies the same document filter as the search gate
 (``document_search.visible_document_ids``), in SQL before LIMIT/OFFSET.
 ``kb.all`` and auth-off keep listing everything; a KB id with KB read access
-keeps listing the whole KB.
+keeps listing the whole KB, without it the same document filter applies (#1469).
 
 Real Postgres: the filter is Postgres SQL (``circle_sql``).
 """
@@ -199,13 +199,19 @@ async def test_kb_id_with_kb_read_access_lists_the_whole_kb(
     assert await _listed(async_client, knowledge_base_id=kb.id) == [doc.id]
 
 
-async def test_kb_id_without_access_is_refused(async_client, db_session, people, auth_on):
+async def test_kb_id_without_kb_read_lists_only_reached_documents(
+    async_client, db_session, people, auth_on
+):
+    """No KB-level read is no 403 any more (#1469): the KB filter then lists the
+    documents of that KB the caller reaches by the retrieval rule — here none,
+    because Alice's tier-self document is out of Carol's reach."""
     kb = await _kb(db_session, people["alice"], "Alice zu")
     await _doc(db_session, kb, "alice-zu")
 
     _as(people["carol"])
     resp = await async_client.get("/api/knowledge/documents", params={"knowledge_base_id": kb.id})
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    assert resp.json() == []
 
 
 async def test_pagination_and_sort_run_after_the_filter(

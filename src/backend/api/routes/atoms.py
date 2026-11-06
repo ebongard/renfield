@@ -36,7 +36,6 @@ from models.database import (
     TIER_SELF,
     Document,
     DocumentFact,
-    KnowledgeBase,
     ObligationAcknowledgement,
     ObligationCalendarPref,
     User,
@@ -50,7 +49,6 @@ from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.document_fact_retrieval import DocumentFactRetrieval
 from services.polymorphic_atom_store import PolymorphicAtomStore
-from utils.config import settings
 
 router = APIRouter()
 
@@ -521,27 +519,13 @@ async def get_document_facts(
     if document is None:
         raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
 
-    if settings.auth_enabled:
-        if document.atom_id is not None:
-            # Facts inherit the document atom's policy — get_atom returns None
-            # for both not-found and not-authorized (the circle check).
-            atom = await PolymorphicAtomStore(db).get_atom(
-                document.atom_id, asker_id=current_user.id,
-            )
-            if atom is None:
-                raise HTTPException(status_code=403, detail="No access to this document")
-        else:
-            # Pre-atom legacy doc (no atom to gate on): fall back to KB
-            # ownership and fail closed. Such docs predate Schicht A and have
-            # no facts, but we deny rather than leak.
-            owner_id = None
-            if document.knowledge_base_id is not None:
-                kb = (await db.execute(
-                    select(KnowledgeBase).where(KnowledgeBase.id == document.knowledge_base_id)
-                )).scalar_one_or_none()
-                owner_id = kb.owner_id if kb else None
-            if owner_id != current_user.id:
-                raise HTTPException(status_code=403, detail="No access to this document")
+    # The REST document read rule (#1469): the circle_sql document filter that
+    # retrieval applies, plus kb.all and the legacy public-KB branch — the same
+    # gate as GET /api/knowledge/documents/{id}. The facts themselves are
+    # circle-filtered per fact below.
+    from services.document_access import user_may_read_document
+    if not await user_may_read_document(db, document, current_user):
+        raise HTTPException(status_code=403, detail="No access to this document")
 
     facts = await DocumentFactRetrieval(db).facts_for_document(
         document_id, asker_id=current_user.id,

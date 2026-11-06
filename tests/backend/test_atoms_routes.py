@@ -32,6 +32,9 @@ async def _mk_user(session: AsyncSession, username: str) -> User:
     user = User(username=username, password_hash="x", is_active=True, role_id=role.id)
     session.add(user)
     await session.flush()
+    # The auth dependencies load the role eagerly (selectinload); the facts
+    # gate reads user.get_permissions() like every knowledge route.
+    await session.refresh(user, attribute_names=["role"])
     return user
 
 

@@ -124,7 +124,9 @@ def circles_filter_clause(
                            NULL (global-RAG / null-KB rows) — there ``kb.owner_id``
                            is NULL so the owner can never reach their own content
                            via the KB-owner branch. The atom-owner fallback keeps
-                           ownership intact for KB-less documents. (CM-1 fix.)
+                           ownership intact for KB-less documents (CM-1 fix).
+                           It applies ONLY where that owner column is NULL: a
+                           KB that names an owner decides alone (#1469).
         kb_share_kb_id_expr: SQL expression yielding the row's knowledge-base
                            id (``d.knowledge_base_id``). When set, a row is also
                            visible if its KB is shared with the asker
@@ -165,16 +167,20 @@ def circles_filter_clause(
     # Owner sees all their own atoms (regardless of tier).
     owner_branch = f"{owner_alias}.{owner_col} = :{asker_param}"
     if owner_atom_id_expr:
-        # Fall back to the atom owner when the structural owner column can be
-        # NULL (null-KB documents). `da` is local to this subquery — no clash
+        # Fall back to the atom owner ONLY where the structural owner column is
+        # NULL (null-KB documents, an ownerless KB, a KB row that is gone). A
+        # KB that names an owner decides alone: on a document moved across
+        # owners before #1460 (atom owner A in B's KB) A used to read as owner
+        # here while the per-document REST gate refused her -- two rules for
+        # one document (#1469). `da` is local to this subquery — no clash
         # with the `a` alias used by the explicit-grant EXISTS below.
         owner_branch = (
             f"({owner_branch} "
-            f"OR EXISTS ("
+            f"OR ({owner_alias}.{owner_col} IS NULL AND EXISTS ("
             f"  SELECT 1 FROM atoms da "
             f"  WHERE da.atom_id = {owner_atom_id_expr} "
             f"  AND da.owner_user_id = :{asker_param}"
-            f"))"
+            f")))"
         )
 
     # Public-tier atoms accessible to anyone (paired or not). Always present.

@@ -185,7 +185,7 @@ def visible_document_ids(asker_id: int | None) -> TextualSelect:
     )
 
 
-async def _visible_ids(db: AsyncSession, ids: list[int], asker_id: int | None) -> set[int]:
+async def reachable_document_ids(db: AsyncSession, ids: list[int], asker_id: int | None) -> set[int]:
     """The subset of ``ids`` the asker may see under circles — the single
     enforcement gate (D2). Postgres only; on sqlite / auth-off the caller skips
     the gate entirely (see search_documents)."""
@@ -225,7 +225,7 @@ async def search_documents(
     name that F-ID-3 removed on 2026-10-27: that one also meant "I am a peer",
     and the conflation cost every signed-in person their own non-public hits
     on the auth-on household. A peer never reaches this function; peer scoping
-    lives in ``circle_sql.PeerScope`` and nowhere else. ``_visible_ids`` below
+    lives in ``circle_sql.PeerScope`` and nowhere else. ``reachable_document_ids`` below
     builds no peer branch, which is what keeps the two apart.
     """
     q = (query or "").strip()
@@ -251,7 +251,7 @@ async def search_documents(
     # sqlite sees everything). This is the one place NAME-signal visibility is
     # enforced, so the un-circle-filtered FTS/ILIKE can't leak a hidden document.
     if enforce_circles and _is_postgres(db):
-        visible = await _visible_ids(db, fused, asker_id)
+        visible = await reachable_document_ids(db, fused, asker_id)
         fused = [did for did in fused if did in visible]
 
     window = fused[offset : offset + limit]
