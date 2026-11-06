@@ -226,12 +226,13 @@ alone do NOT unlock it (tested — still clamped, and broke the simple grab). No
 document reading. 640×480 / 1280×720 also work (lighter/less heat). The tool caps requests at
 1920×1080.
 
-**Deploy — DONE via hostPath (not baked into the image).** `/opt/awisp` (the `renfield_isp_capture`
-binary + `lib/{libAWIspApi,libisp,libisp_ini}.so`) lives on the **host** and is hostPath-mounted
-read-only into the pod (`k8s/satellite-esszimmer.yaml`, `awisp` volume). Applied + verified: the
-pod sees `/opt/awisp/*` and captures a frame in-container. The `.c` is in-repo; the three AW
-`.so`s are Allwinner proprietary (from the OPi desktop image) — they live on the host, NOT in git.
-(A later hardening option is to bake them into the satellite image instead of the host hostPath.)
+**Deploy — on the host.** `/opt/awisp` (the `renfield_isp_capture` binary +
+`lib/{libAWIspApi,libisp,libisp_ini}.so`) lives on the **host**; since 2026-11-06 the Esszimmer
+satellite runs bare-metal and calls it directly (until then a pod with `/opt/awisp` hostPath-mounted).
+The service user reaches `/dev/video0` + `/dev/media0` through the `video` group; verified with a
+1920×1080 capture as that user (2026-11-06). The tool's "cannot save ISP context to /mnt" warning is
+harmless (the pod lost that file on every restart too). The `.c` is in-repo; the three AW `.so`s are
+Allwinner proprietary (from the OPi desktop image) — they live on the host, NOT in git.
 
 ### Reproducibility (how this survives a reflash) — Ansible, config-driven
 
@@ -245,25 +246,23 @@ group — the fleet has every combination:
 | **A733 (esszimmer)** | true | **`sunxi_isp`** | DT overlay + sunxi-vin modules + `/opt/awisp` (ISP libs + `renfield_isp_capture`) |
 
 **`src/satellite/provisioning/provision-camera.yml`** is config-driven (targets `all`, gated on
-those vars): a no-op for rpicam hosts, the full host setup for `sunxi_isp`. The bare-metal
-`provision.yml` (`hosts: satellites`) is untouched — the A733 runs the satellite as a **k8s pod**,
-so it's a separate `orangepi_nodes` inventory group that only `provision-camera.yml` targets
-(in the git-ignored `inventory.yml`; group vars `ansible_user: root`, `camera_enabled: true`,
-`camera_backend: sunxi_isp`; hosts `orangepi-esszimmer`, `orangepi-kueche`).
+those vars): a no-op for rpicam hosts, the full host setup for `sunxi_isp`. The A733 satellites
+are ordinary members of `satellites` (`satellite_platform: orangepi`); the camera vars sit in
+their host_vars (`host_vars/satellite-esszimmer.yml`), and the playbook escalates with `become`.
 ```
 cd src/satellite/provisioning
-ansible-playbook -i inventory.yml provision-camera.yml --limit orangepi-esszimmer -e camera_reboot=true
+ansible-playbook -i inventory.yml provision-camera.yml --limit satellite-esszimmer -e camera_reboot=true
 ```
+`--check` fails at the overlay copy: the `.dtbo` is compiled by a shell step that check mode skips.
 The AW ISP `.so`s are Allwinner **proprietary** → staged on the control machine at
 `files/awisp/` (git-ignored), never committed. Quickest source: copy them from a node that already
 has them (`scp root@<node>:/opt/awisp/{lib/libAWIspApi.so,lib/libisp.so,lib/libisp_ini.so,AWIspApi.h}
 files/awisp/`); otherwise extract them from the OPi desktop image. **Check the camera before
 provisioning:** only an IMX219 enumerates — the Küche node (2026-11-05) got the full host setup
 but carries a Camera Module 3 (IMX708), which the kernel probes and rejects
-(`[imx219]chip found is not an target chip`), so it has no `/dev/video0` and its pod no camera. So for the
-A733: reflash node → k8s node setup → `provision-camera.yml` → reboot → `kubectl apply` the pod →
-camera back. The POD side (device + `/opt/awisp` mounts) is fully git-managed; only these host
-bits + the proprietary libs are out-of-band.
+(`[imx219]chip found is not an target chip`), so it has no `/dev/video0` and no camera. So for the
+A733: reflash → `orangepi-first-boot.sh` → `provision.yml` → `provision-camera.yml` → reboot →
+camera back. Only the proprietary libs are out-of-band.
 
 ## Thermal note (observed during bring-up)
 
