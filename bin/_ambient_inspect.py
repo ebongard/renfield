@@ -4,14 +4,21 @@
 Runs ON the satellite (shipped there base64-encoded, so no quoting layers).
 Two modes:
 
-  probe          print the live audio config + capture-gain provenance as JSON
-  gate <wav>     measure a capture and report per-channel level statistics
+  probe [hat_type]         print the live audio config + capture-gain provenance as JSON
+  gate <wav> [hat_type]    measure a capture and report per-channel level statistics
+
+Where the gain provenance comes from depends on where the mic keeps its gain: a
+HAT codec in ALSA mixer controls (`amixer`), the XVF3800 (hat_type
+`xvf3800-usb`) in its own chip flash, read over USB with `xvf_host` (#1397) —
+it has no ALSA capture control at all. `gain_source` names the origin of the
+`mixer` values; "none" means no provenance could be read.
 
 Kept dependency-light on purpose: `probe` uses only the stdlib so it also runs
 on a satellite whose venv is broken, and `gate` needs numpy only (present in
 the satellite venv).
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -32,11 +39,82 @@ MIXER_CONTROLS = (
 )
 
 
-def probe() -> dict:
+# Gain chain of the XVF3800 (XMOS v3.2.1 control-command appendix; the
+# capture-relevant subset of hardware/xvf3800/tune.sh's readback list).
+# PP_AGCDESIREDLEVEL is the value the commissioning doc names; PP_AGCGAIN is the
+# AGC's CURRENT gain — a snapshot, not a setting.
+XVF_GAIN_PARAMS = (
+    "PP_AGCONOFF",
+    "PP_AGCDESIREDLEVEL",
+    "PP_AGCMAXGAIN",
+    "PP_AGCTIME",
+    "PP_AGCGAIN",
+    "PP_MIN_NS",
+    "PP_MIN_NN",
+    "AUDIO_MGR_MIC_GAIN",
+    "AEC_ASROUTONOFF",
+)
+XVF_HOST_DEFAULT = "/opt/renfield-satellite/bin/xvf_host"
+USB_XVF_HAT = "xvf3800-usb"
+
+
+def read_config():
+    """(config text, error) — the error is a sentence, never an exception."""
     try:
-        cfg = open(CONFIG_PATH).read()
+        with open(CONFIG_PATH) as fh:
+            return fh.read(), None
     except OSError as exc:
-        return {"error": f"cannot read {CONFIG_PATH}: {exc}"}
+        return None, f"cannot read {CONFIG_PATH}: {exc}"
+
+
+def xvf_host_path(cfg) -> str:
+    """The binary the satellite itself drives (led.xvf_host_path), else the fleet default."""
+    m = re.search(r'^\s+xvf_host_path:\s*"?([^"#\n]+?)"?\s*(?:#.*)?$', cfg or "", re.M)
+    return m.group(1).strip() if m else XVF_HOST_DEFAULT
+
+
+def read_xvf(path: str) -> dict:
+    """Read the gain chain off the XVF3800 chip, one xvf_host call per param.
+
+    xvf_host must run from its own directory: it loads libcommand_map.so and
+    libdevice_usb.so from there. A param that does not answer is left out.
+    """
+    out = {}
+    if not os.path.isfile(path):
+        return out
+    for param in XVF_GAIN_PARAMS:
+        try:
+            res = subprocess.run(
+                [path, param],
+                capture_output=True, text=True, timeout=5,
+                cwd=os.path.dirname(path) or None,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+        if res.returncode == 0 and lines:
+            out[param] = " | ".join(lines)
+    return out
+
+
+def read_gain(hat_type: str, cfg) -> dict:
+    """Gain provenance as {"gain_source": ..., "mixer": {...}}.
+
+    Never an unexplained empty dict: no values means gain_source "none".
+    """
+    if hat_type == USB_XVF_HAT:
+        values = read_xvf(xvf_host_path(cfg))
+        source = "xvf3800_chip"
+    else:
+        values = read_mixer()
+        source = "alsa_mixer"
+    return {"gain_source": source if values else "none", "mixer": values}
+
+
+def probe(hat_type: str = "") -> dict:
+    cfg, error = read_config()
+    if error:
+        return {"error": error}
 
     def scalar(key, default=""):
         m = re.search(r'^\s{2}%s:\s*"?([^"#\n]+?)"?\s*(?:#.*)?$' % key, cfg, re.M)
@@ -54,7 +132,7 @@ def probe() -> dict:
         "combine": scalar("combine", ""),
         "select_channel": scalar("select_channel", ""),
         "mic_spacing": spacing.group(1) if spacing else "",
-        "mixer": read_mixer(),
+        **read_gain(hat_type, cfg),
     }
 
 
@@ -86,7 +164,7 @@ def read_mixer() -> dict:
 _GATE_BLOCK_FRAMES = 1 << 19  # ~0.5 M frames, a few MB per block
 
 
-def gate(path: str) -> dict:
+def gate(path: str, hat_type: str = "") -> dict:
     import numpy as np
 
     with wave.open(path) as w:
@@ -135,7 +213,8 @@ def gate(path: str) -> dict:
         "channels": channels,
         "sample_rate": rate,
         "per_channel": per_channel,
-        "mixer": read_mixer(),
+        # A missing config only costs the xvf_host path override, not the gain.
+        **read_gain(hat_type, read_config()[0]),
     }
 
 
@@ -145,12 +224,12 @@ def main() -> int:
         return 2
     mode = sys.argv[1]
     if mode == "probe":
-        result = probe()
+        result = probe(sys.argv[2] if len(sys.argv) > 2 else "")
     elif mode == "gate":
         if len(sys.argv) < 3:
             print("gate needs a wav path", file=sys.stderr)
             return 2
-        result = gate(sys.argv[2])
+        result = gate(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "")
     else:
         print(f"unknown mode: {mode}", file=sys.stderr)
         return 2

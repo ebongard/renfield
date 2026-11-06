@@ -48,6 +48,7 @@ PROBE_JSON = json.dumps(
         "combine": "",
         "select_channel": "",
         "mic_spacing": "",
+        "gain_source": "alsa_mixer",
         "mixer": {"PGA": "Mono: 50 [78%]"},
     }
 )
@@ -56,6 +57,7 @@ GATE_JSON = json.dumps(
         "duration_seconds": 900.0,
         "channels": 2,
         "sample_rate": 16000,
+        "gain_source": "alsa_mixer",
         "mixer": {"PGA": "Mono: 50 [78%]"},
         "per_channel": [
             {
@@ -159,8 +161,10 @@ def box(tmp_path):
         '        echo "active"; exit 0 ;;\n'
         "    esac ;;\n"
         "  *_inspect.py\\ probe*)\n"
+        '    echo "$cmd" >> "$INSPECT_CALLS"\n'
         '    echo "AMBIENT_JSON:$PROBE_JSON"; exit 0 ;;\n'
         "  *_inspect.py\\ gate*)\n"
+        '    echo "$cmd" >> "$INSPECT_CALLS"\n'
         '    echo "AMBIENT_JSON:$GATE_JSON"; exit 0 ;;\n'
         "  *arecord*)\n"
         '    case "${ARECORD_MODE:-ok}" in\n'
@@ -195,6 +199,7 @@ def box(tmp_path):
         {
             "PATH": f"{stubs}:{env['PATH']}",
             "CALLS": str(calls),
+            "INSPECT_CALLS": str(tmp_path / "inspect-calls"),
             "CAPTURE_MARKER": str(marker),
             "RESTART_BEGUN": str(restart_begun),
             "RESTART_FINISHED": str(restart_finished),
@@ -636,3 +641,69 @@ def test_the_template_resolver_reads_the_known_profiles_correctly():
         "asoundrc-whisplay.j2": "shared",
         "asoundrc-xvf3800-usb.j2": "exclusive",
     }, modes
+
+
+# --- gain provenance (#1397) --------------------------------------------------
+
+
+def _probe_with(gain_source, mixer):
+    probe = json.loads(PROBE_JSON)
+    probe.update({"gain_source": gain_source, "mixer": mixer})
+    return json.dumps(probe)
+
+
+def test_the_helper_is_told_the_hat_type_for_probe_and_gate(box):
+    """Without it the helper cannot know the gain lives in the chip, not ALSA."""
+    box.env["HAT_TYPE"] = "xvf3800-usb"
+    res = box.run("--minutes", "15", "--allow-service-stop")
+    assert res.returncode == 0, res.stderr
+    inspect_calls = Path(box.env["INSPECT_CALLS"]).read_text().splitlines()
+    assert any(re.search(r"_inspect\.py probe 'xvf3800-usb'$", c) for c in inspect_calls), inspect_calls
+    assert any(re.search(r"_inspect\.py gate \S+\.wav 'xvf3800-usb'$", c) for c in inspect_calls), inspect_calls
+
+
+def test_usb_mic_with_chip_gain_has_provenance_and_no_warning(box):
+    chip = {"PP_AGCDESIREDLEVEL": "0.015", "PP_AGCONOFF": "1"}
+    box.env["HAT_TYPE"] = "xvf3800-usb"
+    box.env["PROBE_JSON"] = _probe_with("xvf3800_chip", chip)
+    gate = json.loads(GATE_JSON)
+    gate.update({"gain_source": "xvf3800_chip", "mixer": chip})
+    box.env["GATE_JSON"] = json.dumps(gate)
+
+    res = box.run("--minutes", "15", "--allow-service-stop")
+    assert res.returncode == 0, res.stderr
+    assert "gains (xvf3800_chip)" in res.stdout
+    assert "PP_AGCDESIREDLEVEL" in res.stdout
+    assert "no gain provenance" not in res.stdout
+    side = box.sidecar()
+    assert side["gain_source"] == "xvf3800_chip"
+    assert side["mixer"]["PP_AGCDESIREDLEVEL"] == "0.015"
+
+
+def test_usb_mic_without_chip_answer_warns_with_the_flash_hint(box):
+    box.env["HAT_TYPE"] = "xvf3800-usb"
+    box.env["PROBE_JSON"] = _probe_with("none", {})
+    res = box.run("--minutes", "15", "--allow-service-stop")
+    assert res.returncode == 0, res.stderr
+    assert "no gain provenance could be read" in res.stdout
+    assert "xvf_host did not answer" in res.stdout
+    assert "xvf3800_tuning" in res.stdout
+
+
+def test_hat_mic_without_mixer_controls_warns_too(box):
+    """Missing provenance is not an XVF-only condition (the old WARN was)."""
+    box.env["HAT_TYPE"] = "2mic"
+    box.env["PROBE_JSON"] = _probe_with("none", {})
+    res = box.run("--minutes", "15")
+    assert res.returncode == 0, res.stderr
+    assert "no gain provenance could be read" in res.stdout
+    assert "amixer found none" in res.stdout
+    assert "xvf_host" not in res.stdout
+
+
+def test_hat_mic_with_mixer_values_does_not_warn(box):
+    res = box.run("--minutes", "15")
+    assert res.returncode == 0, res.stderr
+    assert "gains (alsa_mixer)" in res.stdout
+    assert "no gain provenance" not in res.stdout
+    assert box.sidecar()["gain_source"] == "alsa_mixer"
