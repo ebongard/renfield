@@ -520,7 +520,7 @@ async def get_document_facts(
         raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
 
     # The REST document read rule (#1469): the circle_sql document filter that
-    # retrieval applies, plus kb.all and the legacy public-KB branch — the same
+    # retrieval applies, plus kb.all (is_public opens no document) — the same
     # gate as GET /api/knowledge/documents/{id}. The facts themselves are
     # circle-filtered per fact below.
     from services.document_access import user_may_read_document

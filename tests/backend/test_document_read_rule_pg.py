@@ -10,8 +10,7 @@ moved across owners before #1460 was readable as owner by its OLD atom owner
 in retrieval, while the per-document gate refused her.
 
 Now one rule: ``services.document_access`` (the ``circle_sql`` document
-filter, plus ``kb.all`` and the legacy public-KB branch that awaits the owner's
-decision). Write, reindex and delete stay KB-level permissions on top.
+filter, plus ``kb.all``; the KB's ``is_public`` flag opens no document). Write, reindex and delete stay KB-level permissions on top.
 
 Real Postgres: every branch is Postgres SQL.
 """
@@ -309,16 +308,33 @@ class TestPermissionsOnTop:
         monkeypatch.setattr(settings, "auth_enabled", False)
         assert await readable_document_ids(db_session, [doc], None) == {doc.id}
 
-    async def test_legacy_public_kb_opens_to_kb_shared_only(self, db_session, people):
-        """Awaiting the owner's decision (#1469): ``is_public`` + ``kb.shared``
-        still opens a document REST-side although retrieval does not return it."""
+    async def test_public_kb_flag_opens_no_document(self, db_session, people, monkeypatch):
+        """``is_public`` + ``kb.shared`` opened every document of the KB over
+        REST while retrieval did not return them. Retired (#1469, owner
+        decision 2026-11-06): the flag opens nothing a search would not."""
         alice, _, carol, dora, _ = people
         offen = await _kb(db_session, alice.id, "Offen", public=True)
         doc = await _doc(db_session, offen, "aushang")
 
         assert not await _retrieval_sees(db_session, carol.id, doc.id)
-        assert await _detail(db_session, carol, doc.id) == 200   # kb.shared
-        assert await _detail(db_session, dora, doc.id) == 403    # kb.own only
+        for reader in (carol, dora):                     # kb.shared, kb.own only
+            assert await _detail(db_session, reader, doc.id) == 403
+            assert await _batch(db_session, reader, [doc.id]) == set()
+            assert await _in_doc_search(db_session, reader, doc.id, monkeypatch) == 403
+            assert await _facts(db_session, reader, doc.id) == 403
+            assert await _listed(db_session, reader, offen) == set()
+
+    async def test_public_kb_at_public_tier_reads_like_retrieval(self, db_session, people):
+        """What retrieval returns stays open: a public-tier document of a
+        public KB is read by ``kb.shared`` and ``kb.own`` holders alike."""
+        alice, _, carol, dora, _ = people
+        offen = await _kb(db_session, alice.id, "Offen", tier=TIER_PUBLIC, public=True)
+        doc = await _doc(db_session, offen, "aushang")
+
+        assert await _retrieval_sees(db_session, carol.id, doc.id)
+        for reader in (carol, dora):
+            assert await _detail(db_session, reader, doc.id) == 200
+            assert await _listed(db_session, reader, offen) == {doc.id}
 
 
 class TestNoKbRungReadsNothing:

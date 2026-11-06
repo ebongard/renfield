@@ -19,12 +19,11 @@ permissions on top:
   token.
 - ``kb.all`` (the admin rung) reads every document — it is a permission, not a
   circle branch, and it already lists, counts and deletes everything.
-- LEGACY, awaiting the owner's decision: a KB with ``is_public = true`` opens
-  its documents to holders of ``kb.shared``. ``circle_sql`` knows no such
-  branch (``is_public`` only seeds ``default_circle_tier``), so retrieval does
-  not return those documents unless their tier is public. Kept so the fix does
-  not silently narrow what ``kb.shared`` holders can open today; see
-  ``docs/CIRCLES.md`` (#1469).
+
+``is_public`` on the KB opens NO document: ``circle_sql`` knows no public-KB
+branch (the flag only seeds ``default_circle_tier`` at creation), so a
+``kb.shared`` holder reads exactly what retrieval returns him. The flag still
+makes the KB itself visible in the KB list (#1469, owner decision 2026-11-06).
 
 Write, reindex, tier and delete stay KB-level permissions on top
 (``knowledge.check_document_access``).
@@ -33,32 +32,19 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Document, KnowledgeBase, User
+from models.database import Document, User
 from models.permissions import Permission, has_permission, holds_no_rung_above
 from services.document_search import reachable_document_ids
 from utils.config import settings
 
 
-async def _public_kb_ids(db: AsyncSession, kb_ids: set[int]) -> set[int]:
-    """The subset of ``kb_ids`` flagged ``is_public`` (the legacy branch)."""
-    if not kb_ids:
-        return set()
-    rows = await db.execute(
-        select(KnowledgeBase.id).where(
-            KnowledgeBase.id.in_(kb_ids), KnowledgeBase.is_public.is_(True)
-        )
-    )
-    return {r[0] for r in rows}
-
-
 async def readable_document_ids(
     db: AsyncSession, documents: Iterable[Document], user: User | None
 ) -> set[int]:
-    """The ids among ``documents`` that ``user`` may read — three queries at most
-    for a whole page, not one per row. Auth off: all; no user (auth on): none."""
+    """The ids among ``documents`` that ``user`` may read — one query for a
+    whole page, not one per row. Auth off: all; no user (auth on): none."""
     docs = list(documents)
     if not settings.auth_enabled:
         return {d.id for d in docs}
@@ -69,12 +55,7 @@ async def readable_document_ids(
         return {d.id for d in docs}
     if holds_no_rung_above(perms, Permission.KB_NONE):
         return set()
-    readable = await reachable_document_ids(db, [d.id for d in docs], user.id)
-    if has_permission(perms, Permission.KB_SHARED):
-        rest = [d for d in docs if d.id not in readable and d.knowledge_base_id]
-        public = await _public_kb_ids(db, {d.knowledge_base_id for d in rest})
-        readable |= {d.id for d in rest if d.knowledge_base_id in public}
-    return readable
+    return await reachable_document_ids(db, [d.id for d in docs], user.id)
 
 
 async def user_may_read_document(

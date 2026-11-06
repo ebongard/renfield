@@ -258,8 +258,7 @@ The per-KB `document_count` of `GET /bases` and `GET /bases/{id}` counts the sam
 
 A REST read of a document — `GET /documents/{id}`, `GET /documents/batch`, `POST /documents/{id}/search`,
 `GET /api/atoms/documents/{id}/facts`, `check_document_access(..., "read")` — is `services/document_access.py`:
-the `circle_sql` document filter retrieval applies (`document_search.reachable_document_ids`), plus `kb.all`, plus
-the legacy public-KB branch below — and nothing at all for a caller without a KB rung above `kb.none` (`Gast`,
+the `circle_sql` document filter retrieval applies (`document_search.reachable_document_ids`), plus `kb.all` — and nothing at all for a caller without a KB rung above `kb.none` (`Gast`,
 the `Kiosk` device role, any role without a KB rung; `holds_no_rung_above`, the gate `/search` and the list
 apply). Without that gate a public-tier document, which the circle filter hands to every asker, opened to every
 token. A KB filter (`?knowledge_base_id` on the list, `knowledge_base_id` on
@@ -270,11 +269,13 @@ member answered 403 on all of these. Write, reindex, tier, move and delete stay 
 household member who reaches documents of a KB by tier does not see the KB itself. Proof:
 `tests/backend/test_document_read_rule_pg.py`, `tests/backend/test_document_atom_reach_parity_pg.py`.
 
-🛑 **Open owner decision: `kb.is_public` / `kb.shared`.** `circle_sql` knows no public-KB branch (`is_public` only
-seeds `default_circle_tier` at creation, `pc20260420_circles_v1`). REST still opens every document of an
-`is_public` KB to `kb.shared` holders (detail, batch, facts gate, the KB-filtered list), retrieval and the
-unfiltered list return them only at tier 4. Kept so #1469 narrows nothing silently; retiring it (or mapping
-`is_public` onto the documents' tier) is the owner's call.
+🛑 **`kb.is_public` opens no document** (owner decision 2026-11-06, #1469). `circle_sql` knows no public-KB branch
+(`is_public` only seeds `default_circle_tier` at creation, `pc20260420_circles_v1`), and REST no longer has one
+either: detail, batch, search-in-document, facts and the KB-filtered list give a `kb.shared` holder exactly the
+documents retrieval returns him. The KB-filtered list shows a whole KB only to its owner or a KB share
+(`knowledge._lists_whole_kb`). The flag still makes the KB ITSELF visible to `kb.shared` holders (the KB list,
+`GET /bases/{id}`); to publish its documents, give them the public tier. Proof:
+`tests/backend/test_document_read_rule_pg.py::TestPermissionsOnTop`.
 
 Attaching is a write on the conversation: `POST /api/chat/upload` applies the chat's own message-write rule to its
 `session_id` (`chat_upload._may_write_session` → `ConversationService.reaches`, exactly as `save_message` with

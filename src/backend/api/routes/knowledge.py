@@ -128,7 +128,8 @@ async def check_kb_access(
     1. Auth disabled → full access
     2. kb.all permission → full access
     3. Owner → full access
-    4. Public KB → read access for users with kb.shared
+    4. Public KB → read access for users with kb.shared (the KB itself; its
+       documents follow the retrieval rule, services.document_access)
     5. KB share (the kb_shares row only; a document grant does not count,
        #1446) → read and write at that level; "delete" (documents) ONLY with
        the share's `can_delete` switch, whatever the level; "delete_kb" (the
@@ -219,7 +220,7 @@ async def check_document_access(
 
     "read" is NOT decided here by KB levels: it is the retrieval rule
     (``services.document_access``, the ``circle_sql`` document filter plus
-    ``kb.all`` and the legacy public-KB branch), so a document search returns
+    ``kb.all``; the public-KB flag opens no document), so a document search returns
     is a document the detail, batch and search-in-document routes open (#1469).
     The rules above hold for "write" and "delete".
     """
@@ -295,6 +296,15 @@ async def get_user_kb_permission(
         return "read"
 
     return None
+
+
+async def _lists_whole_kb(kb: KnowledgeBase, user: User, db: AsyncSession) -> bool:
+    """The KB owner or a KB share reads every document of the KB — the KB-level
+    read without the public flag, which opens no document (#1469)."""
+    if kb.owner_id == user.id:
+        return True
+    from services.kb_shares_service import get_user_kb_permission_level
+    return await get_user_kb_permission_level(db, kb.id, user.id) is not None
 
 
 # =============================================================================
@@ -571,10 +581,13 @@ async def list_documents(
                     select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
                 )
                 kb = result.scalar_one_or_none()
-                kb_read = kb is not None and await check_kb_access(kb, user, "read", db)
-            # A KB-level read lists the whole KB. Without one, a kb.own holder
-            # still lists the documents of that KB he reaches by the retrieval
-            # rule (tier reach, a document grant) instead of a 403 (#1469).
+                # Owner or a KB share lists the whole KB. NOT the public flag:
+                # `is_public` opens no document (#1469), so it must not open
+                # the KB-filtered list either.
+                kb_read = kb is not None and await _lists_whole_kb(kb, user, db)
+            # Without that, a kb.own holder still lists the documents of that KB
+            # he reaches by the retrieval rule (tier reach, a document grant)
+            # instead of a 403 (#1469).
             if not kb_read:
                 if not has_permission(user_perms, Permission.KB_OWN):
                     if knowledge_base_id:
