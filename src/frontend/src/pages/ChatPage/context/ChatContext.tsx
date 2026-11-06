@@ -57,6 +57,7 @@ import type { TraceEntity } from '../../../api/resources/wissensbasis';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
 import { drainSentenceTts, type SentenceStreamState } from './sentenceStream';
 import { shouldRearmWakeWord } from './wakeWordRecovery';
+import { messagesAfterSessionReplaced } from './sessionReplaced';
 
 const SESSION_STORAGE_KEY = 'renfield_current_session';
 // How long sendMessageInternal waits for the WebSocket handshake before
@@ -404,6 +405,12 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Message state
   const [messages, setMessages] = useState<ChatUiMessage[]>([]);
   const [loading, setLoading] = useState(false);
+  // Read by callbacks that must not re-subscribe on every turn (the WS frame
+  // handlers): is a turn in flight right now?
+  const loadingRef = useRef(false);
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
   const [input, setInput] = useState('');
   // Command palette (chat-ui item 4): open state + a next-turn agent-role hint.
   // The hint is consumed by the next sent message (role_hint on the WS frame),
@@ -1247,12 +1254,14 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // WebSocket hook
   // The server refused the session id this tab sent — it belongs to someone
   // else, or to nobody (an ownerless conversation is no longer adopted by
-  // whoever opens it first). The turn was saved into a fresh conversation;
-  // adopt its id so everything after this lands there. The transcript on screen
-  // is this turn's — a refused conversation never loads its history — so there
-  // is nothing to clear. The optimistic sidebar entry under the old id is
-  // local-only and disappears with the next refresh, which we ask for here.
+  // whoever opens it first), or it was deleted elsewhere (#1485). The turn runs
+  // in a fresh conversation; adopt its id so everything after this lands there.
+  // A deleted conversation is still on screen and none of it exists any more,
+  // so only the turn in flight stays (`messagesAfterSessionReplaced`). The
+  // optimistic sidebar entry under the old id is local-only and disappears with
+  // the next refresh, which we ask for here.
   const handleSessionReplaced = useCallback((data: SessionReplacedMessage) => {
+    setMessages((prev) => messagesAfterSessionReplaced(prev, loadingRef.current));
     setSessionId(data.session_id);
     try {
       localStorage.setItem(SESSION_STORAGE_KEY, data.session_id);
