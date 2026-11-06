@@ -14,8 +14,10 @@ Resolution model
   {provider_id}`` counter, then the walk continues to the next provider.
 * **Redirect providers** (google, github, apple, …) are NOT in the credential
   walk — their ``authenticate`` returns None. They are user-selected entry
-  points; ``redirect_entries`` enumerates them for the login UI and their
-  OAuth/OIDC callback constructs the ``ProviderResult`` directly.
+  points; ``redirect_entries`` enumerates them for the login UI,
+  ``redirect_provider`` gates the start/callback routes
+  (``api/routes/auth_oauth.py``) and ``exchange_code`` turns the callback's
+  code into the ``ProviderResult`` (#1344).
 
 The registry is identity-agnostic. It produces a ``ProviderResult`` and fires
 ``post_authenticate`` exactly once; the Reva consumer (or the standalone
@@ -79,24 +81,30 @@ class ProviderRegistry:
             if p.enabled and channel in p.supported_channels
         ]
 
-    def redirect_entries(self, channel: str) -> list[tuple[str, str]]:
-        """``(provider_id, authorize_url)`` for every enabled redirect provider
-        that exposes an ``authorize_url(channel)`` entry point for *channel*.
+    def redirect_provider(self, provider_id: str, channel: str):
+        """The enabled, fully configured redirect provider *provider_id* for
+        *channel*, or None. The single gate of the OAuth start/callback routes
+        (#1344): a disabled or half-configured provider does not exist."""
+        p = self.get(provider_id)
+        if p is None or not p.enabled or channel not in p.supported_channels:
+            return None
+        is_configured = getattr(p, "is_configured", None)
+        if not callable(is_configured) or not is_configured():
+            return None
+        if not callable(getattr(p, "exchange_code", None)):
+            return None
+        return p
 
-        Credential-only providers (no ``authorize_url``) are excluded, so this
-        is the list the login UI renders as "Sign in with …" buttons.
-        """
-        entries: list[tuple[str, str]] = []
-        for p in self.all():
-            if not p.enabled or channel not in p.supported_channels:
-                continue
-            authorize_url = getattr(p, "authorize_url", None)
-            if authorize_url is None:
-                continue
-            url = authorize_url(channel)
-            if url:
-                entries.append((p.provider_id, url))
-        return entries
+    def redirect_entries(self, channel: str) -> list[str]:
+        """Provider ids of every usable redirect provider for *channel* — the
+        "Sign in with …" buttons. The authorize URL is NOT built here: it needs
+        a server-bound ``state`` + PKCE challenge, which only
+        ``GET /api/auth/sso/start`` creates (#1344)."""
+        return [
+            p.provider_id
+            for p in self.all()
+            if self.redirect_provider(p.provider_id, channel) is not None
+        ]
 
     # -- credential walk -----------------------------------------------------
 

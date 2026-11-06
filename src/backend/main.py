@@ -27,6 +27,7 @@ from api.lifecycle import lifespan
 from api.routes import (
     atoms,
     auth,
+    auth_oauth,
     chat,
     chat_upload,
     circles,
@@ -180,10 +181,13 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     covers first-login (no cookie yet), the refresh bootstrap after cookie
     expiry, and every legacy client. ``/api/internal/*`` (server-to-server, no
     browser) is exempt defensively. Safe methods and CORS preflight pass through.
+    The OAuth callback (``/api/auth/sso/callback/``, #1344) is exempt as well: the
+    IdP's cross-site form POST (Apple) can never carry the header, and the route
+    is CSRF-bound by its own server-side ``state`` + browser-binding cookie.
     """
 
     _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
-    _EXEMPT_PREFIXES = ("/api/internal/",)
+    _EXEMPT_PREFIXES = ("/api/internal/", "/api/auth/sso/callback/")
 
     async def dispatch(self, request: Request, call_next):
         if (
@@ -233,6 +237,9 @@ setup_rate_limiter(app)
 
 # REST API Routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+# OAuth redirect providers (#1344): 404 unless SSO_HANDOFF_ENABLED and the
+# provider is enabled + configured.
+app.include_router(auth_oauth.router, prefix="/api/auth", tags=["Authentication"])
 # Unauthenticated-by-design token oracle for downstream services (voice-server
 # callback/registry auth) — opaque 401s; constrain reach at the network layer.
 app.include_router(internal_auth.router, prefix="/api/internal", tags=["Internal"])

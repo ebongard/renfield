@@ -1574,7 +1574,12 @@ class Settings(BaseSettings):
     ldap_receive_timeout: int = 10
 
     # --- Social redirect providers. All ship enabled=False; enabling is a
-    #     config-only change (no redeploy). Off the credential critical path. ---
+    #     config-only change (no redeploy). Off the credential critical path.
+    #     Login = GET /api/auth/sso/start → IdP → /api/auth/sso/callback/{id}
+    #     → one-time hand-off code (needs SSO_HANDOFF_ENABLED, validator) (#1344).
+    # Lifetime of a pending redirect login (server-bound state + PKCE verifier
+    # in Redis): the time a person has at the IdP's consent screen.
+    oauth_state_ttl_seconds: int = 600
     oauth_google_enabled: bool = False
     oauth_google_client_id: str = ""
     oauth_google_client_secret: SecretStr = ""
@@ -2385,6 +2390,38 @@ class Settings(BaseSettings):
                     f"missing: {', '.join(missing)}. Nobody could log in. "
                     "Configure LDAP or set DB_AUTH_ENABLED=true."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def assert_oauth_redirect_config(self) -> "Settings":
+        """An enabled OAuth redirect provider needs the SSO hand-off (#1344).
+
+        The callback delivers the session to the SPA ONLY through the one-time
+        hand-off code (``POST /api/auth/sso/exchange``, gated by
+        ``SSO_HANDOFF_ENABLED``) — never a token in a URL. With the hand-off
+        off, every federated login would end in a dead callback, so an
+        enabled provider without it fails the boot. A non-positive state TTL
+        would make every callback fail the same way.
+        """
+        enabled = [
+            name
+            for name, on in (
+                ("OAUTH_GOOGLE_ENABLED", self.oauth_google_enabled),
+                ("OAUTH_GITHUB_ENABLED", self.oauth_github_enabled),
+                ("OAUTH_APPLE_ENABLED", self.oauth_apple_enabled),
+            )
+            if on
+        ]
+        if not enabled:
+            return self
+        if not self.sso_handoff_enabled:
+            raise ValueError(
+                f"{', '.join(enabled)}=true requires SSO_HANDOFF_ENABLED=true — "
+                "the OAuth callback hands the session to the browser only via the "
+                "one-time hand-off code."
+            )
+        if self.oauth_state_ttl_seconds <= 0:
+            raise ValueError("OAUTH_STATE_TTL_SECONDS must be positive.")
         return self
 
     @model_validator(mode="after")

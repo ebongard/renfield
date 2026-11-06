@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth.provider_contract import ProviderResult
 from auth.registry import get_registry
 from utils.hooks import has_hook, run_hooks
 
@@ -78,6 +79,17 @@ async def resolve_login(
         return None  # every provider declined → 401 (bad credentials)
 
     # --- Step 3: fire post_authenticate exactly once, before JWT mint ------
+    return await resolve_provider_result(result)
+
+
+async def resolve_provider_result(result: ProviderResult) -> LoginOutcome | None:
+    """Turn a provider identity into a Renfield user — the ONE place.
+
+    Shared by the credential walk above and the OAuth redirect callback
+    (``api/routes/auth_oauth.py``, #1344), so a federated login can never
+    resolve differently from a password login: ``post_authenticate`` fires
+    exactly once; without a consumer only a ``db`` subject is a user id.
+    """
     if has_hook("post_authenticate"):
         resolutions = await run_hooks("post_authenticate", result=result)
         resolved = next((r for r in resolutions if r is not None), None)
