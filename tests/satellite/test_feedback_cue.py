@@ -375,7 +375,7 @@ def _rgb(c):
 def test_the_cue_colour_is_no_selectable_colour():
     """Distinct from everything a device can show otherwise. `led.idle_color`
     may name ANY entry of `COLORS` (`COLORS.get(idle_color, blue)`; purple is
-    one of them, the Esszimmer pod runs yellow), and the state patterns use
+    one of them), and the state patterns use
     entries of `COLORS` too — so the cue colour must be outside `COLORS`."""
     assert _rgb(CUE_COLOR) not in {_rgb(c) for c in COLORS.values()}
 

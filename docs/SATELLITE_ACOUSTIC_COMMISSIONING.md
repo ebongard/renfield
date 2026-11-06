@@ -336,7 +336,7 @@ A room that dominates the `vad_floor` count and has near-zero successful
 sessions is not commissioned, whatever its provisioning status says. The floor
 constants live in `ha_glue/services/voice_empty_turn.py`;
 `tests/satellite/test_backend_vad_floor_matches_fleet.py` fails when the fleet
-settings (both sources) drift away from them.
+settings (group_vars) drift away from them.
 
 ---
 

@@ -41,7 +41,10 @@ else
 fi
 
 echo "3/3 user $ANSIBLE_USER (SSH key from root, passwordless sudo)"
-GROUPS_CSV=$(for g in sudo audio video plugdev i2c; do getent group "$g" >/dev/null && printf '%s,' "$g"; done)
+GROUPS_CSV=""
+for g in sudo audio video plugdev i2c; do
+  if getent group "$g" >/dev/null; then GROUPS_CSV+="$g,"; fi
+done
 id "$ANSIBLE_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash -G "${GROUPS_CSV%,}" "$ANSIBLE_USER"
 install -d -m700 -o "$ANSIBLE_USER" -g "$ANSIBLE_USER" "/home/$ANSIBLE_USER/.ssh"
 install -m600 -o "$ANSIBLE_USER" -g "$ANSIBLE_USER" /root/.ssh/authorized_keys "/home/$ANSIBLE_USER/.ssh/authorized_keys"
