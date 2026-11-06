@@ -20,6 +20,21 @@
   hosts: satellites
   become: true
 
+  vars:
+    # The ALSA card id each hat_type's microphone registers as — the same id its
+    # templates/asoundrc-<hat_type>.j2 opens (`hw:<id>`); a test pins the two
+    # together. Play vars on purpose: this is a property of the template, not a
+    # per-host setting, so host_vars must not be able to loosen it.
+    mic_alsa_card:
+      "2mic": seeed2micvoicec
+      "2mic-v2": seeed2micvoicec
+      "4mic": seeed4micvoicec
+      "whisplay": wm8960soundcard
+      "xvf3800-usb": Array
+    asound_cards_path: /proc/asound/cards
+    # A Pi Zero 2 W re-enumerates USB slowly after the driver reboot.
+    mic_card_timeout: 30
+
   handlers:
     - name: reboot after driver install
       ansible.builtin.reboot:
@@ -525,29 +540,27 @@
       tags: [driver]
       ansible.builtin.meta: flush_handlers
 
-    - name: Wait for sound card after reboot
+    # Microphone acceptance, part 1: the card the asoundrc template opens must
+    # exist. ignore_errors only DEFERS the verdict — the rest of the run (config,
+    # service) still lands, and "Acceptance — microphone and service" at the end
+    # fails the host. Before that gate a run without a mic reported success
+    # (#1387: Wohnzimmer, 2026-10-10 — only card vc4hdmi, run would be green).
+    # One task with one register: two tasks sharing a register let the second,
+    # skipped one overwrite the first one's real result.
+    - name: Wait for the microphone's sound card
       tags: [driver]
-      when: hat_type in ["2mic", "2mic-v2", "4mic", "whisplay"]
       ansible.builtin.wait_for:
-        path: /proc/asound/cards
-        search_regex: "seeed|wm8960"
-        timeout: 30
-      register: soundcard_check
-      ignore_errors: true
-
-    - name: Verify XVF3800 USB audio device
-      tags: [driver]
-      when: hat_type == "xvf3800-usb"
-      ansible.builtin.wait_for:
-        path: /proc/asound/cards
-        search_regex: "Array"
-        timeout: 10
-      register: soundcard_check
+        path: "{{ asound_cards_path }}"
+        # The exact card id, bracketed as /proc/asound/cards prints it — the old
+        # "seeed|wm8960" let any HAT card stand in for another one.
+        search_regex: '\[{{ mic_alsa_card[hat_type] }}\s*\]'
+        timeout: "{{ mic_card_timeout }}"
+      register: mic_card_check
       ignore_errors: true
 
     - name: Show detected sound cards
       tags: [driver]
-      ansible.builtin.command: cat /proc/asound/cards
+      ansible.builtin.command: cat {{ asound_cards_path }}
       register: asound_cards
       changed_when: false
 
@@ -1070,6 +1083,31 @@
       tags: [service]
       ansible.builtin.debug:
         var: service_status.stdout_lines
+
+    # Acceptance, part 2: the verdict. Both checks above run with ignore_errors
+    # so a failed one does not cut the run short (the config and the service
+    # still land, and a half-provisioned satellite would be worse); this gate
+    # turns them into a failed host, so the run ends red and the summary below
+    # never claims success. A check that did not run (its tag not selected,
+    # check mode) is no verdict — `--tags config` is not blocked by a mic that
+    # is out for a hardware swap.
+    - name: Acceptance — microphone and service
+      tags: [always]
+      vars:
+        mic_failed: "{{ mic_card_check is defined and mic_card_check is not skipped and mic_card_check is failed }}"
+        service_failed: "{{ service_status is defined and service_status is not skipped and service_status is failed }}"
+      ansible.builtin.assert:
+        that:
+          - not (mic_failed | bool)
+          - not (service_failed | bool)
+        quiet: true
+        fail_msg: >-
+          Satellite {{ inventory_hostname }} is NOT accepted.
+          {% if mic_failed | bool %}MICROPHONE: no ALSA card
+          '{{ mic_alsa_card[hat_type] | default('<unknown hat_type ' ~ hat_type ~ '>') }}'
+          in {{ asound_cards_path }} (hat_type={{ hat_type }}) — the room would be
+          deaf; see "Display sound cards" above. {% endif %}{% if service_failed | bool %}SERVICE:
+          renfield-satellite is not active — see "Display service status" above.{% endif %}
 
     - name: Show provisioning summary
       tags: [always]
