@@ -443,6 +443,17 @@ einführt, selbst keine neue Abhängigkeit mitbringen (trifft zu). Ein Gerät au
 Version, das eine neue Abhängigkeit braucht, bekommt sie weiterhin per Ansible
 (`ansible-playbook … --tags app`, dazu die Abhängigkeiten im venv).
 
+**`requirements.txt` nennt genau, was die Flotte ausführt.** Provisioniert wird aus
+`group_vars/satellites.yml` (`satellite_python_packages`) und einigen eigenen pip-Aufgaben im
+Playbook; das OTA installiert `requirements.txt` ins venv. Beide Listen waren auseinandergelaufen
+(`soundcard`, `pymicro-wakeword`, `pyopen-wakeword`, `RPi.GPIO` standen nur in `requirements.txt`,
+`pyaudio`, `lgpio`, `gpiozero`, `Pillow`, `openwakeword` nur im Playbook). Unsichtbar blieb das,
+weil der Installer bis 1.4.18 ein nacktes `pip` aufrief — das System-pip, nicht das des venv —
+und so nie etwas ins venv installierte; auf einem Orange Pi kompilierte es dabei bis zum
+Zeitlimit. Jetzt ruft er `sys.executable -m pip` auf, und
+`tests/satellite/test_requirements_match_fleet.py` hält beide Listen zusammen (Ausnahmen nur mit
+Begründung). Die Korrektur greift ab dem Update NACH dem, das sie ausliefert.
+
 Wer eine Abhängigkeit hinzufügt, trägt sie in `requirements.txt` UND `safe_packages.txt` ein und
 signiert neu; `tests/satellite/test_update_security.py::test_shipped_requirements_pass_validation`
 prüft beide gegeneinander. Vor dem Eintrag die PEP-503-Normalform prüfen (Trennzeichen werden zu
