@@ -880,7 +880,7 @@ speech and **every** turn in the fleet was cut at ~3.3 s (53 of 53 recordings on
 The signature in the logs: voice-server `Processing audio with duration 00:03.1–3.4` for
 every call, and `Ending listening: silence` ~3 s after the wake word. The model is pinned to
 a release tag + checksum (`silero_vad_version` / `silero_vad_sha256` in
-`provisioning/group_vars/satellites.yml`, same tag in `src/satellite/Dockerfile`); it used to
+`provisioning/group_vars/satellites.yml`); it used to
 track `master`. Before bumping it, run `tests/satellite/test_silero_vad_streaming.py` against
 the new file (`SILERO_VAD_MODEL` + `SILERO_VAD_SPEECH_WAV`). The wake word is unaffected
 because `wakeword.vad_gated` is off by default — turning it on makes the VAD a precondition

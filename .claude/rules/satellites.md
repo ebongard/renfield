@@ -59,7 +59,7 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
   over a gap-free stream — the 1280-sample chunk is not a multiple of 512, so the remainder carries over, never
   zero-padded. Bare frames score ~0.00 for clear speech (0/118 vs 114/118 chunks): every turn in the fleet was cut at
   ~3.3 s until v1.4.11. Log signature: voice-server durations all 3.1–3.4 s. The model is pinned by tag + sha256
-  (`silero_vad_version` / `silero_vad_sha256` in `provisioning/group_vars/satellites.yml`, same tag in the Dockerfile);
+  (`silero_vad_version` / `silero_vad_sha256` in `provisioning/group_vars/satellites.yml`);
   before bumping run `tests/satellite/test_silero_vad_streaming.py` with `SILERO_VAD_MODEL` + `SILERO_VAD_SPEECH_WAV`.
 - An inference error must fall back to RMS, never be judged: neutral 0.5 reads as SPEECH at threshold 0.5.
 - `RATE_LIMITED` means ONE dropped frame, not a failed session — it must not reset a running turn (#1284).
