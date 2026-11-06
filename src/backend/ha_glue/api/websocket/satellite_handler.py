@@ -159,6 +159,32 @@ def truncation_notice(turn_end_reason: str | None, language: str | None) -> str:
     return _CUT_NOTICE.get(language or "de", _CUT_NOTICE["en"])
 
 
+async def should_use_vision(
+    image_b64: str | None, text: str, language: str | None, ollama, *, answered_by_action: bool = False,
+) -> bool:
+    """Answer this voice turn with the vision model and its camera snapshot?
+
+    The satellite photographs the room on every wake word, so an image comes
+    with ANY question. With the gate on, only an utterance that wants to see
+    something gets it; no verdict means no image (a turn answered without the
+    picture is still an answer, one about a dark frame is not). A turn an
+    action already answered never uses the image, so it is not asked.
+    """
+    if not (image_b64 and settings.ollama_vision_model):
+        return False
+    if not ha_glue_settings.satellite_vision_query_gate_enabled:
+        logger.info(f"👁️ Using vision model: {settings.ollama_vision_model}")
+        return True
+    if answered_by_action:
+        return False
+    verdict = await ollama.is_visual_query(text, lang=language)
+    if verdict is True:
+        logger.info(f"👁️ Visual query, using vision model: {settings.ollama_vision_model}")
+        return True
+    logger.info(f"🙈 Snapshot not used (visual query check: {verdict})")
+    return False
+
+
 def _spawn_satellite_extraction(
     *,
     user_text: str,
@@ -1497,9 +1523,9 @@ async def satellite_websocket(
 
                     # Generate response (with conversation history for context)
                     # Use vision model if image is present and vision model is configured
-                    use_vision = bool(image_b64 and settings.ollama_vision_model)
-                    if use_vision:
-                        logger.info(f"👁️ Using vision model: {settings.ollama_vision_model}")
+                    use_vision = await should_use_vision(
+                        image_b64, text, satellite_language, ollama, answered_by_action=bool(action_result),
+                    )
 
                     response_text = ""
                     if action_result and action_result.get("success"):

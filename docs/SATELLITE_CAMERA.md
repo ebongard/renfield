@@ -9,7 +9,9 @@ and send it alongside the transcribed speech to a Vision-LLM for image-aware res
 
 1. Wakeword detected -> camera snapshot captured in background
 2. User finishes speaking -> audio transcribed, snapshot attached to `audio_end` message
-3. Backend receives image + text -> routes to Vision-LLM (`qwen3-vl:8b`)
+3. Backend receives image + text -> with `SATELLITE_VISION_QUERY_GATE_ENABLED` the intent
+   model first decides whether the question wants to see something; only then -> Vision-LLM
+   (`qwen3-vl:8b`)
 4. Vision-LLM describes what it sees -> TTS response spoken back
 
 ## Architecture
@@ -27,7 +29,8 @@ Wakeword detected
                                            |-> Whisper STT
                                            |-> Intent extraction (text-only)
                                            |-> Response generation:
-                                           |     image present + vision model?
+                                           |     image present + vision model
+                                           |     (+ gate on: is_visual_query() == JA)?
                                            |       YES -> chat_stream_with_image()
                                            |       NO  -> chat_stream()
                                            |-> Piper TTS
@@ -101,6 +104,10 @@ snapshot is already captured and ready. This means zero additional latency.
 - `rpicam-still` not installed -> same as above
 - Capture fails -> snapshot is None -> standard text-only response
 - No vision model configured -> image silently ignored
+- Gate on and the question does not want to see (NEIN, unclear answer, classifier error)
+  -> image ignored, text-only response. The snapshot is taken on EVERY wake word, so
+  without the gate a dark room turns "Wie spät ist es?" into "das Bild ist schwarz".
+  A turn an action already answered is not classified at all.
 - Other satellites without camera -> completely unaffected
 
 ### WebSocket Protocol

@@ -1398,6 +1398,13 @@ SATELLITE_CLEANUP_INTERVAL=30
 # Strecke ist berechtigt langsam, und ein verfrühtes Urteil wäre die
 # schlechtere Lüge.
 SATELLITE_UPDATE_TIMEOUT=900
+# Kamerabild beim Sprachbefehl nur für Sehfragen. Ein Kamera-Satellit fotografiert
+# bei JEDEM Weckwort; aus (Vorgabe, bisheriges Verhalten) geht jeder Zug mit Bild an
+# das Vision-Modell. An: das Intent-Modell entscheidet zuerst, ob die Äußerung etwas
+# SEHEN will („Was siehst du?“, „Wer ist im Raum?“); nur dann wird das Bild genutzt,
+# sonst — auch wenn die Prüfung scheitert — wird ohne Bild geantwortet.
+# Haushalt: an (k8s/configmap.yaml).
+SATELLITE_VISION_QUERY_GATE_ENABLED=false
 # Sicherungsnetz für ein HÄNGENDES Gerät — greift nur im Zustand `listening`
 # und nur, wenn gar kein `audio_end` eintrifft. Seit 2026-01 eingelesen und nie
 # gelesen; mit #1209 wirkt er erstmals.
