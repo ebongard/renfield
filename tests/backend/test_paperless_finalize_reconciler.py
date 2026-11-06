@@ -233,3 +233,39 @@ class TestFinalizeReconciler:
             assert (await db.execute(
                 select(Conversation).where(Conversation.session_id == "weg-paperless")
             )).scalar_one_or_none() is None
+
+    async def test_a_failing_announcement_keeps_the_filing_and_the_push(
+        self, session_factory,
+    ):
+        """A transient failure of the announcement write (not a refusal) costs
+        the persisted message only: the filing is stamped, the live push goes out."""
+        from services import paperless_commit_tool as pct
+        from services.conversation_service import ConversationService
+
+        pf_id = await _mk(session_factory, session_id="kaputt-paperless")
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={"success": True})
+        push = AsyncMock()
+        with patch("services.chat_upload_tool._poll_paperless_task",
+                   AsyncMock(return_value=(None, 42))), \
+             patch("services.chat_upload_tool._bump_confirms_used", AsyncMock()), \
+             patch.object(ConversationService, "save_message",
+                          AsyncMock(side_effect=RuntimeError("db gone"))), \
+             patch("api.websocket.shared.notify_session", push):
+            status = await pct._finalize_paperless_commit(
+                task_id="task-x",
+                deferred_patch={},
+                user_approved={"title": "Doc"},
+                attachment_id=1, user_id=1, session_id="kaputt-paperless",
+                filename="doc.pdf", created_note="", doc_text=None,
+                mcp_manager=mcp, pending_finalize_id=pf_id, poll_timeout_s=1.0,
+            )
+
+        assert status == "completed"
+        async with session_factory() as db:
+            assert (await db.get(PaperlessPendingFinalize, pf_id)).finalized_at is not None
+            assert (await db.execute(
+                select(PaperlessUploadTracking.id)
+                .where(PaperlessUploadTracking.chat_upload_id == 1)
+            )).first() is not None
+        push.assert_awaited_once()

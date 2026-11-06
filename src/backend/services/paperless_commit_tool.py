@@ -844,6 +844,10 @@ async def _finalize_paperless_commit(
                     "paperless finalize: refused to announce into a "
                     "conversation the caller does not own or that was deleted"
                 )
+            except Exception as exc:
+                logger.warning(
+                    "paperless finalize: announcement not persisted, filing kept: {}", exc
+                )
     except Exception as exc:
         logger.warning("paperless finalize: outcome persist failed: {}", exc)
 

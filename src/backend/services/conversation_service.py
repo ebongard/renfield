@@ -714,6 +714,11 @@ class ConversationService:
             logger.debug(f"Message stored: {role} ({len(content)} chars)")
             return message
 
+        except ConversationNotOwnedError:
+            # A refusal (foreign or deleted conversation) is an expected answer,
+            # not a storage failure; the caller logs what it means.
+            await self.db.rollback()
+            raise
         except Exception as e:
             logger.error(f"Failed to store the message: {error_text_without_content(e)}")
             await self.db.rollback()

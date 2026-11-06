@@ -72,7 +72,7 @@ service layer ever ran, and the shared thread would be readable but never contin
 swapped and announced as `{"type": "session_replaced", "session_id": …}` — the id and nothing else, or the frame
 becomes an oracle. The late `ConversationNotOwnedError` catch in the save block is a backstop for clients that send no
 register frame; it rebinds `session_state.db_session_id` too. Never catch a bare `PermissionError` there — it is a
-builtin `OSError` descendant. No identity (device token) → no replacement: it would mint a new ownerless row per turn.
+builtin `OSError` descendant. Under auth, no identity (device token) → no replacement: it would mint a new ownerless row per turn; under auth-off a deleted id is replaced ownerless.
 
 ## Fork / switch / delete
 - `ConversationService.save_message` ALWAYS maintains the tree (`ollama_service.save_message` only delegates): normal
