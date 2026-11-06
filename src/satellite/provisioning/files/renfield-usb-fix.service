@@ -1,0 +1,12 @@
+[Unit]
+Description=Renfield: ensure the ReSpeaker XVF3800 enumerates after boot
+After=systemd-udev-settle.service
+Before=renfield-satellite.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/renfield-usb-fix.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

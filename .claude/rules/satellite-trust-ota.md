@@ -22,6 +22,7 @@ Loaded only when OTA-signing / update / enrollment code is read. Long form: `doc
   (`bin/sign_satellite_release.py --sign`, check with `--verify`), committing `src/satellite/RELEASE_MANIFEST.json` +
   `.sig`. The fleet is fail-closed: a stale manifest fails the tree-hash check, so every OTA aborts. Without a bump no
   update is ever attempted and the breakage stays invisible.
+  A comment edit counts too; `tests/satellite/test_release_manifest_matches_source.py` turns red on it (since 2026-11-06).
 - **The private key lives only on the operator workstation** (`~/.renfield/ota_release_key`) — never on the backend
   or build box, never in git. Public keys (`satellite_release_pubkeys` in group_vars → `update.release_pubkeys`, N keys
   = rotation) are safe in git.

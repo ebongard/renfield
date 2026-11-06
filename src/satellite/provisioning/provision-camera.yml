@@ -16,12 +16,9 @@
 #                                       no-op check only.
 #   * camera_backend=sunxi_isp (A733) → install the DT overlay + sunxi-vin module autoload
 #                                       + the Allwinner ISP userspace + renfield_isp_capture
-#                                       into /opt/awisp (Esszimmer). This is a k8s-POD host;
-#                                       only these HOST bits are provisioned — the satellite
-#                                       app runs as a pod (k8s/satellite-esszimmer.yaml), so
-#                                       the main provision.yml deliberately does NOT target it.
+#                                       into /opt/awisp (Esszimmer).
 #
-# The bare-metal satellite app (provision.yml, hosts: satellites) is untouched by this.
+# The satellite app itself (provision.yml, hosts: satellites) is untouched by this.
 #
 # IDEMPOTENT. sunxi_isp needs a REBOOT after first overlay install (opt-in: -e camera_reboot=true).
 #

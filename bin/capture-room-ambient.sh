@@ -131,9 +131,6 @@ ansible_root_sh() {
 HOST_FACTS="$(ansible-inventory -i "$INVENTORY" --host "$HOST" 2>/dev/null)" || HOST_FACTS=""
 [[ -n "$HOST_FACTS" ]] || {
     echo "error: $HOST has no entry in $INVENTORY" >&2
-    echo "       Note: satellite-esszimmer runs as a k8s POD (k8s/satellite-esszimmer.yaml)," >&2
-    echo "       not as an Ansible host — this script cannot serve it. Capture there with" >&2
-    echo "       arecord inside the pod." >&2
     exit 1
 }
 FACTS_PARSED="$(python3 -c '

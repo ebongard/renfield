@@ -59,31 +59,32 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
   over a gap-free stream — the 1280-sample chunk is not a multiple of 512, so the remainder carries over, never
   zero-padded. Bare frames score ~0.00 for clear speech (0/118 vs 114/118 chunks): every turn in the fleet was cut at
   ~3.3 s until v1.4.11. Log signature: voice-server durations all 3.1–3.4 s. The model is pinned by tag + sha256
-  (`silero_vad_version` / `silero_vad_sha256` in `provisioning/group_vars/satellites.yml`, same tag in the Dockerfile);
+  (`silero_vad_version` / `silero_vad_sha256` in `provisioning/group_vars/satellites.yml`);
   before bumping run `tests/satellite/test_silero_vad_streaming.py` with `SILERO_VAD_MODEL` + `SILERO_VAD_SPEECH_WAV`.
 - An inference error must fall back to RMS, never be judged: neutral 0.5 reads as SPEECH at threshold 0.5.
 - `RATE_LIMITED` means ONE dropped frame, not a failed session — it must not reset a running turn (#1284).
 - `wakeword.vad_gated` is off by default; turning it on makes the VAD a precondition for the wake word.
 
-## A fleet setting has more than one source
-Ansible `src/satellite/provisioning/group_vars/satellites.yml` for the Pis and the bare-metal Orange Pis, **and** the
-ConfigMap inside `k8s/satellite-esszimmer.yaml` while the Esszimmer is still a pod. #1282 raised the recording limit
-only in group_vars; the pod kept the code default of 15 s. Change `vad_*`, LED or audio values in every source.
+## One source for fleet settings
+Every satellite, the Orange Pis included, is provisioned from Ansible
+`src/satellite/provisioning/group_vars/satellites.yml` + host_vars. Until 2026-11-06 the Esszimmer pod had its own
+ConfigMap, and #1282 raised the recording limit only in group_vars (the pod kept 15 s); a second source must not
+come back.
 
-## Orange Pi Zero 3W: leaving k8s for bare-metal (Küche done 2026-11-05, Esszimmer still a pod)
+## Orange Pi Zero 3W: bare-metal like the Pis (both since 2026-11-05/06, no satellite in k8s any more)
 Why: OTA cannot update a pod (code lives in the ephemeral container layer), and a cluster node with an always-on mic
 needs 6443/10250/VXLAN out of the IoT VLAN. Bare-metal = the Pi playbook with `satellite_platform: orangepi` in
-host_vars (skips `/boot/firmware/config.txt`, Ubuntu groups via `satellite_hw_groups`); OTA then works like on a Pi.
+host_vars: it skips `/boot/firmware/config.txt`, uses Ubuntu groups via `satellite_hw_groups` and adds the Orange Pi
+host tasks (CPU cap 1.2 GHz, conditional XVF3800 USB re-enumeration at boot, logs on disk). A fresh board first gets
+`provisioning/orangepi-first-boot.sh` as root (fresh machine-id + SSH host keys, the ansible user); camera:
+`provision-camera.yml` (only an IMX219 works, a Camera Module 3/IMX708 never enumerates).
 Traps: systemd refuses a unit naming a missing group (`216/GROUP`); the XVF3800 udev rule needs its add event replayed
 without the Pi's reboot (handler `apply XVF3800 udev rule`, else `xvf_host` "Failed to open device", ring dark);
-`hey_renfield.onnx` is not in git — copy it from another satellite. **Leave the cluster BEFORE the IoT VLAN:** while the
-node is a member, kube-proxy DNATs 192.168.1.230:443 to Traefik pod IPs that VLAN 90 cannot reach, so the switch gets
-a .90.x lease and still fails the 443 check (drain + delete node, `kubeadm reset`, disable kubelet/containerd, reboot
-to clear the rules — nothing persists iptables there). Host prep stays: `k8s/orangepi-node-prep.sh`
-(identity, rfkill, USB fix, RAM log off), CPU cap from `orangepi-calico-kmods.sh`; camera: `provision-camera.yml`
-(only an IMX219 works, a Camera Module 3/IMX708 never enumerates).
-Until the Esszimmer moves: build its image natively on the node, `ctr -n k8s.io images import`, `kubectl set image`,
-bump the tag in the manifest; keep the node's disk below ~80 % (image GC deletes the unpullable image).
+`hey_renfield.onnx` is not in git — copy it from another satellite. **Leaving a cluster:** reset ON the node first
+(disable kubelet, `kubeadm reset`, disable containerd), delete the Node object, then reboot to clear the iptables
+(nothing persists them there). Deleting the Node first kills calico + kube-proxy while kube-proxy's DNAT of
+192.168.1.230:443 stays, so the satellite loses the server; and a still-enabled kubelet re-registers the node on the
+next boot. Only then the IoT VLAN, else the switch gets a .90.x lease and still fails the 443 check.
 **XVF3800 ring: two scales.** Fleet brightness (config, night-dimming push) is the APA102's 0..31; the chip's
 `LED_BRIGHTNESS` is 0..255 and dims only breath/rainbow, never solid colours. Passing 0..31 through left the breathing
 idle ring dark on every XVF3800 until 1.4.16 — `XVF3800LEDController.chip_brightness()` converts. Idle = blue breath at

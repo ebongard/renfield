@@ -375,25 +375,22 @@ def _rgb(c):
 def test_the_cue_colour_is_no_selectable_colour():
     """Distinct from everything a device can show otherwise. `led.idle_color`
     may name ANY entry of `COLORS` (`COLORS.get(idle_color, blue)`; purple is
-    one of them, the Esszimmer pod runs yellow), and the state patterns use
+    one of them), and the state patterns use
     entries of `COLORS` too — so the cue colour must be outside `COLORS`."""
     assert _rgb(CUE_COLOR) not in {_rgb(c) for c in COLORS.values()}
 
 
 def test_the_configured_idle_colours_are_all_in_colors():
     """The invariant above only holds if every idle colour the fleet actually
-    configures goes through `COLORS`: the Ansible template default and any pod
-    ConfigMap (host_vars are gitignored; they can only name `COLORS` entries
-    or fall back to blue). Idle is blue everywhere since 1.4.16; yellow is
-    PROCESSING, so no pod sets a room colour any more."""
+    configures goes through `COLORS`: the Ansible template default (host_vars
+    are gitignored; they can only name `COLORS` entries or fall back to blue).
+    Idle is blue everywhere since 1.4.16; yellow is PROCESSING."""
     import pathlib
     import re
 
     repo = pathlib.Path(__file__).resolve().parents[2]
     template = (repo / "src/satellite/provisioning/templates/satellite.yaml.j2").read_text()
     names = set(re.findall(r"led_idle_color \| default\('(\w+)'\)", template))
-    for pod in sorted((repo / "k8s").glob("satellite-*.yaml")):
-        names |= set(re.findall(r'idle_color:\s*"(\w+)"', pod.read_text()))
     assert "blue" in names, names  # the template default; proves the pattern still matches
     assert names <= set(COLORS), names
 

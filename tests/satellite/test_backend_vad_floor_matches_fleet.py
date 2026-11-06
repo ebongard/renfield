@@ -6,9 +6,9 @@ recording ends at the earliest moment the satellite allows. It does not get
 the satellite's VAD settings over the wire, so it carries them as constants in
 `src/backend/ha_glue/services/voice_empty_turn.py`.
 
-🛑 A fleet setting has TWO sources: Ansible group_vars for the Pis and the
-ConfigMap in `k8s/satellite-esszimmer.yaml` for the pod. This test reads both,
-plus the satellite code default for what neither sets, and then MEASURES the
+The fleet's settings come from Ansible group_vars (every satellite, the Orange
+Pis included, is provisioned from it since 2026-11-06). This test reads them,
+plus the satellite code default for what they do not set, and then MEASURES the
 floor on the real `_on_audio_chunk` — not a reconstruction of its arithmetic.
 
 It lives here and not in tests/backend because the backend test copy on the
@@ -31,7 +31,6 @@ from renfield_satellite.satellite import Satellite, SatelliteState
 REPO = pathlib.Path(__file__).resolve().parents[2]
 BACKEND_MODULE = REPO / "src/backend/ha_glue/services/voice_empty_turn.py"
 GROUP_VARS = REPO / "src/satellite/provisioning/group_vars/satellites.yml"
-POD_MANIFEST = REPO / "k8s/satellite-esszimmer.yaml"
 TEMPLATE = REPO / "src/satellite/provisioning/templates/satellite.yaml.j2"
 
 
@@ -49,38 +48,19 @@ def _backend_constants() -> dict[str, float]:
     return out
 
 
-def _pod_config() -> dict:
-    for doc in yaml.safe_load_all(POD_MANIFEST.read_text()):
-        if doc and doc.get("kind") == "ConfigMap":
-            for value in (doc.get("data") or {}).values():
-                cfg = yaml.safe_load(value)
-                if isinstance(cfg, dict) and "vad" in cfg:
-                    return cfg
-    raise AssertionError("no satellite config with a `vad` block in the pod ConfigMap")
-
-
 def _fleet_values() -> list[tuple[str, float, int, int]]:
-    """(source, min_listening_s, silence_ms, chunk_size) for Pis and the pod."""
+    """(source, min_listening_s, silence_ms, chunk_size) for the fleet."""
     group_vars = yaml.safe_load(GROUP_VARS.read_text())
     template = TEMPLATE.read_text()
     default_min = VADConfig().min_listening_seconds
 
     # The template renders min_listening only if it names it; otherwise the
-    # code default applies on the Pis.
+    # code default applies.
     pi_min = default_min
     if "min_listening_seconds" in template:
         pi_min = float(group_vars["vad_min_listening_seconds"])
     pi_chunk = int(re.search(r"chunk_size:\s*(\d+)", template).group(1))
-    pi = ("pis", pi_min, int(group_vars["vad_silence_duration_ms"]), pi_chunk)
-
-    pod_cfg = _pod_config()
-    pod = (
-        "esszimmer-pod",
-        float(pod_cfg["vad"].get("min_listening_seconds", default_min)),
-        int(pod_cfg["vad"]["silence_duration_ms"]),
-        int(pod_cfg["audio"]["chunk_size"]),
-    )
-    return [pi, pod]
+    return [("fleet", pi_min, int(group_vars["vad_silence_duration_ms"]), pi_chunk)]
 
 
 def _measured_floor_seconds(

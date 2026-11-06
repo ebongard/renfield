@@ -140,7 +140,7 @@ sidecar has no gain provenance and the script warns — note the
 capture (§2).
 
 An unknown `hat_type`, a host without one, and a host that is not in the
-Ansible inventory at all (the Esszimmer satellite is a k8s pod) are refusals,
+Ansible inventory at all are refusals,
 not guesses.
 
 **The capture must span the room's real acoustic events.** A quiet 10-minute
@@ -336,7 +336,7 @@ A room that dominates the `vad_floor` count and has near-zero successful
 sessions is not commissioned, whatever its provisioning status says. The floor
 constants live in `ha_glue/services/voice_empty_turn.py`;
 `tests/satellite/test_backend_vad_floor_matches_fleet.py` fails when the fleet
-settings (both sources) drift away from them.
+settings (group_vars) drift away from them.
 
 ---
 
@@ -348,7 +348,7 @@ settings (both sources) drift away from them.
 | Arbeitszimmer | WM8960 / Whisplay | yes (v3 + v4 audiobook) | `ALC Max Gain=4` |
 | Wohnzimmer | 2-mic HAT | yes (v3) | still on v3, v5 available |
 | Kinderbad | 2-mic HAT (AIC3104) | **yes (v5, 2026-09-05)** | ADC HPF enabled 2026-09-04; FPs persisted (25 genuine wakes in the following 9 h). Its 10-min June capture scored peak 0.127 (0 detections) — useless as a negative. The 45-min in-use capture scores 0.969 / 8 against v3; v5 brings that to 0.609 / 1. **v5 deployed + live-verified 2026-09-05** (backend `2026-09-05-renfield-de-v5`): 4 `completed` sessions in the first 1.6 h, versus 0 in 9 h under v3. |
-| Esszimmer | Orange Pi / XVF3800 | yes (v3) | k8s pod, live on image `esszimmer-v12` (#1290, after v11 in #1288; satellite v1.4.11, fleet 60 s limit); audio path aligned to Fitnessraum (ch0 select) 2026-07-10; still on v3, v5 available |
+| Esszimmer | Orange Pi / XVF3800 | yes (v3) | bare-metal via Ansible since 2026-11-06 (was a k8s pod until then); audio path aligned to Fitnessraum (ch0 select) 2026-07-10; still on v3, v5 available |
 
 ---
 
