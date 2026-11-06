@@ -96,9 +96,11 @@ Phones rotate their address; `ble/rpa.py` resolves it with the per-person IRK an
 biases room arbitration). Do not bond a phone to one satellite — it out-shouts its neighbours.
 
 ## Wake word model files
-The config push carries `model_sha256` per keyword (`services/wakeword_models.py`); a satellite ≥ 1.4.17 replaces a
-differing file (verified, atomic) and reloads it, a failed update keeps the running model. Older satellites only fetch
-a model they lack — that is how two Pis ran an outdated `renfield_de` for months.
+The config push carries `model_sha256` per keyword (`services/wakeword_models.py`); a satellite ≥ 1.4.17 replaces
+a differing file (verified, atomic, the old one kept as `.prev`) and reloads it. A failed update keeps the running
+model but acks `success=false` (otherwise the backend shows the device synced); a model that does not load puts
+`.prev` back, else the next restart loads the broken file and the room goes deaf. Older satellites only fetch a
+model they lack — that is how two Pis ran an outdated `renfield_de` for months.
 
 ## Acoustic commissioning is mandatory
 A new room is not live until its ambient audio is in the wake-word hard-negative set. The synthetic false-positive
