@@ -112,6 +112,24 @@ class ConversationSessionState:
             if entity_id:
                 self.last_entities = [entity_id]
 
+    def bind_session(self, session_id: str) -> None:
+        """Point this socket at ``session_id``; another id starts a clean history.
+
+        The in-memory history, its load flag and its watermark describe ONE
+        conversation. Rebinding to a different one -- a ``register`` frame, a
+        message naming another id, a replacement for a refused or deleted id
+        (#1485) -- without dropping them would carry the previous
+        conversation's turns into the next prompt, and the freshness rule
+        (``history_needs_reload``) would compare the new conversation against
+        the old one's watermark. Dropped here, the next message loads the
+        history of the conversation it actually continues.
+        """
+        if session_id != self.db_session_id:
+            self.conversation_history = []
+            self.history_loaded = False
+            self.history_watermark = None
+        self.db_session_id = session_id
+
     def clear_rag(self):
         """Clear RAG-specific state."""
         self.last_rag_context = None

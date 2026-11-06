@@ -57,6 +57,18 @@ class ConversationNotOwnedError(PermissionError):
     """
 
 
+class ConversationDeletedError(ConversationNotOwnedError):
+    """The session id belonged to a conversation that was deleted (#1485).
+
+    Raised by ``save_message`` instead of recreating the conversation under
+    that id. A subclass of ``ConversationNotOwnedError`` on purpose: every
+    writer already answers that one correctly -- the WS turn opens a fresh
+    conversation and tells the client its id, the scanner and the Paperless
+    announcement settle without writing. The deleted id is no longer the
+    caller's either.
+    """
+
+
 class ConversationService:
     """
     Service for conversation persistence.
@@ -557,6 +569,7 @@ class ConversationService:
         parent_message_id: int | None = None,
         enforce_ownership: bool = False,
         circle_tier: int | None = None,
+        allow_deleted_session: bool = False,
     ) -> Message:
         """
         Store a single message.
@@ -574,6 +587,11 @@ class ConversationService:
                 advanced to the new message id, so the tree stays walkable for
                 EVERY conversation regardless of CHAT_BRANCHING_ENABLED
                 (CTE-always-on).
+            allow_deleted_session: create the conversation even when a
+                conversation under ``session_id`` was deleted before. Only the
+                satellite path sets it: its room id is fixed, so a deleted room
+                history comes back under it. Everyone else gets
+                ``ConversationDeletedError`` (#1485).
 
         Returns:
             Gespeicherte Message
@@ -605,6 +623,16 @@ class ConversationService:
             conversation = result.scalar_one_or_none()
 
             if not conversation:
+                # #1485: the row is created HERE, so the tombstone is enforced
+                # here too, not only at the chat boundary. A turn that started
+                # before the delete, a scan outcome or a Paperless
+                # announcement would otherwise revive the deleted id.
+                if not allow_deleted_session:
+                    from services.conversation_tombstones import is_deleted_session
+
+                    if await is_deleted_session(self.db, session_id):
+                        logger.info("🪦 Refused to recreate a deleted conversation")
+                        raise ConversationDeletedError("conversation was deleted")
                 conversation = Conversation(
                     session_id=session_id, user_id=user_id,
                     circle_tier=(circle_tier if circle_tier is not None else 0),

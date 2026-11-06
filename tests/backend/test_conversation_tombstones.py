@@ -12,7 +12,10 @@ What must hold, against real Postgres (the record is written by a trigger):
   by the reach rule as before;
 - a socket that still holds the deleted conversation notices on its next turn;
 - an upload made under the deleted id after the delete follows the turn to the
-  fresh id; older uploads and other people's uploads stay where they were.
+  fresh id; older uploads and other people's uploads stay where they were;
+- the row is never recreated where it is written (`save_message`): a turn that
+  started before the delete, a scan outcome and a Paperless announcement are
+  refused; only the satellite's fixed room id opts in.
 """
 from __future__ import annotations
 
@@ -28,7 +31,11 @@ from sqlalchemy import select, text
 # the real database.
 import api.websocket.chat_handler as chat_handler
 from models.database import ChatUpload, Conversation, DeletedConversationSession
-from services.conversation_service import ConversationService
+from services.conversation_service import (
+    ConversationDeletedError,
+    ConversationNotOwnedError,
+    ConversationService,
+)
 from services.conversation_tombstones import (
     carry_uploads_to_replacement,
     is_deleted_session,
@@ -46,8 +53,12 @@ class _WS:
         self.sent.append(msg)
 
 
-async def _conversation(db, session_id: str, user_id: int | None = None) -> Conversation:
-    await ConversationService(db).save_message(session_id, "user", "hallo", user_id=user_id)
+async def _conversation(
+    db, session_id: str, user_id: int | None = None, *, recreate: bool = False,
+) -> Conversation:
+    await ConversationService(db).save_message(
+        session_id, "user", "hallo", user_id=user_id, allow_deleted_session=recreate,
+    )
     await db.commit()
     return (await db.execute(
         select(Conversation).where(Conversation.session_id == session_id)
@@ -144,7 +155,7 @@ class TestTheRecord:
         await db_session.commit()
         first = await _deleted_at(db_session, "weg-2")
 
-        await _conversation(db_session, "weg-2")
+        await _conversation(db_session, "weg-2", recreate=True)
         await _delete(db_session, "weg-2")
 
         db_session.expire_all()
@@ -185,7 +196,7 @@ class TestTheWebSocketBoundary:
         monkeypatch.setattr(settings, "auth_enabled", False)
         await _conversation(db_session, "kueche")
         await _delete(db_session, "kueche")
-        await _conversation(db_session, "kueche")
+        await _conversation(db_session, "kueche", recreate=True)
 
         assert await chat_handler._session_registerable_by("kueche", None) is True
 
@@ -405,3 +416,148 @@ class TestTheRestFallback:
         assert (await db_session.execute(
             select(Conversation).where(Conversation.session_id == new_id)
         )).scalar_one_or_none() is not None
+
+
+class _Ollama:
+    """The one `ollama` method the replacement path calls, on the real service."""
+
+    async def save_message(self, session_id, role, content, db, **kw):
+        return await ConversationService(db).save_message(
+            session_id, role, content, kw.pop("metadata", None), **kw,
+        )
+
+
+async def _row(db, session_id: str):
+    db.expire_all()
+    return (await db.execute(
+        select(Conversation).where(Conversation.session_id == session_id)
+    )).scalar_one_or_none()
+
+
+class TestTheWriterRefusesADeletedId:
+    """The row is created in `save_message`, so the record is enforced there
+    too -- not only at the chat boundary, which a turn already past it, a scan
+    outcome or a Paperless announcement never crosses again."""
+
+    async def test_save_message_refuses_to_recreate_a_deleted_conversation(self, db_session):
+        await _conversation(db_session, "weg-save")
+        await _delete(db_session, "weg-save")
+
+        with pytest.raises(ConversationDeletedError) as raised:
+            await ConversationService(db_session).save_message("weg-save", "user", "noch da?")
+
+        # Every writer already handles the parent class correctly.
+        assert isinstance(raised.value, ConversationNotOwnedError)
+        assert await _row(db_session, "weg-save") is None
+
+    async def test_the_satellite_opt_in_recreates_its_room_id(self, db_session):
+        await _conversation(db_session, "satellite-kueche")
+        await _delete(db_session, "satellite-kueche")
+
+        await ConversationService(db_session).save_message(
+            "satellite-kueche", "user", "Licht an", allow_deleted_session=True,
+        )
+        # Once the row exists again, plain appends work as before.
+        await ConversationService(db_session).save_message(
+            "satellite-kueche", "assistant", "Erledigt.",
+        )
+
+        assert await _row(db_session, "satellite-kueche") is not None
+
+    async def test_the_satellite_handler_opts_in(self):
+        """Pinned on the call itself: without the flag a deleted room history
+        would silently stop being written for the rest of the day."""
+        import ast
+        import inspect
+
+        from ha_glue.api.websocket import satellite_handler
+
+        tree = ast.parse(inspect.getsource(satellite_handler))
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "save_message"
+        ]
+        assert calls
+        for call in calls:
+            flags = {kw.arg: kw.value for kw in call.keywords}
+            assert isinstance(flags.get("allow_deleted_session"), ast.Constant)
+            assert flags["allow_deleted_session"].value is True
+
+    @pytest.mark.parametrize("auth_enabled, caller", [(False, None), (True, 5)])
+    async def test_a_turn_whose_conversation_was_deleted_mid_turn_lands_in_a_fresh_one(
+        self, db_session, own_session_to_test_db, monkeypatch, auth_enabled, caller,
+    ):
+        """The probe runs at turn START, the save after the LLM round. A delete
+        in between must not be revived by the save: it raises, and the
+        handler's replacement path opens a fresh conversation -- under auth-off
+        too, where the turn has no identity."""
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "auth_enabled", auth_enabled)
+        await ensure_user(db_session, 5)
+        await db_session.commit()
+        await _conversation(db_session, "weg-mitten", user_id=caller)
+        # Turn start: the conversation is there, nothing to swap.
+        newest, deleted = await chat_handler._probe_session_freshness("weg-mitten")
+        assert newest is not None and deleted is False
+
+        await _delete(db_session, "weg-mitten")  # another tab, mid-turn
+
+        ollama = _Ollama()
+        with pytest.raises(ConversationNotOwnedError):  # what the handler catches
+            await ollama.save_message(
+                "weg-mitten", "user", "Frage", db_session,
+                user_id=caller, enforce_ownership=auth_enabled,
+            )
+        ws = _WS()
+        new_id, user_msg_id, asst_msg_id = await chat_handler._restart_conversation_for_caller(
+            ws, db_session, ollama, user_id=caller, content="Frage", response="Antwort",
+            user_metadata=None, assistant_metadata=None,
+        )
+
+        assert new_id and new_id != "weg-mitten"
+        assert user_msg_id and asst_msg_id
+        assert ws.sent == [{"type": "session_replaced", "session_id": new_id}]
+        assert await _row(db_session, "weg-mitten") is None
+        assert (await _row(db_session, new_id)).user_id == caller
+
+    async def test_under_auth_a_turn_without_identity_still_opens_nothing(
+        self, db_session, monkeypatch,
+    ):
+        """Unchanged: under auth a replacement without an owner would mint one
+        ownerless row per turn."""
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "auth_enabled", True)
+        ws = _WS()
+        assert await chat_handler._restart_conversation_for_caller(
+            ws, db_session, _Ollama(), user_id=None, content="Frage", response="Antwort",
+            user_metadata=None, assistant_metadata=None,
+        ) == (None, None, None)
+        assert ws.sent == []
+
+    async def test_a_scan_outcome_after_the_delete_is_refused(
+        self, db_session, monkeypatch,
+    ):
+        """The scan started in the conversation; it was deleted before the
+        scanner reported. The outcome settles as refused and writes nothing."""
+        from services import scanner_jobs as sj
+        from tests.backend.test_scanner_jobs import JOB_ID, FakeRedis, _event, _tool_result
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        await _conversation(db_session, "weg-scan")
+        redis = FakeRedis()
+        await sj.remember_scan_requester(
+            _tool_result({"ok": True, "job_id": JOB_ID}), user_id=None,
+            session_id="weg-scan", redis=redis,
+        )
+        await _delete(db_session, "weg-scan")
+
+        assert await sj.handle_job_event(db_session, _event(), redis=redis) == "refused"
+        assert await _row(db_session, "weg-scan") is None
+        assert redis.published == []
+        # Final, like any refusal: the retry is a duplicate, not a second try.
+        assert await sj.handle_job_event(db_session, _event(), redis=redis) == "duplicate"

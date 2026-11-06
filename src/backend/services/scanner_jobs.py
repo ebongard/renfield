@@ -798,10 +798,14 @@ async def handle_job_event(
             if message is None:
                 raise RuntimeError("message was not saved")
         except PermissionError:
-            # The conversation belongs to someone else. That never changes on a
-            # retry, so this is final: settle it and answer 2xx — a 5xx would
-            # make the scanner hammer a write that can never succeed.
-            logger.warning(f"scanner: job {job_id} refused — conversation owned by another user")
+            # The conversation belongs to someone else, or was deleted since the
+            # scan started (#1485, `ConversationDeletedError`). Neither changes
+            # on a retry, so this is final: settle it and answer 2xx — a 5xx
+            # would make the scanner hammer a write that can never succeed.
+            logger.warning(
+                f"scanner: job {job_id} refused — conversation owned by another "
+                f"user or deleted"
+            )
             await _mark_reported(redis, reported_key, "refused")
             return "refused"
         await _mark_reported(redis, reported_key, "delivered")

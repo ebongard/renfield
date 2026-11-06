@@ -1636,6 +1636,11 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                                 # producing a shared thread nobody can see.
                                 # (`room_owner_id` / `room_tier` are resolved
                                 # once, above, next to the speaker association.)
+                                #
+                                # `allow_deleted_session`: the room id is fixed
+                                # per day, so a room history deleted earlier
+                                # today legitimately comes back under it
+                                # (#1485 refuses that for every other writer).
                                 await ollama.save_message(
                                     satellite_db_session_id, "user", text, db_session,
                                     metadata={
@@ -1645,12 +1650,14 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                                     },
                                     user_id=room_owner_id,
                                     circle_tier=room_tier,
+                                    allow_deleted_session=True,
                                 )
                                 await ollama.save_message(
                                     satellite_db_session_id, "assistant", response_text, db_session,
                                     metadata=assistant_metadata,
                                     user_id=room_owner_id,
                                     circle_tier=room_tier,
+                                    allow_deleted_session=True,
                                 )
                                 logger.debug(f"💾 Satellite messages saved to DB: {satellite_db_session_id}")
                         except Exception as e:

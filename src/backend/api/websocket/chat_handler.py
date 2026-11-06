@@ -397,11 +397,17 @@ async def _restart_conversation_for_caller(
     The frame carries the new id and NOTHING else — no reason, no owner. A
     "that one is taken" would turn this into an oracle for probing session ids.
 
+    The same path answers a conversation deleted while the turn ran (#1485,
+    ``ConversationDeletedError``): the turn lands in a fresh conversation
+    instead of reviving the deleted id.
+
     Returns ``(session_id, user_message_id, assistant_message_id)``; the session
-    id is ``None`` when the turn carries no identity to own a conversation — a
-    replacement would then just mint another ownerless row, one per turn.
+    id is ``None`` when, under auth, the turn carries no identity to own a
+    conversation — a replacement would then just mint another ownerless row,
+    one per turn. Under auth-off every row is ownerless and the only refusal is
+    a deleted id, which the client stops naming once it got the new one.
     """
-    if user_id is None:
+    if user_id is None and settings.auth_enabled:
         logger.warning(
             "⚠️ Refused session, and no identity to open a replacement for — "
             "turn not persisted"
@@ -1170,7 +1176,9 @@ async def websocket_endpoint(
                     if _replacement is not None:
                         reg_sid = _replacement
                     register_ws_connection(reg_sid, websocket)
-                    session_state.db_session_id = reg_sid
+                    # A switch to another conversation drops the previous
+                    # one's history, so the next message loads this one's.
+                    session_state.bind_session(reg_sid)
                 continue
 
             # Structured Paperless-confirm decision from the interactive confirm
@@ -1477,13 +1485,11 @@ async def websocket_endpoint(
                     )
                     if _replacement is not None:
                         msg_session_id = _replacement
-                    if session_state.db_session_id != msg_session_id:
-                        # Another conversation: the live list belongs to the
-                        # previous one. The load below only REPLACES it when
-                        # it finds messages, so a fresh or replaced id would
-                        # otherwise carry the old turns into the prompt.
-                        session_state.conversation_history = []
-                    session_state.db_session_id = msg_session_id
+                    # Another conversation: the live list belongs to the
+                    # previous one. The load below only REPLACES it when it
+                    # finds messages, so a fresh or replaced id would
+                    # otherwise carry the old turns into the prompt.
+                    session_state.bind_session(msg_session_id)
                     register_ws_connection(msg_session_id, websocket)
                     try:
                         # Cross-user IDOR guard: scope the history load to the
@@ -2897,8 +2903,12 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             # lookup and the disconnect-time unregister read —
                             # leaving it on the refused id would aim them at a
                             # conversation this connection no longer writes to.
+                            #
+                            # The in-memory history belongs to the refused (or
+                            # deleted, #1485) conversation; the next message
+                            # loads the replacement's own -- this turn.
                             msg_session_id = _replacement_sid
-                            session_state.db_session_id = _replacement_sid
+                            session_state.bind_session(_replacement_sid)
                             register_ws_connection(_replacement_sid, websocket)
                     except Exception as e:
                         logger.warning(

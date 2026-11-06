@@ -190,3 +190,46 @@ class TestFinalizeReconciler:
             )).scalars().all()
             assert len(tracks) == 1  # no duplicate
             assert (await db.get(PaperlessPendingFinalize, pf_id)).finalized_at is not None
+
+    async def test_a_refused_announcement_keeps_the_filing(self, session_factory, db_session):
+        """The conversation was deleted before the consume finished (#1485).
+        The announcement is refused -- and the filing must survive that: a
+        refused `save_message` rolls its session back, and when it shared the
+        filing's session the tracking row and the finalize stamp went with it,
+        so the reconciler re-ran the finalize on every pass."""
+        from models.database import Conversation
+        from services import paperless_commit_tool as pct
+        from services.conversation_service import ConversationService
+
+        await ConversationService(db_session).save_message("weg-paperless", "user", "Ablegen")
+        conv = (await db_session.execute(
+            select(Conversation).where(Conversation.session_id == "weg-paperless")
+        )).scalar_one()
+        await db_session.delete(conv)
+        await db_session.commit()
+        pf_id = await _mk(session_factory, session_id="weg-paperless")
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={"success": True})
+        with patch("services.chat_upload_tool._poll_paperless_task",
+                   AsyncMock(return_value=(None, 42))), \
+             patch("services.chat_upload_tool._bump_confirms_used", AsyncMock()), \
+             patch("api.websocket.shared.notify_session", AsyncMock()):
+            status = await pct._finalize_paperless_commit(
+                task_id="task-x",
+                deferred_patch={},
+                user_approved={"title": "Doc"},
+                attachment_id=1, user_id=1, session_id="weg-paperless",
+                filename="doc.pdf", created_note="", doc_text=None,
+                mcp_manager=mcp, pending_finalize_id=pf_id, poll_timeout_s=1.0,
+            )
+
+        assert status == "completed"
+        async with session_factory() as db:
+            assert (await db.execute(
+                select(PaperlessUploadTracking.id)
+                .where(PaperlessUploadTracking.chat_upload_id == 1)
+            )).first() is not None
+            assert (await db.get(PaperlessPendingFinalize, pf_id)).finalized_at is not None
+            assert (await db.execute(
+                select(Conversation).where(Conversation.session_id == "weg-paperless")
+            )).scalar_one_or_none() is None
