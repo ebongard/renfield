@@ -16,6 +16,11 @@ satellite_platform: raspberrypi
 # SupplementaryGroups). Ubuntu on the Orange Pi has no spi/gpio groups, and
 # systemd refuses to start a unit that names a missing group (status 216/GROUP).
 satellite_hw_groups: "{{ ['audio', 'spi', 'gpio', 'i2c'] if satellite_platform == 'raspberrypi' else ['audio', 'i2c', 'video', 'plugdev'] }}"
+# MemoryMax of renfield-satellite.service. A Pi Zero 2 W has 512 MB, and the AC108
+# driver needs headroom (memory pressure triggers a vmalloc kernel crash). The
+# Orange Pis have 4 and 12 GB; at 450M their page cache pressed against the cap
+# and a pip run inside the unit stalled in reclaim.
+satellite_memory_max: "{{ '450M' if satellite_platform == 'raspberrypi' else '1G' }}"
 satellite_venv: "{{ satellite_base_dir }}/venv"
 satellite_config_dir: "{{ satellite_base_dir }}/config"
 satellite_models_dir: "{{ satellite_base_dir }}/models"

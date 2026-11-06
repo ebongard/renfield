@@ -8,6 +8,7 @@ in the satellite OTA update manager.
 import io
 import shutil
 import ssl
+import sys
 import tarfile
 import tempfile
 from pathlib import Path
@@ -260,6 +261,19 @@ class TestInstallRequirements:
         call_args = mock_run.call_args
         assert "pip" in call_args[0][0]
         assert "--no-deps" in call_args[0][0]
+
+    @pytest.mark.satellite
+    @patch("subprocess.run")
+    def test_pip_runs_in_the_satellites_own_interpreter(self, mock_run, update_manager, tmp_path):
+        """A bare "pip" found the system pip (the unit does not put the venv on
+        PATH): dependencies landed in the system Python, never in the venv."""
+        mock_run.return_value = MagicMock(returncode=0)
+        req_file = tmp_path / "requirements.txt"
+        req_file.write_text("websockets>=10.0\n")
+
+        update_manager._install_requirements(req_file)
+
+        assert mock_run.call_args[0][0][:3] == [sys.executable, "-m", "pip"]
 
     @pytest.mark.satellite
     @patch("subprocess.run")
