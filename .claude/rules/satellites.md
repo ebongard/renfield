@@ -64,6 +64,11 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
 - An inference error must fall back to RMS, never be judged: neutral 0.5 reads as SPEECH at threshold 0.5.
 - `RATE_LIMITED` means ONE dropped frame, not a failed session — it must not reset a running turn (#1284).
 - `wakeword.vad_gated` is off by default; turning it on makes the VAD a precondition for the wake word.
+- **A camera satellite photographs the room on EVERY wake word**, so an image on `audio_end` says nothing about the
+  question. Without `SATELLITE_VISION_QUERY_GATE_ENABLED` every such turn went to the vision model, and a dark room
+  answered "Wie spät ist es?" with "das Bild ist komplett schwarz" (Esszimmer, 2026-11-06). With it the intent model
+  first decides (`is_visual_query`, JA/NEIN); anything but a clear JA (NEIN, unparseable, error, open breaker)
+  answers WITHOUT the image — never fall back to vision on a failed check.
 
 ## One source for fleet settings
 Every satellite, the Orange Pis included, is provisioned from Ansible
