@@ -300,7 +300,10 @@ async def get_user_kb_permission(
 
 async def _lists_whole_kb(kb: KnowledgeBase, user: User, db: AsyncSession) -> bool:
     """The KB owner or a KB share reads every document of the KB — the KB-level
-    read without the public flag, which opens no document (#1469)."""
+    read without the public flag, which opens no document (#1469). Not for a
+    caller without a KB rung (Gast, Kiosk): a share does not lift that gate."""
+    if holds_no_rung_above(user.get_permissions(), Permission.KB_NONE):
+        return False
     if kb.owner_id == user.id:
         return True
     from services.kb_shares_service import get_user_kb_permission_level

@@ -246,8 +246,8 @@ GROUP BY a.atom_type;
 ### Listing documents is a read through the document filter
 
 `GET /api/knowledge/documents` has three branches under auth: with `q` the search gate of `search_documents`; with a
-`knowledge_base_id` and a KB-level read (`check_kb_access(kb, user, "read", db)`) the whole KB is listed, without
-one a `kb.own` holder gets the KB's documents through the document filter (no 403 since #1469); with
+`knowledge_base_id` the KB owner or a KB share lists the whole KB (`knowledge._lists_whole_kb`; never the public
+flag, never a caller without a KB rung), otherwise a `kb.own` holder gets the KB's documents through the document filter (no 403 since #1469); with
 neither (the recency list) the same document filter as the search gate, `document_search.visible_document_ids`, as an
 IN-subquery before `LIMIT`/`OFFSET` so pages stay full. `kb.all` and auth-off list everything. Until 2026-11-02 the
 recency list had no filter, so any `kb.own` holder listed every user's document rows. `RAGService.list_documents`

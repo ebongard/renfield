@@ -357,6 +357,18 @@ class TestNoKbRungReadsNothing:
         assert await _in_doc_search(db_session, guest, doc.id, monkeypatch) == 403
         assert await _facts(db_session, guest, doc.id) == 403
 
+    async def test_a_kb_share_does_not_lift_the_rung_gate_on_the_list(self, db_session, people):
+        """A share granted to a Gast must not list the KB he may not read."""
+        alice, _, _, _, _ = people
+        haus = await _kb(db_session, alice.id, "Haus")
+        await _doc(db_session, haus, "a")
+        guest = await _user(db_session, "guest-shared", ["kb.none"])
+        await ks.share_kb(db_session, haus, guest.id, "read", granted_by=alice.id)
+
+        with pytest.raises(HTTPException) as exc:
+            await _listed(db_session, guest, haus)
+        assert exc.value.status_code == 403
+
     async def test_a_kb_rung_still_reads_the_public_document(self, db_session, people):
         alice, _, _, dora, _ = people
         haus = await _kb(db_session, alice.id, "Haus", tier=TIER_PUBLIC)
