@@ -227,11 +227,19 @@ def _should_fallback(exc: BaseException) -> bool:
 
 
 def _exception_chain(exc: BaseException, limit: int = 8) -> list[BaseException]:
-    """``exc`` plus its ``__cause__``/``__context__`` ancestors, cycle-safe.
+    """``exc`` plus its explicit ``__cause__`` ancestors, cycle-safe.
 
-    The clients wrap the transport error: ollama raises a bare
-    ``ConnectionError`` from the ``httpx.ConnectError``, openai an
-    ``APIConnectionError`` with the httpx error as ``__cause__``.
+    The clients wrap the transport error: openai raises an
+    ``APIConnectionError`` with the httpx error as ``__cause__`` (``from err``);
+    ollama raises a bare ``ConnectionError`` ``from None``, which is classified
+    by its own type.
+
+    The implicit ``__context__`` ("raised while handling another exception") is
+    NOT followed: :class:`_OpenAICompatFallbackClient` calls the fallback inside
+    the primary's ``except`` block, so an error the REACHED fallback raises (a
+    500, a missing model) carries the primary's connect failure as context.
+    Following it would call a server that answered "unreachable" and log the
+    wrong host.
     """
     chain: list[BaseException] = []
     seen: set[int] = set()
@@ -239,7 +247,7 @@ def _exception_chain(exc: BaseException, limit: int = 8) -> list[BaseException]:
     while cur is not None and id(cur) not in seen and len(chain) < limit:
         chain.append(cur)
         seen.add(id(cur))
-        cur = cur.__cause__ or cur.__context__
+        cur = cur.__cause__
     return chain
 
 
@@ -272,7 +280,7 @@ def is_llm_unreachable(exc: BaseException) -> bool:
             # openai raises this for EVERY transport error, a connection the
             # server dropped mid-answer included. The chained httpx cause
             # decides; without one, "Connection error." is all there is.
-            if err.__cause__ is None and err.__context__ is None:
+            if err.__cause__ is None:
                 return True
             continue
         # A refused connection, and ollama's own bare ConnectionError

@@ -119,6 +119,101 @@ class TestIsLlmUnreachable:
 
 
 # ---------------------------------------------------------------------------
+# Fail-over: the reached fallback's own error is not "unreachable"
+# ---------------------------------------------------------------------------
+
+CUDA = "http://cuda.lan:8080"
+_CUDA_REQ = httpx.Request("POST", f"{CUDA}/v1/chat/completions")
+
+
+def _primary_cannot_connect() -> openai.APIConnectionError:
+    """What openai raises for a downed primary: ``from`` the httpx ConnectError."""
+    try:
+        try:
+            raise httpx.ConnectError("All connection attempts failed", request=_CUDA_REQ)
+        except httpx.ConnectError as err:
+            raise openai.APIConnectionError(request=_CUDA_REQ) from err
+    except openai.APIConnectionError as exc:
+        return exc
+
+
+def _fallback_500() -> httpx.HTTPStatusError:
+    resp = httpx.Response(500, request=_REQ, text="model runner crashed")
+    return httpx.HTTPStatusError("Server error '500'", request=_REQ, response=resp)
+
+
+def _fallback_client(fallback_exc: BaseException) -> llm_client._OpenAICompatFallbackClient:
+    primary = MagicMock()
+    primary.chat = AsyncMock(side_effect=_primary_cannot_connect())
+    fallback = MagicMock()
+    fallback.chat = AsyncMock(side_effect=fallback_exc)
+    return llm_client._OpenAICompatFallbackClient(primary, fallback)
+
+
+class TestFallbackErrorIsNotUnreachable:
+    """The fallback runs inside the primary's ``except``: its error carries the
+    primary's connect failure as implicit ``__context__``. That context must not
+    turn an answering server into an "unreachable" one."""
+
+    @pytest.fixture(autouse=True)
+    def _fallback_model(self, monkeypatch):
+        monkeypatch.setattr(
+            llm_client._OpenAICompatFallbackClient, "_fallback_model", lambda self: "qwen3:14b",
+        )
+
+    async def _raised(self, client, *, stream: bool) -> BaseException:
+        with pytest.raises(Exception) as info:
+            if stream:
+                gen = await client.chat(model="m", messages=[{"role": "user", "content": "x"}], stream=True)
+                async for _ in gen:
+                    pass
+            else:
+                await client.chat(model="m", messages=[{"role": "user", "content": "x"}])
+        return info.value
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("make_exc", [
+        _fallback_500,
+        lambda: __import__("ollama").ResponseError("model 'x' not found", 404),
+        lambda: ValueError("bad payload"),
+    ])
+    async def test_reached_fallback_failure_keeps_its_own_classification(self, make_exc, stream):
+        exc = await self._raised(_fallback_client(make_exc()), stream=stream)
+        # the setup really is the reported one: primary failure as implicit context
+        assert isinstance(exc.__context__, openai.APIConnectionError)
+        assert is_llm_unreachable(exc) is False
+
+    @pytest.mark.unit
+    async def test_endpoint_is_not_taken_from_the_context(self):
+        exc = await self._raised(_fallback_client(ValueError("bad payload")), stream=False)
+        assert llm_client._endpoint_of(exc) is None
+
+    @pytest.mark.unit
+    async def test_both_down_is_still_unreachable(self):
+        # ollama raises its bare ConnectionError ``from None`` when it cannot connect
+        exc = await self._raised(
+            _fallback_client(ConnectionError("Failed to connect to Ollama")), stream=False,
+        )
+        assert is_llm_unreachable(exc) is True
+
+    @pytest.mark.unit
+    async def test_user_keeps_the_generic_message(self, log_lines):
+        exc = await self._raised(_fallback_client(_fallback_500()), stream=False)
+        svc = _service(exc)
+        out = await svc.chat("Hallo", lang="en")
+        assert out == prompt_manager.get("chat", "error_fallback", lang="en", error=str(exc))
+        assert not any("LLM server unreachable" in line for line in log_lines)
+
+    @pytest.mark.unit
+    def test_implicit_context_alone_is_not_followed(self):
+        outer = RuntimeError("raised while handling")
+        outer.__context__ = _connect_error()
+        assert is_llm_unreachable(outer) is False
+        assert llm_client._endpoint_of(outer) is None
+
+
+# ---------------------------------------------------------------------------
 # Operator log
 # ---------------------------------------------------------------------------
 
