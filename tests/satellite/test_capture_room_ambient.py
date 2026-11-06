@@ -522,16 +522,15 @@ def test_busy_device_on_an_exclusive_mic_blames_a_third_party(box):
     assert "start" in ops, box.calls
 
 
-# --- the Esszimmer pod is not an Ansible host -------------------------------
+# --- a host outside the inventory is refused before anything runs -----------
 
 
-def test_host_outside_the_inventory_names_the_pod_case(box):
+def test_host_outside_the_inventory_is_refused(box):
     box.env["HOST_IN_INVENTORY"] = "0"
     res = box.run("--minutes", "15")
 
     assert res.returncode != 0
     assert "no entry in" in res.stderr
-    assert "k8s POD" in res.stderr
     assert box.calls == []
 
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=Cap CPU frequency at 1.2 GHz (fanless board)
+After=cpufrequtils.service loadcpufreq.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'for p in /sys/devices/system/cpu/cpufreq/policy*; do echo 1196000 > $p/scaling_max_freq; done'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

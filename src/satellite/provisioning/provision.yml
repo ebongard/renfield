@@ -41,6 +41,12 @@
       ansible.builtin.systemd:
         daemon_reload: true
 
+    - name: apply CPU cap
+      ansible.builtin.systemd:
+        name: cpu-freq-cap.service
+        state: restarted
+        daemon_reload: true
+
     - name: restart bluetooth
       ansible.builtin.systemd:
         name: bluetooth
@@ -228,6 +234,80 @@
         path: /boot/firmware/config.txt
         regexp: '^dtoverlay=w1-gpio'
         state: absent
+
+    # =========================================================================
+    # ORANGE PI — host settings the vendor image lacks. One-time identity setup
+    # (hostname, machine-id, SSH host keys, the ansible user) is
+    # orangepi-first-boot.sh, run before this playbook.
+    # =========================================================================
+
+    # Fanless board (up to ~90 °C under load). The vendor cpufrequtils service
+    # writes MAX_SPEED at boot and would undo a cap applied before it, so cap its
+    # default AND order the unit after it.
+    - name: Orange Pi — cpufrequtils boot default at the cap
+      tags: [system]
+      when: satellite_platform == "orangepi"
+      ansible.builtin.lineinfile:
+        path: /etc/default/cpufrequtils
+        regexp: '^MAX_SPEED='
+        line: "MAX_SPEED=1196000"
+      notify: apply CPU cap
+
+    - name: Orange Pi — CPU cap unit
+      tags: [system]
+      when: satellite_platform == "orangepi"
+      ansible.builtin.copy:
+        src: cpu-freq-cap.service
+        dest: /etc/systemd/system/cpu-freq-cap.service
+        mode: "0644"
+      notify: apply CPU cap
+
+    - name: Orange Pi — enable the CPU cap
+      tags: [system]
+      when: satellite_platform == "orangepi"
+      ansible.builtin.systemd:
+        name: cpu-freq-cap.service
+        enabled: true
+        daemon_reload: true
+
+    # The XVF3800 sometimes fails to enumerate after a warm reboot.
+    - name: Orange Pi — USB re-enumeration script
+      tags: [system]
+      when: satellite_platform == "orangepi"
+      ansible.builtin.copy:
+        src: renfield-usb-fix.sh
+        dest: /usr/local/sbin/renfield-usb-fix.sh
+        mode: "0755"
+
+    - name: Orange Pi — USB re-enumeration unit
+      tags: [system]
+      when: satellite_platform == "orangepi"
+      ansible.builtin.copy:
+        src: renfield-usb-fix.service
+        dest: /etc/systemd/system/renfield-usb-fix.service
+        mode: "0644"
+      notify: reload systemd
+
+    # Enabled only: it runs at the next boot. It is a no-op while the array is
+    # present, so there is no reason to start it under a running satellite.
+    - name: Orange Pi — enable USB re-enumeration at boot
+      tags: [system]
+      when: satellite_platform == "orangepi"
+      ansible.builtin.systemd:
+        name: renfield-usb-fix.service
+        enabled: true
+        daemon_reload: true
+
+    # The vendor image keeps /var/log on a 50 MB tmpfs synced only on a clean
+    # shutdown, so the persistent journal would lose exactly the crash it is for.
+    # Takes effect at the next boot.
+    - name: Orange Pi — logs on disk, not in RAM
+      tags: [system]
+      when: satellite_platform == "orangepi"
+      ansible.builtin.lineinfile:
+        path: /etc/default/orangepi-ramlog
+        regexp: '^ENABLED='
+        line: "ENABLED=false"
 
     # =========================================================================
     # DRIVER — Audio driver installation

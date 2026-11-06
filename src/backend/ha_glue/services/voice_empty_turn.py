@@ -45,11 +45,10 @@ from utils.metrics import VOICE_EMPTY_TURN_KINDS, VOICE_EMPTY_TURN_SOURCES
 #: Satellite capture chunk: 1280 samples at 16 kHz (`audio.chunk_size`).
 SATELLITE_CHUNK_SECONDS = 0.08
 
-#: The fleet's VAD end-of-turn settings. 🛑 A fleet setting has TWO sources
-#: (`src/satellite/provisioning/group_vars/satellites.yml` and the ConfigMap in
-#: `k8s/satellite-esszimmer.yaml`); `min_listening_seconds` is set in neither
-#: and comes from the satellite's code default. A cross-check test in
-#: `tests/satellite/` fails when they drift apart from these values.
+#: The fleet's VAD end-of-turn settings, from
+#: `src/satellite/provisioning/group_vars/satellites.yml`; `min_listening_seconds`
+#: is not set there and comes from the satellite's code default. A cross-check
+#: test in `tests/satellite/` fails when they drift apart from these values.
 FLEET_MIN_LISTENING_SECONDS = 2.0
 FLEET_SILENCE_DURATION_MS = 1200
 
