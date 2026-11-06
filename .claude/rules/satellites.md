@@ -102,6 +102,8 @@ a differing file (verified, atomic, the old one kept as `.prev`) and reloads it.
 model but acks `success=false` (otherwise the backend shows the device synced); a model that does not load puts
 `.prev` back, else the next restart loads the broken file and the room goes deaf. Older satellites only fetch a
 model they lack — that is how two Pis ran an outdated `renfield_de` for months.
+The detector loads the EXACT id first (`<keyword>.<ext>`, the file the update hashes); the substring match is only the
+fallback (`alexa` → `alexa_v0.1`) — before 1.4.19 `renfield_de_v5` could win in glob order.
 
 ## Acoustic commissioning is mandatory
 A new room is not live until its ambient audio is in the wake-word hard-negative set. The synthetic false-positive
