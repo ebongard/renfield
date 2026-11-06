@@ -1293,7 +1293,12 @@ class Satellite:
         keywords = config.wake_words or []
         active_keywords = []
         failed_keywords = []
+        replaced_keywords = []
+        # Keywords whose model update failed: they keep running on the
+        # previous model, but the ack must not claim the device is in sync.
+        update_failed = []
         error_msg = None
+        expected_shas = config.model_sha256 or {}
 
         if not keywords:
             # No keywords requested, just update other settings
@@ -1313,6 +1318,26 @@ class Satellite:
                     active_keywords.append(keyword)
                     continue
 
+                expected_sha = expected_shas.get(keyword)
+
+                # A local file that differs from the server's is replaced; if
+                # that fails, the current model keeps running.
+                if model_downloader.is_model_stale(keyword, expected_sha):
+                    print(f"⬇️ Keyword '{keyword}': local model differs from the server's, updating...")
+                    success, download_error = await model_downloader.download_model(
+                        keyword, expected_sha256=expected_sha
+                    )
+                    if success:
+                        print(f"✓ Keyword '{keyword}' model updated")
+                        replaced_keywords.append(keyword)
+                    else:
+                        print(f"⚠️ Keyword '{keyword}' update failed, keeping the current model: {download_error}")
+                        update_failed.append(keyword)
+                        if not error_msg:
+                            error_msg = f"Model update for {keyword} failed: {download_error}"
+                    active_keywords.append(keyword)
+                    continue
+
                 # Check if model file exists locally
                 if model_downloader.is_model_available(keyword):
                     print(f"✓ Keyword '{keyword}' available locally")
@@ -1321,7 +1346,9 @@ class Satellite:
 
                 # Try to download from server
                 print(f"⬇️ Keyword '{keyword}' not available locally, attempting download...")
-                success, download_error = await model_downloader.download_model(keyword)
+                success, download_error = await model_downloader.download_model(
+                    keyword, expected_sha256=expected_sha
+                )
                 if success:
                     print(f"✓ Keyword '{keyword}' downloaded successfully")
                     active_keywords.append(keyword)
@@ -1330,6 +1357,16 @@ class Satellite:
                     failed_keywords.append(keyword)
                     if not error_msg:
                         error_msg = download_error
+
+            # A replaced file only takes effect when its model is loaded again
+            # (update_config only loads keywords it does not have yet).
+            for keyword in replaced_keywords:
+                if keyword in self.wakeword.active_keywords and not self.wakeword.reload_keyword(keyword):
+                    restored = model_downloader.restore_previous(keyword)
+                    print(f"⚠️ Keyword '{keyword}': new model does not load, previous file restored={restored}")
+                    update_failed.append(keyword)
+                    if not error_msg:
+                        error_msg = f"Updated model for {keyword} does not load (previous restored: {restored})"
 
             # Apply the configuration with available keywords
             if active_keywords:
@@ -1355,7 +1392,7 @@ class Satellite:
                 active_keywords = self.wakeword.active_keywords
 
         # Send config acknowledgment to server
-        config_success = len(failed_keywords) == 0 and len(active_keywords) > 0
+        config_success = not failed_keywords and not update_failed and len(active_keywords) > 0
         await self.ws_client.send_config_ack(
             success=config_success,
             active_keywords=active_keywords,
