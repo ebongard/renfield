@@ -7,6 +7,7 @@ import IntentCorrectionButton from '../../components/IntentCorrectionButton';
 import AttachmentQuickActions from './AttachmentQuickActions';
 import EmailForwardDialog from './EmailForwardDialog';
 import PaperlessConfirmCard from './PaperlessConfirmCard';
+import ChatSkeleton from './ChatSkeleton';
 import SourceChips from '../../components/chat/SourceChips';
 import FollowupChips from '../../components/chat/FollowupChips';
 import MediaHandoffIndicator from '../../components/chat/MediaHandoffIndicator';
@@ -227,13 +228,11 @@ export default function ChatMessages() {
       aria-label={t('chat.conversations')}
       aria-relevant="additions"
     >
-      {/* History Loading State */}
-      {historyLoading && (
-        <div className="flex items-center justify-center py-8">
-          <Loader className="w-6 h-6 text-gray-500 dark:text-gray-400 animate-spin mr-2" aria-hidden="true" />
-          <span className="text-gray-500 dark:text-gray-400">{t('chat.loadingConversation')}</span>
-        </div>
-      )}
+      {/* History loading: a skeleton of the thread (#125) stands in for the
+          message list — including the previous conversation's messages, which
+          stay in state until the switched history arrives and are not the
+          conversation being opened. */}
+      {historyLoading && <ChatSkeleton />}
 
       {/* Empty State */}
       {!historyLoading && messages.length === 0 && (
@@ -279,7 +278,7 @@ export default function ChatMessages() {
       )}
 
       {/* Messages */}
-      {messages.map((message, index) => (
+      {!historyLoading && messages.map((message, index) => (
         <div
           key={index}
           ref={(el) => { messageRefs.current[index] = el; }}

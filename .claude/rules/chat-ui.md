@@ -67,3 +67,8 @@ conversations carrying a tier.) Highlighting is sentinel→`<mark>` (XSS-safe); 
 - Numeric `value` is bool-excluded and clamped server-side: brightness 0-100, temperature to the entity's
   `min_temp`/`max_temp`. The result frame echoes `brightness`/`targetTemp` so the widget reconciles.
 - `internal.device_controls` reads fresh `get_states()`, not the 60s entity-map cache (initial values must be real).
+
+## Chat history skeleton (#125)
+While `historyLoading`, `ChatSkeleton` REPLACES the message list (the previous conversation stays in state until the
+switched history arrives and must not show under it). Gray-only bubbles (crimson tints read as error), one
+`role="status"` with `chat.loadingConversation`, bubbles `aria-hidden`, `motion-reduce:animate-none`.

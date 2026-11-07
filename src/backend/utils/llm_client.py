@@ -221,6 +221,123 @@ def _should_fallback(exc: BaseException) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# "LLM server not reachable" — one classification, one log line, one answer
+# ---------------------------------------------------------------------------
+
+
+def _exception_chain(exc: BaseException, limit: int = 8) -> list[BaseException]:
+    """``exc`` plus its explicit ``__cause__`` ancestors, cycle-safe.
+
+    The clients wrap the transport error: openai raises an
+    ``APIConnectionError`` with the httpx error as ``__cause__`` (``from err``);
+    ollama raises a bare ``ConnectionError`` ``from None``, which is classified
+    by its own type.
+
+    The implicit ``__context__`` ("raised while handling another exception") is
+    NOT followed: :class:`_OpenAICompatFallbackClient` calls the fallback inside
+    the primary's ``except`` block, so an error the REACHED fallback raises (a
+    500, a missing model) carries the primary's connect failure as context.
+    Following it would call a server that answered "unreachable" and log the
+    wrong host.
+    """
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen and len(chain) < limit:
+        chain.append(cur)
+        seen.add(id(cur))
+        cur = cur.__cause__
+    return chain
+
+
+def is_llm_unreachable(exc: BaseException) -> bool:
+    """True when the LLM server could not be REACHED at all (#121).
+
+    Connection refused / no route / DNS failure / connect timeout — the server
+    is down or the URL is wrong, which is an operator problem with a concrete
+    fix. Not covered, on purpose: a read timeout of a server that accepted the
+    request (slow, not down), a 4xx/5xx answer (it is running), and anything
+    that is not a transport error. Those keep their own messages.
+    """
+    import httpx
+
+    try:
+        import openai
+    except Exception:  # pragma: no cover - openai is a hard dependency
+        openai = None  # type: ignore[assignment]
+
+    for err in _exception_chain(exc):
+        if isinstance(err, (httpx.ReadTimeout, httpx.PoolTimeout, httpx.WriteTimeout)):
+            return False
+        if isinstance(err, (httpx.ConnectError, httpx.ConnectTimeout)):
+            return True
+        if openai is not None and isinstance(err, openai.APITimeoutError):
+            # openai flattens connect- and read-timeouts into one type; only
+            # the chained httpx cause tells them apart (see _should_fallback).
+            continue
+        if openai is not None and isinstance(err, openai.APIConnectionError):
+            # openai raises this for EVERY transport error, a connection the
+            # server dropped mid-answer included. The chained httpx cause
+            # decides; without one, "Connection error." is all there is.
+            if err.__cause__ is None:
+                return True
+            continue
+        # A refused connection, and ollama's own bare ConnectionError
+        # ("Failed to connect to Ollama ..."). NOT its siblings reset/aborted/
+        # broken pipe: those mean the server WAS reached.
+        if isinstance(err, ConnectionRefusedError) or type(err) is ConnectionError:
+            return True
+    return False
+
+
+def _endpoint_of(exc: BaseException) -> str | None:
+    """The base URL the failed request went to, from the httpx request carried
+    on the exception chain — scheme, host and port only (never a path, query
+    or credentials)."""
+    for err in _exception_chain(exc):
+        try:
+            request = err.request  # type: ignore[attr-defined]
+        except Exception:
+            continue
+        url = getattr(request, "url", None)
+        if url is None:
+            continue
+        try:
+            port = f":{url.port}" if url.port else ""
+            return f"{url.scheme}://{url.host}{port}"
+        except Exception:
+            continue
+    return None
+
+
+def configured_llm_url(tier: str) -> str:
+    """The base URL a tier is configured to talk to (for the operator log, when
+    the exception carries no request URL)."""
+    if tier == "vision" and settings.ollama_vision_url:
+        return settings.ollama_vision_url
+    if use_openai_for_tier(tier) and settings.llm_openai_base_url:
+        return settings.llm_openai_base_url
+    return settings.ollama_url
+
+
+def log_llm_unreachable(exc: BaseException, *, where: str, configured_url: str) -> None:
+    """One ERROR line an operator can act on: which URL, and how to check it.
+
+    The URL and the hint go to the LOG only. The user-facing answer
+    (``chat.error_llm_unreachable``) says what happened and what to do without
+    naming internal hosts — under auth every household member reads it.
+    """
+    url = (_endpoint_of(exc) or configured_url or "").rstrip("/")
+    logger.error(
+        f"LLM server unreachable ({where}): cannot connect to {url}. "
+        f"Is it running and reachable from the backend? Check with "
+        f"`curl {url}/api/tags` (Ollama) or `curl {url}/v1/models` "
+        f"(OpenAI-compatible), and the OLLAMA_URL / LLM_OPENAI_BASE_URL "
+        f"setting. Cause: {type(exc).__name__}: {exc}"
+    )
+
+
 class _OpenAICompatFallbackClient:
     """Wrap the OpenAI-compat chat/agent client with a transparent retry on the
     in-cluster Ollama when the primary (external llama-server, e.g. cuda.local)

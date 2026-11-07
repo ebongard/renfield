@@ -4,7 +4,7 @@ import { GitMerge } from 'lucide-react';
 import { extractApiError } from '../utils/axios';
 import MergeProposalCard from './MergeProposalCard';
 import MergeClusterCard from './MergeClusterCard';
-import { groupProposals } from './mergeClusters';
+import { groupProposals, isCautiousProposal } from './mergeClusters';
 import {
   useApproveMergeProposal,
   useMergeProposalsQuery,
@@ -47,6 +47,12 @@ export default function MergeProposalsSection() {
   // and the pairs sat open in the database until the next page load.
   const [clusterNote, setClusterNote] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Initial focus (#1349): ONE card's Ablehnen — the topmost cautious single —
+  // takes the focus, once, when the queue is first built. Not a DOM `autoFocus`
+  // per card: with several cautious cards every one claimed it and the last
+  // won, and every remount (a neighbour approved/rejected) pulled it again.
+  const rejectButtons = useRef(new Map<number, HTMLButtonElement>());
+  const initialFocusDone = useRef(false);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -95,6 +101,21 @@ export default function MergeProposalsSection() {
   }, [reject]);
 
   useEffect(() => clearTimer, [clearTimer]);
+
+  useEffect(() => {
+    if (initialFocusDone.current || query.data === undefined) return;
+    // Decided on the FIRST loaded queue, focus or not: a later refetch that
+    // brings a cautious proposal must not move the focus either.
+    initialFocusDone.current = true;
+    const target = groupProposals(query.data).singles.find(isCautiousProposal);
+    // preventScroll: focusing must not scroll the page (reduced motion).
+    if (target) rejectButtons.current.get(target.id)?.focus({ preventScroll: true });
+  }, [query.data]);
+
+  const registerReject = useCallback((id: number) => (el: HTMLButtonElement | null) => {
+    if (el) rejectButtons.current.set(id, el);
+    else rejectButtons.current.delete(id);
+  }, []);
 
   const visible = proposals.filter((p) => !dismissedIds.has(p.id));
   if (visible.length === 0 && !pending) {
@@ -240,6 +261,7 @@ export default function MergeProposalsSection() {
             proposal={p}
             onApprove={(winnerId) => handleApprove(p, winnerId)}
             onReject={() => handleReject(p)}
+            rejectRef={registerReject(p.id)}
           />
         ))}
       </ul>

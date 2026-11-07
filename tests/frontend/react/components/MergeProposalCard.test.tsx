@@ -87,7 +87,19 @@ describe('MergeProposalCard', () => {
     expect(merge.className).toContain('btn-secondary');
     expect(merge.className).not.toContain('btn-primary');
     expect(reject.compareDocumentPosition(merge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(document.activeElement).toBe(reject);
+  });
+
+  it('never takes the focus itself — the section decides (#1349)', () => {
+    // A DOM autoFocus per card let the LAST of several cautious cards win and
+    // fired again on every remount. The card only hands out its Ablehnen button.
+    const rejectRef = { current: null as HTMLButtonElement | null };
+    const p = proposal({ reason: 'name_typo' });
+    renderWithRouter(
+      <MergeProposalCard proposal={p} onApprove={vi.fn()} onReject={vi.fn()} rejectRef={rejectRef} />,
+    );
+    const reject = screen.getByRole('button', { name: 'Ablehnen' });
+    expect(document.activeElement).not.toBe(reject);
+    expect(rejectRef.current).toBe(reject);
   });
 
   it('a legacy gray_zone pair whose names differ only in a number reads as name_identifier', () => {
