@@ -62,6 +62,9 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   empty or both are identical (normalized) — whatever the names (`gray_zone`) — OR the names differ only in
   digit-bearing tokens (multiset difference of `_norm().split()`; "1.2.3" is one token): a different number is a
   different thing (`name_identifier`, weak — see #1333 below). Field case: "Product A - 1.2.4" folded into "… 1.2.3", same generic description.
+  The same predicate guards EVERY name-similarity fold, incl. the admin string cleanup (`kg_cleanup_service`, ratio
+  0.82 scores the field pair 0.94): never a cluster edge, and a cluster holding such a pair via a third spelling is
+  `identifier_conflict` → refused whole (`clusters_refused`). A new merge path must call it too.
 - Per-user non-blocking advisory lock `_RECONCILER_LOCK_NS`; an overlapping run is a no-op. Each pass first re-embeds
   up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else invisible to the self-join) — so a
   dry-run estimate over `embedding IS NOT NULL` undercounts the run's candidates.
