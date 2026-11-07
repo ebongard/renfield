@@ -233,7 +233,9 @@ class TestLogLlmUnreachable:
 
     @pytest.mark.unit
     def test_never_logs_path_query_or_credentials(self, log_lines):
-        req = httpx.Request("POST", "http://user:secret@llm.lan:8080/v1/chat/completions?key=abc")
+        url = httpx.URL("http://llm.lan:8080/v1/chat/completions?key=abc").copy_with(
+            username="user", password="secret")
+        req = httpx.Request("POST", url)
         log_llm_unreachable(httpx.ConnectError("x", request=req), where="Chat", configured_url="")
         text = "\n".join(log_lines)
         assert "cannot connect to http://llm.lan:8080." in text
