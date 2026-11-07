@@ -5,6 +5,19 @@ Owners: auth. Related: `auth/provider_contract.py`, `auth/registry.py`,
 `api/routes/auth.py`, `src/frontend/src/main.tsx`, the pluggable auth-provider
 registry (CLAUDE.md → "Pluggable auth provider registry").
 
+**Renfield-side emitter (#1344):** for Renfield's own redirect providers
+(google/github/apple, all still off) the emitter exists — `POST /api/auth/sso/start`
+(§4.4, server-side `state` + PKCE verifier for the IdP leg,
+`services/oauth_state_store.py`, browser-bound by an HttpOnly cookie) and
+`GET|POST /api/auth/sso/callback/{provider}` (`api/routes/auth_oauth.py`), which
+issues the hand-off code of §4.1 and redirects to `/auth/callback?code=&state=`.
+The Reva/entra emitter cutover (§6) is unchanged.
+The start step is a same-origin JSON XHR that answers `{authorize_url}` (the SPA
+then navigates), NOT the top-level GET sketched in §4.4/§5: a GET could be
+forged cross-site, planting the attacker's SPA challenge in the victim's browser
+so that the callback mints a hand-off code for the VICTIM bound to the
+ATTACKER's verifier — a leaked code would no longer be worthless.
+
 ## 1. Problem
 
 After a federated login (Entra/OIDC today; Google/GitHub/Apple when enabled) the

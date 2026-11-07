@@ -60,7 +60,9 @@ export function clearPkce(): void {
 
 /**
  * Begin a PKCE login: generate + stash a verifier/state and return the params
- * to hand to the backend `/sso/start` (or an authorize URL). Callers redirect.
+ * to hand to the backend `POST /api/auth/sso/start` (JSON body — a same-origin
+ * XHR, never a link or top-level GET); callers navigate to the returned
+ * `authorize_url`.
  */
 export async function beginPkceLogin(): Promise<{ challenge: string; state: string }> {
   const verifier = generateVerifier();

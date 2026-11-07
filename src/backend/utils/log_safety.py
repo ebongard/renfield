@@ -49,6 +49,9 @@ def error_text_without_content(e: BaseException) -> str:
 SECRET_QUERY_PARAMS = (
     "token", "access_token", "refresh_token", "id_token", "ws_token",
     "ticket", "api_key", "apikey", "key", "secret", "password", "auth",
+    # The OAuth authorization code on /api/auth/sso/callback/{provider} (#1344):
+    # PKCE-bound and single-use, but still a bearer of a login until redeemed.
+    "code",
 )
 
 REDACTED = "[REDACTED]"

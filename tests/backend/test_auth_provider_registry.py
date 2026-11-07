@@ -243,7 +243,11 @@ class TestRedirectProviders:
             username="u", password="p", channel="web") is None
 
     @pytest.mark.unit
-    def test_authorize_url_per_provider_when_configured(self, monkeypatch):
+    def test_authorize_url_carries_given_state_and_s256_challenge(self, monkeypatch):
+        """#1344: the provider never invents a state — it carries the
+        server-bound one the route hands in, plus the PKCE challenge."""
+        from pydantic import SecretStr
+
         from auth.providers.github import GitHubProvider
         from auth.providers.google import GoogleProvider
         for mod, prov in (("google", GoogleProvider()),
@@ -253,13 +257,20 @@ class TestRedirectProviders:
             monkeypatch.setattr(
                 f"auth.providers.{mod}.settings.oauth_{mod}_client_id", "cid")
             monkeypatch.setattr(
+                f"auth.providers.{mod}.settings.oauth_{mod}_client_secret",
+                SecretStr("sec"))
+            monkeypatch.setattr(
                 f"auth.providers.{mod}.settings.oauth_{mod}_redirect_uri",
                 "https://r/cb")
-            url = prov.authorize_url("web")
+            url = prov.authorize_url("web", state="ST4TE", code_challenge="CH")
             assert url and "client_id=cid" in url and prov.provider_id in url
+            assert "state=ST4TE" in url
+            assert "code_challenge=CH" in url and "code_challenge_method=S256" in url
 
     @pytest.mark.unit
-    def test_registry_redirect_entries_lists_enabled_only(self, monkeypatch):
+    def test_registry_redirect_entries_lists_usable_only(self, monkeypatch):
+        from pydantic import SecretStr
+
         from auth.providers.google import GoogleProvider
         reg = ProviderRegistry()
         reg.register(GoogleProvider())
@@ -271,8 +282,14 @@ class TestRedirectProviders:
         monkeypatch.setattr(
             "auth.providers.google.settings.oauth_google_redirect_uri",
             "https://r/cb")
-        entries = reg.redirect_entries("web")
-        assert [pid for pid, _ in entries] == ["google"]
+        # Enabled but without a client secret: half-configured → not usable.
+        assert reg.redirect_entries("web") == []
+        monkeypatch.setattr(
+            "auth.providers.google.settings.oauth_google_client_secret",
+            SecretStr("sec"))
+        assert reg.redirect_entries("web") == ["google"]
+        assert reg.redirect_provider("google", "voice") is None
+        assert reg.redirect_provider("nope", "web") is None
 
 
 # ---------------------------------------------------------------------------

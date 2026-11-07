@@ -2581,6 +2581,20 @@ LDAP_RECEIVE_TIMEOUT=10
 
 # Social redirect providers — all ship disabled; enabling is config-only
 # (no redeploy), off the credential critical path.
+# Ablauf (#1344): POST /api/auth/sso/start (JSON {provider, code_challenge,
+# state}, Antwort {authorize_url}; ein fremder Seitenaufruf kann ihn nicht
+# auslösen) → Anbieter → /api/auth/sso/callback/<provider> (GET; Apple per POST) → einmaliger
+# Hand-off-Code → POST /api/auth/sso/exchange. `state` und der PKCE-Verifier
+# des Anbieter-Wegs entstehen auf dem Server, liegen einmalig in Redis
+# (GETDEL) und sind per HttpOnly-Cookie an den Browser gebunden; jeder
+# Fehlschlag am Callback ist dasselbe opake 400. Ein Anbieter zählt erst als
+# vorhanden, wenn ALLE seine Werte gesetzt sind (sonst 404). Ein eingeschalteter
+# Anbieter verlangt SSO_HANDOFF_ENABLED=true (sonst Boot-Abbruch). Die Identität
+# löst wie beim Passwort-Login `post_authenticate` auf — ohne Konsumenten wird
+# jeder Anbieter-Login abgewiesen. Ein Konto mit Stimme als zweitem Faktor kann
+# sich so NICHT anmelden. Die Redirect-URI ist .../api/auth/sso/callback/<provider>.
+# Lebensdauer eines begonnenen Anbieter-Logins (Zeit am Zustimmungs-Bildschirm):
+OAUTH_STATE_TTL_SECONDS=600
 OAUTH_GOOGLE_ENABLED=false
 OAUTH_GOOGLE_CLIENT_ID=
 OAUTH_GOOGLE_CLIENT_SECRET=
@@ -2590,7 +2604,7 @@ OAUTH_GITHUB_CLIENT_ID=
 OAUTH_GITHUB_CLIENT_SECRET=
 OAUTH_GITHUB_REDIRECT_URI=
 OAUTH_APPLE_ENABLED=false
-OAUTH_APPLE_CLIENT_ID=                 # Apple Services ID
+OAUTH_APPLE_CLIENT_ID=                 # Apple Services ID; Apple dokumentiert kein PKCE — die Bindung trägt dort der Server-`state`
 OAUTH_APPLE_TEAM_ID=
 OAUTH_APPLE_KEY_ID=
 OAUTH_APPLE_PRIVATE_KEY=
