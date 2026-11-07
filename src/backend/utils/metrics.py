@@ -459,11 +459,44 @@ def record_mcp_health_tick(problem_count: int | None):
         _mcp_health_problem_servers.set(problem_count)
 
 
+#: Every label value of renfield_agent_outcome_total (#1381). Set in
+#: `services/agent_service.py`: `final_answer` / `aborted` by
+#: `_record_turn_metrics`, `cancelled` / `error` by run(), the rest by the exit
+#: paths, and `summary_<trigger>` by `_build_summary_answer`. Primed at startup.
+AGENT_SUMMARY_TRIGGERS = (
+    "timeout_total",
+    "circuit_open",
+    "timeout_step",
+    "parse_failed",
+    "invalid_tools",
+    "repeated_empty",
+    "loop_detected",
+    "same_tool",
+    "max_steps",
+)
+AGENT_OUTCOMES = (
+    "final_answer",
+    "aborted",
+    "cancelled",
+    "error",
+    "llm_error",
+    "empty_response",
+    "parse_failed_no_results",
+    *(f"summary_{trigger}" for trigger in AGENT_SUMMARY_TRIGGERS),
+)
+
+
 def record_agent_outcome(outcome: str):
-    """Record an agent loop outcome (success/error/max_steps/timeout/loop_detected)."""
+    """Record how an agent run ended (one of `AGENT_OUTCOMES`)."""
     if not _metrics_initialized:
         return
     _agent_outcome_total.labels(outcome=outcome).inc()
+
+
+def _prime_agent_outcome() -> None:
+    """Export a 0 sample per outcome (see `_prime_llm_response_truncated`)."""
+    for outcome in AGENT_OUTCOMES:
+        _agent_outcome_total.labels(outcome=outcome)
 
 
 #: Every kind `record_agent_schema_repair` is called with. Primed at startup
@@ -679,6 +712,7 @@ def setup_metrics(app: "FastAPI"):
         # unprimed counter is exactly the blind spot the priming exists to close.
         logger.warning(f"Could not prime renfield_llm_response_truncated_total: {e!r}")
 
+    _prime_agent_outcome()
     _prime_agent_schema_repairs()
     _prime_voice_empty_turn()
 

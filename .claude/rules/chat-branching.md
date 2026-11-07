@@ -72,7 +72,7 @@ service layer ever ran, and the shared thread would be readable but never contin
 swapped and announced as `{"type": "session_replaced", "session_id": …}` — the id and nothing else, or the frame
 becomes an oracle. The late `ConversationNotOwnedError` catch in the save block is a backstop for clients that send no
 register frame; it rebinds `session_state.db_session_id` too. Never catch a bare `PermissionError` there — it is a
-builtin `OSError` descendant. No identity (device token) → no replacement: it would mint a new ownerless row per turn.
+builtin `OSError` descendant. Under auth, no identity (device token) → no replacement: it would mint a new ownerless row per turn; under auth-off a deleted id is replaced ownerless.
 
 ## Fork / switch / delete
 - `ConversationService.save_message` ALWAYS maintains the tree (`ollama_service.save_message` only delegates): normal
@@ -84,3 +84,11 @@ builtin `OSError` descendant. No identity (device token) → no replacement: it 
 - `DELETE /api/chat/{session_id}/branch/{message_id}`: ownership-gated 404; **refuses an active-path message with 409**;
   subtree delete. Branch-local memories are **soft-deleted + detached** (`is_active=False`, `source_message_id=NULL`) —
   a hard delete hits the `memory_history` RESTRICT FK and orphans the `atoms` row. KG provenance is detached, not deleted.
+- **A deleted conversation's session id is never reused (#1485).** A trigger on `conversations` records every deleted
+  id in `deleted_conversation_sessions` (FK cascade of an atom purge included — never a call-site list); the boundary
+  (`_session_registerable_by`, `session_id_is_reusable`) refuses a recorded id WITHOUT a row for every caller and swaps
+  it. A row recreated under it (satellite room id) follows reach. `save_message` refuses to CREATE a row under a
+  recorded id (`ConversationDeletedError` ⊂ `ConversationNotOwnedError`) — only the satellite passes
+  `allow_deleted_session=True`. A live socket notices via `_probe_session_freshness` → reload. Every rebind of a
+  socket to another id goes through `session_state.bind_session` (drops history + watermark), the `register` frame too. Uploads made after the delete move along (`carry_uploads_to_replacement`), older ones never.
+  The harness builds the trigger (`conftest._add_conversation_tombstone_trigger`); `create_all` alone does not.

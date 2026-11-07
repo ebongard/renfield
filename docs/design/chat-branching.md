@@ -109,6 +109,56 @@ advance, memory deactivate, search filter+reindex, **cross-conversation IDOR
 isolation**, SET-NULL deletion) — 16 pass on real PG. Frontend:
 `ChatMessages.branching.test.tsx` + `historyToUiMessage` id carry.
 
+## Deleted conversations stay deleted (#1485)
+
+The browser mints the session id and keeps it in `localStorage`. A conversation
+deleted elsewhere — another tab, another device, `DELETE /conversations/cleanup`,
+an Art.-17 atom purge — was recreated under the same id by the next message of a
+browser that still held it; everything that outlives a delete and keys on the id
+(KG provenance in `source_session_id`, logs) was then attributed to new content.
+
+- **Record:** `deleted_conversation_sessions(session_id, deleted_at)` — the id and a
+  UTC timestamp, no owner, no content. Filled by the trigger
+  `trg_conversations_record_deleted_session` (AFTER DELETE, per row), because the
+  atom purge removes conversations through an `ON DELETE CASCADE` no Python code
+  sees. DDL once in `services/conversation_tombstones.py`, used by the migration
+  `pc20261106_conv_tombstones` and the test harness. No backfill: ids deleted
+  before the migration are recorded nowhere. The table only grows (one short row
+  per deleted conversation); no retention yet.
+- **Boundary:** an id with NO conversation row that is recorded is refused for
+  every caller — auth on or off, JWT or device token — at the WS `register` frame
+  and first message (`session_replaced` with a fresh id) and in `POST /api/chat/send`
+  (answers under the fresh id). The fresh id is not recorded, so there is no loop.
+  An existing row under a recorded id (a satellite recreating its fixed room id)
+  is judged by reach as before.
+- **Writer:** the boundary alone is not enough — a turn already past it (the probe
+  runs at turn start, the save after the LLM round), a scan outcome and the
+  Paperless announcement write after a delete without crossing it again. So
+  `ConversationService.save_message` refuses to CREATE a row under a recorded id
+  (`ConversationDeletedError`, a subclass of `ConversationNotOwnedError`): the WS
+  turn falls into its replacement path (under auth-off too, where the turn has no
+  identity), the scanner settles `refused`, the Paperless announcement is skipped.
+  Only the satellite opts in (`allow_deleted_session=True`): its room id is fixed
+  per day. The Paperless announcement writes in its own session after the filing
+  committed — a refused `save_message` rolls its session back, and a shared one
+  undid the tracking row and the finalize stamp.
+- **Live socket:** its history is loaded, so only the per-turn freshness probe can
+  notice. `_probe_session_freshness` asks the record when the newest message is
+  gone; `history_needs_reload(session_deleted=True)` forces the reload where the
+  boundary check runs. Every switch to another conversation — the `register`
+  frame the browser sends on each session change, a message naming another id, a
+  replacement — goes through `ConversationSessionState.bind_session`, which drops
+  the in-memory history, its load flag and its watermark. Before, the `register`
+  frame only moved the id: the next message saw the same id, skipped the reload,
+  and the previous conversation's turns went into the new one's prompt.
+- **Uploads:** a file attached under the deleted id AFTER the delete belongs to
+  the turn the tab is about to send; it moves to the fresh id (under auth only
+  the caller's own). Older uploads stay — moving them would revive part of the
+  deleted conversation.
+- **Frontend:** on `session_replaced` the tab keeps only the turn in flight (last
+  user message onward), or nothing when no turn is running
+  (`ChatPage/context/sessionReplaced.ts`).
+
 ## Background moved from CLAUDE.md (2026-09-20)
 
 - Two defects were caught in `/review` and fixed before merge: the cross-conversation IDOR (see Security) **and a

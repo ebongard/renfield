@@ -1072,6 +1072,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         parent_message_id: int | None = None,
         enforce_ownership: bool = False,
         circle_tier: int | None = None,
+        allow_deleted_session: bool = False,
     ) -> "Message":
         """Save a single message (delegates to ConversationService).
 
@@ -1081,6 +1082,9 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         ``enforce_ownership`` (auth-enabled WS path): raises ``PermissionError``
         rather than appending into another user's conversation.
+
+        ``allow_deleted_session``: recreate a deleted conversation under its id
+        (the satellite room path only, #1485).
         """
         from services.conversation_service import ConversationService
         service = ConversationService(db)
@@ -1088,6 +1092,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             session_id, role, content, metadata,
             user_id=user_id, parent_message_id=parent_message_id,
             enforce_ownership=enforce_ownership, circle_tier=circle_tier,
+            allow_deleted_session=allow_deleted_session,
         )
 
     async def get_conversation_summary(

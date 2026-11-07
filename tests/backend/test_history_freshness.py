@@ -64,3 +64,14 @@ def test_an_older_database_id_does_not_reload():
     """Lower than the mark can only arise through deletion -- that is not a
     foreign write and does not justify a reload."""
     assert _needs_reload(watermark=100, newest_in_db=99) is False
+
+
+def test_a_conversation_deleted_elsewhere_reloads():
+    """#1485: the tab still holds a conversation deleted in another tab. The
+    reload is where the boundary check hands out a fresh id; without it the
+    next save would recreate the deleted conversation under the old one."""
+    assert _needs_reload(newest_in_db=None, session_deleted=True) is True
+
+
+def test_not_deleted_is_the_default():
+    assert _needs_reload(newest_in_db=None, session_deleted=False) is False

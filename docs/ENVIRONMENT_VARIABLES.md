@@ -245,6 +245,11 @@ Segmente zu `{id}` (Kardinalitätsschutz).
 - WebSocket Connection Gauge
 - LLM Call Duration Histogram
 - Agent Steps Histogram
+- `renfield_agent_outcome_total{outcome}`: wie ein Agent-Lauf endete, ein Wert je
+  `AgentService.run()` (ein orchestrierter Zug zählt je Teil-Agent). Werte in
+  `utils/metrics.py::AGENT_OUTCOMES`: `final_answer`, `aborted`, `cancelled`,
+  `error`, `llm_error`, `empty_response`, `parse_failed_no_results` und
+  `summary_<auslöser>` (`max_steps`, `loop_detected`, `timeout_total`, …; #1381)
 - `renfield_agent_schema_repairs_total{kind}`: Agent-Antworten, die erst nach
   einer Formreparatur angenommen wurden (`answer_without_action`: `{"answer": …}`
   ohne `action`, #1381); der Lauf selbst zählt als `final_answer`
@@ -256,7 +261,7 @@ Segmente zu `{id}` (Kardinalitätsschutz).
   `vad_speech_seen` in `audio_end`, bei älteren Satelliten die Aufnahmelänge;
   nur `vad_heard_speech` löst am Satelliten ein kurzes LED-Signal aus
   (`feedback_cue`, kein Ton)
-- Beide mit 0 vorbelegt, damit `increase()` auch das erste Ereignis sieht
+- Alle drei mit 0 vorbelegt, damit `increase()` auch das erste Ereignis sieht
 - Circuit Breaker State + Failures
 
 **Prometheus Scrape Config:**

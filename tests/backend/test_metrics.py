@@ -421,6 +421,69 @@ class TestAgentSchemaRepairCounter:
         assert recorded == set(metrics_module.AGENT_SCHEMA_REPAIR_KINDS)
 
 
+class TestAgentOutcomeCounter:
+    """renfield_agent_outcome_total is primed with every outcome (#1381)."""
+
+    def test_prime_exports_zero_series_for_every_outcome(self, monkeypatch):
+        import utils.metrics as metrics_module
+
+        counter = MagicMock()
+        monkeypatch.setattr(metrics_module, "_agent_outcome_total", counter)
+        metrics_module._prime_agent_outcome()
+        assert [c.kwargs for c in counter.labels.call_args_list] == [
+            {"outcome": o} for o in metrics_module.AGENT_OUTCOMES
+        ]
+        counter.labels.return_value.inc.assert_not_called()
+
+    def test_setup_primes_the_outcome_counter(self, monkeypatch):
+        """Priming is wired into startup, not only defined."""
+        import utils.metrics as metrics_module
+
+        calls = []
+        monkeypatch.setattr(metrics_module.settings, "metrics_enabled", True)
+        monkeypatch.setattr(metrics_module, "_init_metrics", lambda: None)
+        monkeypatch.setattr(metrics_module, "_metrics_initialized", True)
+        monkeypatch.setattr(metrics_module, "_prime_llm_response_truncated", lambda: None)
+        monkeypatch.setattr(metrics_module, "_prime_agent_schema_repairs", lambda: None)
+        monkeypatch.setattr(metrics_module, "_prime_voice_empty_turn", lambda: None)
+        monkeypatch.setattr(
+            metrics_module, "_prime_agent_outcome", lambda: calls.append("outcome"),
+        )
+        metrics_module.setup_metrics(MagicMock())
+        assert calls == ["outcome"]
+
+    def test_outcomes_match_the_agent_exit_paths(self):
+        """Every outcome the loop can record is primed, and nothing else.
+
+        Read from the AST, not the text: a regex over the source would also
+        match the docstrings that NAME the outcomes.
+        """
+        import ast
+        from pathlib import Path
+
+        import utils.metrics as metrics_module
+
+        src = (Path(__file__).resolve().parents[2]
+               / "src/backend/services/agent_service.py").read_text()
+        recorded: set[str] = set()
+        for node in ast.walk(ast.parse(src)):
+            # context.outcome = "..."  and  outcome = "..." (_record_turn_metrics)
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                for target in node.targets:
+                    name = (target.attr if isinstance(target, ast.Attribute)
+                            else getattr(target, "id", None))
+                    if name == "outcome" and isinstance(node.value.value, str):
+                        recorded.add(node.value.value)
+            # _build_summary_answer(..., trigger="...") -> summary_<trigger>
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "_build_summary_answer"):
+                for kw in node.keywords:
+                    if kw.arg == "trigger" and isinstance(kw.value, ast.Constant):
+                        recorded.add(f"summary_{kw.value.value}")
+        assert recorded == set(metrics_module.AGENT_OUTCOMES)
+
+
 class TestVoiceEmptyTurnCounter:
     """renfield_voice_empty_turn_total (#1386)."""
 
