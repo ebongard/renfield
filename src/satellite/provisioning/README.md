@@ -166,7 +166,15 @@ thresholds, and the per-room event checklist are in the commissioning doc.
 
 ## Verification
 
-After provisioning, check:
+The run checks itself: the task **"Acceptance — microphone and service"** at
+the end fails the host when the ALSA card its `asoundrc-<hat_type>.j2` opens
+(`mic_alsa_card` in the play vars) is missing from `/proc/asound/cards`, or
+when `renfield-satellite` is not active. The earlier checks only record their
+result (`ignore_errors`), so config and service still land, but the run ends
+red and the "provisioned successfully" summary is not printed. A check that did
+not run (`--tags config`, `--check`) gives no verdict.
+
+Then check by hand:
 
 ```bash
 # Sound card detected?

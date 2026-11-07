@@ -303,7 +303,7 @@ extract_json() {
 
 echo "==> Probing live audio config on $HOST"
 ansible_sh "mkdir -p $REMOTE_DIR" >/dev/null
-PROBE="$(run_inspect probe | extract_json)"
+PROBE="$(run_inspect "probe '$HAT_TYPE'" | extract_json)"
 [[ -n "$PROBE" ]] || { echo "error: probe returned nothing — is $HOST reachable?" >&2; exit 1; }
 
 # `read` succeeds on empty input, so a failing command substitution here does
@@ -325,20 +325,28 @@ read -r DEVICE CHANNELS RATE BEAMFORMING <<<"$PARSED"
 
 echo "    device=$DEVICE channels=$CHANNELS rate=$RATE beamforming=$BEAMFORMING"
 echo "    hat_type=$HAT_TYPE mic=$CAPTURE_MODE"
-echo "    gains: $(python3 -c '
+# The helper names where the gain came from: ALSA mixer controls on a HAT codec,
+# the chip itself (read with xvf_host) on an XVF3800 — which has no ALSA capture
+# control at all — or "none". The sidecar records the same source.
+GAIN_SOURCE="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("gain_source") or "none")' <<<"$PROBE")"
+echo "    gains ($GAIN_SOURCE): $(python3 -c '
 import json, sys
 for k, v in json.load(sys.stdin).get("mixer", {}).items():
     print("           %-22s %s" % (k, v))
 ' <<<"$PROBE" | sed '1s/^ *//')"
-if [[ "$CAPTURE_MODE" == "exclusive" ]] \
-   && [[ "$(python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("mixer") or {}))' <<<"$PROBE")" == "0" ]]; then
-    # The XVF3800 holds its capture gain in chip flash, not in ALSA, so the
-    # sidecar's gain provenance is empty here — and a negative captured at a
-    # different gain than the deployed one is worthless (commissioning doc, §2).
-    echo "    WARN  no ALSA capture controls on $HOST — an XVF3800 keeps its gain"
-    echo "          (PP_AGCDESIREDLEVEL) in chip flash, so the sidecar records none."
-    echo "          Note the value from host_vars/$HOST.yml (xvf3800_tuning) with this"
-    echo "          capture; a gain change after the fact invalidates it."
+if [[ "$GAIN_SOURCE" == "none" ]]; then
+    # A negative captured at a different gain than the deployed one is worthless
+    # (commissioning doc, §2), and without provenance nobody can tell later.
+    echo "    WARN  no gain provenance could be read on $HOST — the sidecar records"
+    echo "          gain_source=none."
+    if [[ "$HAT_TYPE" == "xvf3800-usb" ]]; then
+        echo "          The XVF3800 keeps its gain (PP_AGCDESIREDLEVEL) in chip flash and"
+        echo "          xvf_host did not answer. Note the value from host_vars/$HOST.yml"
+        echo "          (xvf3800_tuning) with this capture."
+    else
+        echo "          amixer found none of the expected capture controls on card 0."
+    fi
+    echo "          A gain change after the fact invalidates the capture."
 fi
 
 if [[ "$CAPTURE_MODE" == "exclusive" ]]; then
@@ -378,7 +386,7 @@ if (( CAPTURE_RC != 0 )); then
 fi
 
 echo "==> Sanity gate"
-GATE_JSON="$(run_inspect "gate $REMOTE_DIR/${BASENAME}.wav" | extract_json)"
+GATE_JSON="$(run_inspect "gate $REMOTE_DIR/${BASENAME}.wav '$HAT_TYPE'" | extract_json)"
 [[ -n "$GATE_JSON" ]] || { echo "error: sanity gate produced no report" >&2; exit 1; }
 
 mkdir -p "$DEST_DIR"

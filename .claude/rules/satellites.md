@@ -126,3 +126,8 @@ failed capture, so the restart hangs off a trap (EXIT/INT/TERM), `on_exit` first
 by the `systemctl start` child — a second Ctrl-C is the REGULAR case, the slow ssh restart looks like a hang), retries
 3× with a pause, and is confirmed with ONE `systemctl is-active`. **DEAF is only claimed when the STOP was confirmed**;
 a failed stop yields a WARNING that the service is probably still running — the wrong verdict costs a trip.
+
+## Provisioning acceptance
+Every `ignore_errors` check in `provision.yml` registers a result that the final "Acceptance — microphone and service"
+task reads (#1387, test-enforced). Never let two `when`-alternative tasks share a `register` — the skipped one
+overwrites the real result. Background: `src/satellite/provisioning/README.md` → Verification.
