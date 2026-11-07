@@ -145,6 +145,58 @@ class TestTheRecord:
         )).scalar_one_or_none() is None
         assert await is_deleted_session(db_session, "weg-purge") is True
 
+    async def test_an_atom_purge_takes_the_messages_with_it(self, db_session):
+        """An Art. 17 purge of a conversation that HAS messages: the database
+        cascade has to reach the messages, the ORM cascade never runs here."""
+        from models.database import Message
+        from services.atom_purge_service import AtomPurgeService
+
+        await ensure_user(db_session, 5)
+        service = ConversationService(db_session)
+        await service.save_message("weg-purge-msgs", "user", "Hallo", user_id=5)
+        await service.save_message("weg-purge-msgs", "assistant", "Hallo zurück", user_id=5)
+        conv = (await db_session.execute(
+            select(Conversation).where(Conversation.session_id == "weg-purge-msgs")
+        )).scalar_one()
+        await service.ensure_atom(conv)
+        await db_session.commit()
+        conv_id, atom_id = conv.id, conv.atom_id
+        assert atom_id is not None
+
+        await AtomPurgeService.purge(db_session, atom_id=atom_id, reason="test")
+
+        db_session.expire_all()
+        assert await db_session.get(Conversation, conv_id) is None
+        assert (await db_session.execute(
+            select(Message.id).where(Message.conversation_id == conv_id)
+        )).first() is None
+
+    async def test_deleting_a_chat_keeps_the_memory_drawn_from_it(self, db_session):
+        """A memory points at the message it was drawn from. The chat delete
+        removes the message; the memory is an atom of its own and stays, with
+        the pointer cleared."""
+        from models.database import ConversationMemory
+
+        await ensure_user(db_session, 5)
+        msg = await ConversationService(db_session).save_message(
+            "weg-mit-erinnerung", "user", "Ich trinke Kaffee schwarz", user_id=5)
+        memory = ConversationMemory(
+            user_id=5, content="trinkt Kaffee schwarz", source_message_id=msg.id,
+            source_session_id="weg-mit-erinnerung",
+        )
+        db_session.add(memory)
+        await db_session.commit()
+        memory_id = memory.id
+        conv = await db_session.get(Conversation, msg.conversation_id)
+
+        await db_session.delete(conv)
+        await db_session.commit()
+
+        db_session.expire_all()
+        kept = await db_session.get(ConversationMemory, memory_id)
+        assert kept is not None
+        assert kept.source_message_id is None
+
     async def test_a_second_delete_of_the_same_id_moves_the_mark(self, db_session):
         await _conversation(db_session, "weg-2")
         await _delete(db_session, "weg-2")

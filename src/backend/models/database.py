@@ -151,7 +151,7 @@ class Message(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    conversation_id = Column(Integer, ForeignKey("conversations.id"), index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
     role = Column(String)  # 'user' or 'assistant'
     content = Column(Text)
     timestamp = Column(DateTime, default=_utcnow)
@@ -1757,7 +1757,7 @@ class ConversationMemory(Base):
 
     # Source tracking
     source_session_id = Column(String(255), nullable=True, index=True)
-    source_message_id = Column(Integer, ForeignKey("messages.id"), nullable=True)
+    source_message_id = Column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     source = Column(String(20), nullable=False, default=MEMORY_SOURCE_LLM_INFERRED)  # user_stated / llm_inferred / system_confirmed
 
     # Scoping
@@ -1962,7 +1962,7 @@ class ProceduralSkill(Base):
 
     source = Column(String(20), nullable=False, default=SKILL_SOURCE_AUTO_EXTRACTED)
     learned_from_conversation_id = Column(
-        Integer, ForeignKey("conversations.id"), nullable=True
+        Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True
     )
     version = Column(Integer, nullable=False, default=1)
 
@@ -2374,7 +2374,7 @@ class KGRelation(Base):
     # distinct from user_id (the graph OWNER). Enables "who told me X about Y".
     stated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     # The specific message the assertion was extracted from (when available).
-    source_message_id = Column(Integer, ForeignKey("messages.id"), nullable=True)
+    source_message_id = Column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     # Validity interval (#875 stage 1, docs/design/kg-bitemporal-edges.md §5).
     # NULL valid_from = "holds, start unknown" — deliberately NOT backfilled from
     # created_at: the extraction time is not the time a fact began to hold.
