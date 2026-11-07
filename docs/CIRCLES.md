@@ -169,10 +169,12 @@ server-resolved owner KBs, no caller KB id. Proof: `tests/backend/test_kb_write_
   gets the tier cascade alone. Per-fact tier overrides are reset to the document tier: they were the previous
   owner's choice about her circles. Same owner: the tier stays (the owner's choice; filing elsewhere neither widens
   nor narrows it). Ownerless target: nobody to hand it to, the atom owner stays (atom-owner fallback).
-- 🛑 **Documents moved across owners BEFORE #1460 have two owners** (atom owner A in a KB of B; the retrieval
-  filter lets both read it as owner). Not repaired automatically (who is the rightful owner is not derivable); the
-  move gate names both, and the next move into one owner's KB settles it. The per-document gate
-  (`check_document_access`: read, reindex, tier, delete) lets the atom owner through ONLY where she is the KB's
+- 🛑 **Documents moved across owners BEFORE #1460 have two owners** (atom owner A in a KB of B). Not repaired
+  automatically (who is the rightful owner is not derivable); the move gate names both, and the next move into one
+  owner's KB settles it. READS follow B alone, in retrieval and REST alike (#1469): the atom-owner fallback in
+  `circle_sql` applies only where `kb.owner_id` IS NULL (no KB, an ownerless KB, a KB row that is gone). Until
+  #1469 the filter let A read it as owner while the per-document gate refused her. The per-document gate
+  (`check_document_access`: reindex, tier, delete) lets the atom owner through ONLY where she is the KB's
   owner, the KB has none, or there is no KB; on a two-owner row A falls to the KB rule (403 without a share), B
   decides. The atom routes (`api/routes/atoms.py`, `load_owned_atom`) still let A act on such an atom as its owner.
   Count (read-only, numbers only):
@@ -244,14 +246,36 @@ GROUP BY a.atom_type;
 ### Listing documents is a read through the document filter
 
 `GET /api/knowledge/documents` has three branches under auth: with `q` the search gate of `search_documents`; with a
-`knowledge_base_id` the KB-level `check_kb_access(kb, user, "read", db)`, after which the whole KB is listed; with
+`knowledge_base_id` the KB owner or a KB share lists the whole KB (`knowledge._lists_whole_kb`; never the public
+flag, never a caller without a KB rung), otherwise a `kb.own` holder gets the KB's documents through the document filter (no 403 since #1469); with
 neither (the recency list) the same document filter as the search gate, `document_search.visible_document_ids`, as an
 IN-subquery before `LIMIT`/`OFFSET` so pages stay full. `kb.all` and auth-off list everything. Until 2026-11-02 the
 recency list had no filter, so any `kb.own` holder listed every user's document rows. `RAGService.list_documents`
 takes `asker_id` + `enforce_circles` without defaults. Proof: `tests/backend/test_document_list_circles_pg.py`.
 `GET /api/knowledge/stats` counts the same way: below `kb.all` (auth on) documents and chunks through `visible_document_ids`, KBs through the KB-list rule (`knowledge._readable_knowledge_bases`, as `GET /bases`); `kb.all` and auth-off count globally. Until 2026-11-02 every `kb.own` holder got the global counts. `RAGService.get_stats` takes `asker_id`, `enforce_circles`, `knowledge_base_ids` without defaults. Proof: `tests/backend/test_knowledge_stats_circles_pg.py`.
 The per-KB `document_count` of `GET /bases` and `GET /bases/{id}` counts the same way (`RAGService._kb_document_count`; `list_knowledge_bases` and `count_kb_documents` take `asker_id` + `enforce_circles` without defaults): a public KB of another user no longer reveals how many tier-self documents its owner keeps there. Same proof file.
-Known divergence, not a leak (#1469): a KB with `is_public=true` opens its documents to `kb.shared` holders via `?knowledge_base_id` and the detail page, but not in the unfiltered list, because `is_public` does not change `circle_tier`.
+### One read rule for REST and retrieval (#1469)
+
+A REST read of a document — `GET /documents/{id}`, `GET /documents/batch`, `POST /documents/{id}/search`,
+`GET /api/atoms/documents/{id}/facts`, `check_document_access(..., "read")` — is `services/document_access.py`:
+the `circle_sql` document filter retrieval applies (`document_search.reachable_document_ids`), plus `kb.all` — and nothing at all for a caller without a KB rung above `kb.none` (`Gast`,
+the `Kiosk` device role, any role without a KB rung; `holds_no_rung_above`, the gate `/search` and the list
+apply). Without that gate a public-tier document, which the circle filter hands to every asker, opened to every
+token. A KB filter (`?knowledge_base_id` on the list, `knowledge_base_id` on
+`/search`) no longer 403s a caller without a KB share: the list falls to the document filter, `/search` to the
+chunk filter of `rag.search(user_id=…)`. Before, a household-tier document that search returned to a household
+member answered 403 on all of these. Write, reindex, tier, move and delete stay KB-level permissions on top
+(`check_kb_access`, the owner's `can_delete` switch). `GET /bases/{id}` and the KB list stay KB-level: a
+household member who reaches documents of a KB by tier does not see the KB itself. Proof:
+`tests/backend/test_document_read_rule_pg.py`, `tests/backend/test_document_atom_reach_parity_pg.py`.
+
+🛑 **`kb.is_public` opens no document** (owner decision 2026-11-06, #1469). `circle_sql` knows no public-KB branch
+(`is_public` only seeds `default_circle_tier` at creation, `pc20260420_circles_v1`), and REST no longer has one
+either: detail, batch, search-in-document, facts and the KB-filtered list give a `kb.shared` holder exactly the
+documents retrieval returns him. The KB-filtered list shows a whole KB only to its owner or a KB share
+(`knowledge._lists_whole_kb`). The flag still makes the KB ITSELF visible to `kb.shared` holders (the KB list,
+`GET /bases/{id}`); to publish its documents, give them the public tier. Proof:
+`tests/backend/test_document_read_rule_pg.py::TestPermissionsOnTop`.
 
 Attaching is a write on the conversation: `POST /api/chat/upload` applies the chat's own message-write rule to its
 `session_id` (`chat_upload._may_write_session` → `ConversationService.reaches`, exactly as `save_message` with

@@ -850,9 +850,10 @@ class TestMoveEdgeCases:
         assert (row[0], row[1]) == (TIER_HOUSEHOLD, [TIER_HOUSEHOLD])
 
     async def test_a_document_with_two_owners(self, db_session, people):
-        """Moved across owners before #1460: atom owner Alice in Bob's KB — both
-        read it as owner (the SQL owner branch is an OR). The gate sees both as
-        owners and does not pick one; a move into one owner's KB settles it."""
+        """Moved across owners before #1460: atom owner Alice in Bob's KB. Reads
+        follow the KB owner alone (#1469: the atom-owner fallback applies only to
+        a KB without owner), but the MOVE gate still names both as owners and
+        does not pick one; a move into one owner's KB settles it."""
         alice, bob, _ = people
         carol = await _user(db_session, "carol", ["kb.own", "kb.shared"])
         privat = await _kb(db_session, alice.id, "Privat")
@@ -864,7 +865,7 @@ class TestMoveEdgeCases:
         await db_session.commit()
         await ks.share_kb(db_session, bobs, carol.id, "write", granted_by=bob.id)
         await ks.share_kb(db_session, bobs_archiv, carol.id, "write", granted_by=bob.id)
-        assert doc.id in await _visible_docs(db_session, alice.id)
+        assert doc.id not in await _visible_docs(db_session, alice.id)
         assert doc.id in await _visible_docs(db_session, bob.id)
 
         owners = await RAGService(db_session).document_owners([doc])

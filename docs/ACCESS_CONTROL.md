@@ -301,14 +301,14 @@ Jede Wissensdatenbank hat einen Besitzer:
 ```python
 class KnowledgeBase:
     owner_id: int         # Benutzer-ID des Besitzers
-    is_public: bool       # Öffentlich für alle mit kb.shared?
+    is_public: bool       # KB sichtbar für alle mit kb.shared (nicht ihre Dokumente)
 ```
 
 **Zugriffs-Regeln:**
 
 1. `kb.all` → Voller Zugriff auf alle KBs
 2. `owner_id == user.id` → Voller Zugriff auf eigene KBs
-3. `is_public == True` + `kb.shared` → Lesezugriff auf öffentliche KBs
+3. `is_public == True` + `kb.shared` → die KB selbst ist sichtbar (Liste, `GET /bases/{id}`). Ihre DOKUMENTE öffnet das nicht: ein Dokument liest, wen die Kreis-Regel erreicht (Stufe, Freigabe), dieselbe Regel wie die Suche (#1469, `docs/CIRCLES.md`)
 4. KB-Freigabe (`kb_shares`, Stufe `read`/`write`/`admin`) → Per-User Zugriff. Die Stufe kommt NUR aus der `kb_shares`-Zeile; ein Grant auf ein einzelnes Dokument öffnet nur dieses Dokument (#1446), siehe `docs/CIRCLES.md` → Zugriffsregel, Zweig 5.
 
 ### Konversationen
@@ -388,7 +388,7 @@ curl -X PATCH http://localhost:8000/api/knowledge/bases/1/public \
   -d '{"is_public": true}'
 ```
 
-Öffentliche KBs sind für alle Benutzer mit mindestens `kb.shared` sichtbar.
+Öffentliche KBs sind für alle Benutzer mit mindestens `kb.shared` sichtbar, ihre Dokumente aber nicht: wer Dokumente für alle freigeben will, gibt ihnen die öffentliche Stufe (Kreis-Stufe 4).
 
 ---
 
@@ -762,7 +762,7 @@ curl -X POST "http://localhost:8000/api/knowledge/bases/$KB_ID/share" \
   -H "Content-Type: application/json" \
   -d '{"user_id": 3, "permission": "write"}'
 
-# 3. Öffentlich für Familie machen
+# 3. KB für die Familie sichtbar machen (Dokumente: Kreis-Stufe)
 curl -X PATCH "http://localhost:8000/api/knowledge/bases/$KB_ID/public" \
   -H "Authorization: Bearer $USER_TOKEN" \
   -H "Content-Type: application/json" \
@@ -951,7 +951,7 @@ Bei Aktivierung von `AUTH_ENABLED` auf einem bestehenden System:
 -- Beispiel: Alle KBs dem Admin zuweisen
 UPDATE knowledge_bases SET owner_id = 1 WHERE owner_id IS NULL;
 
--- Beispiel: Alle KBs öffentlich machen
+-- Beispiel: Alle KBs sichtbar machen (öffnet keine Dokumente, s. #1469)
 UPDATE knowledge_bases SET is_public = true;
 ```
 

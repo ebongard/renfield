@@ -133,7 +133,7 @@ async def _sql_doc(db: AsyncSession, asker_id: int, doc: Document) -> bool:
     """Both production document gates: chunks as rag_retrieval filters them, and
     the document-search gate. They must agree with each other as well."""
     from services.circle_sql import document_chunks_circles_filter
-    from services.document_search import _visible_ids
+    from services.document_search import reachable_document_ids
 
     clause, params = document_chunks_circles_filter(asker_id)
     chunk_hit = (await db.execute(
@@ -142,7 +142,7 @@ async def _sql_doc(db: AsyncSession, asker_id: int, doc: Document) -> bool:
              f"WHERE d.id = :id AND ({clause}) LIMIT 1"),
         {**params, "id": doc.id},
     )).first() is not None
-    gate_hit = doc.id in await _visible_ids(db, [doc.id], asker_id)
+    gate_hit = doc.id in await reachable_document_ids(db, [doc.id], asker_id)
     assert chunk_hit == gate_hit, f"chunk filter and document gate disagree on doc {doc.id}"
     return chunk_hit
 
@@ -225,9 +225,10 @@ class TestPythonCheckAgreesWithSqlFilter:
              {"carol": (False, True), "dave": (False, True), "alice": (True, True)}),
         ])
 
-    async def test_kb_owner_and_drifted_atom_owner_both_reach(self, db_session, people):
+    async def test_kb_owner_reaches_a_drifted_atom_owner_does_not(self, db_session, people):
         """A document atom whose owner is not the KB owner (pre-#1460 moves): the
-        filter lets both read it, and so does the Python check now."""
+        KB that names an owner decides alone (#1469) — the atom-owner fallback is
+        for KB-less / ownerless-KB rows. Filter and Python check agree."""
         u = people
         haus = await _kb(db_session, u["alice"].id, "Haus")
         doc = await _doc(db_session, haus, "drift", owner_id=u["erin"].id)
@@ -238,7 +239,7 @@ class TestPythonCheckAgreesWithSqlFilter:
 
         await _assert_parity(db_session, u, [
             ("drift", doc, fact,
-             {"alice": (True, True), "erin": (True, True), "carol": (False, False)}),
+             {"alice": (True, True), "erin": (False, False), "carol": (False, False)}),
         ])
 
     async def test_kb_less_document_reaches_its_owner_only(self, db_session, people):

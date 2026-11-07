@@ -131,8 +131,8 @@ def move_changes_owner(owners: frozenset[int], target_kb_owner: int | None) -> b
     """Whether filing a document with these ``owners`` into a KB owned by
     ``target_kb_owner`` changes who reads it as owner.
 
-    ``owners`` = every user the document filters treat as owner (the atom owner
-    AND the KB owner — ``circle_sql``'s owner branch is an OR; see
+    ``owners`` = every user with a claim to own the document (the atom owner
+    AND the KB owner; only the KB owner reads it as owner since #1469, see
     :meth:`RAGService.document_owners`). After the move exactly the target KB's
     owner is owner, so anything else is a change. An ownerless target KB counts as
     a change as well: nobody reads it as KB owner afterwards, and the content
@@ -1201,12 +1201,14 @@ class RAGService(AtomOwnerResolverMixin):
         """Everyone the document filters treat as OWNER of each document: the
         owner of its ``kb_document`` atom and the owner of its KB.
 
-        ``circle_sql``'s owner branch is ``kb.owner_id = asker OR atom owner =
-        asker``. Normally the two are one person; a document moved across owners
-        before #1460 has two, and BOTH read it as owner. Naming only one of them
-        here would make the move gate disagree with the filters, so this returns
-        the set and decides nothing about who the rightful owner is. Empty = nobody
-        (atom-less in an ownerless KB, or KB-less without an atom)."""
+        Normally the two are one person. A document moved across owners before
+        #1460 has two; since #1469 ``circle_sql``'s owner branch lets only the KB
+        owner read it as owner (the atom owner counts only where the KB names no
+        owner). The move gate still names BOTH on purpose: which of them is the
+        rightful owner is undecided, so a move that settles it is a change of
+        owner. This returns the set and decides nothing about ownership. Do not
+        re-widen the filter to match it. Empty = nobody (atom-less in an
+        ownerless KB, or KB-less without an atom)."""
         if not docs:
             return {}
         rows = (await self.db.execute(
