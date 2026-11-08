@@ -2091,6 +2091,8 @@
     "pairResponseWrongNonce": "Response doesn't match this invitation.",
     "pairGenerateOffer": "Generate invitation",
     "pairCopyJson": "Copy JSON",
+    "jsonAsText": "As text (select to copy)",
+    "copyRefused": "Copy refused — the browser allows the clipboard only on a secure page. The text is selected: copy it with Ctrl+C or Cmd+C.",
     "pairCompleteButton": "Complete pairing",
     "pairOfferFailed": "Couldn't generate the invitation.",
     "pairCompleteFailed": "Pairing failed.",

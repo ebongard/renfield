@@ -1691,6 +1691,8 @@
     "pairResponseWrongNonce": "La risposta non corrisponde a questo invito.",
     "pairGenerateOffer": "Genera invito",
     "pairCopyJson": "Copia JSON",
+    "jsonAsText": "Come testo (seleziona per copiare)",
+    "copyRefused": "Copia rifiutata — il browser consente gli appunti solo su una pagina sicura. Il testo è selezionato: copialo con Ctrl+C o Cmd+C.",
     "pairCompleteButton": "Completa abbinamento",
     "pairOfferFailed": "Impossibile generare l'invito.",
     "pairCompleteFailed": "Abbinamento fallito.",

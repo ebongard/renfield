@@ -115,7 +115,7 @@ describe('LinkIdentityInitiatorModal', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /verknüpfung abschließen/i }));
 
-    expect(await screen.findByText(/signature/i)).toBeInTheDocument();
+    expect(await screen.findByText(/signature/i, { ignore: 'script, style, textarea' })).toBeInTheDocument();
     expect(post).toHaveBeenCalledTimes(1);
   });
 });

@@ -17,10 +17,11 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { QRCodeSVG } from 'qrcode.react';
-import { Check, Copy, Fingerprint } from 'lucide-react';
+import { Fingerprint } from 'lucide-react';
 
 import apiClient, { extractApiError } from '../utils/axios';
 import Modal from './Modal';
+import CopyableJson from './CopyableJson';
 import Alert from './Alert';
 
 type Step = 'intro' | 'await_confirmation' | 'done';
@@ -52,7 +53,6 @@ export default function LinkIdentityInitiatorModal({
   const [confirmationText, setConfirmationText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const reset = () => {
     setStep('intro');
@@ -60,7 +60,6 @@ export default function LinkIdentityInitiatorModal({
     setConfirmationText('');
     setError(null);
     setLoading(false);
-    setCopied(false);
   };
 
   const handleClose = () => {
@@ -82,16 +81,6 @@ export default function LinkIdentityInitiatorModal({
       setError(extractApiError(err, t('circles.linkOfferFailed')));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleCopyOffer = async () => {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(offer));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // The clipboard may be refused -- the JSON is visible next to it.
     }
   };
 
@@ -181,16 +170,8 @@ export default function LinkIdentityInitiatorModal({
           <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
             <Fingerprint className="w-3 h-3" aria-hidden="true" />
             <code className="tabular-nums">{offer.initiator_pubkey.slice(0, 24)}…</code>
-            <button
-              type="button"
-              onClick={handleCopyOffer}
-              className="ml-auto btn-icon btn-icon-ghost"
-              title={t('circles.linkCopyJson')}
-              aria-label={t('circles.linkCopyJson')}
-            >
-              {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-            </button>
           </div>
+          <CopyableJson id="link-offer-json" value={offer} copyLabel={t('circles.linkCopyJson')} />
 
           <div>
             <label

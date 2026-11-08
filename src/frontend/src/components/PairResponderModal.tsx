@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { QRCodeSVG } from 'qrcode.react';
-import { ArrowLeft, Check, Copy, Fingerprint } from 'lucide-react';
+import { ArrowLeft, Fingerprint } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { extractApiError } from '../utils/axios';
 import Modal from './Modal';
+import CopyableJson from './CopyableJson';
 import Alert from './Alert';
 import TierPicker from './TierPicker';
 import type { CircleTier } from './TierBadge';
@@ -57,7 +58,6 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }: PairRe
   const [tier, setTier] = useState<CircleTier>(2);
   const [responseData, setResponseData] = useState<PairingResponseData | null>(null);
 
-  const [copied, setCopied] = useState(false);
   // Optional per-pairing override of the reachable endpoint the peer will use to
   // query us. Blank → the backend defaults from FEDERATION_ADVERTISED_URL.
   const [advertisedUrl, setAdvertisedUrl] = useState('');
@@ -70,7 +70,6 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }: PairRe
     setParsedOffer(null);
     setTier(2);
     setResponseData(null);
-    setCopied(false);
     setAdvertisedUrl('');  // don't re-advertise a URL typed for a prior peer
   };
 
@@ -129,17 +128,6 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }: PairRe
       setError(extractApiError(err, t('circles.pairAcceptFailed')));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleCopyResponse = async () => {
-    if (!responseData) return;
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(responseData));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* Non-fatal */
     }
   };
 
@@ -254,16 +242,8 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }: PairRe
             <div className="mt-3 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
               <Fingerprint className="w-3 h-3" aria-hidden="true" />
               <code className="tabular-nums">{responseData.responder_pubkey.slice(0, 24)}…</code>
-              <button
-                type="button"
-                onClick={handleCopyResponse}
-                className="ml-auto btn-icon btn-icon-ghost"
-                title={t('circles.pairCopyJson')}
-                aria-label={t('circles.pairCopyJson')}
-              >
-                {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-              </button>
             </div>
+            <CopyableJson id="pair-response-json" value={responseData} copyLabel={t('circles.pairCopyJson')} />
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400">
             {t('circles.pairAcceptStep3Hint')}
