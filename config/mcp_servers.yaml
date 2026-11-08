@@ -597,8 +597,8 @@ servers:
         Fertigmeldung, sonst erst list_pending_scans aufrufen.
         🛑 `target` ist die technische KENNUNG, klein und englisch — NICHT die
         deutsche Anzeigebezeichnung: „Haushalt" wird abgelehnt, `household`
-        angenommen. Derzeit `household` und `xidra`; die gültige Liste steht in
-        der Zielkonfiguration des Scanners und wird bei einem unbekannten Wert
+        angenommen. Derzeit `household`, `xidra` und `mama`; die gültige Liste
+        steht in der Zielkonfiguration des Scanners und wird bei einem unbekannten Wert
         in der Fehlermeldung mitgenannt (`known: [...]`) — danach richten, nie
         raten.
         NICHT für einen NEUEN Scan — „scanne die Seiten nach <Ziel>" ist
@@ -644,7 +644,8 @@ servers:
         🛑 `target` ist die technische KENNUNG, klein und englisch — NICHT die
         deutsche Anzeigebezeichnung: „Haushalt" wird abgelehnt, `household`
         angenommen. Bei „scanne nach Haushalt" also `target=household`
-        übergeben, nicht `target=Haushalt`. Derzeit `household` und `xidra`.
+        übergeben, nicht `target=Haushalt`; bei „scanne nach Mama" oder „nach
+        Mamas Renfield" `target=mama`. Derzeit `household`, `xidra` und `mama`.
         🛑 Ein unbekanntes Ziel fällt hier NICHT im Aufruf auf: der Auftrag
         startet, und der Fehlschlag kommt erst mit der Fertigmeldung — ohne
         Liste der gültigen Ziele. Bei Unsicherheit also NICHT raten, sondern

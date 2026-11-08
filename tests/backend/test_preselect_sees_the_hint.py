@@ -269,6 +269,15 @@ def test_the_hint_keeps_the_way_back_from_a_display_name():
         "fails on")
 
 
+def test_the_hint_maps_the_second_household_to_its_id():
+    """"scanne nach mamas renfield" (2026-11-08) reached the scanner without a
+    known target: the hint listed only `household` and `xidra`. The phrase a
+    person says has to lead to the id, as for "Haushalt"."""
+    hint_text = _scan_document_hint()
+    assert "`target=mama`" in hint_text
+    assert "Mamas Renfield" in hint_text
+
+
 def test_the_hint_promises_no_error_channel_that_is_walled_off():
     """🛑 This test first stood the WRONG WAY ROUND -- the intent was wrong.
 
