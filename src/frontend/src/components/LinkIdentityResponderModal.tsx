@@ -13,10 +13,11 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { QRCodeSVG } from 'qrcode.react';
-import { Check, Copy, Fingerprint } from 'lucide-react';
+import { Fingerprint } from 'lucide-react';
 
 import apiClient, { extractApiError } from '../utils/axios';
 import Modal from './Modal';
+import CopyableJson from './CopyableJson';
 import Alert from './Alert';
 
 type Step = 'paste_offer' | 'confirm' | 'show_confirmation';
@@ -46,7 +47,6 @@ export default function LinkIdentityResponderModal({ isOpen, onClose, onLinked }
   const [confirmation, setConfirmation] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const reset = () => {
     setStep('paste_offer');
@@ -55,7 +55,6 @@ export default function LinkIdentityResponderModal({ isOpen, onClose, onLinked }
     setConfirmation(null);
     setError(null);
     setLoading(false);
-    setCopied(false);
   };
 
   const handleClose = () => {
@@ -109,16 +108,6 @@ export default function LinkIdentityResponderModal({ isOpen, onClose, onLinked }
       setError(extractApiError(err, t('circles.linkAcceptFailed')));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleCopyConfirmation = async () => {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(confirmation));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // See the initiator: the JSON is visible right next to it.
     }
   };
 
@@ -201,17 +190,7 @@ export default function LinkIdentityResponderModal({ isOpen, onClose, onLinked }
           >
             <QRCodeSVG value={JSON.stringify(confirmation)} size={220} level="M" />
           </div>
-          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-            <button
-              type="button"
-              onClick={handleCopyConfirmation}
-              className="ml-auto btn-icon btn-icon-ghost"
-              title={t('circles.linkCopyJson')}
-              aria-label={t('circles.linkCopyJson')}
-            >
-              {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-            </button>
-          </div>
+          <CopyableJson id="link-confirmation-json" value={confirmation} copyLabel={t('circles.linkCopyJson')} />
           <p className="text-xs text-gray-500 dark:text-gray-400">
             {t('circles.linkAcceptStep3Hint')}
           </p>

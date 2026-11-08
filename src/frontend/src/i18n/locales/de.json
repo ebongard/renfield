@@ -2091,6 +2091,8 @@
     "pairResponseWrongNonce": "Antwort gehört nicht zu dieser Einladung.",
     "pairGenerateOffer": "Einladung erzeugen",
     "pairCopyJson": "JSON kopieren",
+    "jsonAsText": "Als Text (zum Kopieren markieren)",
+    "copyRefused": "Kopieren abgelehnt — der Browser erlaubt die Zwischenablage nur auf einer sicheren Seite. Der Text ist markiert: mit Strg+C bzw. Cmd+C kopieren.",
     "pairCompleteButton": "Kopplung abschließen",
     "pairOfferFailed": "Einladung konnte nicht erzeugt werden.",
     "pairCompleteFailed": "Kopplung fehlgeschlagen.",

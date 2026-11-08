@@ -62,7 +62,9 @@ describe('PairInitiatorModal', () => {
       expect(screen.getByRole('img', { name: /kopplungs-einladung/i })).toBeInTheDocument();
     });
     // Fingerprint preview of the pubkey
-    expect(screen.getByText(new RegExp(FAKE_OFFER.initiator_pubkey.slice(0, 24)))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(FAKE_OFFER.initiator_pubkey.slice(0, 24)), { ignore: 'script, style, textarea' })).toBeInTheDocument();
+    // The offer is also selectable text: a refused clipboard must not leave only the QR code.
+    expect(screen.getByDisplayValue(JSON.stringify(FAKE_OFFER))).toBeInTheDocument();
   });
 
   // Regression guard for BLOCKING #1 — the server's PairingResponse schema
@@ -112,7 +114,7 @@ describe('PairInitiatorModal', () => {
     fireEvent.click(screen.getByRole('button', { name: /weiter|continue/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/signature/)).toBeInTheDocument();
+      expect(screen.getByText(/signature/, { ignore: 'script, style, textarea' })).toBeInTheDocument();
     });
   });
 

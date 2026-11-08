@@ -153,7 +153,7 @@ describe('PairResponderModal', () => {
     });
     // Fingerprint preview of responder pubkey is rendered
     expect(
-      screen.getByText(new RegExp(FAKE_RESPONSE.responder_pubkey.slice(0, 24))),
+      screen.getByText(new RegExp(FAKE_RESPONSE.responder_pubkey.slice(0, 24)), { ignore: 'script, style, textarea' }),
     ).toBeInTheDocument();
   });
 
