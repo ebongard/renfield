@@ -74,8 +74,13 @@ On instance **A**: click **"Neue Kopplung starten"**.
 - Leave **Erreichbare URL (optional)** blank to use A's configured
   `FEDERATION_ADVERTISED_URL` (the normal case). Only fill it to override the
   endpoint for this one pairing (e.g. a specific public hostname).
-- A signed **offer** appears as a QR code + copyable JSON. Hand it to B (scan
-  the QR, or copy the JSON and paste it into B's tab).
+- A signed **offer** appears as a QR code + the JSON as selectable text. Hand
+  it to B (scan the QR, or copy the JSON and paste it into B's tab).
+  The copy button needs a *secure context*: on an instance served over plain
+  HTTP, or one whose self-signed certificate the browser does not trust, the
+  browser refuses the clipboard. The dialog then says so and selects the text;
+  copy it with Ctrl+C / Cmd+C (before 2026-11-08 the refusal was silent and
+  the JSON was shown only as a QR code).
 
 ### Step 2 — Responder (B) accepts
 
