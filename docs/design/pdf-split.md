@@ -38,9 +38,11 @@ All batch entry points (folder-ingest MCP push, email ingest,
 `services/folder_ingest.py::ingest_document` → `DocumentTaskQueue` →
 `workers/document_processor_worker.py::_process_entry`. Detection runs there,
 **before Docling**, so one seam covers every entry point and the API pod never
-does slow work. The chat-upload lane (`api/routes/chat_upload.py`, its own
-inline path with an interactive latency budget and a present user) is
-**deliberately out of scope**.
+does slow work. The chat-upload lane does not split inline (interactive latency
+budget, a present user) — but its auto-index already enqueues the attachment
+as a KB document, so the pre-stage cuts it there. Since 2026-11-08 filing such
+an attachment into Paperless is split-aware and files the parts, never the
+original: `docs/design/chat-upload-pdf-split.md`.
 
 Worker flow (initial_ingest branch, after the idempotent-consumer guard):
 

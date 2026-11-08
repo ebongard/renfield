@@ -10,6 +10,10 @@ Loaded only when a PDF-split file is read. Long form: `docs/design/pdf-split.md`
 `PDF_SPLIT_ENABLED` — opt-in / dark by default. Multi-document batch scans are detected + split at ingest as a
 document-worker **pre-stage before Docling**, so ALL batch entry points are covered without new upload paths.
 
+🛑 **Ein Chat-Anhang wird beim Auto-Index geschnitten, und seine Ablage legt die TEILE ab, nie das Original**
+(`services/chat_paperless_split.py`): die Ablageabsicht steht dauerhaft auf `chat_uploads.paperless_intent` und
+läuft über Bitte, Auto-Index und Abgleicher zusammen. Design: `docs/design/chat-upload-pdf-split.md`.
+
 ## Never
 - **Page count is NEVER a gate, cap or signal.** Batches are arbitrary mixes of 1-page docs and long contracts;
   boundaries come from content evidence via ONE strict-JSON text-model call, context-window-batched by
