@@ -19,7 +19,8 @@
 #   7. `up -d`, wait for the backend healthcheck, /health/ready from inside,
 #      error count in the logs of backend + workers
 #   8. (--prune-old) remove Renfield images on the target other than the new
-#      and the previous tags (the previous one is the rollback target)
+#      ones and the rollback target -- the newest OTHER image of each kind,
+#      from the replaced .env or else the backups/env.* history
 #
 # Rollback: --rollback <timestamp> puts backups/env.<timestamp> back and runs
 # `up -d`. It skips the gate on purpose: an older image on a newer schema is
@@ -180,8 +181,10 @@ on_target() {
 on_target_change() {
   if [[ $DRY_RUN == 1 ]]; then printf '  [dry-run] target: %s\n' "$*"; else on_target "$@"; fi
 }
-# The first revision id an `alembic heads` / `alembic current` printed.
-first_rev() { grep -oE '^[A-Za-z0-9_]+ \((head|current)' | head -1 | cut -d' ' -f1; }
+# The first revision id an `alembic heads` / `alembic current` printed. A
+# database BEHIND the head prints the bare id without "(head)" -- exactly the
+# case --migrate exists for, so the suffix must not be required.
+first_rev() { grep -oE '^[A-Za-z0-9_]+( \(.*\))?$' | head -1 | cut -d' ' -f1; }
 
 # --- 1. preflight -----------------------------------------------------------
 log "preflight: $TARGET:$DIR ($COMPOSE_FILE)"
