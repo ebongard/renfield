@@ -558,6 +558,10 @@ geschützt (flag-unabhängiger Worker-Guard, Reindex-409, Dedup als DUPLICATE).
   (`split_from_document_id`-Lineage) und durchlaufen OCR/Schicht-A/KG/Paperless
   wie jeder normale Upload; `internal.ingest_status` weist archivierte
   Originale separat aus. Design: `docs/design/pdf-split.md`.
+- **Auch aus dem Chat:** Ein im Chat angehängtes Sammel-PDF wird beim Auto-Index geschnitten; „lege das in
+  Paperless ab" legt dann jedes Schreiben einzeln ab, nie das Original — auch wenn die Bitte noch vor dem Ende
+  des Einlesens kommt (die Absicht bleibt am Anhang und wird nachgezogen). Ein Einzeldokument behält die
+  Bestätigungskarte. Design: `docs/design/chat-upload-pdf-split.md`.
 
 ### Dokumentenscan (Papier → Wissensspeicher)
 

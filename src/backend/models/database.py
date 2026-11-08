@@ -882,7 +882,15 @@ class ChatUpload(Base):
     uploaded_by_user_id = Column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True,
     )
+    # A requested Paperless filing that the split-aware route hands to the
+    # decoupled filing leg (services/chat_paperless_split.py): "requested" until
+    # it reached the KB document, then "settled". NULL = never requested there.
+    paperless_intent = Column(String(16), nullable=True)
     created_at = Column(DateTime, default=_utcnow)
+
+
+CHAT_PAPERLESS_INTENT_REQUESTED = "requested"
+CHAT_PAPERLESS_INTENT_SETTLED = "settled"
 
 
 class PaperlessPendingConfirm(Base):

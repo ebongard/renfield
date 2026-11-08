@@ -31,6 +31,7 @@ from models.database import (
     Atom,
     Document,
 )
+from services.chat_paperless_split import settle_open_intents, split_filing_active
 from services.database import AsyncSessionLocal
 from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
@@ -50,6 +51,13 @@ async def reenqueue_pending_paperless(mcp_manager: Any = None) -> None:
     grace = timedelta(seconds=settings.paperless_reconciler_refile_grace_seconds)
     cutoff = datetime.now(UTC).replace(tzinfo=None) - grace
     batch = settings.paperless_reconciler_batch
+
+    # Filings requested from the chat that have not reached their KB document
+    # (or its split children) yet -- the convergence point of the split-aware
+    # route. Stamped `pending` here, picked up by the scan below.
+    if split_filing_active():
+        async with AsyncSessionLocal() as db:
+            await settle_open_intents(db, limit=batch)
 
     async with AsyncSessionLocal() as db:
         # Left-join atoms for the owner (Document has no direct owner column —

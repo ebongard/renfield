@@ -582,6 +582,30 @@ def validate_extraction(
     return metadata
 
 
+_OVERRIDE_KEYS = ("title", "correspondent", "document_type", "tags")
+
+
+def _normalise_overrides(overrides: dict[str, Any] | None) -> dict[str, Any]:
+    """The usable override values: non-empty strings, ``tags`` as a list of
+    names. A comma string ("rechnung, 2026") is split; a value of any other
+    type is dropped rather than failing the shape check."""
+    out: dict[str, Any] = {}
+    for key in _OVERRIDE_KEYS:
+        val = (overrides or {}).get(key)
+        if key == "tags":
+            if isinstance(val, str):
+                val = val.split(",")
+            # Anything but names is dropped, not allowed to fail the shape
+            # check and with it a good extraction.
+            val = [t.strip() for t in val if isinstance(t, str) and t.strip()] \
+                if isinstance(val, list) else None
+        elif not isinstance(val, str):
+            val = None
+        if val:
+            out[key] = val.strip() if isinstance(val, str) else val
+    return out
+
+
 def _resolve_singleton_field(
     value: str | None,
     taxonomy: list[str],
@@ -776,10 +800,17 @@ class PaperlessMetadataExtractor:
         session_id: str | None,
         user_id: int | None = None,
         lang: str = "de",
+        overrides: dict[str, Any] | None = None,
     ) -> ExtractionResult:
         """Run the full pipeline on a ChatUpload and return structured
         metadata. Never raises on expected failure paths — sets
         ``error`` on the result instead.
+
+        ``overrides`` are values the caller already knows (the agent's
+        title / correspondent / document_type / tags). They replace the
+        LLM's values BEFORE validation, so a name that is not in the
+        taxonomy becomes a resolution like any other — never a raw name
+        that ``upload_document`` refuses after the user approved.
         """
         # 1. Load the ChatUpload, honour the session-scoping guard from #442.
         upload = await self._load_upload(attachment_id, session_id)
@@ -789,7 +820,7 @@ class PaperlessMetadataExtractor:
                 error=f"Attachment {attachment_id} not found",
             )
         return await self.extract_from_file(
-            upload.file_path, user_id=user_id, lang=lang
+            upload.file_path, user_id=user_id, lang=lang, overrides=overrides
         )
 
     async def extract_from_file(
@@ -798,6 +829,7 @@ class PaperlessMetadataExtractor:
         *,
         user_id: int | None = None,
         lang: str = "de",
+        overrides: dict[str, Any] | None = None,
     ) -> ExtractionResult:
         """Run the pipeline on a file on disk (no ChatUpload row needed).
 
@@ -813,7 +845,9 @@ class PaperlessMetadataExtractor:
                 metadata=PaperlessMetadata(),
                 error="Konnte Dokument nicht lesen (OCR lieferte keinen Text).",
             )
-        return await self.extract_from_doc_text(doc_text, user_id=user_id, lang=lang)
+        return await self.extract_from_doc_text(
+            doc_text, user_id=user_id, lang=lang, overrides=overrides
+        )
 
     async def extract_from_doc_text(
         self,
@@ -821,6 +855,7 @@ class PaperlessMetadataExtractor:
         *,
         user_id: int | None = None,
         lang: str = "de",
+        overrides: dict[str, Any] | None = None,
     ) -> ExtractionResult:
         """Run taxonomy → LLM → validate on already-extracted document text.
         The text-source-agnostic core of the pipeline (steps 3-6); both the
@@ -867,7 +902,11 @@ class PaperlessMetadataExtractor:
                 error="LLM lieferte keine gueltige JSON-Antwort.",
             )
 
-        # 6. Validate + fuzzy-match + clamp.
+        # 6. Caller-known values win over the LLM's, and go through the same
+        # validation (see ``extract``).
+        parsed.update(_normalise_overrides(overrides))
+
+        # 7. Validate + fuzzy-match + clamp.
         try:
             metadata = validate_extraction(parsed, taxonomy)
         except ValueError as exc:

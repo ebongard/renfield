@@ -266,6 +266,19 @@ async def forward_attachment_to_paperless(
                 "action_taken": False,
             }
 
+        # A batch PDF is cut into its letters at ingest; file those, never
+        # the combined original (services/chat_paperless_split.py).
+        from services.chat_paperless_split import route_chat_filing
+
+        async with AsyncSessionLocal() as db:
+            routed_upload = await db.get(ChatUpload, attachment_id)
+            routed = (
+                await route_chat_filing(db, routed_upload)
+                if routed_upload is not None else None
+            )
+        if routed is not None:
+            return routed
+
         # Decide whether to skip extraction. Agent-passed flag wins;
         # auto-heuristic catches cases the agent didn't think to flag.
         skip_metadata = bool(params.get("skip_metadata"))
@@ -301,6 +314,7 @@ async def forward_attachment_to_paperless(
             user_id=user_id,
             mcp_manager=mcp_manager,
             user_lang=_infer_lang(upload),
+            overrides=agent_overrides,
         )
         if extraction_result is None or extraction_result.error:
             # Extraction failed — fall back to bare upload with a
@@ -322,15 +336,16 @@ async def forward_attachment_to_paperless(
                 )
             return direct
 
-        # Merge agent overrides into the extracted metadata (agent
-        # wins). `mode="json"` serialises pydantic dates to ISO
-        # strings so the dict is safe to write into a JSON column
-        # downstream (paperless_pending_confirms.post_fuzzy_output).
-        # Without it, `created_date` comes back as a datetime.date
-        # which SQLAlchemy's default JSON encoder can't handle and
-        # the whole INSERT fails.
+        # The agent overrides went INTO the extraction (agent wins over the
+        # LLM, both validated against the taxonomy). Merging them in here
+        # afterwards put unknown tag names straight into the upload, which
+        # Paperless refused after the user had approved the card.
+        # `mode="json"` serialises pydantic dates to ISO strings so the
+        # dict is safe to write into a JSON column downstream
+        # (paperless_pending_confirms.post_fuzzy_output). Without it,
+        # `created_date` comes back as a datetime.date which SQLAlchemy's
+        # default JSON encoder can't handle and the whole INSERT fails.
         post_fuzzy = extraction_result.metadata.model_dump(mode="json")
-        post_fuzzy.update(agent_overrides)
 
         # Cold-start gate. User is inside the window → confirm
         # required; otherwise silent upload with extracted metadata.
@@ -622,6 +637,7 @@ async def _run_extraction(
     user_id: int | None,
     mcp_manager,
     user_lang: str,
+    overrides: dict | None = None,
 ):
     """Run the PaperlessMetadataExtractor; return its ExtractionResult
     or None if the extractor module can't be loaded."""
@@ -637,6 +653,7 @@ async def _run_extraction(
             session_id=session_id,
             user_id=user_id,
             lang=user_lang,
+            overrides=overrides,
         )
     except Exception as exc:
         logger.warning(f"Extractor call failed: {exc}")
