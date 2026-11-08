@@ -243,3 +243,67 @@ async def test_auto_index_poll_treats_a_split_as_ready_and_a_review_as_terminal(
         types = [n["type"] for n in notes]
         assert "document_error" not in types, status
         assert ("document_ready" in types) is expect_ready, status
+
+
+async def test_a_second_request_after_filing_does_not_upload_again(db_session, kb, split_on):
+    # First request while being read in → the document got `pending`; it then
+    # finished as ONE document. A second "lege ab" must not take the direct
+    # upload of the original next to the filing leg.
+    doc = await _doc(db_session, kb, status="completed", state=PAPERLESS_STATE_PENDING)
+    result = await route_chat_filing(db_session, await _upload(db_session, doc=doc))
+    assert result is not None and result["action_taken"] is False
+    assert "bereits" in result["message"]
+
+
+async def test_waiting_intents_do_not_fill_the_reconciler_batch(db_session, kb, split_on):
+    for i in range(3):
+        waiting = await _doc(db_session, kb, status="split_review", name=f"w{i}.pdf")
+        await route_chat_filing(db_session, await _upload(db_session, doc=waiting, name=f"w{i}.pdf"))
+    parent = await _doc(db_session, kb, status="processing", name="late.pdf")
+    late = await _upload(db_session, doc=parent, name="late.pdf")
+    await route_chat_filing(db_session, late)
+    parent.status = "split_archived"
+    child = await _doc(db_session, kb, status="completed", parent=parent, name="c.pdf")
+    await db_session.commit()
+
+    assert await settle_open_intents(db_session, limit=1) == 1
+
+    await db_session.refresh(child)
+    assert child.paperless_state == PAPERLESS_STATE_PENDING
+
+
+async def test_an_upload_that_never_got_a_document_is_not_promised_a_filing(db_session, kb, split_on):
+    from datetime import datetime, timedelta
+
+    up = await _upload(db_session)
+    up.created_at = datetime.utcnow() - timedelta(hours=1)
+    await db_session.commit()
+    assert await route_chat_filing(db_session, up) is None  # ordinary path
+
+    up.paperless_intent = CHAT_PAPERLESS_INTENT_REQUESTED
+    await db_session.commit()
+    await settle_open_intents(db_session)
+    await db_session.refresh(up)
+    assert up.paperless_intent == CHAT_PAPERLESS_INTENT_SETTLED
+
+
+async def test_an_archived_parent_never_comes_out_pending(db_session, kb, split_on):
+    # The worker archived the parent after the settle had read it as split_pending.
+    parent = await _doc(db_session, kb, status="split_pending")
+    up = await _upload(db_session, doc=parent)
+    from sqlalchemy import text
+
+    from services.chat_paperless_split import settle_intent
+
+    await db_session.get(Document, parent.id)  # loaded as split_pending
+    await db_session.execute(
+        text("UPDATE documents SET status = 'split_archived', paperless_state = NULL WHERE id = :i"),
+        {"i": parent.id},
+    )
+    up.paperless_intent = CHAT_PAPERLESS_INTENT_REQUESTED
+    await settle_intent(db_session, up)
+    await db_session.commit()
+    state = (
+        await db_session.execute(text("SELECT paperless_state FROM documents WHERE id = :i"), {"i": parent.id})
+    ).scalar()
+    assert state is None

@@ -586,15 +586,23 @@ _OVERRIDE_KEYS = ("title", "correspondent", "document_type", "tags")
 
 
 def _normalise_overrides(overrides: dict[str, Any] | None) -> dict[str, Any]:
-    """The non-empty override values, ``tags`` as a list of names. A comma
-    string ("rechnung, 2026") is split rather than failing the shape check."""
+    """The usable override values: non-empty strings, ``tags`` as a list of
+    names. A comma string ("rechnung, 2026") is split; a value of any other
+    type is dropped rather than failing the shape check."""
     out: dict[str, Any] = {}
     for key in _OVERRIDE_KEYS:
         val = (overrides or {}).get(key)
-        if key == "tags" and isinstance(val, str):
-            val = [t.strip() for t in val.split(",") if t.strip()]
+        if key == "tags":
+            if isinstance(val, str):
+                val = val.split(",")
+            # Anything but names is dropped, not allowed to fail the shape
+            # check and with it a good extraction.
+            val = [t.strip() for t in val if isinstance(t, str) and t.strip()] \
+                if isinstance(val, list) else None
+        elif not isinstance(val, str):
+            val = None
         if val:
-            out[key] = val
+            out[key] = val.strip() if isinstance(val, str) else val
     return out
 
 

@@ -18,9 +18,10 @@ Design: ``docs/design/chat-upload-pdf-split.md``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
@@ -35,6 +36,15 @@ from models.database import (
     Document,
 )
 from utils.config import settings
+
+# An upload whose text extraction finished this long ago without a KB document
+# will not get one (auto-index failed, e.g. the worker was down): the request is
+# not ours, and an open intent for it is given up.
+_NO_DOCUMENT_AFTER = timedelta(minutes=10)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def split_filing_active() -> bool:
@@ -67,6 +77,16 @@ async def settle_intent(db: AsyncSession, upload: ChatUpload) -> SettleResult:
         return SettleResult(settled=False)
 
     if doc.status == DOC_STATUS_SPLIT_ARCHIVED:
+        # Guarded in SQL, not on the loaded objects: a part the worker filed
+        # meanwhile keeps its state.
+        await db.execute(
+            update(Document)
+            .where(
+                Document.split_from_document_id == doc.id,
+                Document.paperless_state.is_(None),
+            )
+            .values(paperless_state=PAPERLESS_STATE_PENDING)
+        )
         children = (
             await db.execute(
                 select(Document)
@@ -74,9 +94,6 @@ async def settle_intent(db: AsyncSession, upload: ChatUpload) -> SettleResult:
                 .order_by(Document.id)
             )
         ).scalars().all()
-        for child in children:
-            if child.paperless_state is None:
-                child.paperless_state = PAPERLESS_STATE_PENDING
         upload.paperless_intent = CHAT_PAPERLESS_INTENT_SETTLED
         return SettleResult(
             settled=True,
@@ -96,8 +113,18 @@ async def settle_intent(db: AsyncSession, upload: ChatUpload) -> SettleResult:
     # document: `pending` on the document itself. A split inherits it to the
     # children (`pdf_splitter` derives the intent from the parent), a single
     # document is filed by the hook or the reconciler.
-    if doc.paperless_state is None:
-        doc.paperless_state = PAPERLESS_STATE_PENDING
+    # Guarded in SQL: if the worker archived the parent since it was read,
+    # the archived original must not come out `pending` (the next pass stamps
+    # its parts instead).
+    await db.execute(
+        update(Document)
+        .where(
+            Document.id == doc.id,
+            Document.paperless_state.is_(None),
+            Document.status != DOC_STATUS_SPLIT_ARCHIVED,
+        )
+        .values(paperless_state=PAPERLESS_STATE_PENDING)
+    )
     settled = doc.status == DOC_STATUS_COMPLETED
     if settled:
         upload.paperless_intent = CHAT_PAPERLESS_INTENT_SETTLED
@@ -114,6 +141,18 @@ async def route_chat_filing(db: AsyncSession, upload: ChatUpload) -> dict | None
     if not split_filing_active() or not _is_pdf(upload):
         return None
     doc = await db.get(Document, upload.document_id) if upload.document_id else None
+    if doc is None and upload.status == "completed" and upload.created_at is not None \
+            and upload.created_at < _now() - _NO_DOCUMENT_AFTER:
+        return None  # auto-index never produced a document; none will come
+    if doc is not None and doc.status == DOC_STATUS_COMPLETED and doc.paperless_state is not None:
+        # Filed or being filed by an earlier request (a chat document carries
+        # no filing state otherwise) -- a second direct upload would duplicate it.
+        return {
+            "success": True,
+            "message": "Dieses Dokument ist bereits in Paperless abgelegt oder wird gerade abgelegt.",
+            "action_taken": False,
+            "data": {"filing": "split_aware", "document_status": doc.status, "parts": 0},
+        }
     if doc is not None and doc.status in (DOC_STATUS_COMPLETED, DOC_STATUS_FAILED):
         return None
 
@@ -149,11 +188,39 @@ async def route_chat_filing(db: AsyncSession, upload: ChatUpload) -> dict | None
 
 
 async def settle_open_intents(db: AsyncSession, limit: int = 100) -> int:
-    """Reconciler pass: settle every requested intent. Returns how many settled."""
+    """Reconciler pass: settle the requested intents whose document reached a
+    state the settle acts on. Returns how many settled.
+
+    Only those are selected: an intent still waiting (document being read in,
+    split under review -- its parent already carries `pending`) has nothing to
+    do, and selecting it would let a backlog of waiting rows fill every batch.
+    An intent whose upload never got a document is given up."""
+    abandoned = (
+        await db.execute(
+            update(ChatUpload)
+            .where(
+                ChatUpload.paperless_intent == CHAT_PAPERLESS_INTENT_REQUESTED,
+                ChatUpload.document_id.is_(None),
+                ChatUpload.created_at < _now() - _NO_DOCUMENT_AFTER,
+            )
+            .values(paperless_intent=CHAT_PAPERLESS_INTENT_SETTLED)
+            .returning(ChatUpload.id)
+        )
+    ).scalars().all()
+    if abandoned:
+        logger.warning(
+            f"chat paperless intent: {len(abandoned)} upload(s) never got a KB document; not filed"
+        )
     uploads = (
         await db.execute(
             select(ChatUpload)
-            .where(ChatUpload.paperless_intent == CHAT_PAPERLESS_INTENT_REQUESTED)
+            .join(Document, Document.id == ChatUpload.document_id)
+            .where(
+                ChatUpload.paperless_intent == CHAT_PAPERLESS_INTENT_REQUESTED,
+                Document.status.in_(
+                    (DOC_STATUS_SPLIT_ARCHIVED, DOC_STATUS_COMPLETED, DOC_STATUS_FAILED)
+                ),
+            )
             .order_by(ChatUpload.id)
             .limit(limit)
         )
@@ -162,6 +229,5 @@ async def settle_open_intents(db: AsyncSession, limit: int = 100) -> int:
     for upload in uploads:
         if (await settle_intent(db, upload)).settled:
             n += 1
-    if uploads:
-        await db.commit()
+    await db.commit()
     return n

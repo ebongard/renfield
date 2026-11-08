@@ -148,3 +148,15 @@ async def test_no_overrides_leaves_the_llm_values():
     with _patched_extractor(PaperlessTaxonomy(tags=["vertrag"])):
         result = await extractor.extract_from_doc_text("text")
     assert result.metadata.tags == ["vertrag"]
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_override_is_dropped_not_fatal():
+    extractor = PaperlessMetadataExtractor(mcp_manager=MagicMock())
+    with _patched_extractor(PaperlessTaxonomy(tags=["vertrag"])):
+        result = await extractor.extract_from_doc_text(
+            "text",
+            overrides={"tags": [1, None, "vertrag"], "correspondent": 42},
+        )
+    assert result.error is None
+    assert result.metadata.tags == ["vertrag"]
