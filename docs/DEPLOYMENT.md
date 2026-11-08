@@ -455,6 +455,20 @@ git pull
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
+**Compose-Instanz aus fertigen Bildern (z. B. „mama").** Eine Einzelhost-Instanz, die ihre Bilder von der
+Baubox bezieht, erreicht `bin/deploy-production.sh` nicht — sie fällt still zurück. Aktualisiert wird sie mit
+`bin/update-compose-instance.sh`: Sicherung (`pg_dump -Fc` + `.env`, ein Zeitstempel), Bildkopie Baubox → Ziel,
+neue Marken in die `.env`, dann dasselbe Migrations-Tor wie im Cluster (Kopf im NEUEN Bild gegen `alembic current`;
+ohne `--migrate` Abbruch und alte `.env` zurück, eine unlesbare Abfrage besteht nie), Neustart mit Gesundheitsprüfung.
+`--prune-old` behält neben den neuen Bildern das jüngste andere je Art als Rückfallziel; `--rollback <zeitstempel>`
+setzt die gesicherte `.env` zurück (die Datenbank nicht — der passende Dump wird genannt); `--dry-run` zeigt nur.
+
+```bash
+bin/update-compose-instance.sh --target <host> --dir '~/renfield-<instanz>' \
+  --compose-file docker-compose.<instanz>.yml --env-script env.sh \
+  --backend-tag <datum-marke> --frontend-tag <datum-marke> --migrate
+```
+
 ### Backup
 
 ```bash
