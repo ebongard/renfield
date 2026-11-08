@@ -84,9 +84,11 @@ FRONTEND_IMAGE="$REGISTRY/frontend:$FRONTEND_TAG"
 log() { printf '\n\033[1;36m=== %s ===\033[0m\n' "$*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-# Everything on the target runs through ONE remote program, read by `bash -s`
-# from stdin, so the target's login shell (zsh on macOS) never parses it and
-# the quoting stays in one place. Arguments are passed %q-quoted.
+# Everything on the target runs through ONE remote program, passed to
+# `bash -c` as a single %q-quoted argument, so the quoting stays in one place
+# and the target's login shell (zsh on macOS) only unquotes it. NOT over stdin
+# (`bash -s`): stdin carries the image stream of the `load` step, and a here-
+# string for the program replaced it -- `docker load` got nothing (2026-11-08).
 read -r -d '' REMOTE <<'REMOTE_EOF' || true
 set -euo pipefail
 DIR=$1 CF=$2 ENVSH=$3 STEP=$4; shift 4
@@ -173,7 +175,7 @@ REMOTE_EOF
 q() { printf '%q ' "$@"; }
 # Read-only steps run in a dry run too, so the trial shows the real state.
 on_target() {
-  ssh "$TARGET" "bash -s -- $(q "$DIR" "$COMPOSE_FILE" "$ENV_SCRIPT" "$@")" <<<"$REMOTE"
+  ssh "$TARGET" "bash -c $(printf '%q' "$REMOTE") remote $(q "$DIR" "$COMPOSE_FILE" "$ENV_SCRIPT" "$@")"
 }
 on_target_change() {
   if [[ $DRY_RUN == 1 ]]; then printf '  [dry-run] target: %s\n' "$*"; else on_target "$@"; fi
