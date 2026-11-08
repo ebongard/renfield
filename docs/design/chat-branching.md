@@ -12,6 +12,13 @@ are always on; the one-time backfill makes flag-off byte-identical).
 - **`conversations.active_leaf_message_id`** — nullable FK → `messages.id`
   (`ON DELETE SET NULL`, `use_alter=True` to break the conversations↔messages
   FK cycle for `metadata.create_all`). The tip of the active branch.
+- **`messages.conversation_id`** — `ON DELETE CASCADE` (`pc20261107_chat_fk_rules`).
+  Before that only the ORM cascade removed the messages, so the atom purge (a
+  Core `DELETE FROM atoms` that cascades into `conversations`) failed on every
+  conversation with messages: an Art. 17 erasure of a chat was refused. The
+  provenance pointers onto a message (`conversation_memories.source_message_id`,
+  `kg_relations.source_message_id`) are `ON DELETE SET NULL`: the memory and the
+  relation are atoms of their own and outlive the chat they were drawn from.
 - **Active branch = the root→leaf path**, resolved by a **recursive CTE walking
   `parent_message_id` upward from `active_leaf_message_id`**, ordered
   `timestamp ASC, id ASC` (reproduces the exact pre-branching history order for
