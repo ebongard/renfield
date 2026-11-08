@@ -266,6 +266,19 @@ async def forward_attachment_to_paperless(
                 "action_taken": False,
             }
 
+        # A batch PDF is cut into its letters at ingest; file those, never
+        # the combined original (services/chat_paperless_split.py).
+        from services.chat_paperless_split import route_chat_filing
+
+        async with AsyncSessionLocal() as db:
+            routed_upload = await db.get(ChatUpload, attachment_id)
+            routed = (
+                await route_chat_filing(db, routed_upload)
+                if routed_upload is not None else None
+            )
+        if routed is not None:
+            return routed
+
         # Decide whether to skip extraction. Agent-passed flag wins;
         # auto-heuristic catches cases the agent didn't think to flag.
         skip_metadata = bool(params.get("skip_metadata"))

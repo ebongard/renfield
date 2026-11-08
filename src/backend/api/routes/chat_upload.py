@@ -18,6 +18,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
+    CHAT_PAPERLESS_INTENT_REQUESTED,
     UPLOAD_STATUS_COMPLETED,
     UPLOAD_STATUS_FAILED,
     UPLOAD_STATUS_PROCESSING,
@@ -27,6 +28,7 @@ from models.database import (
 )
 from models.permissions import Permission
 from services.auth_service import get_optional_user, require_permission
+from services.chat_paperless_split import route_chat_filing, settle_intent
 from services.circle_sql import conversations_circles_filter
 from services.conversation_service import ConversationService
 from services.database import AsyncSessionLocal, get_db
@@ -450,6 +452,12 @@ async def forward_to_paperless(
     # Check file exists on disk
     if not upload.file_path or not Path(upload.file_path).is_file():
         raise HTTPException(status_code=400, detail="File no longer available on disk")
+
+    # A batch PDF is cut into its letters at ingest; file those, never the
+    # combined original (services/chat_paperless_split.py).
+    routed = await route_chat_filing(db, upload)
+    if routed is not None:
+        return PaperlessResponse(success=True, message=routed["message"])
 
     # Get MCP manager
     manager = getattr(request.app.state, "mcp_manager", None)
@@ -981,6 +989,10 @@ async def _auto_index_to_kb(
                 if upload_row:
                     upload_row.document_id = doc_id
                     upload_row.knowledge_base_id = kb_id
+                    # A filing requested before the document existed lands on
+                    # it now, before the worker sees it (chat_paperless_split).
+                    if upload_row.paperless_intent == CHAT_PAPERLESS_INTENT_REQUESTED:
+                        await settle_intent(db, upload_row)
                     await db.commit()
                 logger.info(
                     f"Chat upload {upload_id} matches existing doc {doc_id} "
@@ -1010,6 +1022,10 @@ async def _auto_index_to_kb(
                 if upload_row:
                     upload_row.document_id = doc_id
                     upload_row.knowledge_base_id = kb_id
+                    # A filing requested before the document existed lands on
+                    # it now, before the worker sees it (chat_paperless_split).
+                    if upload_row.paperless_intent == CHAT_PAPERLESS_INTENT_REQUESTED:
+                        await settle_intent(db, upload_row)
                     await db.commit()
 
         # Only enqueue when we created a NEW document row. Re-uploads
@@ -1048,7 +1064,9 @@ async def _auto_index_to_kb(
                 )).scalar_one_or_none()
             if d is None:
                 return
-            if d.status == "completed":
+            if d.status in ("completed", "split_archived"):
+                # A batch PDF cut into its letters is just as ready: the
+                # parts carry the chunks, the archived original none.
                 if session_id:
                     await notify_session(session_id, {
                         "type": "document_ready",
@@ -1062,6 +1080,11 @@ async def _auto_index_to_kb(
                 return
             if d.status == "failed":
                 raise RuntimeError(d.error_message or "Document processing failed in worker")
+            if d.status == "split_review":
+                # Terminal for this poll: the owner got the review notice;
+                # waiting here would end as a false document_error.
+                logger.info(f"Chat upload {upload_id} → doc {doc_id} awaits a split review")
+                return
             # Non-terminal — wait and loop.
             await asyncio.sleep(_POLL_INTERVAL_S)
 
