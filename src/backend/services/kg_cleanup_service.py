@@ -144,9 +144,13 @@ class KGCleanupService:
         it as a whole (refusing the edge alone is not enough, cf. #1334).
 
         Entities are only compared within one ``(entity_type, user_id,
-        circle_tier)`` partition, the same partitioning the reconciler's SQL
-        applies (#1499): ``merge_entities`` refuses a cross-user pair, and a
-        cross-tier fold would narrow a shared entity to the private tier.
+        circle_tier)`` partition (#1499): per owner like the reconciler, whose
+        ``merge_entities`` refuses a cross-user pair, and additionally per tier,
+        because a fold takes the MIN tier and would narrow a shared entity to
+        the private one (the reconciler sends such a pair to review instead).
+        Ownerless entities form one partition among themselves. Like the
+        reconciler, the scan skips notes (they resolve by exact title only) and
+        merge tombstones.
         """
         if threshold is None:
             threshold = 0.82
@@ -157,7 +161,11 @@ class KGCleanupService:
                 KGEntity.id, KGEntity.name, KGEntity.mention_count, KGEntity.entity_type,
                 KGEntity.user_id, KGEntity.circle_tier,
             )
-            .where(KGEntity.is_active == True)  # noqa: E712
+            .where(
+                KGEntity.is_active == True,  # noqa: E712
+                KGEntity.canonical_id.is_(None),
+                KGEntity.entity_type != "note",
+            )
         )
         if entity_type:
             query = query.where(KGEntity.entity_type == entity_type)
@@ -351,6 +359,9 @@ class KGCleanupService:
                         survivor = await kg_service.merge_entities(dup_id, canonical_id)
                     except Exception as e:
                         logger.warning(f"KG cleanup: Failed to merge {dup_id} → {canonical_id}: {e}")
+                        # An aborted transaction would fail every later pair
+                        # unseen; earlier merges are already committed.
+                        await self.db.rollback()
                         skipped.append({"loser_id": dup_id, "winner_id": canonical_id, "reason": "error"})
                         continue
                     if survivor is None:

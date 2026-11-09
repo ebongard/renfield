@@ -182,7 +182,9 @@ async def test_a_skipped_merge_is_reported_not_counted():
         _row(10, "Stadtwerke Bonn", 5),
         _row(11, "Stadtwerke Bnn", 1),
         _row(12, "Stadtwerk Bonn", 1),
+        _row(13, "Stadtwerke Bonm", 1),
     ]))
+    svc.db.rollback = AsyncMock()
     kg = MagicMock()
 
     async def merge(loser, winner):
@@ -196,8 +198,10 @@ async def test_a_skipped_merge_is_reported_not_counted():
     with patch("services.kg_cleanup_service.KnowledgeGraphService", return_value=kg):
         result = await svc.merge_duplicate_clusters(dry_run=False)
 
-    assert result["entities_merged"] == 0
+    assert result["entities_merged"] == 1  # 13 merged
     assert result["entities_skipped"] == 2
+    # The failed pair rolls the session back, so the next pair still runs.
+    svc.db.rollback.assert_awaited_once()
     assert sorted(result["skipped"], key=lambda p: p["loser_id"]) == [
         {"loser_id": 11, "winner_id": 10, "reason": "skipped"},
         {"loser_id": 12, "winner_id": 10, "reason": "error"},
