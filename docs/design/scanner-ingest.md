@@ -306,7 +306,7 @@ registered.
 |---|---|
 | `list_scanners()` | Devices + capabilities |
 | `scanner_status()` | Real hardware state from the SANE sensors — ready / power-save / cover-open / page-loaded / error code. Not a guess. |
-| `scan_document(target?, title?)` | STARTS a scan job and returns `{job_id, status: running}` at once; scan, assemble, route and dispatch run in the background. `target` omitted → L2/L3 decide. A second call while a scan runs returns `busy` with the running job's id. |
+| `scan_document(target?, title?)` | STARTS a scan job and returns `{job_id, status: running}` at once; scan, assemble, route and dispatch run in the background. `target` omitted → L2/L3 decide. A second call while a scan runs returns `busy` with the running job's id; within ONE agent turn Renfield does not make that second call after a successful start (#1508, `_STARTS_BACKGROUND_JOB` in the agent loop). |
 | `scan_job_status(job_id)` | How a job stands or ended — for an explicit user question only, never polled |
 | `list_pending_scans()` | The review floor — unrouted batches with evidence |
 | `route_scan(stage_id, target)` | Resolve one, dispatch it, purge from staging |
@@ -367,7 +367,7 @@ The shape now:
   below). A restart closes cut-off jobs as `interrupted` and re-sends events that
   never got through.
 - **Renfield** (`services/scanner_jobs.py`, `api/routes/scanner_jobs.py`): when
-  `mcp.scanner.scan_document` returns a job id, `action_executor` stores the
+  `mcp.scanner.scan_document` (`scanner_jobs.SCAN_START_TOOL`) returns a job id, `action_executor` stores the
   requester (user + chat session) from the AUTHENTICATED turn in Redis (24 h).
   The event carries no user identity; a job this instance did not record is
   ignored (409 after the hardening below, never 404). Delivery is at-most-once

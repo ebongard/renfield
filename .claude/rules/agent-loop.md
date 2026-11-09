@@ -148,6 +148,11 @@ Wiederholung die Schleifenerkennung selbst abbrach — beides, nie nur eines. De
 `AgentStep.abort_reason` mit, NICHT als Inhaltstext: `content` kommt aus dem Prompt-Katalog und ist uebersetzt.
 🛑 **`chat_handler` urteilt an ZWEI Stellen** (Orchestrator- und Einzelrollen-Pfad). Eine zu verdrahten und die
 andere zu vergessen ist der Normalfall des Irrtums; ein AST-Test haelt fest, dass beide die Menge uebergeben.
+🛑 **Zwei Nachrufe reichen schon** (2026-11-08, #1508): Start, EIN Nachruf auf „busy", `final_answer` — die
+Schleifenerkennung (3 identische) feuert nie, der Hinweis hielt das Modell nicht ab. Darum fuehrt die Schleife ein
+Werkzeug aus `_STARTS_BACKGROUND_JOB` (heute `scanner_jobs.SCAN_START_TOOL`) nach einem ERFOLG im selben Zug gar
+nicht mehr aus: Ergebnis `success=True` mit `background_job_already_started` aus dem Katalog. Nur ein ERFOLG sperrt
+(ein gescheiterter Start startete nichts), nur im selben Zug (ein neuer Zug ist eine neue Bitte).
 
 ## LLM server unreachable (#121)
 - `utils/llm_client.is_llm_unreachable` is the ONE classification of "could not connect" (connect error/timeout,
