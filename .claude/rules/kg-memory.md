@@ -65,6 +65,9 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   The same predicate guards EVERY name-similarity fold, incl. the admin string cleanup (`kg_cleanup_service`, ratio
   0.82 scores the field pair 0.94): never a cluster edge, and a cluster holding such a pair via a third spelling is
   `identifier_conflict` → refused whole (`clusters_refused`). A new merge path must call it too.
+  The admin cleanup also clusters only within `(entity_type, user_id, circle_tier)` (#1499), skips notes and tombstones
+  like the reconciler, and needs `KG_MANAGE` for
+  the scan too — it reads every user's entities; skipped merges land in `entities_skipped`, never in `entities_merged`.
 - Per-user non-blocking advisory lock `_RECONCILER_LOCK_NS`; an overlapping run is a no-op. Each pass first re-embeds
   up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else invisible to the self-join) — so a
   dry-run estimate over `embedding IS NOT NULL` undercounts the run's candidates.
