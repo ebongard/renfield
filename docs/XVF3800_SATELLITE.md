@@ -619,6 +619,21 @@ dmix/dsnoop — als alleinige Audio-App reicht `asym plug→hw:Array`, und dmix/
 schleppen System-V-IPC-sem/shm mit, die bei root-Erstanlage auf 0600 owner-locked
 `Pa_Initialize` ebenfalls deadlocken; Cleanup braucht `ipcrm -s` UND `-m`).
 
+### Mikrofon abgezogen: kein Rückfall auf das Null-PCM (ab Satellit 1.4.21)
+
+**Symptom (Fitnessraum, 2026-11-09):** XVF3800 abgezogen, Satellit verbunden und
+scheinbar gesund, aber zwei Erfassungs-Threads bei 100 % und 64 % CPU, Pegel um
+-5 dB, der zwischen zwei Werten wechselt.
+
+**Ursache:** Ohne `hw:Array` fehlt das ALSA-`default` in PortAudios Geräteliste.
+Übrig bleibt nur `pulse`, das obige `type null` ist. `_find_pyaudio_device` fiel
+auf PortAudios Vorgabe-Eingang zurück, also genau dieses Null-PCM; dessen Lesezugriffe
+kehren sofort zurück.
+
+**Fix:** Ein konfiguriertes, aber fehlendes Gerät wird nicht mehr ersetzt; die
+Erfassung startet nicht, und der Taubwächter (#1211) meldet den Raum. Ein später
+eingestecktes Mikrofon braucht einen Neustart des Dienstes.
+
 ### Firmware flashen (USB/UAC2 vs. I2S)
 
 Der XVF3800 hat zwei sich ausschließende Firmwares: **USB/UAC2** (enumeriert als

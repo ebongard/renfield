@@ -26,6 +26,13 @@ Puffer, ~40 % CPU) und galt als lebendig. Wiederholte Bloecke zaehlen nicht, kon
 (digitale Stille) immer. Fuer aeltere Satelliten bleibt der Pegel: `-96.0` dB heisst
 „noch kein Frame", `-90.3` heisst „Frames, aber digital still" und ist KEIN Ausfall (#1211,
 `docs/SATELLITE_MONITORING.md`).
+🛑 **Ein fehlendes Mikrofon wird NICHT ersetzt (ab 1.4.21).** Ohne XVF3800 verschwindet `default`,
+und PortAudios Vorgabe-Eingang ist das `pulse`-Null-PCM aus `/etc/asound.conf`: seine Lesezugriffe
+kehren sofort zurueck, die Erfassungs-Threads drehten bei 100 % CPU auf erfundenem Audio. Ein
+spaeter eingestecktes Mikrofon braucht einen Dienst-Neustart.
+🛑 **Keine PortAudio-/ALSA-Geraeteproben auf einem laufenden Satelliten mit exklusivem Mikrofon**
+(`xvf3800-usb`, 4mic): das gehaltene Geraet fehlt in der Liste, und die Probe hat das Wohnzimmer
+vermutlich festgesetzt (2026-11-09). Nur `/proc/asound/…/status` lesen.
 
 
 Loaded only when a satellite file is read. Trust/OTA signing lives in `satellite-trust-ota.md`.
