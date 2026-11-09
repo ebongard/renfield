@@ -37,6 +37,11 @@ def watch_on(monkeypatch):
 
 
 @pytest.fixture
+def watch_off(monkeypatch):
+    monkeypatch.setattr(settings, "satellite_deaf_watch_enabled", False)
+
+
+@pytest.fixture
 def settled(monkeypatch):
     monkeypatch.setattr(wd, "_STARTED_AT", time.monotonic() - wd.SETTLE_SECONDS - 1)
 
@@ -59,16 +64,18 @@ def _beat(m: SatelliteManager, sid: str, rms: float, db: float, at: float) -> No
     m.update_heartbeat(sid, {"audio_rms": rms, "audio_db": db})
     if sat.audio_level != before:
         sat.audio_level_changed_at = at
+        if before is None:
+            sat.audio_level_first_at = at
 
 
 class TestTheVerdict:
-    def test_flag_off_tracks_nothing_and_never_judges(self):
+    def test_flag_off_tracks_nothing_and_never_judges(self, watch_off):
         m = _manager("sat-a")
         m.update_heartbeat("sat-a", {"audio_rms": 0.0, "audio_db": -96.0})
         assert m.satellites["sat-a"].audio_level is None
         assert m.capture_stalled_since("sat-a", time.time() + 10 * WINDOW) is None
 
-    def test_flag_off_roster_entry_has_no_new_key(self):
+    def test_flag_off_roster_entry_has_no_new_key(self, watch_off):
         # Off is byte-identical: the kiosk snapshot and the API read this dict.
         assert "capture_stalled_since" not in _manager("sat-a").get_all_satellites()[0]
 
@@ -101,6 +108,17 @@ class TestTheVerdict:
         _beat(m, "sat-a", 0.0, -96.0, t0)
         assert m.capture_stalled_since("sat-a", t0 + WINDOW - 1) is None
 
+    def test_digital_silence_is_not_a_frozen_stream(self, watch_on):
+        # A noise-suppressed mic in a silent room delivers frames below one LSB:
+        # constant (0.0, -90.3). Only the INITIAL value before any frame is
+        # -96.0, so silence must not read as deaf.
+        m, t0 = _manager("sat-a"), time.time() - 2 * WINDOW
+        _beat(m, "sat-a", 0.0, -90.3, t0)
+        for _ in range(3):
+            m.update_heartbeat("sat-a", {"audio_rms": 0.0, "audio_db": -90.3})
+        assert m.capture_stalled_since("sat-a") is None
+        assert m.capture_proven_live("sat-a") is True
+
     def test_a_satellite_without_level_metrics_is_not_judged(self, watch_on):
         m = _manager("sat-a")
         m.update_heartbeat("sat-a", {"cpu_percent": 12.0})
@@ -116,6 +134,21 @@ class TestTheVerdict:
 
     def test_an_unknown_satellite_is_none(self, watch_on):
         assert _manager().capture_stalled_since("gone", time.time()) is None
+
+    def test_live_needs_a_change_after_the_first_level(self, watch_on):
+        # One heartbeat proves nothing: right after a (re)connect there is no
+        # verdict either way.
+        m, t0 = _manager("sat-a"), time.time() - 60
+        _beat(m, "sat-a", 0.0, -96.0, t0)
+        assert m.capture_proven_live("sat-a") is False
+        _beat(m, "sat-a", 85.4, -51.7, t0 + 30)
+        assert m.capture_proven_live("sat-a") is True
+
+    def test_a_frozen_level_is_not_live(self, watch_on):
+        m, t0 = _manager("sat-a"), 1_000.0
+        _beat(m, "sat-a", 85.4, -51.7, t0)
+        _beat(m, "sat-a", 0.0, -96.0, t0 + 30)
+        assert m.capture_proven_live("sat-a", t0 + 30 + WINDOW) is False
 
     def test_roster_entry_carries_the_verdict_when_on(self, watch_on):
         m, t0 = _manager("sat-a"), time.time() - 2 * WINDOW
@@ -154,14 +187,18 @@ def _deaf_manager(t0: float) -> SatelliteManager:
     return m
 
 
-async def _check(m, notify, state, now):
+async def _check(m, notify, state, now, enrolled=(("sat-wohnzimmer", "Wohnzimmer"),)):
+    async def fetch():
+        return [(sid, room, None) for sid, room in enrolled]
+
     return await wd.check_deaf_satellites(
-        notify=notify, manager=m, read_state=state.read, write_state=state.write, now=now,
+        notify=notify, manager=m, fetch_enrolled=fetch,
+        read_state=state.read, write_state=state.write, now=now,
     )
 
 
 class TestTheReport:
-    async def test_flag_off_is_silent(self, settled):
+    async def test_flag_off_is_silent(self, watch_off, settled):
         n = _Notify()
         assert await _check(_deaf_manager(1_000.0), n, _State(), 1_000.0 + 10 * WINDOW) is None
         assert n.calls == []
@@ -194,6 +231,40 @@ class TestTheReport:
         assert await _check(m, n, st, time.time()) is None
         assert [c["title"] for c in n.calls] == ["Satelliten hören wieder"]
         assert st.value == ""
+
+    async def test_a_reconnect_does_not_read_as_recovery(self, watch_on, settled):
+        # 🛑 The flap: after a reconnect the window starts over, so the deaf
+        # satellite is not "stalled" yet -- that must not report "hören wieder"
+        # and then "hört nichts" an hour later.
+        m, n, st = _manager("sat-wohnzimmer"), _Notify(), _State("sat-wohnzimmer")
+        m.update_heartbeat("sat-wohnzimmer", {"audio_rms": 0.0, "audio_db": -96.0})
+        out = await _check(m, n, st, time.time())
+        assert out == "taub: Wohnzimmer (Urteil ausstehend) (unveraendert)"
+        assert n.calls == [] and st.value == "sat-wohnzimmer"
+
+    async def test_a_reported_satellite_that_disconnected_stays_reported(self, watch_on, settled):
+        n, st = _Notify(), _State("sat-wohnzimmer")
+        out = await _check(_manager(), n, st, time.time())
+        assert out == "taub: Wohnzimmer (Urteil ausstehend) (unveraendert)"
+        assert n.calls == [] and st.value == "sat-wohnzimmer"
+
+    async def test_a_revoked_reported_satellite_leaves_the_marker(self, watch_on, settled):
+        # Never connected again and no longer enrolled: it can never be proven
+        # live, so without this it would sit in the marker forever.
+        n, st = _Notify(), _State("sat-wohnzimmer")
+        assert await _check(_manager(), n, st, time.time(), enrolled=()) is None
+        assert st.value == ""
+
+    async def test_an_ota_does_not_read_as_recovery(self, watch_on, settled):
+        # The mic died after working, so the level DID change after the first
+        # observation; an OTA must still not count as "hears again".
+        t0 = time.time() - 3600
+        m, n, st = _manager("sat-wohnzimmer"), _Notify(), _State("sat-wohnzimmer")
+        _beat(m, "sat-wohnzimmer", 85.4, -51.7, t0)
+        _beat(m, "sat-wohnzimmer", 86.1, -51.6, t0 + 30)
+        m.satellites["sat-wohnzimmer"].update_status = UpdateStatus.IN_PROGRESS
+        out = await _check(m, n, st, time.time())
+        assert out.endswith("(unveraendert)") and n.calls == []
 
     async def test_all_hearing_without_a_prior_report_stays_silent(self, watch_on, settled):
         m, n = _manager("sat-a"), _Notify()
@@ -255,7 +326,8 @@ class TestTheApi:
             m.satellites.clear()
 
     @pytest.mark.integration
-    async def test_off_reports_null(self, async_client: AsyncClient):
+    async def test_off_reports_null(self, async_client: AsyncClient, watch_off):
+        # A level frozen long enough to be judged -- only the flag keeps it null.
         m = get_satellite_manager()
         m.satellites.clear()
         try:
@@ -263,7 +335,9 @@ class TestTheApi:
                 satellite_id="sat-a", room="Küche", websocket=MagicMock(),
                 capabilities=SatelliteCapabilities(),
             )
-            m.update_heartbeat("sat-a", {"audio_rms": 0.0, "audio_db": -96.0})
+            m.satellites["sat-a"].audio_level = (0.0, -96.0)
+            m.satellites["sat-a"].audio_level_first_at = time.time() - 2 * WINDOW
+            m.satellites["sat-a"].audio_level_changed_at = time.time() - 2 * WINDOW
             r = await async_client.get("/api/satellites")
             assert r.json()["satellites"][0]["capture_stalled_seconds"] is None
         finally:

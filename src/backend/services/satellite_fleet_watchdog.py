@@ -247,7 +247,8 @@ async def check_satellite_fleet(
 
 
 async def check_deaf_satellites(
-    *, notify=None, manager=None, read_state=None, write_state=None, now: float | None = None,
+    *, notify=None, manager=None, fetch_enrolled=None,
+    read_state=None, write_state=None, now: float | None = None,
 ) -> str | None:
     """Report connected satellites whose microphone delivers nothing (#1211).
 
@@ -268,16 +269,37 @@ async def check_deaf_satellites(
             return None
 
     now = time.time() if now is None else now
-    deaf: list[tuple[str, str, float]] = []
-    for sid, sat in sorted((getattr(manager, "satellites", {}) or {}).items()):
-        since = manager.capture_stalled_since(sid, now)
-        if since is not None:
-            deaf.append((sid, getattr(sat, "room", None) or sid, since))
-
+    sats = getattr(manager, "satellites", {}) or {}
     read_state = read_state or (lambda: _read_last_reported(DEAF_STATE_KEY))
     write_state = write_state or (lambda v: _write_last_reported(v, DEAF_STATE_KEY))
-    signature = ",".join(sid for sid, _, _ in deaf)
     previous = await read_state()
+
+    deaf: dict[str, tuple[str, float | None]] = {}
+    for sid, sat in sats.items():
+        since = manager.capture_stalled_since(sid, now)
+        if since is not None:
+            deaf[sid] = (getattr(sat, "room", None) or sid, since)
+    # 🛑 A reported satellite leaves the set only on POSITIVE evidence. After a
+    # reconnect or a backend restart its frozen-level window starts over, and
+    # "no verdict yet" read as "hears again" made the report flap every hour.
+    # Disconnected ones stay while enrolled (the offline report covers them);
+    # a revoked or disabled one leaves, else it would sit in the marker forever.
+    enrolled: dict[str, str | None] | None = None
+    for sid in filter(None, previous.split(",")):
+        if sid in deaf or manager.capture_proven_live(sid, now):
+            continue
+        sat = sats.get(sid)
+        if sat is None:
+            if enrolled is None:
+                rows = await (fetch_enrolled or _fetch_enrolled)()
+                enrolled = {row_sid: room for row_sid, room, _ in rows}
+            if sid not in enrolled:
+                continue
+            deaf[sid] = (enrolled[sid] or sid, None)
+        else:
+            deaf[sid] = (getattr(sat, "room", None) or sid, None)
+
+    signature = ",".join(sorted(deaf))
     changed = signature != previous
 
     if not deaf:
@@ -291,8 +313,11 @@ async def check_deaf_satellites(
             await write_state("")
         return None
 
-    summary = ", ".join(f"{room} ({_since_text(now - since)})" for _, room, since in deaf)
-    line = f"🛰 Flottenwache: {len(deaf)} Satellit(en) verbunden, aber taub — {summary}"
+    summary = ", ".join(
+        f"{room} ({_since_text(now - since) if since is not None else 'Urteil ausstehend'})"
+        for room, since in (deaf[sid] for sid in sorted(deaf))
+    )
+    line = f"🛰 Flottenwache: {len(deaf)} Satellit(en) taub — {summary}"
     (logger.warning if changed else logger.info)(
         line if changed else line + " (unveraendert, keine neue Meldung)")
 
