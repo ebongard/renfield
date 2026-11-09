@@ -142,13 +142,21 @@ class KGCleanupService:
         can still land in one cluster via a third spelling; that cluster is
         marked ``identifier_conflict`` and ``merge_duplicate_clusters`` refuses
         it as a whole (refusing the edge alone is not enough, cf. #1334).
+
+        Entities are only compared within one ``(entity_type, user_id,
+        circle_tier)`` partition, the same partitioning the reconciler's SQL
+        applies (#1499): ``merge_entities`` refuses a cross-user pair, and a
+        cross-tier fold would narrow a shared entity to the private tier.
         """
         if threshold is None:
             threshold = 0.82
 
         # Fetch all active entities
         query = (
-            select(KGEntity.id, KGEntity.name, KGEntity.mention_count, KGEntity.entity_type)
+            select(
+                KGEntity.id, KGEntity.name, KGEntity.mention_count, KGEntity.entity_type,
+                KGEntity.user_id, KGEntity.circle_tier,
+            )
             .where(KGEntity.is_active == True)  # noqa: E712
         )
         if entity_type:
@@ -157,10 +165,10 @@ class KGCleanupService:
         result = await self.db.execute(query)
         rows = result.fetchall()
 
-        # Group by entity_type (only compare within same type)
-        by_type: dict[str, list] = defaultdict(list)
+        # Only compare within one type, owner and tier (#1499)
+        by_type: dict[tuple, list] = defaultdict(list)
         for row in rows:
-            by_type[row.entity_type].append(row)
+            by_type[(row.entity_type, row.user_id, row.circle_tier)].append(row)
 
         # Find similar pairs via string comparison
         entity_info: dict[int, dict] = {}
@@ -180,7 +188,7 @@ class KGCleanupService:
             if rx != ry:
                 parent[rx] = ry
 
-        for etype, entities in by_type.items():
+        for (etype, _owner, _tier), entities in by_type.items():
             # Pre-compute normalized names
             normed = [(e, _normalize_name(e.name, etype)) for e in entities]
             n = len(normed)
@@ -306,12 +314,15 @@ class KGCleanupService:
                 "clusters_found": 0,
                 "entities_merged": 0,
                 "clusters_refused": 0,
+                "entities_skipped": 0,
+                "skipped": [],
                 "clusters": [],
             }
 
         kg_service = KnowledgeGraphService(self.db)
         merged_count = 0
         refused_count = 0
+        skipped: list[dict] = []
         cluster_summaries = []
 
         for cluster in clusters:
@@ -333,11 +344,19 @@ class KGCleanupService:
 
             if not dry_run:
                 for dup_id in dup_ids:
+                    # merge_entities returns None for a pair it skips (already
+                    # merged, missing, cross-user): that is not a merge, and the
+                    # result names it instead of only the log (#1499).
                     try:
-                        await kg_service.merge_entities(dup_id, canonical_id)
-                        merged_count += 1
+                        survivor = await kg_service.merge_entities(dup_id, canonical_id)
                     except Exception as e:
                         logger.warning(f"KG cleanup: Failed to merge {dup_id} → {canonical_id}: {e}")
+                        skipped.append({"loser_id": dup_id, "winner_id": canonical_id, "reason": "error"})
+                        continue
+                    if survivor is None:
+                        skipped.append({"loser_id": dup_id, "winner_id": canonical_id, "reason": "skipped"})
+                    else:
+                        merged_count += 1
             else:
                 merged_count += len(dup_ids)
 
@@ -352,5 +371,7 @@ class KGCleanupService:
             "clusters_found": len(clusters),
             "entities_merged": merged_count,
             "clusters_refused": refused_count,
+            "entities_skipped": len(skipped),
+            "skipped": skipped[:50],  # entities_skipped carries the uncapped total
             "clusters": cluster_summaries[:50],  # Limit response size
         }

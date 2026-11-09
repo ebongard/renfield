@@ -454,9 +454,13 @@ async def find_duplicate_clusters(
     threshold: float | None = Query(None, ge=0.5, le=1.0, description="Similarity threshold"),
     limit: int = Query(50, ge=1, le=200, description="Max clusters to return"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.KG_VIEW)),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
-    """Find clusters of likely-duplicate entities via string similarity."""
+    """Find clusters of likely-duplicate entities via string similarity.
+
+    KG_MANAGE like the merge: the scan reads every user's entities at every
+    tier, so KG_VIEW (role Familie) would list other users' private names.
+    """
     try:
         from services.kg_cleanup_service import KGCleanupService
 

@@ -141,6 +141,9 @@ class MergeDuplicatesResponse(BaseModel):
     clusters_found: int
     entities_merged: int
     clusters_refused: int = 0
+    # Pairs merge_entities skipped or failed on; the list is capped at 50.
+    entities_skipped: int = 0
+    skipped: list[dict] = Field(default_factory=list)
     clusters: list[dict] = Field(default_factory=list)
 
 
