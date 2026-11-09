@@ -739,3 +739,65 @@ class TestProbeAndMonitorIntegration:
         mgr.probe_server.assert_not_awaited()
         assert len(calls) == 1
         assert "drosselt" in calls[0]["message"]
+
+
+# ===========================================================================
+# #1509: a bespoke probe's verdict is not "healed" by reconnecting the transport
+# ===========================================================================
+
+@pytest.mark.asyncio
+class TestBespokeProbeIsNotSelfHealed:
+    """`search` is judged by a probe that asks SearXNG directly, around the MCP
+    transport. While the upstream engines refused the probe query, the self-heal
+    reconnected `search` every tick and logged it as recovered."""
+
+    def _failed_probe(self, name):
+        state = _server(name=name, tools=1, session=_Session())
+        for _ in range(max(1, settings.mcp_health_probe_fail_threshold)):
+            state.record_probe_outcome(False, "keine Suchmaschine liefert Ergebnisse")
+        return state
+
+    async def test_search_with_a_failed_bespoke_probe_is_not_reconnected(self, monkeypatch):
+        monkeypatch.setattr(settings, "mcp_health_probe_enabled", False)
+        calls = _capture_delivery(monkeypatch)
+        mgr = _manager({"search": self._failed_probe("search")})
+        mgr.probe_server = AsyncMock(return_value={"ok": True})
+
+        await monitor.monitor_tick(_app(mgr))
+
+        mgr.probe_server.assert_not_awaited()
+        assert len(calls) == 1
+        assert calls[0]["data"]["server"] == "search"
+        assert calls[0]["data"]["self_heal_attempted"] is False
+        assert "Selbstheilung" not in calls[0]["message"]
+
+    async def test_a_yaml_probe_failure_is_still_reconnected(self, monkeypatch):
+        """Negative control: a generic probe runs THROUGH the transport, so a
+        reconnect can fix a wedged session — that server keeps its self-heal."""
+        monkeypatch.setattr(settings, "mcp_health_probe_enabled", False)
+        calls = _capture_delivery(monkeypatch)
+        mgr = _manager({"paperless": self._failed_probe("paperless")})
+        mgr.probe_server = AsyncMock(return_value={"ok": True})
+
+        await monitor.monitor_tick(_app(mgr))
+
+        mgr.probe_server.assert_awaited_once_with("paperless")
+        assert calls[0]["data"]["self_heal_attempted"] is True
+
+    async def test_the_tick_logs_the_verdict_after_the_probes_not_the_reconnect(self, monkeypatch):
+        from loguru import logger
+
+        monkeypatch.setattr(settings, "mcp_health_probe_enabled", False)
+        _capture_delivery(monkeypatch)
+        mgr = _manager({"paperless": self._failed_probe("paperless")})
+        mgr.probe_server = AsyncMock(return_value={"ok": True})
+        lines: list[str] = []
+        sink = logger.add(lambda m: lines.append(m.record["message"]), level="INFO")
+        try:
+            await monitor.monitor_tick(_app(mgr))
+        finally:
+            logger.remove(sink)
+
+        assert not any("recovered" in line for line in lines)
+        assert any("1 transport(s) reconnected" in line for line in lines)
+        assert any("0 of 1 healthy; still impaired: paperless" in line for line in lines)

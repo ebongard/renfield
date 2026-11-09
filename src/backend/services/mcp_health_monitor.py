@@ -156,9 +156,12 @@ async def _self_heal(mcp_manager, problem_names: list[str]) -> set[str]:
         except Exception as e:
             logger.warning(f"mcp_health: self-heal probe failed for '{name}': {e}")
     if attempted:
+        # "reconnected", not "recovered": the reconnect proves the transport only.
+        # Whether the server is healthy again is decided after the functional
+        # probes; the tick logs that verdict (#1509).
         logger.info(
             f"mcp_health: self-heal probed {len(attempted)} server(s), "
-            f"{healed} recovered on reconnect"
+            f"{healed} transport(s) reconnected"
         )
     return attempted
 
@@ -311,6 +314,21 @@ async def _run_probes(mcp_manager) -> list[str]:
 _UNHEALABLE_CODES = frozenset({"plugin_failed", "no_tools", "rate_limited"})
 
 
+def _reconnect_cannot_help(srv: dict) -> bool:
+    """True for an impairment a probe+reconnect provably cannot fix.
+
+    Besides ``_UNHEALABLE_CODES``: a ``probe_failed`` verdict from a BESPOKE probe.
+    Those judge the service around the MCP transport (``search`` asks SearXNG's
+    JSON API directly), so reconnecting the transport cannot change the verdict.
+    Self-healing them reconnected ``search`` every tick while the upstream engines
+    refused the probe query, and logged it as recovered each time (#1509).
+    """
+    code = srv.get("impaired_code")
+    if code in _UNHEALABLE_CODES:
+        return True
+    return code == "probe_failed" and srv.get("name") in _BESPOKE_PROBES
+
+
 def _in_no_tools_grace(srv: dict) -> bool:
     """True while a tool-less server is younger than the grace. An UNKNOWN age
     alerts — there is no evidence the server just came up."""
@@ -384,7 +402,7 @@ async def _monitor_tick_body(mcp_manager) -> None:
         s.get("name")
         for s in status.get("servers", [])
         if s.get("health") in ("degraded", "down")
-        and s.get("impaired_code") not in _UNHEALABLE_CODES
+        and not _reconnect_cannot_help(s)
     ]
     healed_attempted: set[str] = set()
     if problem_names:
@@ -456,6 +474,14 @@ async def _monitor_tick_body(mcp_manager) -> None:
         server = key[len("planea:"):].rsplit(":", 1)[0]
         if server not in problem_servers:
             _clear_alert(key)
+
+    if healed_attempted:
+        still = sorted(healed_attempted & problem_servers)
+        logger.info(
+            f"mcp_health: after self-heal and probes {len(healed_attempted) - len(still)} "
+            f"of {len(healed_attempted)} healthy"
+            + (f"; still impaired: {', '.join(still)}" if still else "")
+        )
 
     _last_tick_problem_count = len(current_problems)
     logger.debug(
