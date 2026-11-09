@@ -1481,6 +1481,8 @@
     "updateAvailable": "Update verfügbar",
     "updating": "Wird aktualisiert...",
     "corrupt": "Daten unlesbar",
+    "captureStalled": "Mikrofon stumm",
+    "captureStalledHint": "Pegel seit {{duration}} unverändert – das Mikrofon liefert keine Daten. Ein Neustart des Dienstes reicht oft nicht: das Gerät neu starten oder das Mikrofon neu einstecken.",
     "updateNow": "Jetzt aktualisieren",
     "upToDate": "Aktuell",
     "updateInProgress": "Update wird durchgeführt...",

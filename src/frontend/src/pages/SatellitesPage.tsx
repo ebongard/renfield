@@ -14,7 +14,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Satellite, Wifi, WifiOff, Mic, Volume2, Cpu, Thermometer,
   Activity, AlertCircle, CheckCircle, RefreshCw, ChevronDown,
-  ChevronUp, Radio, Zap, MemoryStick, ArrowUpCircle, Loader2, Package,
+  ChevronUp, Radio, Zap, MemoryStick, ArrowUpCircle, Loader2, Package, MicOff,
 } from 'lucide-react';
 import {
   useSatellitesQuery,
@@ -131,6 +131,8 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
   const hasActiveSession = satellite.has_active_session;
   const hasUpdate = satellite.update_available && satellite.update_status !== 'in_progress';
   const isUpdating = satellite.update_status === 'in_progress';
+  // Connected but deaf (#1211): the backend saw the level frozen.
+  const stalledSeconds = satellite.capture_stalled_seconds ?? null;
 
   return (
     <div className="card">
@@ -161,6 +163,12 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
           {satellite.corrupt && (
             <Badge color="red" icon={AlertCircle}>
               {t('satellites.corrupt', { defaultValue: 'Data unreadable' })}
+            </Badge>
+          )}
+
+          {stalledSeconds !== null && (
+            <Badge color="amber" icon={MicOff}>
+              {t('satellites.captureStalled', { defaultValue: 'Mic silent' })}
             </Badge>
           )}
 
@@ -224,6 +232,14 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
               <Mic className="w-4 h-4" />
               {t('satellites.audioLevels', 'Audio Levels')}
             </h4>
+            {stalledSeconds !== null && (
+              <p role="status" className="text-sm text-amber-600 dark:text-amber-400">
+                {t('satellites.captureStalledHint', {
+                  defaultValue: 'Level unchanged for {{duration}}; the microphone is delivering no audio. A service restart is often not enough: reboot the device or re-plug the microphone.',
+                  duration: formatDuration(stalledSeconds),
+                })}
+              </p>
+            )}
             <AudioLevelMeter
               level={metrics.audio_rms || 0}
               maxLevel={10000}

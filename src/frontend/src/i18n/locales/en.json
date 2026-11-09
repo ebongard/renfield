@@ -1481,6 +1481,8 @@
     "updateAvailable": "Update",
     "updating": "Updating...",
     "corrupt": "Data unreadable",
+    "captureStalled": "Mic silent",
+    "captureStalledHint": "Level unchanged for {{duration}}; the microphone is delivering no audio. A service restart is often not enough: reboot the device or re-plug the microphone.",
     "updateNow": "Update Now",
     "upToDate": "Up to date",
     "updateInProgress": "Update in progress...",

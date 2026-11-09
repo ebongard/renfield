@@ -58,6 +58,16 @@ That is why the watchdog remembers the last REPORTED set in `system_settings`
 when it changes -- including the return: when a room comes back, that is its
 own piece of good news. Every run still goes into the LOG, so the situation
 stays readable without a notification.
+
+CONNECTED BUT DEAF (#1211)
+--------------------------
+A satellite can be connected and still hear nothing: on 2026-11-06 the
+Wohnzimmer XVF3800 delivered zero frames for two days (ALSA stream RUNNING,
+`hw_ptr` 0) while heartbeat, state and error count looked healthy. Restarting
+the service did not help, only a reboot reset the device. `check_deaf_satellites`
+reports these from the frozen heartbeat level, with its own marker
+(`DEAF_STATE_KEY`) and the same change-only rule. Behind
+`SATELLITE_DEAF_WATCH_ENABLED`.
 """
 from __future__ import annotations
 
@@ -83,8 +93,40 @@ _STARTED_AT = time.monotonic()
 STATE_KEY = "satellite_fleet_watchdog:last_reported"
 
 
+#: The last REPORTED set of deaf satellites (#1211), kept apart from the
+#: offline set: the two change independently.
+DEAF_STATE_KEY = "satellite_fleet_watchdog:last_reported_deaf"
+
+
 def _uptime_seconds() -> float:
     return time.monotonic() - _STARTED_AT
+
+
+def _registry():
+    """The live `SatelliteManager`, or None when the satellite feature is off.
+
+    🛑 The import stands in the FUNCTION BODY and behind this gate, so that a
+    platform installation without `ha_glue` never reaches it -- the caller in
+    `scheduled_tasks/builtins.py` already checks the same condition, here once
+    more for direct callers. This is the reason for the entry in
+    `ALLOWED_IMPORTERS` of `test_ha_glue_boundary.py`.
+    """
+    from utils.config import settings as _platform_settings
+
+    if not _platform_settings.features.get("satellites"):
+        logger.debug("Fleet watchdog: satellite feature off, no verdict")
+        return None
+
+    from ha_glue.services.satellite_manager import get_satellite_manager
+
+    return get_satellite_manager()
+
+
+def _since_text(seconds: float) -> str:
+    hours = int(seconds // 3600)
+    if hours < 1:
+        return f"seit {int(seconds // 60)} min"
+    return f"seit {hours} h" if hours < 48 else f"seit {hours // 24} Tagen"
 
 
 async def _fetch_enrolled() -> list[tuple[str, str | None, datetime | None]]:
@@ -99,21 +141,21 @@ async def _fetch_enrolled() -> list[tuple[str, str | None, datetime | None]]:
         """))).all())
 
 
-async def _read_last_reported() -> str:
+async def _read_last_reported(key: str = STATE_KEY) -> str:
     from models.database import SystemSetting
 
     async with AsyncSessionLocal() as db:
-        row = await db.get(SystemSetting, STATE_KEY)
+        row = await db.get(SystemSetting, key)
         return (row.value or "") if row else ""
 
 
-async def _write_last_reported(value: str) -> None:
+async def _write_last_reported(value: str, key: str = STATE_KEY) -> None:
     from models.database import SystemSetting
 
     async with AsyncSessionLocal() as db:
-        row = await db.get(SystemSetting, STATE_KEY)
+        row = await db.get(SystemSetting, key)
         if row is None:
-            db.add(SystemSetting(key=STATE_KEY, value=value))
+            db.add(SystemSetting(key=key, value=value))
         else:
             row.value = value
         await db.commit()
@@ -140,20 +182,9 @@ async def check_satellite_fleet(
         return None
 
     if manager is None:
-        # 🛑 The import stands in the FUNCTION BODY and behind this gate, so
-        # that a platform installation without `ha_glue` never reaches it --
-        # the caller in `scheduled_tasks/builtins.py` already checks the same
-        # condition, here once more for direct callers. This is the reason for
-        # the entry in `ALLOWED_IMPORTERS` of `test_ha_glue_boundary.py`.
-        from utils.config import settings as _platform_settings
-
-        if not _platform_settings.features.get("satellites"):
-            logger.debug("Fleet watchdog: satellite feature off, no verdict")
+        manager = _registry()
+        if manager is None:
             return None
-
-        from ha_glue.services.satellite_manager import get_satellite_manager
-
-        manager = get_satellite_manager()
     connected = set(getattr(manager, "satellites", {}) or {})
 
     if fetch_enrolled is None:
@@ -213,6 +244,69 @@ async def check_satellite_fleet(
         await write_state(signature)
 
     return f"offline: {summary}" + ("" if changed else " (unveraendert)")
+
+
+async def check_deaf_satellites(
+    *, notify=None, manager=None, read_state=None, write_state=None, now: float | None = None,
+) -> str | None:
+    """Report connected satellites whose microphone delivers nothing (#1211).
+
+    The offline check above cannot see them: they are connected, heartbeat and
+    report 0 errors. The verdict is `SatelliteManager.capture_stalled_since`
+    (a frozen heartbeat level). Same rules as the offline report: no verdict in
+    the settle period, and only a CHANGE of the set becomes a notification.
+    """
+    from utils.config import settings as _platform_settings
+
+    if not _platform_settings.satellite_deaf_watch_enabled:
+        return None
+    if _uptime_seconds() < SETTLE_SECONDS:
+        return None
+    if manager is None:
+        manager = _registry()
+        if manager is None:
+            return None
+
+    now = time.time() if now is None else now
+    deaf: list[tuple[str, str, float]] = []
+    for sid, sat in sorted((getattr(manager, "satellites", {}) or {}).items()):
+        since = manager.capture_stalled_since(sid, now)
+        if since is not None:
+            deaf.append((sid, getattr(sat, "room", None) or sid, since))
+
+    read_state = read_state or (lambda: _read_last_reported(DEAF_STATE_KEY))
+    write_state = write_state or (lambda v: _write_last_reported(v, DEAF_STATE_KEY))
+    signature = ",".join(sid for sid, _, _ in deaf)
+    previous = await read_state()
+    changed = signature != previous
+
+    if not deaf:
+        if changed:
+            logger.info("🛰 Fleet watchdog: no connected satellite is deaf any more")
+            await _try_notify(
+                notify, title="Satelliten hören wieder",
+                message="Kein verbundener Satellit liefert mehr ein stummes Mikrofon.",
+                dedup_key=f"{DEAF_STATE_KEY}:clear",
+            )
+            await write_state("")
+        return None
+
+    summary = ", ".join(f"{room} ({_since_text(now - since)})" for _, room, since in deaf)
+    line = f"🛰 Flottenwache: {len(deaf)} Satellit(en) verbunden, aber taub — {summary}"
+    (logger.warning if changed else logger.info)(
+        line if changed else line + " (unveraendert, keine neue Meldung)")
+
+    if changed:
+        await _try_notify(
+            notify, title=f"{len(deaf)} Satellit(en) hören nichts",
+            message=(f"Verbunden, aber das Mikrofon liefert keine Daten: {summary}. "
+                     "Ein Neustart des Dienstes reicht oft nicht: das Gerät neu starten "
+                     "oder das Mikrofon neu einstecken."),
+            dedup_key=f"satellite_deaf:{signature}",
+        )
+        await write_state(signature)
+
+    return f"taub: {summary}" + ("" if changed else " (unveraendert)")
 
 
 async def _try_notify(notify, *, title: str, message: str, dedup_key: str) -> None:

@@ -1097,6 +1097,8 @@
     "updateAvailable": "Aggiorna",
     "updating": "Aggiornamento in corso...",
     "corrupt": "Dati illeggibili",
+    "captureStalled": "Microfono muto",
+    "captureStalledHint": "Livello invariato da {{duration}}: il microfono non fornisce audio. Spesso riavviare il servizio non basta: riavviare il dispositivo o ricollegare il microfono.",
     "updateNow": "Aggiorna ora",
     "upToDate": "Aggiornato",
     "updateInProgress": "Aggiornamento in corso...",

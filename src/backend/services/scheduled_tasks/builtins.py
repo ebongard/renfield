@@ -510,9 +510,12 @@ async def _satellite_fleet_watchdog_handler(app: FastAPI, params: dict) -> str |
         # closed" and not an empty line that might also be a failure.
         return "skipped: satellite feature off"
 
-    from services.satellite_fleet_watchdog import check_satellite_fleet
+    from services.satellite_fleet_watchdog import check_deaf_satellites, check_satellite_fleet
 
-    return await check_satellite_fleet()
+    # Offline and connected-but-deaf (#1211) are independent verdicts; one run
+    # line carries whichever has something to say.
+    lines = [await check_satellite_fleet(), await check_deaf_satellites()]
+    return "; ".join(line for line in lines if line) or None
 
 
 async def _vector_index_threshold_handler(app: FastAPI, params: dict) -> str | None:
