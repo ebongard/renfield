@@ -32,6 +32,10 @@
       "whisplay": wm8960soundcard
       "xvf3800-usb": Array
     asound_cards_path: /proc/asound/cards
+    etc_hosts_path: /etc/hosts
+    # Present on images set up with Raspberry Pi Imager: cloud-init renders
+    # /etc/hosts from it on every boot (manage_etc_hosts in user-data).
+    cloud_init_hosts_template: /etc/cloud/templates/hosts.debian.tmpl
     # A Pi Zero 2 W re-enumerates USB slowly after the driver reboot.
     mic_card_timeout: 30
 
@@ -93,13 +97,24 @@
     # ".local" names itself (mdns4_minimal [NOTFOUND=return]) before DNS is
     # asked, so a DNS override is not enough. server_static_ip lives in the
     # git-ignored host_vars; unset, /etc/hosts is left alone.
+    # cloud-init rewrites /etc/hosts from its template at every boot, so the
+    # pin goes into the template too; otherwise a reboot drops it and the
+    # satellite never reaches the backend again (Wohnzimmer, 2026-11-09).
+    - name: Find cloud-init's hosts template
+      tags: [system, network]
+      when: server_static_ip is defined
+      ansible.builtin.stat:
+        path: "{{ cloud_init_hosts_template }}"
+      register: cloud_init_hosts
+
     - name: Pin the server hostname in /etc/hosts
       tags: [system, network]
       when: server_static_ip is defined
       ansible.builtin.lineinfile:
-        path: /etc/hosts
+        path: "{{ item }}"
         regexp: "\\s{{ server_url | urlsplit('hostname') | regex_escape }}$"
         line: "{{ server_static_ip }} {{ server_url | urlsplit('hostname') }}"
+      loop: "{{ [etc_hosts_path] + ([cloud_init_hosts_template] if cloud_init_hosts.stat.exists else []) }}"
 
     - name: Add user to hardware groups
       tags: [system]
