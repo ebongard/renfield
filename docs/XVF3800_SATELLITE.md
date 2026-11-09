@@ -143,7 +143,7 @@ aplay -D plughw:XVF3800,0 test.wav
 
 ```yaml
 audio:
-  device: "plughw:XVF3800,0"    # USB-Geraetename (stabil ueber Reboots)
+  device: "default"             # ALSA-default aus /etc/asound.conf (asym → plug → hw:Array); ein Name, den PortAudio listet
   playback_device: "plughw:XVF3800,0"  # Speaker-Ausgang ueber selben USB
   channels: 2                    # BEIDE HW-Kanaele holen (0=Beam, 1=ASR/Residual)
   combine: "select"              # NICHT downmixen — genau EINEN Kanal waehlen
@@ -211,7 +211,7 @@ Fuer Ansible (`provisioning/inventory.yml`) ein neues HAT-Profil:
 ```yaml
 # host_vars/satellite-neuerraum.yml
 hat_type: "xvf3800-usb"         # Neues Profil
-audio_device: "plughw:XVF3800,0"
+audio_device: "default"          # PortAudio listet nur PCM-Namen; "plughw:…" findet es nicht (ab 1.4.21 kein Rückfall mehr)
 audio_playback_device: "plughw:XVF3800,0"
 audio_channels: 2                # Stereo erfassen, dann Beam auswaehlen
 audio_combine: "select"
