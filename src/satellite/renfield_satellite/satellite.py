@@ -14,6 +14,7 @@ import math
 import os
 import struct
 import time
+import zlib
 from collections import deque
 from enum import Enum
 from typing import Optional, Dict, Any
@@ -57,6 +58,12 @@ UPDATE_ALREADY_IN_PROGRESS = "update already in progress"
 #: How long the "not understood" LED cue stays before IDLE returns (#1386).
 #: Covers the two blinks (~0.6 s) plus a short dark pause.
 NOT_UNDERSTOOD_CUE_SECONDS = 1.2
+
+#: How many recent chunks a fresh one must differ from (#1211). A replaying
+#: device cycles through its ring of a few periods; 16 chunks (~1.3 s) covers
+#: that with room to spare. A replayed ring LONGER than this counts as fresh
+#: and goes undetected (accepted; the observed case was two buffers).
+CHUNK_REPLAY_WINDOW = 16
 
 
 class Satellite:
@@ -122,6 +129,12 @@ class Satellite:
         self._current_audio_rms: float = 0.0
         self._current_audio_db: float = -96.0
         self._current_is_speech: bool = False
+        # Liveness of the capture (#1211): chunks whose bytes differ from every
+        # one of the last CHUNK_REPLAY_WINDOW chunks. A vanished USB mic can keep
+        # handing out its last buffers, which still moves the level; a replayed
+        # chunk does not count, so this counter freezes while the level cycles.
+        self._fresh_chunk_count: int = 0
+        self._recent_chunk_crcs: deque = deque(maxlen=CHUNK_REPLAY_WINDOW)
 
         # Initialize components
         self._init_components()
@@ -845,6 +858,22 @@ class Satellite:
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(coro, self._loop)
 
+    def _count_fresh_chunk(self, audio_bytes: bytes) -> None:
+        """Count a chunk unless it repeats one of the recent ones byte for byte.
+
+        Live audio never repeats a whole chunk; a replayed device buffer does.
+        A constant chunk (digital silence) is the exception: it repeats on a
+        live stream too, so it always counts -- a stream that replays a silent
+        buffer goes unjudged, as on the backend's level path.
+        """
+        if not audio_bytes:
+            return
+        crc = zlib.crc32(audio_bytes)
+        constant = audio_bytes == audio_bytes[:2] * (len(audio_bytes) // 2)
+        if constant or crc not in self._recent_chunk_crcs:
+            self._fresh_chunk_count += 1
+        self._recent_chunk_crcs.append(crc)
+
     def _on_audio_chunk(self, audio_bytes: bytes):
         """Handle incoming audio chunk from microphone (called from audio thread)"""
         # Calculate audio levels for monitoring (runs on every chunk)
@@ -859,6 +888,10 @@ class Satellite:
                     self._current_is_speech = rms > 500
         except Exception:
             pass
+        # Outside the level block: a chunk the level maths cannot parse (odd
+        # length) is still a chunk, and skipping it would freeze the counter on
+        # a live microphone -- a false "deaf" report.
+        self._count_fresh_chunk(audio_bytes)
 
         # Process for wake word in IDLE state
         if self._state == SatelliteState.IDLE and not self._wakeword_pending:
@@ -1220,6 +1253,7 @@ class Satellite:
         metrics["audio_rms"] = self._current_audio_rms
         metrics["audio_db"] = self._current_audio_db
         metrics["is_speech"] = self._current_is_speech
+        metrics["capture_fresh_chunks"] = self._fresh_chunk_count
 
         # System metrics
         try:

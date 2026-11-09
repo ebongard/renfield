@@ -254,7 +254,7 @@ async def check_deaf_satellites(
 
     The offline check above cannot see them: they are connected, heartbeat and
     report 0 errors. The verdict is `SatelliteManager.capture_stalled_since`
-    (a frozen heartbeat level). Same rules as the offline report: no verdict in
+    (a frozen fresh-chunk counter, or the level for older satellites). Same rules as the offline report: no verdict in
     the settle period, and only a CHANGE of the set becomes a notification.
     """
     from utils.config import settings as _platform_settings

@@ -19,10 +19,11 @@ marker for this test.
 import ast
 import inspect
 import pathlib
+from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from renfield_satellite.satellite import Satellite, SatelliteState
+from renfield_satellite.satellite import CHUNK_REPLAY_WINDOW, Satellite, SatelliteState
 
 CHUNK_SIZE = 1280
 SAMPLE_RATE = 16000
@@ -51,6 +52,8 @@ def _make_satellite(max_recording_seconds: float) -> Satellite:
     sat._current_audio_rms = 0.0
     sat._current_audio_db = 0.0
     sat._current_is_speech = False
+    sat._fresh_chunk_count = 0
+    sat._recent_chunk_crcs = deque(maxlen=CHUNK_REPLAY_WINDOW)
 
     sat.wakeword = MagicMock()
     sat.wakeword.active_stop_words = []   # stop-word branch off

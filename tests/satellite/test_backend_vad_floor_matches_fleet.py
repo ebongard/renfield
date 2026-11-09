@@ -20,13 +20,14 @@ from __future__ import annotations
 import ast
 import pathlib
 import re
+from collections import deque
 from unittest.mock import MagicMock
 
 import pytest
 import yaml
 from renfield_satellite.audio import opus_codec
 from renfield_satellite.config import VADConfig
-from renfield_satellite.satellite import Satellite, SatelliteState
+from renfield_satellite.satellite import CHUNK_REPLAY_WINDOW, Satellite, SatelliteState
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 BACKEND_MODULE = REPO / "src/backend/ha_glue/services/voice_empty_turn.py"
@@ -82,6 +83,8 @@ def _measured_floor_seconds(
     sat._current_audio_rms = 0.0
     sat._current_audio_db = 0.0
     sat._current_is_speech = False
+    sat._fresh_chunk_count = 0
+    sat._recent_chunk_crcs = deque(maxlen=CHUNK_REPLAY_WINDOW)
     sat.wakeword = MagicMock()
     sat.wakeword.active_stop_words = []
     sat.preprocessor = MagicMock()

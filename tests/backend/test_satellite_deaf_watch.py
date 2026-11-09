@@ -1,4 +1,4 @@
-"""Connected but deaf (#1211): the frozen heartbeat level as the signal.
+"""Connected but deaf (#1211): a frozen capture signal as the verdict.
 
 On 2026-11-06 the Wohnzimmer XVF3800 delivered zero frames for two days (ALSA
 stream RUNNING, `hw_ptr` 0) while heartbeat, state and error count looked
@@ -60,19 +60,19 @@ def _beat(m: SatelliteManager, sid: str, rms: float, db: float, at: float) -> No
     """A heartbeat at a chosen time: the tracking reads the wall clock, so a
     beat that CHANGED the level gets its timestamp moved to `at`."""
     sat = m.satellites[sid]
-    before = sat.audio_level
+    before = sat.capture_signal
     m.update_heartbeat(sid, {"audio_rms": rms, "audio_db": db})
-    if sat.audio_level != before:
-        sat.audio_level_changed_at = at
+    if sat.capture_signal != before:
+        sat.capture_signal_changed_at = at
         if before is None:
-            sat.audio_level_first_at = at
+            sat.capture_signal_first_at = at
 
 
 class TestTheVerdict:
     def test_flag_off_tracks_nothing_and_never_judges(self, watch_off):
         m = _manager("sat-a")
         m.update_heartbeat("sat-a", {"audio_rms": 0.0, "audio_db": -96.0})
-        assert m.satellites["sat-a"].audio_level is None
+        assert m.satellites["sat-a"].capture_signal is None
         assert m.capture_stalled_since("sat-a", time.time() + 10 * WINDOW) is None
 
     def test_flag_off_roster_entry_has_no_new_key(self, watch_off):
@@ -97,9 +97,9 @@ class TestTheVerdict:
     def test_a_live_mic_is_never_deaf(self, watch_on):
         m, t0 = _manager("sat-a"), 1_000.0
         _beat(m, "sat-a", 85.0, -51.7, t0)
-        m.satellites["sat-a"].audio_level_changed_at = t0
+        m.satellites["sat-a"].capture_signal_changed_at = t0
         m.update_heartbeat("sat-a", {"audio_rms": 85.4, "audio_db": -51.7})
-        changed = m.satellites["sat-a"].audio_level_changed_at
+        changed = m.satellites["sat-a"].capture_signal_changed_at
         assert changed > t0
         assert m.capture_stalled_since("sat-a", changed + WINDOW - 1) is None
 
@@ -154,6 +154,51 @@ class TestTheVerdict:
         m, t0 = _manager("sat-a"), time.time() - 2 * WINDOW
         _beat(m, "sat-a", 0.0, -96.0, t0)
         assert m.get_all_satellites()[0]["capture_stalled_since"] == t0
+
+
+def _counted_beat(m: SatelliteManager, sid: str, fresh: int, rms: float, at: float) -> None:
+    """A heartbeat of a satellite >= 1.4.20, which reports its fresh-chunk count."""
+    sat = m.satellites[sid]
+    before = sat.capture_signal
+    m.update_heartbeat(sid, {"audio_rms": rms, "audio_db": -40.0, "capture_fresh_chunks": fresh})
+    if sat.capture_signal != before:
+        sat.capture_signal_changed_at = at
+        if before is None:
+            sat.capture_signal_first_at = at
+
+
+class TestTheFreshChunkCounter:
+    """The Fitnessraum case (2026-11-09): USB mic unplugged, the level cycled
+    between 1499.6 and 525.1 on every heartbeat and the level watch saw a live
+    microphone. The satellite's counter of non-repeating chunks froze."""
+
+    def test_a_cycling_level_with_a_frozen_counter_is_deaf(self, watch_on):
+        m, t0 = _manager("sat-a"), 1_000.0
+        for i in range(25):
+            _counted_beat(m, "sat-a", 4711, 1499.6 if i % 2 else 525.1, t0 + 30 * i)
+        assert m.capture_stalled_since("sat-a", t0 + WINDOW) == t0
+        assert m.capture_proven_live("sat-a", t0 + WINDOW) is False
+
+    def test_an_advancing_counter_is_live_even_with_a_constant_level(self, watch_on):
+        # The counter decides; the level path's digital-silence rule is not needed.
+        m, t0 = _manager("sat-a"), 1_000.0
+        for i in range(25):
+            _counted_beat(m, "sat-a", 375 * i, 0.0, t0 + 30 * i)
+        last = t0 + 30 * 24
+        assert m.capture_stalled_since("sat-a", last + WINDOW - 1) is None
+        assert m.capture_proven_live("sat-a", last + 1) is True
+
+    def test_a_counter_of_zero_from_the_start_is_deaf(self, watch_on):
+        # A satellite that never opened its microphone.
+        m, t0 = _manager("sat-a"), 1_000.0
+        _counted_beat(m, "sat-a", 0, 0.0, t0)
+        _counted_beat(m, "sat-a", 0, 0.0, t0 + 30)
+        assert m.capture_stalled_since("sat-a", t0 + WINDOW) == t0
+
+    def test_a_wrong_typed_counter_falls_back_to_the_level(self, watch_on):
+        m = _manager("sat-a")
+        m.update_heartbeat("sat-a", {"audio_rms": 3.0, "audio_db": -80.0, "capture_fresh_chunks": "12"})
+        assert m.satellites["sat-a"].capture_signal == ("level", 3.0, -80.0)
 
 
 class _Notify:
@@ -317,7 +362,7 @@ class TestTheApi:
                 capabilities=SatelliteCapabilities(),
             )
             m.update_heartbeat("sat-deaf", {"audio_rms": 0.0, "audio_db": -96.0})
-            m.satellites["sat-deaf"].audio_level_changed_at = time.time() - 2 * WINDOW
+            m.satellites["sat-deaf"].capture_signal_changed_at = time.time() - 2 * WINDOW
             r = await async_client.get("/api/satellites")
             assert r.status_code == 200
             stalled = r.json()["satellites"][0]["capture_stalled_seconds"]
@@ -335,9 +380,9 @@ class TestTheApi:
                 satellite_id="sat-a", room="Küche", websocket=MagicMock(),
                 capabilities=SatelliteCapabilities(),
             )
-            m.satellites["sat-a"].audio_level = (0.0, -96.0)
-            m.satellites["sat-a"].audio_level_first_at = time.time() - 2 * WINDOW
-            m.satellites["sat-a"].audio_level_changed_at = time.time() - 2 * WINDOW
+            m.satellites["sat-a"].capture_signal = (0.0, -96.0)
+            m.satellites["sat-a"].capture_signal_first_at = time.time() - 2 * WINDOW
+            m.satellites["sat-a"].capture_signal_changed_at = time.time() - 2 * WINDOW
             r = await async_client.get("/api/satellites")
             assert r.json()["satellites"][0]["capture_stalled_seconds"] is None
         finally:

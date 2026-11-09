@@ -99,10 +99,10 @@ Flotte als tot, und ein Fehlalarm dieser Groesse macht jede echte Meldung wertlo
 Deshalb auch `run_at_boot=False`.
 
 🛑 **Verbunden ist nicht hoerend (#1211, `SATELLITE_DEAF_WATCH_ENABLED`).** Dieselbe Aufgabe
-meldet ueber `check_deaf_satellites` Satelliten, deren Heartbeat-Pegel eingefroren ist
-(`SatelliteManager.capture_stalled_since`), mit EIGENEM Marker
+meldet ueber `check_deaf_satellites` Satelliten, deren Erfassungssignal eingefroren ist
+(`SatelliteManager.capture_stalled_since`; Zaehler frischer Bloecke, sonst der Pegel), mit EIGENEM Marker
 (`…:last_reported_deaf`) und derselben Nur-Aenderung-Regel. Ein gemeldeter verlaesst die
-Menge NUR auf positiven Beleg (`capture_proven_live`: Pegel nach der ersten Messung der
+Menge NUR auf positiven Beleg (`capture_proven_live`: Signal nach der ersten Messung der
 Verbindung geaendert) — nach Neuverbinden/Backend-Neustart beginnt das Fenster neu, und
 „noch kein Urteil" als „hoert wieder" gelesen liess die Meldung stuendlich flattern.
 Getrennte bleiben drin, solange eingebucht.
