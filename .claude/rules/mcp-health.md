@@ -25,7 +25,7 @@ Retry-After is honoured, no automatic retry; signal + alert stay dark).
 - Fold order: `probe_failed` → `rate_limited` → `calls_failing` (direct evidence beats inference).
 - Tick order: get_status → self-heal (`probe_server()`) → re-read → **probe** → re-read → the ONE alert pass.
 - `no_tools`/`plugin_failed`/`rate_limited` are `_UNHEALABLE_CODES` — not self-heal-probed: `tools/list` answers
-  fine with `[]`, so a reconnect "recovers" a tool-less server. Neither is a `probe_failed` from a BESPOKE probe
+  fine with `[]`, so a reconnect "recovers" a tool-less server. Same for a `probe_failed` from a BESPOKE probe
   (`search`): it judges the service around the transport (#1509, `_reconnect_cannot_help`).
 - `execute_tool_streaming` shares `execute_tool`'s accounting (caller cancellation records nothing; app error ≠
   disconnect). Connect + `refresh_tools` install tools ONLY through `_install_discovered_tools`.
