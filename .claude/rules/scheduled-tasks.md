@@ -98,6 +98,15 @@ Arbeitsspeicher und ist beim Start leer. Ohne Karenz meldete jeder Rollout die g
 Flotte als tot, und ein Fehlalarm dieser Groesse macht jede echte Meldung wertlos.
 Deshalb auch `run_at_boot=False`.
 
+🛑 **Verbunden ist nicht hoerend (#1211, `SATELLITE_DEAF_WATCH_ENABLED`).** Dieselbe Aufgabe
+meldet ueber `check_deaf_satellites` Satelliten, deren Heartbeat-Pegel eingefroren ist
+(`SatelliteManager.capture_stalled_since`), mit EIGENEM Marker
+(`…:last_reported_deaf`) und derselben Nur-Aenderung-Regel. Ein gemeldeter verlaesst die
+Menge NUR auf positiven Beleg (`capture_proven_live`: Pegel nach der ersten Messung der
+Verbindung geaendert) — nach Neuverbinden/Backend-Neustart beginnt das Fenster neu, und
+„noch kein Urteil" als „hoert wieder" gelesen liess die Meldung stuendlich flattern.
+Getrennte bleiben drin, solange eingebucht.
+
 **Warum es das ueberhaupt gibt:** am 2026-09-26 war die halbe Flotte dunkel — Esszimmer
 1 Tag (k8s-Knoten `NotReady`), Arbeitszimmer 2 Tage, BensZimmer **30 Tage** — und in
 36 Stunden gab es keine einzige Satelliten-Benachrichtigung. MCP-Server hatten
