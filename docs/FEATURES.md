@@ -793,7 +793,7 @@ String-Similarity (difflib SequenceMatcher) statt Embedding-Similarity für zuve
 ### Bulk Cleanup API
 
 - `POST /api/knowledge-graph/cleanup/invalid` — Scan + Soft-Delete invalider Entities (`dry_run=true` default)
-- `GET /api/knowledge-graph/cleanup/duplicates` — Duplikat-Cluster per String-Similarity finden (`kg.manage`: der Scan liest die Entitäten ALLER Nutzer auf jeder Stufe). Cluster entstehen nur innerhalb von Typ, Eigentümer und Stufe (#1499) — wie im Abgleicher.
+- `GET /api/knowledge-graph/cleanup/duplicates` — Duplikat-Cluster per String-Similarity finden (`kg.manage`: der Scan liest die Entitäten ALLER Nutzer auf jeder Stufe). Cluster entstehen nur innerhalb von Typ, Eigentümer und Stufe (#1499): pro Eigentümer wie im Abgleicher, zusätzlich pro Stufe (der Abgleicher schickt ein Paar über Stufen hinweg in die Prüfschlange). Entitäten ohne Eigentümer bilden eine Gruppe unter sich; Notizen und Merge-Grabsteine bleiben draußen.
 - `POST /api/knowledge-graph/cleanup/merge-duplicates` — Auto-Merge (Threshold 0.93+ empfohlen für sicheres Auto-Merge). Namen, die sich nur in einer Zahl unterscheiden („Product A - 1.2.4“ / „… 1.2.3“, #1329), bilden nie eine Cluster-Kante; ein Cluster, der ein solches Paar über eine dritte Schreibweise trotzdem enthält, trägt `identifier_conflict` und wird nicht verschmolzen (`clusters_refused`). Ein Paar, das `merge_entities` überspringt oder bei dem es scheitert, zählt nicht als verschmolzen, sondern steht in `entities_skipped` / `skipped` (#1499).
 
 ### 3D-Wissensgraph (Visualisierung)
