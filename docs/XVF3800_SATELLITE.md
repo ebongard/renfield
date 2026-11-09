@@ -143,7 +143,7 @@ aplay -D plughw:XVF3800,0 test.wav
 
 ```yaml
 audio:
-  device: "plughw:XVF3800,0"    # USB-Geraetename (stabil ueber Reboots)
+  device: "default"             # ALSA-default aus /etc/asound.conf (asym → plug → hw:Array); ein Name, den PortAudio listet
   playback_device: "plughw:XVF3800,0"  # Speaker-Ausgang ueber selben USB
   channels: 2                    # BEIDE HW-Kanaele holen (0=Beam, 1=ASR/Residual)
   combine: "select"              # NICHT downmixen — genau EINEN Kanal waehlen
@@ -211,7 +211,7 @@ Fuer Ansible (`provisioning/inventory.yml`) ein neues HAT-Profil:
 ```yaml
 # host_vars/satellite-neuerraum.yml
 hat_type: "xvf3800-usb"         # Neues Profil
-audio_device: "plughw:XVF3800,0"
+audio_device: "default"          # PortAudio listet nur PCM-Namen; "plughw:…" findet es nicht (ab 1.4.21 kein Rückfall mehr)
 audio_playback_device: "plughw:XVF3800,0"
 audio_channels: 2                # Stereo erfassen, dann Beam auswaehlen
 audio_combine: "select"
@@ -618,6 +618,21 @@ Im Template `asoundrc-xvf3800-usb.j2` enthalten (zusammen mit dem Verzicht auf
 dmix/dsnoop — als alleinige Audio-App reicht `asym plug→hw:Array`, und dmix/dsnoop
 schleppen System-V-IPC-sem/shm mit, die bei root-Erstanlage auf 0600 owner-locked
 `Pa_Initialize` ebenfalls deadlocken; Cleanup braucht `ipcrm -s` UND `-m`).
+
+### Mikrofon abgezogen: kein Rückfall auf das Null-PCM (ab Satellit 1.4.21)
+
+**Symptom (Fitnessraum, 2026-11-09):** XVF3800 abgezogen, Satellit verbunden und
+scheinbar gesund, aber zwei Erfassungs-Threads bei 100 % und 64 % CPU, Pegel um
+-5 dB, der zwischen zwei Werten wechselt.
+
+**Ursache:** Ohne `hw:Array` fehlt das ALSA-`default` in PortAudios Geräteliste.
+Übrig bleibt nur `pulse`, das obige `type null` ist. `_find_pyaudio_device` fiel
+auf PortAudios Vorgabe-Eingang zurück, also genau dieses Null-PCM; dessen Lesezugriffe
+kehren sofort zurück.
+
+**Fix:** Ein konfiguriertes, aber fehlendes Gerät wird nicht mehr ersetzt; die
+Erfassung startet nicht, und der Taubwächter (#1211) meldet den Raum. Ein später
+eingestecktes Mikrofon braucht einen Neustart des Dienstes.
 
 ### Firmware flashen (USB/UAC2 vs. I2S)
 
