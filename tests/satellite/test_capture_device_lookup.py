@@ -12,6 +12,7 @@ healthy.
 
 import pytest
 from renfield_satellite.audio.capture import AudioCapture
+from renfield_satellite.config import AudioConfig
 
 
 class _FakePyAudio:
@@ -61,3 +62,8 @@ class TestFindPyAudioDevice:
     def test_without_a_configured_device_and_no_default_there_is_none(self):
         pa = _FakePyAudio(["pulse"], default=None)
         assert _capture(None, pa)._find_pyaudio_device() is None
+
+    def test_the_config_default_names_a_device_portaudio_lists(self):
+        """Without the fallback, a default that PortAudio never lists would be deaf."""
+        pa = _FakePyAudio(["sysdefault", "pulse", "default"], default=1)
+        assert _capture(AudioConfig().device, pa)._find_pyaudio_device() == 2

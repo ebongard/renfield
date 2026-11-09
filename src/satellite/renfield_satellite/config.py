@@ -77,7 +77,10 @@ class AudioConfig:
     # match — provisioning sets it explicitly only when they differ.
     physical_mics: int | None = None
     use_arecord: bool = False  # Use arecord subprocess (required for AC108 4-mic + onnxruntime)
-    device: str = "plughw:1,0"  # ReSpeaker default
+    # The ALSA "default" PCM: a name PortAudio lists. "plughw:1,0" matched no
+    # PortAudio device and only worked through the default-input fallback,
+    # which a missing microphone no longer gets (1.4.21).
+    device: str = "default"
     playback_device: str = "plughw:1,0"
     # Stereo→mono combine (docs/design/satellite-audio-combine-pipeline.md).
     # The wakeword/STT need one mono channel; how the native multi-channel
