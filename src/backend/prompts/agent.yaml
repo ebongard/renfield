@@ -549,6 +549,8 @@ de:
   retry_nudge: "\n\nDu MUSST jetzt mit einem JSON-Objekt antworten. Was ist der nächste Schritt?"
 
   # Error messages
+  # A tool that starts a background job was called again in the same turn (#1508)
+  background_job_already_started: "Der Vorgang wurde in diesem Zug bereits gestartet und läuft. Das Ergebnis kommt von selbst in diesen Chat. NICHT erneut starten — antworte jetzt mit final_answer."
   error_loop_detected: "Loop erkannt: Tool '{tool}' wurde mehrfach identisch aufgerufen."
   error_empty_results: "Wiederholte leere Ergebnisse fuer Tool '{tool}' — Suche abgebrochen."
   error_circuit_open: "LLM-Service vorübergehend nicht verfügbar (Circuit Breaker aktiv)."
@@ -1162,6 +1164,8 @@ en:
   retry_nudge: "\n\nYou MUST now respond with a JSON object. What is the next step?"
 
   # Error messages
+  # A tool that starts a background job was called again in the same turn (#1508)
+  background_job_already_started: "This job was already started in this turn and is running. Its result arrives in this chat by itself. Do NOT start it again — answer with final_answer now."
   error_loop_detected: "Loop detected: Tool '{tool}' was called identically multiple times."
   error_empty_results: "Repeated empty results for tool '{tool}' — search aborted."
   error_circuit_open: "LLM service temporarily unavailable (Circuit Breaker active)."

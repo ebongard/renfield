@@ -22,6 +22,7 @@ from loguru import logger
 
 from services.agent_tools import AgentToolRegistry, unsanitize_tool_name
 from services.prompt_manager import prompt_manager
+from services.scanner_jobs import SCAN_START_TOOL
 from utils.circuit_breaker import agent_circuit_breaker
 from utils.config import settings
 from utils.llm_client import (
@@ -343,6 +344,13 @@ class AgentContext:
         recent = tool_calls[-min_repetitions:]
         return len(set(recent)) == 1
 
+    def job_already_started(self, tool: str) -> bool:
+        """Whether ``tool`` already succeeded this turn (see _STARTS_BACKGROUND_JOB)."""
+        return any(
+            s.step_type == "tool_result" and s.tool == tool and s.success
+            for s in self.steps
+        )
+
     def count_tool_calls(self, tool: str) -> int:
         """How many times ``tool`` has been called this turn (any parameters).
 
@@ -471,6 +479,14 @@ _INVALID_TOOL_ABORT_THRESHOLD = 3
 # weaker loop signal than identical), and the abort summarizes what was
 # already gathered, so the domain survives instead of returning nothing.
 _SAME_TOOL_ABORT_THRESHOLD = 5
+
+# Tools whose successful call STARTS a background job that reports back on its
+# own. One success per turn is the whole action: a second call only meets the
+# running job ("busy"), and since the turn's verdict is a tool's LAST attempt,
+# that refusal turned a scan that ran into a failed turn (2026-11-08, #1508).
+# Neither the prompt hint nor loop detection (needs 3 identical calls) stopped
+# the double call, so the loop does not execute it.
+_STARTS_BACKGROUND_JOB = frozenset({SCAN_START_TOOL})
 
 
 # LLM option defaults — used as fallback if prompts/agent.yaml lacks the key.
@@ -2816,24 +2832,32 @@ class AgentService:
             yield tool_call_step
 
             # Execute the tool (with resolved blob data)
-            try:
-                intent_data = {
-                    "intent": action,
-                    "parameters": resolved_parameters,
-                    "confidence": 1.0,
-                }
-                result = await executor.execute(
-                    intent_data, user_permissions=user_permissions,
-                    user_id=user_id, progress_sink=progress_sink,
-                )
-            except Exception as e:
-                logger.error(f"❌ Agent tool execution failed: {action} — {error_text_without_content(e)}")
-                error_msg = f"Tool error: {e!s}" if lang == "en" else f"Tool-Fehler: {e!s}"
+            if action in _STARTS_BACKGROUND_JOB and context.job_already_started(action):
+                logger.info(f"🤖 Agent step {step_num}: '{action}' already started this turn — not executed again")
                 result = {
-                    "success": False,
-                    "message": error_msg,
+                    "success": True,
+                    "message": prompt_manager.get("agent", "background_job_already_started", lang=lang),
                     "action_taken": False,
                 }
+            else:
+                try:
+                    intent_data = {
+                        "intent": action,
+                        "parameters": resolved_parameters,
+                        "confidence": 1.0,
+                    }
+                    result = await executor.execute(
+                        intent_data, user_permissions=user_permissions,
+                        user_id=user_id, progress_sink=progress_sink,
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Agent tool execution failed: {action} — {error_text_without_content(e)}")
+                    error_msg = f"Tool error: {e!s}" if lang == "en" else f"Tool-Fehler: {e!s}"
+                    result = {
+                        "success": False,
+                        "message": error_msg,
+                        "action_taken": False,
+                    }
 
             logger.info(f"🤖 Agent step {step_num} tool result: success={result.get('success')}, has_data={result.get('data') is not None}, message_len={len(result.get('message', ''))}")
 

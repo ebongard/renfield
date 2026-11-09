@@ -384,7 +384,9 @@ class ActionExecutor:
                 intent, parameters, user_permissions=user_permissions,
                 user_id=user_id, progress_sink=progress_sink,
             )
-            if intent == "mcp.scanner.scan_document":
+            from services.scanner_jobs import SCAN_START_TOOL
+
+            if intent == SCAN_START_TOOL:
                 # The scan runs in the background on the scanner host and reports
                 # back later over /api/scanner/job-event. Remember WHO asked, and in
                 # which conversation, from the authenticated turn — never from

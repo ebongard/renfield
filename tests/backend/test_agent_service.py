@@ -3191,3 +3191,96 @@ class TestAgentLoopAnswerWithoutAction:
 
         monkeypatch.setattr("utils.metrics.record_agent_schema_repair", boom)
         _record_schema_repair("answer_without_action")  # must not raise
+
+
+class TestABackgroundJobStartsOncePerTurn:
+    """🛑 A tool that STARTS a background job runs at most once per turn (#1508).
+
+    Observed on 2026-11-08: "scanne nach x-idra" -- step 1 started the scan
+    (`success=True`), step 2 called `scan_document` AGAIN and got "busy". The
+    turn's verdict is a tool's LAST attempt, two calls do not trip the loop
+    detection, so the user saw a failed turn for a scan that ran. The prompt
+    hint (2026-10-29) did not prevent the second call, so the loop no longer
+    executes it.
+    """
+
+    _SCAN = "mcp.scanner.scan_document"
+    _STARTED = {
+        "success": True,
+        "message": '{"ok": true, "job_id": "' + "a" * 32 + '"}',
+        "action_taken": True,
+    }
+    _BUSY = {
+        "success": False,
+        "message": '{"ok": false, "error_code": "busy", "job_id": "' + "a" * 32 + '"}',
+        "action_taken": False,
+    }
+
+    def _make_registry(self):
+        mcp = _make_mock_mcp_manager()
+        scan = MagicMock()
+        scan.namespaced_name = self._SCAN
+        scan.description = "Start a scan"
+        scan.input_schema = {"properties": {"target": {"type": "string"}}, "required": []}
+        mcp.get_all_tools.return_value = [*mcp.get_all_tools.return_value, scan]
+        return AgentToolRegistry(mcp_manager=mcp, _init_only=True)
+
+    def _llm(self, responses):
+        return TestAgentServiceRun()._make_ollama_mock(responses)
+
+    async def _run(self, responses, executor_results):
+        executor = AsyncMock()
+        executor.execute = AsyncMock(side_effect=executor_results)
+        agent = AgentService(self._make_registry(), max_steps=6)
+        steps = await collect_steps(
+            agent, message="scanne nach x-idra",
+            ollama=self._llm(responses), executor=executor,
+        )
+        return steps, executor
+
+    @staticmethod
+    def _call(tool):
+        return json.dumps({"action": tool, "parameters": {}, "reason": "x"})
+
+    _ANSWER = '{"action": "final_answer", "answer": "Der Scan läuft.", "reason": "done"}'
+
+    @pytest.mark.unit
+    async def test_the_second_start_in_a_turn_is_not_executed(self):
+        from api.websocket.chat_handler import _failed_agent_actions
+        from services.prompt_manager import prompt_manager
+
+        steps, executor = await self._run(
+            [self._call(self._SCAN), self._call(self._SCAN), self._ANSWER],
+            # The busy reply is what the scanner WOULD answer if called again.
+            [self._STARTED, self._BUSY],
+        )
+
+        assert executor.execute.await_count == 1
+        results = [s for s in steps if s.step_type == "tool_result"]
+        assert [(s.tool, s.success) for s in results] == [(self._SCAN, True), (self._SCAN, True)]
+        assert results[1].content == prompt_manager.get(
+            "agent", "background_job_already_started", lang="de")
+        assert steps[-1].step_type == "final_answer"
+        assert _failed_agent_actions([(s.tool, s.success) for s in results]) == []
+
+    @pytest.mark.unit
+    async def test_NEGATIVE_any_other_tool_is_still_executed_twice(self):
+        """🛑 Negative control: the guard is the job-starting tools only."""
+        _steps, executor = await self._run(
+            [self._call("mcp.homeassistant.turn_on"),
+             self._call("mcp.homeassistant.turn_on"), self._ANSWER],
+            [{"success": True, "message": "an", "action_taken": True}] * 2,
+        )
+        assert executor.execute.await_count == 2
+
+    @pytest.mark.unit
+    async def test_NEGATIVE_a_start_that_failed_does_not_block_the_retry(self):
+        """🛑 Second negative control: only a SUCCESSFUL start counts. A first
+        call that failed started nothing, so the retry reaches the scanner."""
+        steps, executor = await self._run(
+            [self._call(self._SCAN), self._call(self._SCAN), self._ANSWER],
+            [self._BUSY, self._STARTED],
+        )
+        assert executor.execute.await_count == 2
+        results = [s for s in steps if s.step_type == "tool_result"]
+        assert [s.success for s in results] == [False, True]

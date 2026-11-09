@@ -39,6 +39,10 @@ from utils.config import settings
 
 SCAN_JOB_EVENT_CONTRACT_VERSION = "1"
 
+#: The tool that STARTS a scan job. One successful call per agent turn is the
+#: whole action; a second one only meets the running job (#1508).
+SCAN_START_TOOL = "mcp.scanner.scan_document"
+
 _KEY = "renfield:scanner:job:{job_id}"
 # A scan finishes in minutes; a day covers a sleeping scanner host catching up on
 # its event retries after wake without keeping requester records around forever.

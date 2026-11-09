@@ -12,6 +12,8 @@ dedup / tier / PDF-Split / Paperless are unchanged.
 ## Job model
 - `scan_document` only **STARTS** a job and returns `{job_id}` at once. Never run the scan inside the tool call (the
   30 s MCP timeout reports a scan as FAILED that is filed moments later).
+- One successful start per agent TURN: the loop does not execute a second `scan_document` after a success in the
+  same turn (`_STARTS_BACKGROUND_JOB`, #1508) — a second call only meets `busy` and flipped the turn to failed.
 - Completion is an **EVENT, never a poll**: the scanner POSTs `/api/scanner/job-event` to the instance that asked
   (per-caller token → `SCANNER_CALLER_TARGET_<CALLER>` → that target's URL + folder-ingest token) and retries for 24 h.
 - `action_executor` records the requester (user, session, title, voice room) from the **AUTHENTICATED** turn in Redis
