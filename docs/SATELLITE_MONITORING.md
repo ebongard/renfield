@@ -283,6 +283,27 @@ times worse than one up for six hours reporting `7`, while the actual rates diff
 a factor of sixty the other way. When comparing satellites, compare these directly; do
 **not** normalise by uptime.
 
+### Connected but deaf (`SATELLITE_DEAF_WATCH_ENABLED`, #1211)
+
+A satellite whose microphone delivers no frames still connects, heartbeats and reports
+0 errors: the Wohnzimmer XVF3800 was deaf for two days that way (ALSA stream `RUNNING`,
+`hw_ptr` 0). Without frames the level in every heartbeat stays frozen — the initial
+`0.0 / -96.0` or the last real value. The backend notes when `(audio_rms, audio_db)`
+last changed; unchanged for `SATELLITE_DEAF_AFTER_SECONDS` (600) on a connected
+satellite = not capturing:
+
+- `/api/satellites` → `capture_stalled_seconds` (null = capturing / not judged / off),
+  the admin page shows **„Mikrofon stumm“**;
+- the hourly fleet watchdog reports the deaf set (change-only, own marker
+  `satellite_fleet_watchdog:last_reported_deaf`).
+
+Not judged: a satellite without level metrics, a running OTA, and **digital silence**
+(`-90.3 dB`: the satellite clamps a computed level at one LSB, so a noise-suppressed mic
+in a silent room delivers frames at a constant level — only `-96.0` means "no frame
+yet"). A reported satellite counts as recovered only when its level changed after the
+first reading of its connection, so a reconnect does not read as recovery.
+A service restart did not reset the stalled XVF3800; a reboot of the Pi did.
+
 ## Troubleshooting
 
 ### No Audio Levels Shown

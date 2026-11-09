@@ -115,9 +115,10 @@ ALLOWED_IMPORTERS = frozenset({
     # inside a try block to broadcast the room-handoff chip; deferred + guarded, so
     # a platform-only deploy never reaches it. Same lazy-pattern rule as above.
     "services/conversation_handoff.py",
-    # (2) Lazy, feature-gated -- `satellite_fleet_watchdog.check_satellite_fleet`
-    # fetches the `SatelliteManager` registry IN THE FUNCTION BODY and only
-    # behind `settings.features.get("satellites")`. A platform-only install
+    # (2) Lazy, feature-gated -- `satellite_fleet_watchdog._registry()` (used by
+    # `check_satellite_fleet` and `check_deaf_satellites`) fetches the
+    # `SatelliteManager` registry IN THE FUNCTION BODY and only behind
+    # `settings.features.get("satellites")`. A platform-only install
     # without ha_glue never reaches the import: the caller in
     # `scheduled_tasks/builtins.py` checks the same gate before it, and the
     # function itself checks again for direct callers. A watchdog over

@@ -67,6 +67,9 @@ export interface SatelliteData {
   /** The backend could not build this entry from its roster and serves
    *  placeholder values (durations are -1). The cause is in the backend log. */
   corrupt?: boolean;
+  /** Seconds the microphone has delivered nothing (frozen heartbeat level,
+   *  #1211); null/absent = capturing, not judged, or the watch is off. */
+  capture_stalled_seconds?: number | null;
 }
 
 interface SatellitesResponse {

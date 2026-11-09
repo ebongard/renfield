@@ -158,3 +158,29 @@ describe('SatellitesPage corrupt entry (#1279)', () => {
     expect(screen.queryByText('Daten unlesbar')).not.toBeInTheDocument();
   });
 });
+
+describe('SatellitesPage deaf satellite (#1211)', () => {
+  it('flags a connected satellite whose microphone delivers nothing', async () => {
+    mockSatellites({
+      ...base,
+      satellite_id: 'sat-wohnzimmer',
+      room: 'Wohnzimmer',
+      capture_stalled_seconds: 7260,
+    });
+
+    renderWithProviders(<SatellitesPage />);
+
+    expect(await screen.findByText('Mikrofon stumm')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('Wohnzimmer'));
+    expect(await screen.findByRole('status')).toHaveTextContent('Pegel seit 2h 1m unverändert');
+  });
+
+  it('shows nothing when the backend does not judge it (null or absent)', async () => {
+    mockSatellites({ ...base, satellite_id: 'sat-kueche', room: 'Küche', capture_stalled_seconds: null });
+
+    renderWithProviders(<SatellitesPage />);
+
+    expect(await screen.findByText('Küche')).toBeInTheDocument();
+    expect(screen.queryByText('Mikrofon stumm')).not.toBeInTheDocument();
+  });
+});

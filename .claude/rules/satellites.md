@@ -16,6 +16,13 @@ Aufgabe `satellite_fleet_watchdog` die Fehlenden. Das Lebenszeichen ist die LAUF
 Registratur des `SatelliteManager`, NICHT `satellites.last_authenticated_at` — die
 Spalte wird nur beim Verbindungsaufbau gesetzt und altert bei einem stabil verbundenen
 Geraet, waehrend es quicklebendig ist. Details: `.claude/rules/scheduled-tasks.md`.
+🛑 **Ein TAUBER Satellit sieht gesund aus** — verbunden, Heartbeat, 0 Fehler, aber keine
+Frames (Wohnzimmer 2026-11: XVF3800-Stream `RUNNING`, `hw_ptr` 0, zwei Tage). Pruefen auf dem
+Geraet: `/proc/asound/cardN/pcm0c/sub0/status` zweimal im Abstand von 2 s — `hw_ptr` muss
+laufen. Ein Dienst-Neustart setzte das Geraet NICHT zurueck, erst der Neustart des Pi.
+Das Signal im Backend ist der eingefrorene Pegel; `-96.0` dB heisst „noch kein Frame",
+`-90.3` heisst „Frames, aber digital still" und ist KEIN Ausfall (#1211,
+`docs/SATELLITE_MONITORING.md`).
 
 
 Loaded only when a satellite file is read. Trust/OTA signing lives in `satellite-trust-ota.md`.

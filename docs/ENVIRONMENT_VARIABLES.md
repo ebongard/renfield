@@ -1260,6 +1260,18 @@ SATELLITE_DEVICE_ACCOUNT=""
 # Komma-Liste der satellite_ids, die per-Person-IRKs empfangen dürfen. Leer =
 # ungated (Legacy) mit lauter Einmal-Warnung pro Satellit.
 SATELLITE_IRK_ALLOWLIST=""
+
+# Wache für taube Satelliten (#1211). Ein Satellit, dessen Mikrofon keine
+# Frames liefert, verbindet sich trotzdem, sendet Heartbeats und meldet 0
+# Fehler — er sieht überall gesund aus (Wohnzimmer, 2026-11: zwei Tage taub).
+# Sein gemeldeter Pegel (`audio_rms`/`audio_db`) friert dann ein. Bleibt er bei
+# einem verbundenen Satelliten SATELLITE_DEAF_AFTER_SECONDS lang unverändert,
+# meldet die stündliche Flottenwache ihn (nur bei Änderung der Menge, Rückkehr
+# eingeschlossen) und die Admin-Seite zeigt „Mikrofon stumm“. Aus = es wird
+# nichts verfolgt, die Registratur-Einträge tragen keinen neuen Schlüssel,
+# `capture_stalled_seconds` in `/api/satellites` ist `null`.
+SATELLITE_DEAF_WATCH_ENABLED=false
+SATELLITE_DEAF_AFTER_SECONDS=600
 ```
 
 **Satellite-Seite** (`satellite.yaml` → `server.enrollment_token`, oder Env

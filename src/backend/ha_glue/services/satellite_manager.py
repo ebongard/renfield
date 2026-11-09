@@ -96,6 +96,12 @@ class SatelliteCapabilities:
     has_enviro: bool = False
 
 
+#: The satellite's level for a chunk below one LSB: `20*log10(max(rms, 1)/32768)`
+#: rounded (renfield_satellite/satellite.py). A COMPUTED level never goes lower;
+#: -96.0 is only the initial value before the first frame.
+DIGITAL_SILENCE_DB = -90.3
+
+
 @dataclass
 class SatelliteMetrics:
     """Live metrics from satellite heartbeat"""
@@ -137,6 +143,13 @@ class SatelliteInfo:
     authenticated: bool = False
     language: str = "de"  # Language code for STT/TTS (e.g., 'de', 'en')
     metrics: dict[str, Any] = field(default_factory=dict)  # Live metrics from heartbeat
+    # Deaf watch (#1211): the last reported (audio_rms, audio_db) and when it
+    # last CHANGED. Tracked only while `satellite_deaf_watch_enabled` is on.
+    audio_level: tuple[float | None, float | None] | None = None
+    audio_level_changed_at: float = field(default_factory=time.time)
+    # When the first level of this connection was seen: a change AFTER it is
+    # the only positive evidence that the microphone delivers.
+    audio_level_first_at: float | None = None
     # Version and update tracking
     version: str = "unknown"
     update_status: UpdateStatus = UpdateStatus.NONE
@@ -918,12 +931,75 @@ class SatelliteManager:
                     "error_count_1h": device_int(metrics.get("error_count_1h"), 0),
                 }
 
+                if settings.satellite_deaf_watch_enabled:
+                    self._track_audio_level(sat)
+
                 # Track history
                 self._add_event(satellite_id, "heartbeat", {
                     "state": sat.state.value,
                     "audio_rms": sat.metrics["audio_rms"],
                     "is_speech": sat.metrics["is_speech"],
                 })
+
+    @staticmethod
+    def _track_audio_level(sat: SatelliteInfo, now: float | None = None) -> None:
+        """Remember when the reported audio level last changed (#1211)."""
+        level = (sat.metrics.get("audio_rms"), sat.metrics.get("audio_db"))
+        if level == (None, None):
+            return  # this satellite reports no level; never judged
+        # Frames that arrive but are silent (noise suppression in a quiet room)
+        # read as a constant level too. They are told apart by the dB: the
+        # satellite clamps a computed level at one LSB (-90.3), while -96.0 is
+        # only its initial value before any frame. Silence therefore counts as
+        # a fresh reading on every heartbeat; a stream that freezes exactly on
+        # a silent chunk goes unjudged (accepted false negative).
+        if level != sat.audio_level or level[1] == DIGITAL_SILENCE_DB:
+            now = time.time() if now is None else now
+            if sat.audio_level is None:
+                sat.audio_level_first_at = now
+            sat.audio_level = level
+            sat.audio_level_changed_at = now
+
+    def capture_stalled_since(self, satellite_id: str, now: float | None = None) -> float | None:
+        """When a connected satellite's microphone stopped delivering, or None.
+
+        The signal is a FROZEN heartbeat level: with no frames the satellite
+        keeps sending its last (or initial 0.0 / -96.0) values, while a live
+        mic's noise floor never repeats at 0.1 resolution for this long. A
+        satellite that never reported a level is not judged, and neither is one
+        in a running OTA (its event loop is blocked by the installer).
+        """
+        if not settings.satellite_deaf_watch_enabled:
+            return None
+        sat = self.satellites.get(satellite_id)
+        if sat is None or sat.audio_level is None:
+            return None
+        if sat.update_status == UpdateStatus.IN_PROGRESS:
+            return None
+        now = time.time() if now is None else now
+        if now - sat.audio_level_changed_at < settings.satellite_deaf_after_seconds:
+            return None
+        return sat.audio_level_changed_at
+
+    def capture_proven_live(self, satellite_id: str, now: float | None = None) -> bool:
+        """True only on POSITIVE evidence that the microphone delivers: the level
+        changed after this connection's first observation and is not frozen.
+
+        Not the negation of `capture_stalled_since`: right after a (re)connect
+        or a backend restart there is no verdict either way, and a reported deaf
+        satellite must not count as recovered then -- otherwise the report flaps
+        on every reconnect (#1211).
+        """
+        if not settings.satellite_deaf_watch_enabled:
+            return False
+        sat = self.satellites.get(satellite_id)
+        if sat is None or sat.audio_level_first_at is None:
+            return False
+        if sat.update_status == UpdateStatus.IN_PROGRESS:
+            return False  # no verdict either way during an OTA
+        if sat.audio_level_changed_at <= sat.audio_level_first_at:
+            return False
+        return self.capture_stalled_since(satellite_id, now) is None
 
     def _add_event(self, satellite_id: str, event_type: str, details: dict[str, Any] = None):
         """Add an event to satellite history"""
@@ -1011,6 +1087,8 @@ class SatelliteManager:
                 "update_progress": sat.update_progress,
                 "update_error": sat.update_error
             })
+            if settings.satellite_deaf_watch_enabled:
+                result[-1]["capture_stalled_since"] = self.capture_stalled_since(sat_id)
         return result
 
     def set_room_id(self, satellite_id: str, room_id: int):

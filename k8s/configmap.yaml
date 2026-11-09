@@ -324,6 +324,10 @@ data:
   # JEDEM Weckwort; ohne diesen Schalter beantwortet das Vision-Modell jede Frage
   # mit Bild — im dunklen Raum wurde daraus „ich kann das Bild nicht sehen“.
   SATELLITE_VISION_QUERY_GATE_ENABLED: "true"
+  # Taube Satelliten melden (#1211): verbunden, Heartbeat, 0 Fehler, aber das
+  # Mikrofon liefert nichts (Wohnzimmer 2026-11, zwei Tage). Eingefrorener Pegel
+  # ueber SATELLITE_DEAF_AFTER_SECONDS (Vorgabe 600) → Flottenwache + Admin-Seite.
+  SATELLITE_DEAF_WATCH_ENABLED: "true"
 
   # Registry-Zeile dieser Instanz beim geteilten Voice-Server. Mit auth AN geht
   # der Browser-Handschlag auf den authentifizierten Pfad und muss `?client=`

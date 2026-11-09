@@ -90,6 +90,9 @@ class SatelliteResponse(BaseModel):
     # True when this entry could not be built from the roster and is shown
     # with placeholder values instead (#1279). The cause is in the backend log.
     corrupt: bool = False
+    # Seconds the microphone has delivered nothing (frozen heartbeat level,
+    # #1211); None = capturing, not judged, or SATELLITE_DEAF_WATCH_ENABLED off.
+    capture_stalled_seconds: float | None = None
 
 
 class SatelliteListResponse(BaseModel):
@@ -177,6 +180,7 @@ def _satellite_to_response(sat_id: str, sat_data: dict[str, Any]) -> SatelliteRe
     # bundled satellite source), so this list view and /versions never disagree.
     version = sat_data.get("version", "unknown")
     update_available = _is_update_available(version, get_satellite_update_service().get_latest_version())
+    stalled_since = sat_data.get("capture_stalled_since")  # backend-set epoch or absent
 
     return SatelliteResponse(
         satellite_id=sat_id,
@@ -198,7 +202,8 @@ def _satellite_to_response(sat_id: str, sat_data: dict[str, Any]) -> SatelliteRe
         update_status=sat_data.get("update_status"),
         update_stage=sat_data.get("update_stage"),
         update_progress=sat_data.get("update_progress", 0),
-        update_error=sat_data.get("update_error")
+        update_error=sat_data.get("update_error"),
+        capture_stalled_seconds=now - stalled_since if stalled_since is not None else None,
     )
 
 

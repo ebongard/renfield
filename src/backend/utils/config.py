@@ -1657,6 +1657,18 @@ class Settings(BaseSettings):
     # credential so a rogue LAN device can't register as a satellite at all.
     satellite_irk_allowlist: str = ""
 
+    # Deaf-satellite watch (#1211). A satellite whose microphone delivers no
+    # frames still connects, heartbeats and reports 0 errors -- it looks
+    # healthy everywhere while hearing nothing (Wohnzimmer, 2026-11: two days).
+    # Its heartbeat level (`audio_rms`/`audio_db`) is then frozen: a live mic
+    # never repeats the same 0.1-resolution RMS across a dozen heartbeats. A
+    # connected satellite whose level has not changed for
+    # `satellite_deaf_after_seconds` is reported as not capturing (fleet
+    # watchdog + admin page). Dark by default; off, nothing is tracked and the
+    # roster entries carry no new key.
+    satellite_deaf_watch_enabled: bool = False
+    satellite_deaf_after_seconds: int = 600
+
     # Security (review H1, full fix): per-satellite enrollment credential. When
     # enabled, a satellite must present its enrollment PSK in the register frame
     # (verified constant-time against the bcrypt hash in the `satellites` table).
