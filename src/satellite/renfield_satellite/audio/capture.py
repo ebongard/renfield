@@ -269,8 +269,15 @@ class AudioCapture:
                 if info['maxInputChannels'] > 0 and name in info['name'].lower():
                     print(f"Found microphone (substring): {info['name']} (index {i})")
                     return i
+            # A configured device that is missing is NOT replaced by PortAudio's
+            # default input. With the XVF3800 unplugged, "default" vanishes and
+            # the only input left is the "pulse" null PCM (/etc/asound.conf):
+            # its reads return at once, so the capture threads spun at full CPU
+            # on fabricated audio (Fitnessraum, 2026-11-09).
+            print(f"Configured microphone '{self.device_name}' not found")
+            return None
 
-        # Use default input device
+        # No device configured: use the default input device
         try:
             default_info = self._pyaudio.get_default_input_device_info()
             print(f"Using default microphone: {default_info['name']} (index {default_info['index']})")
