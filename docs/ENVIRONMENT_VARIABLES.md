@@ -1264,8 +1264,10 @@ SATELLITE_IRK_ALLOWLIST=""
 # Wache für taube Satelliten (#1211). Ein Satellit, dessen Mikrofon keine
 # Frames liefert, verbindet sich trotzdem, sendet Heartbeats und meldet 0
 # Fehler — er sieht überall gesund aus (Wohnzimmer, 2026-11: zwei Tage taub).
-# Sein gemeldeter Pegel (`audio_rms`/`audio_db`) friert dann ein. Bleibt er bei
-# einem verbundenen Satelliten SATELLITE_DEAF_AFTER_SECONDS lang unverändert,
+# Sein Zähler frischer Audioblöcke (`capture_fresh_chunks`, ab Satellit 1.4.20;
+# wiederholte Puffer zählen nicht) friert dann ein, bei älteren Satelliten der
+# Pegel (`audio_rms`/`audio_db`). Bleibt das Signal bei einem verbundenen
+# Satelliten SATELLITE_DEAF_AFTER_SECONDS lang unverändert,
 # meldet die stündliche Flottenwache ihn (nur bei Änderung der Menge, Rückkehr
 # eingeschlossen) und die Admin-Seite zeigt „Mikrofon stumm“. Aus = es wird
 # nichts verfolgt, die Registratur-Einträge tragen keinen neuen Schlüssel,

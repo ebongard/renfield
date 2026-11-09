@@ -288,19 +288,27 @@ a factor of sixty the other way. When comparing satellites, compare these direct
 A satellite whose microphone delivers no frames still connects, heartbeats and reports
 0 errors: the Wohnzimmer XVF3800 was deaf for two days that way (ALSA stream `RUNNING`,
 `hw_ptr` 0). Without frames the level in every heartbeat stays frozen — the initial
-`0.0 / -96.0` or the last real value. The backend notes when `(audio_rms, audio_db)`
-last changed; unchanged for `SATELLITE_DEAF_AFTER_SECONDS` (600) on a connected
-satellite = not capturing:
+`0.0 / -96.0` or the last real value. The backend notes when the capture signal last
+changed; unchanged for `SATELLITE_DEAF_AFTER_SECONDS` (600) on a connected satellite =
+not capturing.
+
+The signal is `capture_fresh_chunks` in the heartbeat (satellite ≥ 1.4.20): the count of
+chunks that repeat none of the last 16 byte for byte. A frozen level is not enough: the
+Fitnessraum (2026-11-09, USB microphone unplugged) kept cycling between two exact levels
+(1499.6 / 525.1) at ~40 % CPU — the capture replayed its last buffers, and the level
+watch read that as a live microphone. A replayed chunk does not count, so the counter
+froze. A constant chunk (digital silence) always counts. Older satellites, which send no
+counter, are still judged by `(audio_rms, audio_db)`. Verdicts:
 
 - `/api/satellites` → `capture_stalled_seconds` (null = capturing / not judged / off),
   the admin page shows **„Mikrofon stumm“**;
 - the hourly fleet watchdog reports the deaf set (change-only, own marker
   `satellite_fleet_watchdog:last_reported_deaf`).
 
-Not judged: a satellite without level metrics, a running OTA, and **digital silence**
-(`-90.3 dB`: the satellite clamps a computed level at one LSB, so a noise-suppressed mic
+Not judged: a satellite without level metrics, a running OTA, and on the level path
+**digital silence** (`-90.3 dB`: the satellite clamps a computed level at one LSB, so a noise-suppressed mic
 in a silent room delivers frames at a constant level — only `-96.0` means "no frame
-yet"). A reported satellite counts as recovered only when its level changed after the
+yet"). A reported satellite counts as recovered only when its signal changed after the
 first reading of its connection, so a reconnect does not read as recovery.
 A service restart did not reset the stalled XVF3800; a reboot of the Pi did.
 

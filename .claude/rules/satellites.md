@@ -20,8 +20,11 @@ Geraet, waehrend es quicklebendig ist. Details: `.claude/rules/scheduled-tasks.m
 Frames (Wohnzimmer 2026-11: XVF3800-Stream `RUNNING`, `hw_ptr` 0, zwei Tage). Pruefen auf dem
 Geraet: `/proc/asound/cardN/pcm0c/sub0/status` zweimal im Abstand von 2 s — `hw_ptr` muss
 laufen. Ein Dienst-Neustart setzte das Geraet NICHT zurueck, erst der Neustart des Pi.
-Das Signal im Backend ist der eingefrorene Pegel; `-96.0` dB heisst „noch kein Frame",
-`-90.3` heisst „Frames, aber digital still" und ist KEIN Ausfall (#1211,
+Das Signal im Backend ist der Zaehler `capture_fresh_chunks` (ab 1.4.20), NICHT der Pegel:
+ohne Mikrofon wechselte der Fitnessraum-Pegel zwischen zwei exakten Werten (wiederholte
+Puffer, ~40 % CPU) und galt als lebendig. Wiederholte Bloecke zaehlen nicht, konstante
+(digitale Stille) immer. Fuer aeltere Satelliten bleibt der Pegel: `-96.0` dB heisst
+„noch kein Frame", `-90.3` heisst „Frames, aber digital still" und ist KEIN Ausfall (#1211,
 `docs/SATELLITE_MONITORING.md`).
 
 
