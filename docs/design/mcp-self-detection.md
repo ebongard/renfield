@@ -264,6 +264,15 @@ the verdict:
    reconnect", and the alert claimed "Selbstheilung versucht". A reconnect cannot
    create tools. Fix: `no_tools` (like `plugin_failed`, and now `rate_limited`) is in
    `_UNHEALABLE_CODES` and is not probed.
+4. **The self-heal "recovered" `search` every tick (#1509).** From 2026-11-08 the
+   upstream engines refused the probe query (CAPTCHA, access denied, 429). The
+   bespoke `search` probe asks SearXNG's JSON API directly, around the MCP
+   transport, so its `probe_failed` verdict survives any reconnect — yet the tick
+   reconnected `search` every 2 min and logged "1 recovered on reconnect".
+   Fix: `_reconnect_cannot_help` also skips a `probe_failed` from a bespoke probe
+   (`_BESPOKE_PROBES`); a YAML probe goes through the transport and keeps its heal.
+   The self-heal line now says "transport(s) reconnected", and the tick logs the
+   verdict AFTER the probes ("N of M healthy; still impaired: …").
 
 Plus two things the alert needed to be trustworthy rather than noisy:
 
