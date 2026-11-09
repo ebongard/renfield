@@ -40,7 +40,7 @@ each time; the room row is created on first connect (`ROOMS_AUTO_CREATE_FROM_SAT
    help either: `nsswitch.conf` has `files mdns4_minimal [NOTFOUND=return] dns`, so
    `.local` never reaches DNS. Set `server_static_ip` in the satellite's
    (git-ignored) `host_vars`; `provision.yml --tags network` writes it into
-   `/etc/hosts`, which is read first, AND into cloud-init's
+   `/etc/hosts`, which is read first, AND, where it exists, into cloud-init's
    `/etc/cloud/templates/hosts.debian.tmpl`: Raspberry Pi Imager images set
    `manage_etc_hosts: true`, so cloud-init re-renders `/etc/hosts` on every boot
    and a pin only in `/etc/hosts` disappears with the next reboot (Wohnzimmer,
