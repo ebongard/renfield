@@ -61,7 +61,8 @@ NOT_UNDERSTOOD_CUE_SECONDS = 1.2
 
 #: How many recent chunks a fresh one must differ from (#1211). A replaying
 #: device cycles through its ring of a few periods; 16 chunks (~1.3 s) covers
-#: that with room to spare.
+#: that with room to spare. A replayed ring LONGER than this counts as fresh
+#: and goes undetected (accepted; the observed case was two buffers).
 CHUNK_REPLAY_WINDOW = 16
 
 
@@ -885,9 +886,12 @@ class Satellite:
                     self._current_audio_db = round(20 * math.log10(max(rms, 1) / 32768.0), 1)
                     # Simple VAD: speech if RMS > threshold
                     self._current_is_speech = rms > 500
-            self._count_fresh_chunk(audio_bytes)
         except Exception:
             pass
+        # Outside the level block: a chunk the level maths cannot parse (odd
+        # length) is still a chunk, and skipping it would freeze the counter on
+        # a live microphone -- a false "deaf" report.
+        self._count_fresh_chunk(audio_bytes)
 
         # Process for wake word in IDLE state
         if self._state == SatelliteState.IDLE and not self._wakeword_pending:

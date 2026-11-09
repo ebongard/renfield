@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -32,7 +33,7 @@ from renfield_satellite.hardware.led import (
     cue_blink_on,
 )
 from renfield_satellite.network.websocket_client import WebSocketClient
-from renfield_satellite.satellite import Satellite, SatelliteState
+from renfield_satellite.satellite import CHUNK_REPLAY_WINDOW, Satellite, SatelliteState
 
 pytestmark = pytest.mark.satellite
 
@@ -60,6 +61,8 @@ def _listening_satellite() -> Satellite:
     sat._state = SatelliteState.LISTENING
     sat._silence_chunks = 0
     sat._recorded_chunks = 0
+    sat._fresh_chunk_count = 0
+    sat._recent_chunk_crcs = deque(maxlen=CHUNK_REPLAY_WINDOW)
     sat._vad_speech_seen = False
     sat._session_id = None
     sat.wakeword = MagicMock()

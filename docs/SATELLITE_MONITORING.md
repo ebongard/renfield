@@ -297,7 +297,8 @@ chunks that repeat none of the last 16 byte for byte. A frozen level is not enou
 Fitnessraum (2026-11-09, USB microphone unplugged) kept cycling between two exact levels
 (1499.6 / 525.1) at ~40 % CPU — the capture replayed its last buffers, and the level
 watch read that as a live microphone. A replayed chunk does not count, so the counter
-froze. A constant chunk (digital silence) always counts. Older satellites, which send no
+froze. A constant chunk (digital silence) always counts; a replayed ring longer than
+16 chunks would count as fresh (accepted, the observed case was two buffers). Older satellites, which send no
 counter, are still judged by `(audio_rms, audio_db)`. Verdicts:
 
 - `/api/satellites` → `capture_stalled_seconds` (null = capturing / not judged / off),

@@ -999,7 +999,7 @@ class SatelliteManager:
         return sat.capture_signal_changed_at
 
     def capture_proven_live(self, satellite_id: str, now: float | None = None) -> bool:
-        """True only on POSITIVE evidence that the microphone delivers: the level
+        """True only on POSITIVE evidence that the microphone delivers: the capture
         signal changed after this connection's first observation and is not frozen.
 
         Not the negation of `capture_stalled_since`: right after a (re)connect

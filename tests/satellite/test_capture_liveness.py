@@ -104,3 +104,12 @@ def _feed_levels(sat: Satellite, chunk: bytes) -> None:
     sat.wakeword = type("W", (), {"active_stop_words": []})()
     sat._wakeword_pending = False
     sat._on_audio_chunk(chunk)
+
+
+@pytest.mark.satellite
+def test_a_chunk_the_level_maths_cannot_parse_still_counts():
+    """An odd-length chunk makes struct.unpack raise; the swallowed error must
+    not freeze the counter on a live microphone."""
+    sat = _make_satellite()
+    _feed_levels(sat, _noise(3) + b"\x01")
+    assert sat._fresh_chunk_count == 1
