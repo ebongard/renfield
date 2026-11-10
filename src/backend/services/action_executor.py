@@ -116,6 +116,16 @@ class ActionExecutor:
                 parameters, user_id=user_id, session_id=self.session_id,
             )
 
+        # List / cancel the asker's own pending reminders (#264). Owner-scoped on
+        # the injected user_id, admins included — never on an LLM-supplied id.
+        if intent == "internal.list_reminders":
+            from services.reminder_tool import list_reminders
+            return await list_reminders(parameters, user_id=user_id)
+
+        if intent == "internal.cancel_reminder":
+            from services.reminder_tool import cancel_reminder
+            return await cancel_reminder(parameters, user_id=user_id)
+
         # Platform-owned internal tool: read-only ingest → KB → Paperless status.
         # Aggregate counts only; user_id injected for symmetry (unused today).
         if intent == "internal.ingest_status":
