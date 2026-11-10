@@ -2502,7 +2502,7 @@
   },
   "routing": {
     "title": "Routing Dashboard",
-    "subtitle": "Recent agent-router decisions: which role, through which layer",
+    "subtitle": "Recent agent-router decisions: which role, through which layer.",
     "classificationLayers": "Classification Layers",
     "empty": "No routing traces found",
     "disabled": "Recording is switched off (ROUTING_TRACES_ENABLED). New decisions are not stored.",
