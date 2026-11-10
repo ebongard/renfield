@@ -12,6 +12,7 @@ This module handles:
 import asyncio
 import re
 import uuid
+from dataclasses import replace
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
@@ -2478,11 +2479,26 @@ async def websocket_endpoint(
                         corrected_intent=_corrected,
                         context_vars_out=turn_context_vars,
                     ):
-                        ws_msg = step_to_ws_message(step)
-                        await websocket.send_json(ws_msg)
-
+                        if step.step_type == "final_answer" and step.content:
+                            # check_output: the same fail-closed gate as the
+                            # orchestrator branch above. This loop sent its
+                            # answer ungated until #1269's own repro was
+                            # measured again (2026-11-10): what is sent, what the
+                            # message store keeps and what the later hooks see is
+                            # the GATED text. (The agent's own trajectory capture
+                            # keeps its internal steps -- a separate store.)
+                            from services.output_gate import apply_check_output_gate
+                            step = replace(step, content=await apply_check_output_gate(
+                                step.content,
+                                role_name=role.name if role else None,
+                                user_id=user_id,
+                                lang=turn_lang,
+                            ))
                         if step.step_type == "final_answer":
                             full_response = step.content
+
+                        ws_msg = step_to_ws_message(step)
+                        await websocket.send_json(ws_msg)
                         if step.step_type == "tool_result":
                             agent_tool_outcomes.append((step.tool, step.success))
                             if step.abort_reason and step.tool:
