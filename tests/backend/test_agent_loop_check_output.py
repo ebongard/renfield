@@ -84,9 +84,12 @@ def client(monkeypatch, seen, own_session_to_test_db):
         roles={"jira": role},
     )
 
-    # The plugin seam under test.
+    # The plugin seam under test. `seen["crash"]` turns it into a redactor
+    # that fails, to pin the fail-closed half at this call site.
     async def _check_output(content, role=None, user_id=None, **_kw):
         seen["check_output"] = {"content": content, "role": role, "user_id": user_id}
+        if seen.get("crash"):
+            raise RuntimeError("redactor down")
         return REDACTED
 
     # What the turn hands on after the send: memory extraction and the
@@ -141,3 +144,14 @@ def test_later_hooks_see_the_gated_text(client, seen):
         _turn(ws)
     assert seen.get("extract_input") == REDACTED
     assert seen.get("post_message_input") == REDACTED
+
+
+def test_a_crashing_redactor_sends_no_raw_text(client, seen):
+    seen["crash"] = True
+    with client.websocket_connect("/ws") as ws:
+        frames = _turn(ws)
+
+    sent = [f["content"] for f in frames if f.get("type") == "stream"]
+    assert len(sent) == 1 and sent[0] not in (RAW, REDACTED)
+    assert all(RAW not in str(f) for f in frames)
+    assert seen.get("extract_input") == sent[0]
