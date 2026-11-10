@@ -2502,7 +2502,7 @@
   },
   "routing": {
     "title": "Routing-Dashboard",
-    "subtitle": "Die letzten Entscheidungen des Agenten-Routers: welche Rolle, über welche Ebene",
+    "subtitle": "Die letzten Entscheidungen des Agenten-Routers: welche Rolle, über welche Ebene.",
     "classificationLayers": "Klassifizierungs-Ebenen",
     "empty": "Keine Routing-Einträge gefunden",
     "disabled": "Die Aufzeichnung ist ausgeschaltet (ROUTING_TRACES_ENABLED). Neue Entscheidungen werden nicht gespeichert.",
