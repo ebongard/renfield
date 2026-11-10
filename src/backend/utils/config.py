@@ -899,6 +899,12 @@ class Settings(BaseSettings):
     skill_auto_demote_threshold: int = Field(default=5, ge=1, le=100)        # Failures before auto-deactivate
     skill_auto_demote_success_rate: float = Field(default=0.10, ge=0.0, le=1.0)  # Success rate below this triggers demote
 
+    # Routing traces (#1524): one row per router decision for /admin/routing.
+    # Stores the FULL user message (decided 2026-11-10), admin-only, purged
+    # after routing_traces_retention_days.
+    routing_traces_enabled: bool = False
+    routing_traces_retention_days: int = Field(default=14, ge=1, le=365)
+
     # Trajectory capture (self-learning Phase 2)
     # Captures full agent-turn traces as JSONL-exportable training data
     # for downstream LoRA fine-tuning. See docs/SELF_LEARNING.md.

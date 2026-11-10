@@ -2088,17 +2088,19 @@
   },
   "routing": {
     "title": "Pannello di routing",
-    "subtitle": "Decisioni di routing recenti su tutti i canali",
+    "subtitle": "Le ultime decisioni del router degli agenti: quale ruolo, tramite quale livello",
     "classificationLayers": "Livelli di classificazione",
     "empty": "Nessuna traccia di routing trovata",
+    "disabled": "La registrazione è disattivata (ROUTING_TRACES_ENABLED). Le nuove decisioni non vengono salvate.",
+    "retention": "Le voci vengono eliminate dopo {{days}} giorni.",
+    "loadError": "Impossibile caricare i dati di routing.",
     "col": {
       "time": "Ora",
       "message": "Messaggio",
       "domain": "Dominio",
       "layer": "Livello",
       "confidence": "Affidabilità",
-      "entities": "Entità",
-      "feedback": "Feedback"
+      "entities": "Entità"
     }
   },
   "scheduledTasks": {

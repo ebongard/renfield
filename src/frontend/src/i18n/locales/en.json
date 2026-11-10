@@ -2502,17 +2502,19 @@
   },
   "routing": {
     "title": "Routing Dashboard",
-    "subtitle": "Recent routing decisions across all channels",
+    "subtitle": "Recent agent-router decisions: which role, through which layer",
     "classificationLayers": "Classification Layers",
     "empty": "No routing traces found",
+    "disabled": "Recording is switched off (ROUTING_TRACES_ENABLED). New decisions are not stored.",
+    "retention": "Entries are deleted after {{days}} days.",
+    "loadError": "The routing data could not be loaded.",
     "col": {
       "time": "Time",
       "message": "Message",
       "domain": "Domain",
       "layer": "Layer",
       "confidence": "Confidence",
-      "entities": "Entities",
-      "feedback": "Feedback"
+      "entities": "Entities"
     }
   },
   "pdfSplit": {

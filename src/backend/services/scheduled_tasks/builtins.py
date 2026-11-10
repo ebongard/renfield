@@ -283,6 +283,17 @@ async def _trajectory_cleanup_handler(app: FastAPI, params: dict) -> str | None:
     return None
 
 
+async def _routing_trace_cleanup_handler(app: FastAPI, params: dict) -> str | None:
+    # No flag gate, deliberately: the rows hold full user messages, and
+    # switching ROUTING_TRACES_ENABLED off must not stop them from expiring.
+    from services.database import AsyncSessionLocal
+    from services.routing_trace_service import purge_expired
+
+    async with AsyncSessionLocal() as db_session:
+        deleted = await purge_expired(db_session)
+    return f"deleted={deleted}" if deleted else None
+
+
 async def _kg_conflation_monitor_handler(app: FastAPI, params: dict) -> str | None:
     if not settings.kg_conflation_monitor_enabled:
         return "skipped: kg_conflation_monitor_enabled is off"
@@ -551,6 +562,7 @@ def register_builtin_handlers() -> None:
     register_handler("memory_cleanup", _memory_cleanup_handler)
     register_handler("meeting_retention", _meeting_retention_handler)
     register_handler("trajectory_cleanup", _trajectory_cleanup_handler)
+    register_handler("routing_trace_cleanup", _routing_trace_cleanup_handler)
     register_handler("kg_conflation_monitor", _kg_conflation_monitor_handler)
     register_handler("paperless_reconciler", _paperless_reconciler_handler)
     # Phase 3 Batch C
@@ -638,6 +650,7 @@ def builtin_task_seeds() -> list[TaskSeed]:
         TaskSeed(name="Gedächtnis aufräumen", handler_key="memory_cleanup", interval_seconds=settings.memory_cleanup_interval, enabled=True),
         TaskSeed(name="Meeting-Aufbewahrung", handler_key="meeting_retention", interval_seconds=86400, run_at_boot=True, enabled=True),
         TaskSeed(name="Trajektorien aufräumen", handler_key="trajectory_cleanup", interval_seconds=settings.trajectory_cleanup_interval, run_at_boot=True, enabled=True),
+        TaskSeed(name="Routing-Spuren aufräumen", handler_key="routing_trace_cleanup", interval_seconds=86400, run_at_boot=True, enabled=True),
         TaskSeed(name="KG-Konflations-Monitor", handler_key="kg_conflation_monitor", interval_seconds=settings.kg_conflation_monitor_interval, run_at_boot=True, enabled=True),
         TaskSeed(name="Paperless-Ablage nachziehen", handler_key="paperless_reconciler", interval_seconds=settings.paperless_reconciler_interval, run_at_boot=True, enabled=True),
         # --- Phase 3 Batch C ---

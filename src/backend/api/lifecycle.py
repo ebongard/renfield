@@ -839,6 +839,14 @@ async def lifespan(app: "FastAPI"):
         register_hook("retrieve_context", kg_retrieve_context_hook)
         logger.info("✅ Knowledge Graph message/context hooks registered")
 
+    # Routing traces for /admin/routing (#1524): the platform's own post_routing consumer.
+    if settings.routing_traces_enabled:
+        from services.routing_trace_service import record_routing_trace
+        from utils.hooks import register_hook
+
+        register_hook("post_routing", record_routing_trace)
+        logger.info("✅ Routing-trace hook registered")
+
     # post_document_ingest consumers (KG + Schicht A field extractor). Shared
     # with the document-worker via services/document_ingest_hooks.py — the
     # worker is the primary ingestion path and registers these in its own

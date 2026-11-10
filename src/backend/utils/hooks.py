@@ -227,9 +227,12 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     #       issue keys, release IDs). First non-None result is merged,
     #       not replaced.
     #   post_routing: (message, domain, session_id, user_id,
-    #                  entity_matches, layer, confidence) -> None
+    #                  entity_matches, layer, confidence, sub_intent) -> None
     #       Fired after the router classifies a message. Used for
-    #       telemetry and routing-decision persistence.
+    #       telemetry and routing-decision persistence; the platform's
+    #       own consumer is services.routing_trace_service (#1524).
+    #       `layer`/`confidence` come from AgentRole.route_layer /
+    #       route_confidence (confidence is None for layers without a score).
     #   extend_orchestrator_roles: (no kwargs) -> list[str] | None
     #       Return additional role names the orchestrator should
     #       consider for cross-MCP fan-out.
