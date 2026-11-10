@@ -714,7 +714,10 @@ class TestBatchBCHandlers:
         # +1: check the satellite fleet -- until then a satellite that had
         # failed went entirely unnoticed (one room was away for 30 days
         # without a single notification).
-        assert len(seeds) == 28  # +1: check the Paperless search index (fix B)
+        # +1: check the Paperless search index (fix B)
+        # +1: expire routing traces (#1524) -- deliberately UNGATED: the rows
+        # hold full user messages and must expire with the flag off too.
+        assert len(seeds) == 29
         names = [s.name for s in seeds]
         # Names are the ON CONFLICT seed key — a duplicate would silently drop a
         # built-in. Expressed against len(seeds) so adding a built-in updates ONE

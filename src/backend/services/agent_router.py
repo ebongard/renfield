@@ -77,6 +77,11 @@ class AgentRole:
     model: str | None = None  # Per-role model override
     ollama_url: str | None = None  # Per-role Ollama URL override
     sub_intent: str | None = None  # Set per-classification (on returned copy)
+    # Which layer decided, and its score where the layer has one (continuity
+    # score, semantic similarity). Set per-classification on the returned copy;
+    # read by the post_routing hook for the routing traces (#1524).
+    route_layer: str | None = None
+    route_confidence: float | None = None
     sub_intent_definitions: dict[str, dict[str, str]] | None = None  # From config
     utterances: list[str] | None = None  # Example utterances for semantic fast-path
     keyword_boost: list[str] | None = None  # Keywords that boost this role in semantic router
@@ -387,7 +392,7 @@ class AgentRouter:
                 message, role.sub_intent_definitions or {}, lang,
             ) if role.sub_intent_definitions else None
             logger.info(f"Router role-hint: '{message[:60]}' -> '{role_hint}'")
-            return replace(role, sub_intent=sub_intent)
+            return replace(role, sub_intent=sub_intent, route_layer="role_hint")
 
         # Layer 1: Entity ID routing — highest confidence, instant
         if resolved and resolved.entity_matches and resolved.inferred_domain:
@@ -404,7 +409,7 @@ class AgentRouter:
                     f"{'/' + sub_intent if sub_intent else ''}' "
                     f"(entities={ids})"
                 )
-                return replace(role, sub_intent=sub_intent)
+                return replace(role, sub_intent=sub_intent, route_layer="entity_id")
 
         # Layer 2: Scored continuity — accumulate signals, penalize domain switches
         # Ported from Reva's context_router.py::_layer_continuity (proven in production)
@@ -500,7 +505,10 @@ class AgentRouter:
                         f"{'/' + sub_intent if sub_intent else ''}' "
                         f"(score={score:.2f}: {', '.join(signals)})"
                     )
-                    return replace(role, sub_intent=sub_intent)
+                    return replace(
+                        role, sub_intent=sub_intent,
+                        route_layer="continuity", route_confidence=score,
+                    )
                 elif signals:
                     logger.debug(
                         f"Router continuity below threshold: '{message[:60]}' "
@@ -549,11 +557,14 @@ class AgentRouter:
                     # Only propagate sub_intent when the parent role
                     # actually defines it — otherwise silently drop to
                     # avoid dispatching against a stale config.
-                    if sem_sub_intent and role.sub_intent_definitions and (
-                        sem_sub_intent in role.sub_intent_definitions
-                    ):
-                        return replace(role, sub_intent=sem_sub_intent)
-                    return replace(role, sub_intent=None)
+                    keep_sub = bool(
+                        sem_sub_intent and role.sub_intent_definitions
+                        and sem_sub_intent in role.sub_intent_definitions
+                    )
+                    return replace(
+                        role, sub_intent=sem_sub_intent if keep_sub else None,
+                        route_layer="semantic", route_confidence=sem_sim,
+                    )
             except Exception as e:
                 logger.warning(f"Semantic router failed, falling back to LLM: {e}")
 
@@ -641,7 +652,7 @@ class AgentRouter:
                     valid_sub = self._infer_sub_intent(
                         message, role.sub_intent_definitions, lang
                     )
-                result = replace(role, sub_intent=valid_sub)
+                result = replace(role, sub_intent=valid_sub, route_layer="llm")
                 logger.info(
                     f"Router classified '{message[:60]}...' as '{role_name}'"
                     + (f" (sub_intent={valid_sub})" if valid_sub else "")
@@ -653,16 +664,20 @@ class AgentRouter:
                 f"falling back to 'general'"
             )
             record_router_fallback("invalid_role")
-            return self.get_role("general")
+            return self._fallback()
 
         except TimeoutError:
             logger.warning("Router: LLM timeout, falling back to 'general'")
             record_router_fallback("timeout")
-            return self.get_role("general")
+            return self._fallback()
         except Exception as e:
             logger.error(f"Router classification failed: {e}")
             record_router_fallback("error")
-            return self.get_role("general")
+            return self._fallback()
+
+    def _fallback(self) -> AgentRole:
+        """The general role, marked as the router's fallback (not a decision)."""
+        return replace(self.get_role("general"), route_layer="fallback")
 
     @staticmethod
     def _infer_sub_intent(

@@ -2101,6 +2101,33 @@ class AgentTrajectory(Base):
     extracted_skill = relationship("ProceduralSkill", foreign_keys=[extracted_skill_id])
 
 
+class RoutingTrace(Base):
+    """One agent-router decision, for the admin routing dashboard (#1524).
+
+    Written by the platform's ``post_routing`` hook consumer
+    (``services.routing_trace_service``) when ``routing_traces_enabled`` is on.
+    Holds the FULL user message, so it is admin-only and purged after
+    ``routing_traces_retention_days``; a deleted user takes their rows along.
+    """
+    __tablename__ = "routing_traces"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    message = Column(Text, nullable=False)
+    domain = Column(String(64), nullable=False)
+    sub_intent = Column(String(64), nullable=True)
+    # role_hint | entity_id | continuity | semantic | llm | fallback
+    layer = Column(String(20), nullable=False)
+    confidence = Column(Float, nullable=True)
+    entity_matches = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_routing_traces_created", "created_at"),
+        Index("idx_routing_traces_domain_created", "domain", "created_at"),
+    )
+
+
 class ToolOutcomeStat(Base):
     """
     Rolling success/failure counters per (user, tool) pair.

@@ -1951,6 +1951,21 @@ Owner-Sichtbarkeit ueber `/api/skills` (CRUD + pin/unpin + Tier-Aenderung).
 
 ---
 
+### Routing-Spuren (#1524)
+
+```bash
+# Jede Router-Entscheidung in routing_traces schreiben (Seite /admin/routing).
+# Aus = keine neuen Zeilen; die Routen antworten mit enabled=false.
+ROUTING_TRACES_ENABLED=false
+
+# Aufbewahrung in Tagen (1–365). Die Zeilen enthalten die VOLLSTÄNDIGE Nachricht;
+# der Aufräumlauf („Routing-Spuren aufräumen", täglich) löscht ältere Zeilen
+# auch bei ausgeschaltetem Schalter.
+ROUTING_TRACES_RETENTION_DAYS=14
+```
+
+---
+
 ### Trajectory Capture (Self-Learning Phase 2)
 
 ```bash

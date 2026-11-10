@@ -2,40 +2,59 @@ import apiClient from '../../utils/axios';
 import { useApiQuery } from '../hooks';
 import { keys, STALE } from '../keys';
 
-export type Layer = 'entity_id' | 'continuity' | 'semantic' | 'mlp' | 'llm';
+/** Which router layer decided (`AgentRole.route_layer` in the backend). */
+export type Layer =
+  | 'role_hint'
+  | 'entity_id'
+  | 'continuity'
+  | 'semantic'
+  | 'llm'
+  | 'fallback'
+  | 'unknown';
 
 export interface EntityMatch {
   id: string;
 }
 
 export interface RoutingTrace {
-  id: string | number;
-  created_at?: string;
+  id: number;
+  created_at: string;
+  user_id: number | null;
   message: string;
   domain: string;
-  layer?: Layer;
-  confidence?: number | null;
-  entity_matches?: EntityMatch[];
-  user_feedback?: 1 | -1 | null;
+  sub_intent: string | null;
+  layer: Layer;
+  /** Continuity score or semantic similarity; null for layers without one. */
+  confidence: number | null;
+  entity_matches: EntityMatch[];
+}
+
+export interface RoutingTracesResponse {
+  traces: RoutingTrace[];
+  enabled: boolean;
+  retention_days: number;
 }
 
 export interface RoutingStats {
-  by_domain?: Record<string, number>;
-  by_layer?: Record<string, number>;
+  total: number;
+  by_domain: Record<string, number>;
+  by_layer: Record<string, number>;
+  enabled: boolean;
+  retention_days: number;
 }
 
-async function fetchTraces(domain: string): Promise<RoutingTrace[]> {
+async function fetchTraces(domain: string): Promise<RoutingTracesResponse> {
   const params = domain ? { domain } : {};
-  const response = await apiClient.get<{ traces: RoutingTrace[] }>(
+  const response = await apiClient.get<RoutingTracesResponse>(
     '/api/admin/routing-traces',
     { params },
   );
-  return response.data.traces ?? [];
+  return response.data;
 }
 
 async function fetchStats(): Promise<RoutingStats> {
   const response = await apiClient.get<RoutingStats>('/api/admin/routing-stats');
-  return response.data ?? {};
+  return response.data;
 }
 
 export function useRoutingTracesQuery(domain: string) {

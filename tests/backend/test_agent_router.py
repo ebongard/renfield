@@ -1817,3 +1817,71 @@ class TestRouterFallbackCounter:
 
         assert role.name == "smart_home"
         rec.assert_not_called()
+
+
+# ============================================================================
+# Route layer stamping (#1524) -- every exit says which layer decided
+# ============================================================================
+
+def _llm_settings(mock_settings):
+    mock_settings.ollama_intent_model = "test-model"
+    mock_settings.ollama_model = "test-model"
+    mock_settings.agent_ollama_url = None
+    mock_settings.agent_router_model = None
+    mock_settings.agent_router_url = None
+
+
+@pytest.mark.unit
+class TestRouteLayer:
+    async def test_role_hint(self):
+        router = AgentRouter(SAMPLE_CONFIG)
+        role = await router.classify_with_context("egal", None, None, role_hint="research")
+        assert (role.route_layer, role.route_confidence) == ("role_hint", None)
+
+    async def test_entity_id(self):
+        from types import SimpleNamespace
+
+        router = AgentRouter(SAMPLE_CONFIG)
+        resolved = SimpleNamespace(
+            entity_matches=[SimpleNamespace(id="light.kueche")], inferred_domain="smart_home",
+        )
+        role = await router.classify_with_context("Licht in der Küche", resolved, None)
+        assert (role.name, role.route_layer) == ("smart_home", "entity_id")
+
+    async def test_continuity_carries_its_score(self):
+        router = AgentRouter(SAMPLE_CONFIG)
+        # very_short 0.2 + strong_continuation 0.25 + domain_turns=3 0.25 = 0.70
+        role = await router.classify_with_context(
+            "und dazu?", None, None,
+            context_vars={"_active_domain": "smart_home", "_active_domain_turns": "3"},
+        )
+        assert (role.name, role.route_layer) == ("smart_home", "continuity")
+        assert role.route_confidence == pytest.approx(0.70)
+
+    async def test_semantic_carries_its_similarity(self):
+        router = AgentRouter(SAMPLE_CONFIG)
+        semantic = MagicMock()
+        semantic.classify = AsyncMock(return_value=("research", None, 0.91))
+        router.set_semantic_router(semantic)
+        role = await router.classify("Wer hat 1990 die WM gewonnen?", make_mock_ollama("{}"))
+        assert (role.name, role.route_layer) == ("research", "semantic")
+        assert role.route_confidence == pytest.approx(0.91)
+
+    async def test_llm(self):
+        router = AgentRouter(SAMPLE_CONFIG)
+        with patch("services.agent_router.settings") as mock_settings:
+            _llm_settings(mock_settings)
+            role = await router.classify(
+                "Schalte das Licht ein", make_mock_ollama('{"role": "smart_home"}'),
+            )
+        assert (role.name, role.route_layer, role.route_confidence) == ("smart_home", "llm", None)
+
+    async def test_fallback_is_not_a_decision(self):
+        """An invalid LLM answer lands on general -- marked as fallback, and the
+        router's own role objects stay unstamped (it returns copies)."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        with patch("services.agent_router.settings") as mock_settings:
+            _llm_settings(mock_settings)
+            role = await router.classify("???", make_mock_ollama('{"role": "invalid"}'))
+        assert (role.name, role.route_layer) == ("general", "fallback")
+        assert router.get_role("general").route_layer is None

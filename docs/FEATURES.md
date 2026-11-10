@@ -254,6 +254,8 @@ Jede Nachricht wird vom Router in genau eine Rolle klassifiziert:
 
 Rollen werden in `config/agent_roles.yaml` definiert. Pro Rolle sind separate Modelle und Ollama-URLs konfigurierbar.
 
+**Routing-Spuren (`/admin/routing`, #1524):** Mit `ROUTING_TRACES_ENABLED=true` schreibt der Router jede Entscheidung in `routing_traces`: Rolle, Unterabsicht, die entscheidende Ebene (`role_hint`, `entity_id`, `continuity`, `semantic`, `llm`, `fallback`) und deren Wert, wo die Ebene einen hat (Kontinuitätspunktzahl, semantische Ähnlichkeit). Erfasst wird über den `post_routing`-Hook (`services/routing_trace_service.py`), gelesen über `GET /api/admin/routing-traces` und `GET /api/admin/routing-stats`. Die Zeile enthält die **vollständige Nachricht** (entschieden 2026-11-10): nur `Permission.ADMIN` liest sie, die Aufgabe „Routing-Spuren aufräumen" löscht nach `ROUTING_TRACES_RETENTION_DAYS` (Vorgabe 14) — auch bei ausgeschaltetem Schalter —, und mit einem gelöschten Konto verschwinden dessen Zeilen. Erfasst sind Chat-Turns über den WebSocket-Pfad; bis #1524 rief die Seite zwei Routen, die es nie gab.
+
 ### Complexity Detection
 
 Der `ComplexityDetector` erkennt per Regex, ob eine Nachricht den Agent Loop benötigt (Zero-Cost, kein LLM-Call):

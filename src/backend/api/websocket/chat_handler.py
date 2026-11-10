@@ -1926,6 +1926,9 @@ async def websocket_endpoint(
                     session_id=msg_session_id,
                     user_id=user_id,
                     entity_matches=[{"id": m.id, "domain": m.domain, "type": m.entity_type} for m in (_resolved.entity_matches if _resolved else [])],
+                    layer=role.route_layer,
+                    confidence=role.route_confidence,
+                    sub_intent=role.sub_intent,
                 ))
                 _background_tasks.add(_pr_task)
                 _pr_task.add_done_callback(_background_tasks.discard)

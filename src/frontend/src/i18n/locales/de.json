@@ -2502,17 +2502,19 @@
   },
   "routing": {
     "title": "Routing-Dashboard",
-    "subtitle": "Aktuelle Routing-Entscheidungen über alle Kanäle",
+    "subtitle": "Die letzten Entscheidungen des Agenten-Routers: welche Rolle, über welche Ebene",
     "classificationLayers": "Klassifizierungs-Ebenen",
     "empty": "Keine Routing-Einträge gefunden",
+    "disabled": "Die Aufzeichnung ist ausgeschaltet (ROUTING_TRACES_ENABLED). Neue Entscheidungen werden nicht gespeichert.",
+    "retention": "Einträge werden nach {{days}} Tagen gelöscht.",
+    "loadError": "Die Routing-Daten konnten nicht geladen werden.",
     "col": {
       "time": "Zeit",
       "message": "Nachricht",
       "domain": "Domäne",
       "layer": "Ebene",
       "confidence": "Konfidenz",
-      "entities": "Entitäten",
-      "feedback": "Feedback"
+      "entities": "Entitäten"
     }
   },
   "pdfSplit": {

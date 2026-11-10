@@ -53,6 +53,7 @@ from api.routes import (
     preferences,
     projects,
     roles,
+    routing_traces,
     scanner_jobs,
     scheduled_tasks,
     simba_ingest,
@@ -281,6 +282,7 @@ app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
 app.include_router(trajectories.router, prefix="/api/trajectories", tags=["Trajectories"])
+app.include_router(routing_traces.router, prefix="/api/admin", tags=["Routing Traces"])
 app.include_router(tool_health.router, prefix="/api/tool-health", tags=["Tool Health"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(kg_routes.router, prefix="/api/knowledge-graph", tags=["Knowledge Graph"])
