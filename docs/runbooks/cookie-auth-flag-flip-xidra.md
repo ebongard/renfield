@@ -14,9 +14,9 @@ HttpOnly `renfield_access` (Path=/) + `renfield_refresh` (Path=/api/auth/refresh
 cookies + a JS-readable `renfield_csrf` cookie; the backend reads the cookie first
 (Bearer still accepted); CSRF is enforced on cookie-authed mutating requests; the
 browser WS handshake authenticates via the cookie. The SPA stops persisting the
-**30-day refresh token** to `localStorage` (the XSS win). The 24h access token is
-still kept in `localStorage` for the voice WS + Bearer dual-read (full elimination
-awaits the deferred voice-WS migration).
+**30-day refresh token** to `localStorage` (the XSS win). Since #1128 the access
+token is not persisted either: the voice WS fetches its own short-lived
+`scope:"voice"` token (`AuthContext.setTokens` writes neither token in cookie mode).
 
 ---
 
@@ -113,8 +113,8 @@ real xidra user, confirm end-to-end:
 3. **Session works via the cookie:** `GET /api/auth/me` succeeds; hard-reload keeps
    you logged in (the session no longer depends on a JS-readable token).
 4. **Refresh token is OUT of localStorage:** DevTools → Application → Local Storage
-   → `renfield_refresh_token` is **absent** (the access token `renfield_access_token`
-   may still be present — expected, deferred voice-WS migration).
+   → `renfield_refresh_token` is **absent** and so is `renfield_access_token`
+   (since #1128; a leftover from before the flip disappears at the next logout).
 5. **CSRF is enforced:** a mutating request (e.g. send a chat message / change a
    setting) succeeds (the SPA auto-attaches `X-CSRF-Token`). Optional negative
    check: a `curl` POST with the cookie but no `X-CSRF-Token` → **403**.

@@ -641,8 +641,8 @@ NUR bei erfolgreichem Resume, **raum-scoped** an die Zielraum-Geräte = dieselbe
 Privacy-Reichweite wie der bestehende Info-Toast) **und** der Frontend-Renderer
 (`MediaHandoffIndicator`, `/api/config/features`). Transient (12 s TTL, max 3, nie in
 der Historie). Umschalten braucht **kein** Backend-Redeploy. (Der „conversation
-continued in {Raum}"-Fall ist als Frame-Kind `continued` reserviert, aber noch nicht
-backend-verdrahtet — Follow-up.)
+continued in {Raum}"-Fall läuft als Frame-Kind `continued`, gesendet aus beiden
+Übergabepfaden: `services/conversation_handoff.py::emit_continued_handoff_frame`.)
 
 ---
 
