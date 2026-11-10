@@ -9,7 +9,11 @@
  * fully-settled reporting.
  */
 import { describe, it, expect } from 'vitest';
-import { drainSentenceTts } from '../../../../src/frontend/src/pages/ChatPage/context/sentenceStream';
+import {
+  drainSentenceTts,
+  speakableTail,
+  takeSpeakableSentences,
+} from '../../../../src/frontend/src/pages/ChatPage/context/sentenceStream';
 
 describe('drainSentenceTts', () => {
   it('removes the settled request id from the pending set', () => {
@@ -49,5 +53,45 @@ describe('drainSentenceTts', () => {
     const stream = { pending: new Set(['a']), streamDone: false };
     expect(drainSentenceTts(stream, 'unknown')).toBe(false);
     expect([...stream.pending]).toEqual(['a']);
+  });
+});
+
+describe('takeSpeakableSentences', () => {
+  it('returns completed sentences and advances past them, leaving the tail', () => {
+    const stream = { accumulated: 'Erster Satz. Zweiter Satz! Und ein Rest', dispatchedIdx: 0 };
+    expect(takeSpeakableSentences(stream)).toEqual(['Erster Satz.', 'Zweiter Satz!']);
+    expect(stream.accumulated.slice(stream.dispatchedIdx)).toBe('Und ein Rest');
+    expect(takeSpeakableSentences(stream)).toEqual([]);
+  });
+
+  it('speaks citation labels, never the markup', () => {
+    const stream = {
+      accumulated: 'Offen ist <cite entity="JIRA-1" type="ticket">Login kaputt</cite>. Sonst nichts. ',
+      dispatchedIdx: 0,
+    };
+    expect(takeSpeakableSentences(stream)).toEqual(['Offen ist Login kaputt.', 'Sonst nichts.']);
+  });
+
+  it('drops both halves of a tag that a sentence end inside the label cut in two', () => {
+    const stream = {
+      accumulated: 'Siehe <cite entity="REL-1" type="release">Version 1. Final</cite> dazu. ',
+      dispatchedIdx: 0,
+    };
+    const spoken = takeSpeakableSentences(stream);
+    expect(spoken).toEqual(['Siehe Version 1.', 'Final dazu.']);
+    expect(spoken.join(' ')).not.toMatch(/cite|entity=/);
+  });
+});
+
+describe('speakableTail', () => {
+  it('returns the undispatched rest without markup', () => {
+    const content = 'Erster Satz. Dann <cite entity="JIRA-1">Login kaputt</cite>';
+    expect(speakableTail({ dispatchedIdx: 13 }, content)).toBe('Dann Login kaputt');
+  });
+
+  it('strips a closing half left over from a tag cut at the last sentence end', () => {
+    const content = 'Siehe <cite entity="REL-1">Version 1. Final</cite>';
+    expect(speakableTail({ dispatchedIdx: 'Siehe <cite entity="REL-1">Version 1. '.length }, content))
+      .toBe('Final');
   });
 });

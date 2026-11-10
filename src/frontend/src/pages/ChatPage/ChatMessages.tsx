@@ -16,7 +16,7 @@ import ArtifactRenderer from '../../components/chat/artifacts/ArtifactRenderer';
 import { useFeatureFlags } from '../../api/resources/brain';
 import { useChatContext } from './context/ChatContext';
 import { CitationChip } from '../../components/wissensbasis/CitationChip';
-import { splitCites, stripCites } from '../../components/wissensbasis/citeMarkup';
+import { splitCites } from '../../components/wissensbasis/citeMarkup';
 import { useTraceQuery, useWissensbasisAvailable, type TraceEntity } from '../../api/resources/wissensbasis';
 
 const IMAGE_URL_RE = /https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?/i;
@@ -626,7 +626,7 @@ export default function ChatMessages() {
             {/* TTS Button for assistant messages */}
             {message.role === 'assistant' && !message.streaming && speakText && (
               <button
-                onClick={() => speakText(stripCites(message.content))}
+                onClick={() => speakText(message.content)}
                 className="mt-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white flex items-center space-x-1"
                 aria-label={t('chat.readAloud')}
               >

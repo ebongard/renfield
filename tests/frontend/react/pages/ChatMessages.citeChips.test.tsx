@@ -62,11 +62,31 @@ describe('ChatMessages — citation markup', () => {
     expect(screen.queryByRole('button', { name: /Export hängt/ })).not.toBeInTheDocument();
   });
 
-  it('reads the labels aloud, not the markup', () => {
+  it('hands the read-aloud button the message as stored (speakText strips, once)', () => {
     const { speakText } = render([{ role: 'assistant', content: ANSWER }]);
     fireEvent.click(screen.getByRole('button', { name: /vorlesen/i }));
-    expect(speakText).toHaveBeenCalledWith('Offen sind Login kaputt und Export hängt.');
+    expect(speakText).toHaveBeenCalledWith(ANSWER);
   });
+
+  it('does not chip a cite label a second time when a trace entity has the same name', () => {
+    render([{
+      role: 'assistant',
+      content: 'Offen ist <cite entity="JIRA-1" type="ticket">Login kaputt</cite>.',
+      entities: [{ entity_id: 'JIRA-1', display_name: 'Login kaputt', entity_type: 'ticket' }],
+    }]);
+    expect(screen.getAllByRole('button', { name: /Login kaputt/ })).toHaveLength(1);
+  });
+
+  it.each(['constructor', '__proto__', 'toString'])(
+    'renders a chip for a crafted type="%s" instead of crashing',
+    (type) => {
+      render([{
+        role: 'assistant',
+        content: `Siehe <cite entity="JIRA-1" type="${type}">Login kaputt</cite>.`,
+      }]);
+      expect(screen.getByRole('button', { name: /Login kaputt/ })).toBeInTheDocument();
+    },
+  );
 
   it('leaves a user bubble untouched (users do not send citation markup)', () => {
     render([{ role: 'user', content: 'Was ist <cite entity="X">das</cite>?' }]);
