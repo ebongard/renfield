@@ -80,7 +80,7 @@ Produktion lag: ob der *PR* Migrationen enthält (das Bild wird aus `main` gebau
 `ls … | grep <revision>` über `alembic/versions/` (**Dateinamen tragen die Revision nicht** —
 `pc20260929_kg_relation_validity.py` hält `pc20260929_kg_validity`). `/health/ready` meldete die ganze Zeit
 `healthy`; gefunden hat es allein der Browser-E2E. Regressionstest: `tests/backend/test_deploy_migration_gate.py`.
-🛑 **Eine Compose-Instanz (mama) erreicht dieses Skript nicht** — sie läuft über `bin/update-compose-instance.sh`
+🛑 **Eine Compose-Instanz erreicht dieses Skript nicht** — sie läuft über `bin/update-compose-instance.sh`
 mit demselben Tor (`tests/backend/test_update_compose_instance.py`). `alembic current` druckt eine Datenbank HINTER
 dem Kopf ohne „(head)"; ein Parser, der das Suffix verlangt, verweigert genau den Fall, für den `--migrate` da ist.
 

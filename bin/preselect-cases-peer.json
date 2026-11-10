@@ -2,7 +2,7 @@
   {"task": "Welche Dokumente sind in der x-idra instanz heute angelegt worden?", "expect": "treffer"},
   {"task": "was liegt in x-idra?", "expect": "treffer"},
   {"task": "frag evdbs Renfield nach den Rechnungen", "expect": "treffer"},
-  {"task": "frag Mamas renfield nach dem Rezept", "expect": "treffer"},
+  {"task": "frag Omas renfield nach dem Rezept", "expect": "treffer"},
   {"task": "frag den SSV renfield nach dem Spielplan", "expect": "treffer"},
   {"task": "suche in allen renfields nach dem Vertrag", "expect": "treffer"},
   {"task": "weiss die andere Instanz etwas ueber den Mietvertrag?", "expect": "treffer"},
