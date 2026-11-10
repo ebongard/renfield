@@ -221,7 +221,11 @@ async def cancel_reminder(params: dict, user_id: int | None = None) -> dict:
     reminder_id: int | None = None
     if raw_id not in (None, ""):
         try:
-            reminder_id = int(str(raw_id).lstrip("#"))
+            # LLMs send 5, "5", "#5" or 5.0 — all mean reminder 5; 5.5 means nothing.
+            as_float = float(str(raw_id).lstrip("#"))
+            if not as_float.is_integer():
+                raise ValueError(raw_id)
+            reminder_id = int(as_float)
         except ValueError:
             return {
                 "success": False,

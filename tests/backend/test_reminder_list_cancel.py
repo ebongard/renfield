@@ -281,3 +281,26 @@ def test_utc_to_local_round_trips_with_local_to_utc():
         local = datetime(2026, 1, 15, 7, 30)
         utc = ReminderService._naive_local_to_naive_utc(local)
         assert naive_utc_to_local(utc).replace(tzinfo=None) == local
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("raw", [5, "5", "#5", 5.0, "5.0"])
+async def test_cancel_accepts_every_spelling_of_an_id(monkeypatch, raw):
+    monkeypatch.setattr(settings, "proactive_reminders_enabled", True)
+    svc = MagicMock()
+    svc.list_pending = AsyncMock(return_value=[_row(5, "Ofen", datetime(2026, 8, 27, 16, 0))])
+    svc.cancel = AsyncMock(return_value=True)
+    p_sess, p_svc = _session_with(svc)
+    with _berlin(), p_sess, p_svc:
+        result = await cancel_reminder({"reminder_id": raw}, user_id=1)
+    assert result["success"] is True, result
+    assert svc.cancel.await_args.args[0] == 5
+
+
+@pytest.mark.unit
+async def test_a_fractional_id_is_refused(monkeypatch):
+    monkeypatch.setattr(settings, "proactive_reminders_enabled", True)
+    with patch("services.database.AsyncSessionLocal") as session:
+        result = await cancel_reminder({"reminder_id": 5.5}, user_id=1)
+    assert result["success"] is False
+    session.assert_not_called()
