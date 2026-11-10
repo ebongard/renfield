@@ -56,6 +56,7 @@ import type { DeviceActionResult } from '../../../components/chat/artifacts/Devi
 import type { TraceEntity } from '../../../api/resources/wissensbasis';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
 import { drainSentenceTts, type SentenceStreamState } from './sentenceStream';
+import { stripCites } from '../../../components/wissensbasis/citeMarkup';
 import { shouldRearmWakeWord } from './wakeWordRecovery';
 import { messagesAfterSessionReplaced } from './sessionReplaced';
 
@@ -1503,7 +1504,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   useEffect(() => {
     streamSpeakRef.current = async (text: string) => {
       try {
-        return await voiceStream.speakText(text);
+        return await voiceStream.speakText(stripCites(text));
       } catch (e) {
         debug.log('streamSpeak error', e);
         return null;
@@ -1627,7 +1628,9 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Streaming-aware speakText. Resolves when the TTS request is dispatched
   // (streaming) or playback completes (legacy). Existing callers see the
   // same Promise<void> shape.
-  const speakText = useCallback(async (text: string): Promise<void> => {
+  const speakText = useCallback(async (raw: string): Promise<void> => {
+    // Citation markup is for the eye; the ear gets the label only.
+    const text = stripCites(raw);
     if (!VOICE_STREAM_ENABLED) {
       return speakTextLegacy(text);
     }
