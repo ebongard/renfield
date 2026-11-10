@@ -10,7 +10,7 @@ import re
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import REMINDER_CANCELLED, REMINDER_FIRED, REMINDER_PENDING, Reminder
@@ -234,6 +234,32 @@ class ReminderService:
         )
         return list(result.scalars().all())
 
+    async def claim_for_firing(self, reminder_id: int) -> bool:
+        """Atomically move a PENDING reminder to FIRED before it is delivered.
+
+        The checker reads due reminders, then delivers them one by one, and
+        delivery commits in between -- so a cancel landing after the read used to
+        be overwritten by ``mark_fired`` and the cancelled text spoken anyway.
+        One conditional UPDATE decides the race: False means it was cancelled
+        (or claimed by another checker) since the read, and must not fire.
+        """
+        result = await self.db.execute(
+            update(Reminder)
+            .where(Reminder.id == reminder_id, Reminder.status == REMINDER_PENDING)
+            .values(status=REMINDER_FIRED, fired_at=datetime.now(UTC).replace(tzinfo=None))
+        )
+        await self.db.commit()
+        return result.rowcount == 1
+
+    async def release_claim(self, reminder_id: int) -> None:
+        """Undo a claim whose delivery failed, so the next check retries it."""
+        await self.db.execute(
+            update(Reminder)
+            .where(Reminder.id == reminder_id, Reminder.status == REMINDER_FIRED)
+            .values(status=REMINDER_PENDING, fired_at=None)
+        )
+        await self.db.commit()
+
     async def mark_fired(self, reminder_id: int, notification_id: int | None = None) -> None:
         """Mark a reminder as fired."""
         result = await self.db.execute(
@@ -262,6 +288,11 @@ async def check_due_reminders():
             due = await service.get_due_reminders()
 
             for reminder in due:
+                # Claim first: a reminder cancelled since get_due_reminders()
+                # must stay silent (#264 race).
+                if not await service.claim_for_firing(reminder.id):
+                    logger.info(f"⏰ Reminder #{reminder.id} skipped: cancelled before it fired")
+                    continue
                 try:
                     notification_service = NotificationService(db)
                     # A reminder that belongs to someone fires as THEIR personal
@@ -286,5 +317,12 @@ async def check_due_reminders():
                     logger.info(f"⏰ Reminder #{reminder.id} fired")
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to fire reminder #{reminder.id}: {e}")
+                    try:
+                        await db.rollback()
+                        await service.release_claim(reminder.id)
+                    except Exception as release_error:
+                        logger.warning(
+                            f"⚠️ Reminder #{reminder.id} stays claimed, will not retry: {release_error}"
+                        )
     except Exception as e:
         logger.warning(f"⚠️ Reminder check failed: {e}")

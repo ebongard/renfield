@@ -455,7 +455,7 @@ Home Assistant Automation → POST /api/notifications/webhook
 - **Zeitgesteuert**: Reminder mit Fälligkeitsdatum
 - **API**: `POST /api/notifications/reminders` zum Erstellen, `GET /api/notifications/reminders` zum Auflisten
 - **Hintergrund-Prüfung**: Fällige Erinnerungen werden automatisch als Benachrichtigungen ausgelöst
-- **Per Sprache und Chat**: „erinnere mich in 20 Minuten an den Ofen“ legt an, „welche Erinnerungen/Timer laufen?“ listet, „brich die Erinnerung an den Ofen ab“ storniert (`internal.create_reminder` / `list_reminders` / `cancel_reminder`, #264). Jeder sieht und storniert nur die eigenen, auch Admins; Zeiten werden in Ortszeit genannt. Benannte Timer stehen noch aus.
+- **Per Sprache und Chat**: „erinnere mich in 20 Minuten an den Ofen“ legt an, „welche Erinnerungen/Timer laufen?“ listet, „brich die Erinnerung an den Ofen ab“ storniert (`internal.create_reminder` / `list_reminders` / `cancel_reminder`, #264). Jeder sieht und storniert nur die eigenen, auch Admins; Zeiten werden in Ortszeit genannt. Der Prüflauf beansprucht eine fällige Erinnerung mit einem bedingten `UPDATE`, bevor er sie zustellt: eine Stornierung, die zwischen Lesen und Zustellen ankommt, bleibt stumm; eine spätere meldet „bereits ausgelöst“, und eine gescheiterte Zustellung wird wieder freigegeben und erneut versucht. Benannte Timer stehen noch aus.
 
 ### Konfiguration
 
