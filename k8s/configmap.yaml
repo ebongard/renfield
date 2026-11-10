@@ -621,6 +621,8 @@ data:
   SPEAKER_CONTROLLED_ENROLLMENT_ENABLED: "true"
   TOOL_HEALTH_TRACKING_ENABLED: "true"
   TRAJECTORY_CAPTURE_ENABLED: "true"
+  # /admin/routing (#1524): every router decision incl. the FULL message, admin-only, 14 days.
+  ROUTING_TRACES_ENABLED: "true"
   WISSEN_WORKSPACE_ENABLED: "true"
   PRESENCE_SWITCH_ENTER_MARGIN_DB: "4"
 
