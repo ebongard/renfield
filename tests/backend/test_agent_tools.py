@@ -36,6 +36,8 @@ INTERNAL_TOOL_NAMES = {
     "internal.reextract_paperless_metadata",  # PAPERLESS_REEXTRACT_TOOL
     "internal.paperless_dedupe",          # PAPERLESS_DEDUPE_TOOL
     "internal.create_reminder",           # REMINDER_TOOL
+    "internal.list_reminders",            # REMINDER_TOOL (#264)
+    "internal.cancel_reminder",           # REMINDER_TOOL (#264)
     "internal.find_duplicate_documents",     # FIND_DUPLICATE_DOCUMENTS_TOOL (#1170)
     # NOTE: the SIMBA_FORWARD_TOOL tools (forward_attachment_to_simba /
     # simba_commit_upload) are NOT in this baseline — they register ONLY when the

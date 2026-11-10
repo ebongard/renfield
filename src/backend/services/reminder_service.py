@@ -17,6 +17,15 @@ from models.database import REMINDER_CANCELLED, REMINDER_FIRED, REMINDER_PENDING
 from utils.config import settings
 
 
+def naive_utc_to_local(dt_naive_utc: datetime) -> datetime:
+    """Inverse of `ReminderService._naive_local_to_naive_utc`: a stored naive-UTC
+    trigger time as an aware LOCAL datetime, for anything shown or spoken to the
+    user. Module-level so it survives tests that replace the service class."""
+    from services.daypart_service import _resolve_tz
+
+    return dt_naive_utc.replace(tzinfo=UTC).astimezone(_resolve_tz())
+
+
 class ReminderService:
     """CRUD + duration parsing for reminders."""
 

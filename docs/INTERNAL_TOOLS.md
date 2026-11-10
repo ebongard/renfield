@@ -21,6 +21,7 @@ Source paths are relative to `src/backend/`.
 | `internal.knowledge_search` | RAG chunk search PLUS circle-filtered Schicht A facts; returns provenance `data.sources` | `services/knowledge_tool.py` | circle filter (asker `user_id`) |
 | `internal.list_my_memories` | Enumerate the asker's own memories without the vector threshold | `services/memory_list_tool.py` | own memories only |
 | `internal.create_reminder` | Create a time-based reminder | `services/reminder_tool.py` | re-asserts `settings.proactive_reminders_enabled` (H4) |
+| `internal.list_reminders` / `internal.cancel_reminder` | List / cancel the asker's own pending reminders by voice (#264) | `services/reminder_tool.py` | own reminders only (admins too); H4 like create |
 | `internal.forward_attachment_to_paperless` | Forward a chat attachment to Paperless from server-stored bytes | `services/chat_upload_tool.py` | — |
 | `internal.ingest_file` | Interactive folder-ingest of a file on a watched share | `services/folder_ingest_tool.py` | `FOLDER_INGEST_ENABLED` |
 | `internal.render_table` / `internal.render_list` | Gen-UI: render an answer as a typed `table`/`list` widget | `services/widget_tools.py` | `ARTIFACTS_TYPED_ENABLED` (widget emit) |
@@ -81,6 +82,26 @@ Source: `services/reminder_tool.py`
 - Closes the #1146 gap where the chat agent had no create path and hallucinated a confirmation (the only prior caller
   was `POST /api/reminders`).
 - Routed via the `general` role.
+- Confirms the firing time in LOCAL time (`reminder_service.naive_utc_to_local`); the row stores naive UTC. Before
+  #264 the confirmation printed the stored UTC, so "um 18:00" came back as "16:00" for a CEST user.
+
+### `internal.list_reminders` / `internal.cancel_reminder`
+
+Source: `services/reminder_tool.py` (#264)
+
+- Answer "welche Erinnerungen/Timer laufen?" and "brich den Nudel-Timer ab" by voice. Before, listing and cancelling
+  existed only as `GET`/`DELETE /api/reminders` for the web UI.
+- **Owner-scoped on the injected `user_id`, admins included** — unlike `GET /api/reminders`, where an admin sees
+  all: a spoken question about "my timers" means one's own. An unidentified turn (`user_id=None`: unrecognised
+  voice, device token) reaches only OWNERLESS reminders. Deliberately not refused like the radio favorites: a
+  reminder set by an unrecognised speaker is ownerless and fires publicly anyway, and refusing would break the
+  common voice case where the speaker is not recognised.
+- Cancel takes `reminder_id` (from the list) or `match` (a word from the text, case-insensitive), resolved against
+  the asker's OWN pending list — one ownership rule for both paths. More than one hit cancels nothing and returns
+  the candidates; the agent asks which one.
+- Times are local, like the create confirmation. Both re-assert `settings.proactive_reminders_enabled` (H4).
+- Routed via the `general` role (`internal_tools: null`); the role description names listing and cancelling.
+- Not yet: named timers ("Nudel-Timer" as a name, not a text match) — the open rest of #264.
 
 ### `internal.forward_attachment_to_paperless`
 

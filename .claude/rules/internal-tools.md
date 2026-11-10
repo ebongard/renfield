@@ -43,12 +43,14 @@ UNIDENTIFIED turn (`user_permissions=None`: device/satellite token, unrecognized
 - `internal.list_unfiled_documents` is owner-scoped: admin/single-user sees all, a non-admin only their OWN docs via
   the atom owner, INNER-joined fail-closed (its `query` mode is a corpus-wide name search); LIKE wildcards escaped.
 - `internal.list_my_memories` reads only the authenticated user's own memories.
+- `internal.list_reminders` / `internal.cancel_reminder` are owner-scoped for EVERYONE, admins included (unlike
+  `GET /api/reminders`); an unidentified turn reaches only ownerless reminders — deliberately not refused (#264).
 - `internal.knowledge_search`: fact-source titles are circle-filtered separately (`_visible_document_meta`); a
   non-visible source becomes a generic `Dokument {id}` label with no chip.
 
 ## H4 — handlers re-assert their runtime flag
 A tool re-checks its feature flag in-handler and refuses rather than persist something nothing will ever act on:
-`internal.create_reminder` → `settings.proactive_reminders_enabled`; `internal.ingest_file` → `FOLDER_INGEST_ENABLED`;
+`internal.create_reminder` / `list_reminders` / `cancel_reminder` → `settings.proactive_reminders_enabled`; `internal.ingest_file` → `FOLDER_INGEST_ENABLED`;
 `internal.find_duplicate_documents` → `DOCUMENT_DEDUPE_ENABLED` (dark).
 
 ## Destructive / write tools — safety properties
