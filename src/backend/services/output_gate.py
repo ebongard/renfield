@@ -8,6 +8,13 @@ case) and the whole REST path never fired it, and a plugin registering the hook
 got no signal that its gate was dead. This module is the shared implementation
 so that "every path that sends text" is one place instead of a dozen.
 
+#1269 still missed one: the single-agent loop of the chat WebSocket (router
+picks one role, no orchestrator) sent its `final_answer` ungated until
+2026-11-10. `test_agent_loop_check_output.py` drives that path end to end.
+Not gated on purpose: answers a plugin produces itself (a sub-intent handler or
+`pre_orchestration` that owns the turn); they come with a card the gate does
+not cover either.
+
 Two entry points:
 
 * :func:`apply_check_output_gate` — for text that already exists in one piece.
