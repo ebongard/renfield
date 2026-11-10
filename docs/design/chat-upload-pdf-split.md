@@ -4,7 +4,7 @@ Stand: 2026-11-08 · Status: gebaut (Variante A), Modul `services/chat_paperless
 
 ## Anlass
 
-Auf der Instanz „mama“ wurde ein PDF mit mehreren Schreiben in den Chat gelegt und „in Paperless speichern“
+Auf einer Compose-Instanz wurde ein PDF mit mehreren Schreiben in den Chat gelegt und „in Paperless speichern“
 verlangt. Ergebnis: ein einziges Paperless-Dokument (bzw. wegen eines zweiten, inzwischen behobenen Fehlers gar
 keines). `pdf-split.md` nimmt den Chat-Weg ausdrücklich aus („deliberately out of scope“) — mit der Begründung
 Wartezeit und anwesender Nutzer.
@@ -86,4 +86,4 @@ Nebenbei behoben: die Fortschrittsabfrage kennt `split_archived` als fertig und 
 
 Je Zeile der Tabelle ein Fall gegen echtes Postgres (`renfield_test`), dazu: Schalter aus → Ablage byte-identisch;
 REST- und Agentenweg verhalten sich gleich; zweimal „ablegen“ legt kein Kind doppelt ab (Idempotenz des Nachlaufs).
-Auf „mama“ zusätzlich `PDF_SPLIT_ENABLED=true` setzen und mit dem gemeldeten Sammel-PDF Ende zu Ende prüfen.
+Auf der betroffenen Instanz zusätzlich `PDF_SPLIT_ENABLED=true` setzen und mit dem gemeldeten Sammel-PDF Ende zu Ende prüfen.

@@ -455,7 +455,7 @@ git pull
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-**Compose-Instanz aus fertigen Bildern (z. B. „mama").** Eine Einzelhost-Instanz, die ihre Bilder von der
+**Compose-Instanz aus fertigen Bildern.** Eine Einzelhost-Instanz, die ihre Bilder von der
 Baubox bezieht, erreicht `bin/deploy-production.sh` nicht — sie fällt still zurück. Aktualisiert wird sie mit
 `bin/update-compose-instance.sh`: Sicherung (`pg_dump -Fc` + `.env`, ein Zeitstempel), Bildkopie Baubox → Ziel,
 neue Marken in die `.env`, dann dasselbe Migrations-Tor wie im Cluster (Kopf im NEUEN Bild gegen `alembic current`;

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Update a pull-based single-host Docker Compose instance (e.g. "mama") to
+# Update a pull-based single-host Docker Compose instance to
 # image tags that already exist on the build box. The k8s instances are
 # deployed by bin/deploy-production.sh; a compose host is not reached by it
 # and falls behind silently (2026-11-08: one week and four migrations).
@@ -28,11 +28,11 @@
 # restored; the matching dump is named in the output.
 #
 # Usage:
-#   bin/update-compose-instance.sh --target seven.local --dir '~/renfield-mama' \
-#     --compose-file docker-compose.mama.yml --env-script env.sh \
+#   bin/update-compose-instance.sh --target <host> --dir '~/renfield-<instance>' \
+#     --compose-file docker-compose.<instance>.yml --env-script env.sh \
 #     --backend-tag 2026-11-08-chat-fk-rules --frontend-tag 2026-11-07-backlog-fixes --migrate
-#   bin/update-compose-instance.sh --target seven.local --dir '~/renfield-mama' \
-#     --compose-file docker-compose.mama.yml --env-script env.sh --rollback 20261108-141756
+#   bin/update-compose-instance.sh --target <host> --dir '~/renfield-<instance>' \
+#     --compose-file docker-compose.<instance>.yml --env-script env.sh --rollback 20261108-141756
 #   add --dry-run to print the steps without changing anything
 #
 # Requires RENFIELD_REGISTRY (as deploy-production.sh). The compose file must

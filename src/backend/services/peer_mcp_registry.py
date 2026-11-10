@@ -80,8 +80,8 @@ def _build_query_brain_tool(peer: PeerUser) -> MCPToolInfo:
             #
             # The old one named only the PERSON. "frag <jemand>s Renfield" hit
             # 3/3 with it -- the model recognises the pattern, not the name,
-            # because "frag Mamas renfield" hit too, although Mama is not the
-            # name. What hit 0/3 was every question naming the INSTANCE ("was
+            # because a question naming a different person hit too, although
+            # that person is not the name. What hit 0/3 was every question naming the INSTANCE ("was
             # liegt in x-idra?", "weiss die andere Instanz ...") or the PLURAL
             # ("suche in allen Renfields"). Those three are now 3/3.
             #

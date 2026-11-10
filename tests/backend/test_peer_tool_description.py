@@ -14,8 +14,8 @@ Measured on 2026-10-29 against the REAL prompt of the live turn (signature
     this version                    36/39   92 %
 
 The old one named only the PERSON. "frag <jemand>s Renfield" hit 3/3 with it --
-the model recognises the pattern, not the name (even "frag Mamas renfield" hit,
-although Mama is not the display name). 0/3 was the score for every question
+the model recognises the pattern, not the name (a question naming a different person
+hit too, although that person is not the display name). 0/3 was the score for every question
 naming the INSTANCE or asking for the PLURAL; those three are now 3/3.
 
 Still open (0/3, with three different document phrasings as well): "Welche
