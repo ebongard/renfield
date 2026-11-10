@@ -2,6 +2,7 @@ import { Fragment, ReactNode } from 'react';
 import { ExternalLink } from 'lucide-react';
 
 import { CitationChip } from './wissensbasis/CitationChip';
+import { citeTagRe as makeCiteTagRe, isValidEntity } from './wissensbasis/citeMarkup';
 
 /**
  * Renders a subset of Microsoft Adaptive Card JSON used by Reva.
@@ -140,17 +141,6 @@ const SPACING: Record<string, string> = {
 };
 
 /**
- * Server-side validator mirror — keep in sync with Reva's
- * _ALLOWED_ENTITY_RE in src/reva/wissensbasis/citation_chip.py.
- * Accepts alphanumeric + dash + underscore + slash (the slash supports
- * Digital.ai Release path-style IDs like Applications/Folder.../Release...).
- * Anything else (script tags, javascript:, smuggled HTML) and any ".."
- * substring (path traversal) renders as a missing chip.
- */
-const CITE_ENTITY_RE = /^[A-Za-z0-9_\-/]{1,256}$/;
-const isValidEntity = (v: string) => !!v && !v.includes('..') && CITE_ENTITY_RE.test(v);
-
-/**
  * URL scheme allowlist for AdaptiveCard Action.OpenUrl / Image (review M3).
  * React does NOT sanitize URL schemes in href/src, so a `javascript:` (or
  * `data:`) URL from a card producer (incl. a federated Reva backend) would be a
@@ -182,7 +172,7 @@ function renderFormattedText(text?: string): ReactNode {
   // Local non-global regex per-call. The pattern is re-used inside the
   // loop with `.match()` (not `.exec()`), so `g` is unnecessary and the
   // module-level `lastIndex` footgun is sidestepped entirely.
-  const citeTagRe = /<cite\s+entity="([^"]+)"(?:\s+type="([^"]+)")?\s*>([^<]*)<\/cite>/i;
+  const citeTagRe = makeCiteTagRe();
 
   const parts: ReactNode[] = [];
   let remaining = String(text);

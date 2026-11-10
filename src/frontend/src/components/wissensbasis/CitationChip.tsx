@@ -49,8 +49,9 @@ const TYPE_ICON: Record<string, LucideIcon> = {
 };
 
 function chipIcon(type?: string): LucideIcon {
-  if (!type) return Box;
-  return TYPE_ICON[type] ?? Box;
+  // Own keys only: `type` comes from model markup, and "constructor" or
+  // "__proto__" would otherwise resolve to Object.prototype members.
+  return type && Object.prototype.hasOwnProperty.call(TYPE_ICON, type) ? TYPE_ICON[type] : Box;
 }
 
 export function CitationChip({ entity, label, entityType, missing }: CitationChipProps) {

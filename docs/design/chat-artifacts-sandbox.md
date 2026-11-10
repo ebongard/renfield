@@ -617,7 +617,7 @@ Lane B is a later, separate, security-reviewed PR if ever needed.
 - `card` WS frame + `chat_handler` emit + `utils/hooks.py` `{"card":...}` contract —
   the `artifact` frame mirrors it.
 - `message_metadata` (sources/agentRole) persistence + `historyToUiMessage` rehydrate.
-- `CitationChip` `CITE_ENTITY_RE` — URL-scheme allow-list precedent.
+- `CITE_ENTITY_RE` (`components/wissensbasis/citeMarkup.ts`, used by `CitationChip`'s callers) — URL-scheme allow-list precedent.
 
 ### Failure modes (each must fail closed)
 - Schema/shape invalid → fallback to escaped code block (never raw markup). **Covered.**

@@ -28,6 +28,18 @@ describe('CitationChip', () => {
     expect(screen.getByTestId('focus')).toHaveTextContent('abc-123');
   });
 
+  it.each(['constructor', '__proto__', 'hasOwnProperty'])(
+    'falls back to the default icon for type="%s" (no prototype lookup)',
+    (type) => {
+      renderWithRouter(
+        <WissensbasisProvider>
+          <CitationChip entity="abc-123" label="Crafted" entityType={type} />
+        </WissensbasisProvider>,
+      );
+      expect(screen.getByRole('button', { name: /Crafted/ })).toBeInTheDocument();
+    },
+  );
+
   it('renders missing chips as non-interactive with strike-through', () => {
     renderWithRouter(
       <WissensbasisProvider>

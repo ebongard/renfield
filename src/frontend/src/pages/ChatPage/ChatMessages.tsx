@@ -16,6 +16,7 @@ import ArtifactRenderer from '../../components/chat/artifacts/ArtifactRenderer';
 import { useFeatureFlags } from '../../api/resources/brain';
 import { useChatContext } from './context/ChatContext';
 import { CitationChip } from '../../components/wissensbasis/CitationChip';
+import { splitCites } from '../../components/wissensbasis/citeMarkup';
 import { useTraceQuery, useWissensbasisAvailable, type TraceEntity } from '../../api/resources/wissensbasis';
 
 const IMAGE_URL_RE = /https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?/i;
@@ -29,7 +30,30 @@ type ContentPart =
   | { type: 'link'; label: string; url: string }
   | { type: 'image'; url: string };
 
+/**
+ * Inline `<cite>` markup first (a check_output handler may wrap entity names
+ * in it), then the trace's entity names in the remaining plain text. A cite
+ * with an id the validator rejects becomes its plain label — in running chat
+ * text a struck-through "missing" pill reads as an error; never the raw tag.
+ */
 function renderTextWithChips(text: string, entities: TraceEntity[], keyPrefix: string): ReactNode[] {
+  return splitCites(text).flatMap<ReactNode>((seg, i) =>
+    typeof seg === 'string'
+      ? renderEntityNames(seg, entities, `${keyPrefix}-${i}`)
+      : seg.valid
+        ? [
+            <CitationChip
+              key={`${keyPrefix}-cite-${i}`}
+              entity={seg.entity}
+              label={seg.label}
+              entityType={seg.type}
+            />,
+          ]
+        : [seg.label],
+  );
+}
+
+function renderEntityNames(text: string, entities: TraceEntity[], keyPrefix: string): ReactNode[] {
   if (!text || entities.length === 0) {
     return [text];
   }

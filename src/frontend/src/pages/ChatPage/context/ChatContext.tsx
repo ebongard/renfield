@@ -55,7 +55,13 @@ import type { BranchInfo, ChatArtifactPayload, Conversation, MessageSource } fro
 import type { DeviceActionResult } from '../../../components/chat/artifacts/DeviceControlArtifact';
 import type { TraceEntity } from '../../../api/resources/wissensbasis';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
-import { drainSentenceTts, type SentenceStreamState } from './sentenceStream';
+import {
+  drainSentenceTts,
+  speakableTail,
+  takeSpeakableSentences,
+  type SentenceStreamState,
+} from './sentenceStream';
+import { stripCites } from '../../../components/wissensbasis/citeMarkup';
 import { shouldRearmWakeWord } from './wakeWordRecovery';
 import { messagesAfterSessionReplaced } from './sessionReplaced';
 
@@ -799,7 +805,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
           const stream = sentenceStreamRef.current;
           if (stream.active) {
             stream.streamDone = true;
-            const tail = completedMessage.content.slice(stream.dispatchedIdx).trim();
+            const tail = speakableTail(stream, completedMessage.content);
             if (tail) {
               debug.log('sentence-streaming: dispatching tail', tail.slice(0, 40));
               void streamSpeakRef.current(tail).then((rid) => {
@@ -883,29 +889,15 @@ export function ChatProvider({ children }: ChatProviderProps) {
     }
   }, [resumeWakeWord]);
 
-  // Sentence boundary regex for streaming TTS dispatch. Matches a
-  // sentence terminator followed by whitespace.
-  const _SENTENCE_BOUNDARY = /[.!?]\s/g;
-
   // Look at the streaming buffer; for each completed sentence not yet
   // dispatched, fire a tts_request via the streaming hook.
   const dispatchPendingSentences = useCallback(() => {
     const stream = sentenceStreamRef.current;
     if (!stream.active) return;
-    const tail = stream.accumulated.slice(stream.dispatchedIdx);
-    const matches = Array.from(tail.matchAll(_SENTENCE_BOUNDARY));
-    let cursor = 0;
-    for (const m of matches) {
-      const end = (m.index ?? 0) + m[0].length;
-      const sentence = tail.slice(cursor, end).trim();
-      cursor = end;
-      if (!sentence) continue;
+    for (const sentence of takeSpeakableSentences(stream)) {
       void streamSpeakRef.current(sentence).then((rid) => {
         if (rid) stream.pending.add(rid);
       });
-    }
-    if (cursor > 0) {
-      stream.dispatchedIdx += cursor;
     }
   }, []);
 
@@ -1627,7 +1619,9 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Streaming-aware speakText. Resolves when the TTS request is dispatched
   // (streaming) or playback completes (legacy). Existing callers see the
   // same Promise<void> shape.
-  const speakText = useCallback(async (text: string): Promise<void> => {
+  const speakText = useCallback(async (raw: string): Promise<void> => {
+    // Citation markup is for the eye; the ear gets the label only.
+    const text = stripCites(raw);
     if (!VOICE_STREAM_ENABLED) {
       return speakTextLegacy(text);
     }

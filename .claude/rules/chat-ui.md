@@ -27,6 +27,10 @@ needs `WEATHER_ENABLED`.
   `agent_router.role_for_intent`): validated against `agent_roles.yaml` in `agent_router` Layer-0. Every tool stays
   permission-gated at execute time — a hint never escalates. Palette tool actions STAGE into the composer, no auto-send.
 - The agent role rides the `done` frame and persists as `message_metadata.agent_role` (rehydrates on history reload).
+- **`<cite entity=… type=…>Label</cite>`** (a `check_output` handler's markup, e.g. Reva's Wissensbasis) is parsed in ONE place,
+  `components/wissensbasis/citeMarkup.ts`: card text and the assistant bubble render a `CitationChip`, read-aloud
+  (`speakText` + the sentence dispatcher) gets `stripCites` → label only. An invalid id is the plain label in the
+  bubble, a missing chip in a card; never the raw tag.
 
 ## Message search
 `GET /api/chat/messages/search`: Postgres FTS on the GENERATED `messages.search_vector` (migration `pc20260617`), ranked
