@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import math
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -321,6 +322,98 @@ class TestMcpToolCallMetric:
 
         assert result["success"] is True
         assert histogram.mock_calls == []
+
+
+class TestFederationCallsAreNotObserved:
+    """A federation peer's name is personal. Peer calls branch off before the
+    timer, in both entry points, so the name never becomes a `server` value."""
+
+    @staticmethod
+    def _federated_manager() -> MCPManager:
+        manager = MCPManager()
+        state = MCPServerState(config=MCPServerConfig(
+            name="peer-of-a-named-person",
+            transport=MCPTransportType.FEDERATION,
+        ))
+        state.connected = True
+        manager._servers["peer-of-a-named-person"] = state
+        manager._tool_index["mcp.peer-of-a-named-person.query_brain"] = MCPToolInfo(
+            server_name="peer-of-a-named-person",
+            original_name="query_brain",
+            namespaced_name="mcp.peer-of-a-named-person.query_brain",
+            description="federated query",
+            input_schema={"type": "object", "properties": {}},
+        )
+
+        async def answer(**_kwargs):
+            yield {"success": True, "message": "from the peer", "data": None}
+
+        manager._execute_federation_streaming = answer
+        return manager
+
+    async def test_execute_tool_leaves_no_sample(self, registry):
+        manager = self._federated_manager()
+
+        result = await manager.execute_tool("mcp.peer-of-a-named-person.query_brain", {})
+
+        assert result["message"] == "from the peer"
+        assert label_values(registry, "renfield_mcp_tool_duration_seconds", "server") == set()
+
+    async def test_execute_tool_streaming_leaves_no_sample(self, registry):
+        manager = self._federated_manager()
+
+        items = [
+            item async for item in
+            manager.execute_tool_streaming("mcp.peer-of-a-named-person.query_brain", {})
+        ]
+
+        assert items[-1]["message"] == "from the peer"
+        assert label_values(registry, "renfield_mcp_tool_duration_seconds", "server") == set()
+
+
+# =============================================================================
+# Gauges without labels: not a number until measured
+# =============================================================================
+
+
+class TestUnlabelledGaugesStartUnmeasured:
+    """prometheus_client exports a gauge without labels as 0 from the start.
+    For these three, 0 is a verdict (no problem server, no conflation
+    candidate, no memory), so before the first measurement they are NaN."""
+
+    @pytest.mark.parametrize(
+        ("series", "measure"),
+        [
+            ("renfield_mcp_health_problem_servers", lambda: metrics_module.record_mcp_health_tick(0)),
+            ("renfield_kg_conflation_candidates", lambda: metrics_module.set_kg_conflation_candidates(0)),
+            ("renfield_memory_active_total", lambda: metrics_module.set_memory_total(0)),
+        ],
+        ids=["mcp-problem-servers", "kg-conflation-candidates", "active-memories"],
+    )
+    def test_nan_before_the_first_measurement_and_a_number_after(self, registry, series, measure):
+        before = registry.get_sample_value(series)
+        assert before is not None and math.isnan(before)
+
+        measure()
+
+        assert registry.get_sample_value(series) == 0.0
+
+    def test_a_tick_without_a_verdict_does_not_turn_unmeasured_into_zero(self, registry):
+        metrics_module.record_mcp_health_tick(None)
+        metrics_module.record_mcp_health_tick(None)
+
+        assert math.isnan(registry.get_sample_value("renfield_mcp_health_problem_servers"))
+        assert registry.get_sample_value("renfield_mcp_health_ticks_total") == 2
+
+    def test_every_gauge_without_labels_is_covered(self, registry):
+        """The class, not the three names: a new gauge without labels has to
+        be added to `_unlabelled_gauges`, or it exports an unmeasured 0."""
+        from tests.backend.metrics_registry import gauge_series
+
+        unlabelled = sorted(name for name, labels in gauge_series().items() if not labels)
+        assert len(unlabelled) == len(metrics_module._unlabelled_gauges()) == 3
+        for name in unlabelled:
+            assert math.isnan(registry.get_sample_value(name)), name
 
 
 # =============================================================================

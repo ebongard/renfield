@@ -332,11 +332,25 @@ def _init_metrics():
             ["domain", "reason"],
         )
 
+        # A gauge without labels is exported as 0 from the moment it exists,
+        # so "never measured" would read as a measured zero: zero problem
+        # servers before the first monitor tick (or with the monitor off),
+        # zero conflation candidates without a scan. NaN until the first
+        # set() keeps the two apart; nothing in the backend reads a gauge back.
+        for gauge in _unlabelled_gauges():
+            gauge.set(float("nan"))
+
         _metrics_initialized = True
         logger.info("Prometheus metrics initialized")
 
     except ImportError:
         logger.warning("prometheus-client not installed — metrics disabled")
+
+
+def _unlabelled_gauges() -> tuple[Any, ...]:
+    """The gauges without labels: each holds one measured value, set by a
+    periodic job, and must not read 0 before that job first ran."""
+    return (_memory_total, _kg_conflation_candidates, _mcp_health_problem_servers)
 
 
 # === Public API for recording metrics ===
@@ -564,7 +578,9 @@ def record_mcp_health_tick(problem_count: int | None):
     """Record one MCP health monitor tick (heartbeat, #1107). The counter ticks
     for every ATTEMPTED tick (liveness — a flatline means the loop is stuck);
     the gauge is only set when the tick completed with a verdict
-    (``problem_count is not None``) so a failing get_status can't fake 0."""
+    (``problem_count is not None``) so a failing get_status can't fake 0.
+    Until the first verdict the gauge is NaN (see `_init_metrics`); after one,
+    a tick without a verdict leaves the LAST verdict standing."""
     if not _metrics_initialized:
         return
     _mcp_health_ticks_total.inc()

@@ -84,6 +84,20 @@ def registered_series() -> dict[str, frozenset[str]]:
     return series
 
 
+def gauge_series() -> dict[str, frozenset[str]]:
+    """The series that are gauges -> their labels (a subset of
+    `registered_series`). A gauge has no rate, and one without labels holds a
+    single value that exists from the start."""
+    with live_metrics():
+        return {
+            described.name: frozenset(collector._labelnames)
+            for collector in vars(metrics_module).values()
+            if _is_collector(collector)
+            for described in collector.describe()
+            if described.type == "gauge"
+        }
+
+
 def sample_count(registry: prometheus_client.CollectorRegistry, name: str, **labels: str) -> float:
     """The value of one sample, 0.0 when the series does not exist."""
     return registry.get_sample_value(name, labels) or 0.0

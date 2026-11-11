@@ -140,7 +140,7 @@
       "id": 3,
       "type": "stat",
       "title": "MCP servers with a problem",
-      "description": "Servers the MCP health monitor judged degraded or down on its last completed tick, by the same verdict the kiosk and /api/mcp/status show (connectivity, discovered tools, functional probe, timeouts). Needs MCP_HEALTH_MONITOR_ENABLED; no value means no tick has completed.",
+      "description": "Servers the MCP health monitor judged degraded or down on its last tick that reached a verdict, by the same verdict the kiosk and /api/mcp/status show (connectivity, discovered tools, functional probe, timeouts). 'no verdict' = no tick has reached a verdict since the backend started (monitor off via MCP_HEALTH_MONITOR_ENABLED, not yet run, or failing). After a first verdict the number is the LAST one: a monitor that fails later keeps it standing.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -154,6 +154,20 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "no verdict",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "no verdict",
+                  "color": "orange",
+                  "index": 0
+                }
+              }
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -201,7 +215,7 @@
       "id": 4,
       "type": "stat",
       "title": "MCP health monitor ticks per minute",
-      "description": "Heartbeat of the health monitor. Zero under a running backend means the monitor is stuck, and the problem count next to it is stale.",
+      "description": "Heartbeat of the health monitor: attempted ticks, also those that reached no verdict. Zero under a running backend means the monitor is off or stuck, and the problem count next to it is stale.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -214,7 +228,20 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.01
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -249,7 +276,7 @@
       "id": 5,
       "type": "stat",
       "title": "Open circuit breakers",
-      "description": "Breakers currently open (state 1). The LLM and agent breakers stop calls to a failing model endpoint.",
+      "description": "Breakers currently open (state 1). The LLM and agent breakers stop calls to a failing model endpoint. Also reads 0 when the backend is not scraped at all; see 'Backend targets up'.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"

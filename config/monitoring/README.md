@@ -76,12 +76,25 @@ The dashboards do not define health a second time.
 
 - **MCP servers with a problem** is the count the MCP health monitor itself
   computed from `MCPManager.get_status()`: the verdict the kiosk and
-  `/api/mcp/status` show. It needs `MCP_HEALTH_MONITOR_ENABLED=true` and is only
-  as fresh as the **monitor ticks** panel next to it. Which server it is, and
-  why, is in `/api/mcp/status`; there is no per-server status metric.
+  `/api/mcp/status` show. It needs `MCP_HEALTH_MONITOR_ENABLED=true`. Until a
+  tick has reached a verdict the gauge is NaN and the panel reads "no verdict",
+  never 0. After a first verdict the number is the last one: if the monitor
+  then fails on every tick, ticks keep counting and the old number stays. Which
+  server it is, and why, is in `/api/mcp/status`; there is no per-server status
+  metric.
+- The same holds for **Active memories** and **Knowledge graph conflation
+  candidates**: NaN ("not counted yet", "no scan yet") until their job first
+  ran in this backend process, so an instance without the job never shows a
+  clean zero it did not measure.
+- **MCP health monitor ticks** is red at 0: monitor off or stuck.
 - **Tool calls by outcome** separates `timeout` from `app_error` because the
   verdict does: only timeouts count against a server (`calls_failing`). A
   device that is switched off produces `app_error` and is not an outage.
+  `error` is every call that raised: a protocol error the server answered with
+  (`McpError`) and a died session share that value and cannot be told apart
+  here.
+- Calls to federation peers are deliberately not observed: a peer's name is
+  personal and must not become a `server` label value.
 - Tool calls include the monitor's own functional probes.
 - Readiness of the backend stays with `/health/ready`; the dashboards show the
   scrape state (`up`) only.

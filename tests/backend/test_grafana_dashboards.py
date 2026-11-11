@@ -29,7 +29,12 @@ import pytest
 import yaml
 
 import utils.metrics as metrics_module
-from tests.backend.metrics_registry import _is_collector, live_metrics, registered_series
+from tests.backend.metrics_registry import (
+    _is_collector,
+    gauge_series,
+    live_metrics,
+    registered_series,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -69,7 +74,12 @@ class Expression:
     """What one panel expression refers to."""
 
     selectors: list[tuple[str, frozenset[str]]] = field(default_factory=list)
+    #: Series read as a range vector (`name{...}[window]`), i.e. fed to rate().
+    ranged: list[str] = field(default_factory=list)
+    #: Labels named in `by (...)` and `without (...)` together.
     grouping: set[str] = field(default_factory=set)
+    #: Labels named in `by (...)` only: the ones that survive.
+    kept: set[str] = field(default_factory=set)
     windows: list[str] = field(default_factory=list)
     calls: set[str] = field(default_factory=set)
     variables: set[str] = field(default_factory=set)
@@ -122,6 +132,8 @@ def read_expression(expr: str) -> Expression:
             if text in GROUPING:
                 names, index = label_list(index + 1)
                 parsed.grouping |= names
+                if text == "by":
+                    parsed.kept |= names
                 continue
             if text in SET_OPERATORS:
                 pass
@@ -150,6 +162,8 @@ def read_expression(expr: str) -> Expression:
                             parsed.problems.append(f"unexpected {matcher_text!r} in a selector")
                         index += 1
                 parsed.selectors.append((text, frozenset(labels)))
+                if value(index + 1) == "[":
+                    parsed.ranged.append(text)
         elif text == "{":
             parsed.problems.append("selector without a series name")
         elif text == "[":
@@ -160,8 +174,13 @@ def read_expression(expr: str) -> Expression:
     return parsed
 
 
-def expression_problems(expr: str, series: dict[str, frozenset[str]]) -> list[str]:
-    """Everything wrong with `expr`, given the series that exist."""
+def expression_problems(
+    expr: str,
+    series: dict[str, frozenset[str]],
+    gauges: frozenset[str] | set[str] = frozenset(),
+) -> list[str]:
+    """Everything wrong with `expr`, given the series that exist and which of
+    them are gauges."""
     parsed = read_expression(expr)
     problems = list(parsed.problems)
     if not parsed.selectors:
@@ -180,12 +199,15 @@ def expression_problems(expr: str, series: dict[str, frozenset[str]]) -> list[st
             problems.append(f"range window [{window}] instead of [{RATE_WINDOW}]")
     if parsed.calls & {"rate", "increase"} and not parsed.windows:
         problems.append("rate() without a range window")
+    for name in parsed.ranged:
+        if name in gauges:
+            problems.append(f"rate()/increase() over the gauge {name!r}")
     if "histogram_quantile" in parsed.calls:
         for name in parsed.series:
             if not name.endswith("_bucket"):
                 problems.append(f"histogram_quantile over {name!r}, not a _bucket series")
-        if "le" not in parsed.grouping:
-            problems.append("histogram_quantile without grouping by le")
+        if "le" not in parsed.kept:
+            problems.append("histogram_quantile without an aggregation by le")
     return problems
 
 
@@ -237,6 +259,11 @@ def _datasource_references(node: object) -> list[object]:
 @pytest.fixture(scope="module")
 def series() -> dict[str, frozenset[str]]:
     return {**registered_series(), **PROMETHEUS_SERIES}
+
+
+@pytest.fixture(scope="module")
+def gauges() -> dict[str, frozenset[str]]:
+    return gauge_series()
 
 
 def test_there_are_dashboards_to_check():
@@ -321,13 +348,107 @@ def test_dashboard_uids_and_titles_are_unique():
     assert len({d["title"] for d in dashboards}) == len(dashboards)
 
 
-def test_every_expression_reads_registered_series_with_their_labels(series):
+def test_every_expression_reads_registered_series_with_their_labels(series, gauges):
     findings = [
         f"{file} / {panel}: {problem}"
         for file, panel, target in _targets()
-        for problem in expression_problems(target["expr"], series)
+        for problem in expression_problems(target["expr"], series, set(gauges))
     ]
     assert findings == []
+
+
+# =============================================================================
+# A gauge without labels: "never measured" must not read as zero
+# =============================================================================
+
+
+def unmeasured_display_problems(panel: dict, unlabelled_gauges: set[str]) -> list[str]:
+    """What is missing on `panel` if it reads a gauge without labels.
+
+    Such a gauge is NaN until its job first measured (see `_init_metrics`).
+    The panel has to say what that state is called, for the absent series
+    (`noValue`) and for NaN (a special value mapping); a stat panel left to
+    its defaults would be free to colour it like a number.
+    """
+    read = {
+        name
+        for target in panel.get("targets", [])
+        for name in read_expression(target["expr"]).series
+        if name in unlabelled_gauges
+    }
+    if not read:
+        return []
+    problems = []
+    defaults = panel["fieldConfig"]["defaults"]
+    if not str(defaults.get("noValue", "")).strip():
+        problems.append(f"{panel['title']}: reads {sorted(read)} without a noValue text")
+    nan_texts = [
+        mapping["options"]["result"].get("text", "")
+        for mapping in defaults.get("mappings", [])
+        if mapping.get("type") == "special" and mapping["options"].get("match") in {"nan", "null+nan"}
+    ]
+    if not any(text.strip() for text in nan_texts):
+        problems.append(f"{panel['title']}: reads {sorted(read)} without a NaN value mapping")
+    return problems
+
+
+def test_every_panel_on_an_unlabelled_gauge_names_the_unmeasured_state(gauges):
+    unlabelled = {name for name, labels in gauges.items() if not labels}
+    assert unlabelled == {
+        "renfield_mcp_health_problem_servers",
+        "renfield_memory_active_total",
+        "renfield_kg_conflation_candidates",
+    }
+    panels = [panel for path in DASHBOARDS for panel in _panels(_load(path)) if panel["type"] != "row"]
+    affected = [
+        panel for panel in panels
+        if any(
+            name in unlabelled
+            for target in panel["targets"]
+            for name in read_expression(target["expr"]).series
+        )
+    ]
+    assert len(affected) == 4, "two problem-server stats, active memories, conflation candidates"
+    assert [p for panel in panels for p in unmeasured_display_problems(panel, unlabelled)] == []
+
+
+def test_NEGATIVE_a_panel_without_unmeasured_handling_is_reported():
+    panel = {
+        "title": "MCP servers with a problem",
+        "type": "stat",
+        "fieldConfig": {"defaults": {"unit": "short"}},
+        "targets": [{"expr": 'max(renfield_mcp_health_problem_servers{job=~"$job"})'}],
+    }
+    unlabelled = {"renfield_mcp_health_problem_servers"}
+
+    assert unmeasured_display_problems(panel, unlabelled) == [
+        "MCP servers with a problem: reads ['renfield_mcp_health_problem_servers'] without a noValue text",
+        "MCP servers with a problem: reads ['renfield_mcp_health_problem_servers'] without a NaN value mapping",
+    ]
+    # A value mapping for an ordinary value is not NaN handling.
+    panel["fieldConfig"]["defaults"] = {
+        "noValue": "no verdict",
+        "mappings": [{"type": "value", "options": {"0": {"text": "none"}}}],
+    }
+    assert len(unmeasured_display_problems(panel, unlabelled)) == 1
+    # A labelled gauge is primed per label value and is not this case.
+    assert unmeasured_display_problems(panel, {"renfield_memory_active_total"}) == []
+
+
+def test_the_monitor_heartbeat_stat_is_red_at_zero():
+    """Ticks keep counting while every tick fails, but a monitor that is off
+    or stuck ticks at 0: the one stall signal the problem count has."""
+    stats = [
+        panel
+        for path in DASHBOARDS
+        for panel in _panels(_load(path))
+        if panel["title"] == "MCP health monitor ticks per minute"
+    ]
+    assert len(stats) == 2
+    for panel in stats:
+        base, above = panel["fieldConfig"]["defaults"]["thresholds"]["steps"]
+        assert (base["value"], base["color"]) == (None, "red")
+        assert above["color"] == "green" and 0 < above["value"] <= 0.1
 
 
 def test_every_legend_label_survives_the_aggregation(series):
@@ -466,8 +587,8 @@ GOOD = (
 )
 
 
-def test_the_reference_expression_is_clean(series):
-    assert expression_problems(GOOD, series) == []
+def test_the_reference_expression_is_clean(series, gauges):
+    assert expression_problems(GOOD, series, set(gauges)) == []
 
 
 @pytest.mark.parametrize(
@@ -490,7 +611,20 @@ def test_the_reference_expression_is_clean(series):
             GOOD.replace("_bucket", "_count"),
             "histogram_quantile over 'renfield_mcp_tool_duration_seconds_count', not a _bucket series",
         ),
-        (GOOD.replace("(le, server)", "(server)"), "histogram_quantile without grouping by le"),
+        (GOOD.replace("(le, server)", "(server)"), "histogram_quantile without an aggregation by le"),
+        (GOOD.replace("sum by (le, server)", "sum without (le)"), "histogram_quantile without an aggregation by le"),
+        (
+            "histogram_quantile(0.95, rate(renfield_mcp_tool_duration_seconds_bucket[$__rate_interval]))",
+            "histogram_quantile without an aggregation by le",
+        ),
+        (
+            "sum by (type) (rate(renfield_websocket_connections[$__rate_interval]))",
+            "rate()/increase() over the gauge 'renfield_websocket_connections'",
+        ),
+        (
+            'increase(renfield_mcp_health_problem_servers{job=~"$job"}[$__rate_interval])',
+            "rate()/increase() over the gauge 'renfield_mcp_health_problem_servers'",
+        ),
         (
             "sum(rate(renfield_mcp_tool_duration_seconds{job=~\"$job\"}[$__rate_interval]))",
             "unknown series 'renfield_mcp_tool_duration_seconds'",
@@ -503,12 +637,19 @@ def test_the_reference_expression_is_clean(series):
     ],
     ids=[
         "renamed-metric", "missing-grouping-label", "missing-selector-label", "fixed-window",
-        "quantile-not-bucket", "quantile-without-le", "histogram-base-name", "rate-without-window",
+        "quantile-not-bucket", "quantile-without-le", "quantile-le-aggregated-away",
+        "quantile-without-aggregation", "rate-on-gauge", "increase-on-gauge",
+        "histogram-base-name", "rate-without-window",
         "unknown-function", "unreadable", "anonymous-selector", "no-series",
     ],
 )
-def test_NEGATIVE_a_broken_expression_is_reported(series, expr, finding):
-    assert finding in expression_problems(expr, series)
+def test_NEGATIVE_a_broken_expression_is_reported(series, gauges, expr, finding):
+    assert finding in expression_problems(expr, series, set(gauges))
+
+
+def test_a_gauge_read_as_a_value_is_not_a_rate_finding(series, gauges):
+    expr = 'sum by (type) (renfield_websocket_connections{job=~"$job"})'
+    assert expression_problems(expr, series, set(gauges)) == []
 
 
 def test_NEGATIVE_a_legend_label_dropped_by_the_aggregation_is_seen():

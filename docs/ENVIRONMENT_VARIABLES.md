@@ -258,7 +258,12 @@ Segmente zu `{id}` (Kardinalitätsschutz).
   `timeout` (das Einzige, was `calls_failing` zählt), `error` (Ausnahme oder
   tote Sitzung). Abweisungen VOR dem Absetzen (Berechtigung, Validierung,
   Rate-Limit, nicht verbunden) werden nicht gezählt; die Funktionssonden des
-  Health-Monitors schon. Bewusst kein `tool`-Label (#82)
+  Health-Monitors schon. Aufrufe an Föderations-Peers werden bewusst NICHT
+  gemessen (der Peer-Name ist personenbezogen). Bewusst kein `tool`-Label (#82)
+- Die drei Gauges ohne Label (`renfield_mcp_health_problem_servers`,
+  `renfield_memory_active_total`, `renfield_kg_conflation_candidates`) stehen
+  auf `NaN`, bis ihr Lauf im Prozess zum ersten Mal gemessen hat: „nie
+  gemessen" ist keine gemessene Null (#82)
 - `renfield_rag_search_duration_seconds{outcome}`: Dauer einer RAG-Suche
   (Embedding, Abruf, Rerank, Kontexterweiterung; #82)
 - Agent Steps Histogram
