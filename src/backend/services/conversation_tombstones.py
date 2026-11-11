@@ -37,19 +37,50 @@ daily built-in task ``conversation_tombstone_cleanup`` remove records whose
 stays, and a non-positive value never prunes anything
 (``prune_expired_tombstones``).
 
-Why a bounded window is safe: the record protects against exactly one thing, a
-client that still holds the id of a conversation deleted elsewhere. Its next
-message is refused, it is handed a fresh id and it drops the stale one, so the
-record is needed only until every such client has spoken once. A pruned record
-changes nothing for anybody else -- an id is random and nobody else names it.
-What a window gives up: a client that stays silent for LONGER than N days and
-then sends under the stale id recreates the conversation under it, which is
-the behaviour before #1485 (no content of the deleted conversation returns;
-the id carries new content). Choose N above the longest time a browser tab or
-device is expected to sit unused. Two reasons to bound it at all: the table
-otherwise grows with every delete, and a plugin transport may use an external
-identifier as the session id (a chat-platform thread id), which would stay
-here indefinitely after its user deleted the conversation.
+What a record is for: it stops a client that still holds the id of a
+conversation deleted elsewhere -- and a deferred writer that still carries it
+(a scan outcome, a Paperless announcement, ``save_message``) -- from creating a
+conversation under that id again. Once the stale client has spoken it is
+handed a fresh id and drops the old one.
+
+What survives a conversation delete, and why the prune has a guard: several
+tables carry the session id WITHOUT a foreign key to ``conversations``, so
+their rows outlive the conversation. Some of them are READ by session id, and
+whoever owns the conversation row under an id is handed those rows:
+``chat_uploads`` (the attachment and its extracted text; the owner of the row
+may forward, e-mail and file it) and ``paperless_pending_confirms`` (the open
+"file this?" question). An unfinalised ``paperless_pending_finalize`` row is a
+writer that will still announce into the id. While the record exists none of
+that is reachable, because no conversation can be created under the id. So a
+record is NEVER pruned while such a row exists (``_prune_guards``) -- an
+indexed upload is never cleaned up, and its record then stays for good.
+Without the guard a pruned id would hand the deleted conversation's
+attachments to whoever recreates it; in a shared conversation that can be a
+different user than the one who deleted it.
+
+What a pruned id still permits: the id is an unknown one again. A client that
+stayed silent for LONGER than N days recreates a conversation under it, owned
+by that client's user -- the behaviour before #1485, minus the guarded rows.
+Rows of the deleted conversation in the tables of
+``SESSION_KEYS_WITHOUT_SESSION_READER`` (memory and KG provenance, episodic
+memories, reminders, a shadow log) keep the id and from then on share it with
+the new conversation's rows; no reader selects them by session id, so nothing
+is handed out, but attribution by id no longer tells the two conversations
+apart. Short-lived Redis state keyed by the id (a remembered scan job, 24 h)
+is outside the database and not guarded: it expires before the smallest
+window of one day does. Choose N above the longest time a browser tab or
+device is expected to sit unused.
+
+Why bound it at all: the table otherwise grows with every delete, and a plugin
+transport may use an external identifier as the session id (a chat-platform
+thread id), which would stay here indefinitely after its user deleted the
+conversation.
+
+A NEW table with a session id column must be one of three things: cascade-
+deleted with its conversation, named in ``_prune_guards``, or entered in
+``SESSION_KEYS_WITHOUT_SESSION_READER`` with the reason no reader hands its
+rows to the holder of the id. ``test_conversation_tombstone_session_keys.py``
+fails otherwise.
 
 The cut-off is computed by the DATABASE clock, the one the trigger wrote
 ``deleted_at`` with, so a skewed application clock cannot shorten the window.
@@ -72,6 +103,44 @@ TRIGGER = "trg_conversations_record_deleted_session"
 DELETED_AT_INDEX = "ix_deleted_conversation_sessions_deleted_at"
 #: `now()` in UTC without a zone -- the shape `models.database._utcnow` writes.
 UTC_NOW_SQL = "timezone('utc', now())"
+
+#: Session-keyed columns (``table.column``) whose rows survive a conversation
+#: delete but are NOT guarded by the prune, each with the reason: no reader
+#: selects them by session id, so recreating the id hands nothing out. An entry
+#: here is a decision made on the code -- re-check it when a reader is added.
+SESSION_KEYS_WITHOUT_SESSION_READER: dict[str, str] = {
+    "conversation_memories.source_session_id":
+        "provenance only; retrieval filters by user and circle, never by session",
+    "kg_relations.source_session_id":
+        "provenance only (also holds 'doc:N'); no reader filters by a chat session id",
+    "episodic_memories.session_id":
+        "written with the episode; retrieval is per user, never by session",
+    "reminders.session_id":
+        "written at creation; delivery goes to the reminder's user, never by session",
+    "memory_v2_shadow_log.session_id":
+        "write-only diagnostics log",
+}
+
+
+def _prune_guards() -> list[tuple]:
+    """``(session id column, extra condition or None)`` per table whose rows
+    keep a record alive: read by session id on behalf of whoever holds the
+    conversation under it, or a writer that will still announce into it."""
+    from models.database import (
+        ChatUpload,
+        PaperlessPendingConfirm,
+        PaperlessPendingFinalize,
+    )
+
+    return [
+        # The attachment itself: `_get_owned_upload`, `_caller_owns_upload`,
+        # the session fallback of the forward tools, `_fetch_document_context`.
+        (ChatUpload.session_id, None),
+        # The open confirm question: `_pending_paperless_confirm`, the commit tool.
+        (PaperlessPendingConfirm.session_id, None),
+        # A filing still in flight announces its outcome into the session.
+        (PaperlessPendingFinalize.session_id, PaperlessPendingFinalize.finalized_at.is_(None)),
+    ]
 
 _CREATE_FUNCTION = f"""
 CREATE OR REPLACE FUNCTION {FUNCTION}() RETURNS trigger AS $$
@@ -159,7 +228,8 @@ async def carry_uploads_to_replacement(
 
 
 async def prune_expired_tombstones(db: AsyncSession, retention_days: int) -> int:
-    """Delete the records deleted MORE than ``retention_days`` days ago.
+    """Delete the records deleted MORE than ``retention_days`` days ago --
+    except those whose id still has surviving rows (``_prune_guards``).
 
     Returns the number of rows removed; commits. ``retention_days <= 0`` means
     keep forever: no statement is sent and 0 is returned -- a negative value
@@ -179,9 +249,17 @@ async def prune_expired_tombstones(db: AsyncSession, retention_days: int) -> int
     cutoff = text(f"{UTC_NOW_SQL} - make_interval(days => :retention_days)").bindparams(
         retention_days=retention_days
     )
+    conditions = [DeletedConversationSession.deleted_at < cutoff]
+    # A record outlives its window while a row of the deleted conversation
+    # would be handed to whoever recreates the id (module docstring).
+    for column, extra in _prune_guards():
+        survivor = [column == DeletedConversationSession.session_id]
+        if extra is not None:
+            survivor.append(extra)
+        conditions.append(~exists().where(*survivor))
     result = await db.execute(
         delete(DeletedConversationSession)
-        .where(DeletedConversationSession.deleted_at < cutoff)
+        .where(*conditions)
         .execution_options(synchronize_session=False)
     )
     await db.commit()

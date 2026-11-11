@@ -10,10 +10,14 @@ What must hold:
 - the upgrade builds the index on ``deleted_at`` in the schema it runs in and
   touches no row;
 - a second upgrade is a no-op, also when ``create_all`` built the index first;
-- the downgrade removes the index from ITS schema only -- the same-named index
-  further down the search_path (``public``, built by this harness) stays --
-  and touches no row; without the index the downgrade is a no-op;
+- the downgrade removes the index from ITS schema only -- a same-named index
+  further down the search_path stays -- and touches no row; without the index
+  the downgrade is a no-op;
 - upgrade -> downgrade -> upgrade is clean.
+
+The file builds everything it reads: it does not depend on ``public`` having
+been built by another test or an earlier run (it runs alone on a database
+without the index).
 """
 from __future__ import annotations
 
@@ -170,23 +174,41 @@ async def test_upgrade_on_an_index_create_all_built(schema_conn):
 
 
 async def test_downgrade_removes_only_this_schemas_index(schema_conn):
+    """An unqualified ``DROP INDEX IF EXISTS`` resolves through the
+    search_path: once the first schema has no such index it would drop the
+    same-named one of the next schema. A second schema this test owns stands
+    in for that neighbour (in production: nothing; on the test database:
+    ``public``)."""
     conn, schema = schema_conn
-    await _setup(conn, schema)
-    before = await _rows(conn)
-    # The harness built `public` with `create_all`, so the same-named index
-    # exists further down this connection's search_path.
-    assert DELETED_AT_INDEX in await _indexes(conn, "public")
+    other = f"{schema}_next"
+    await conn.exec_driver_sql(f'CREATE SCHEMA "{other}"')
+    try:
+        await conn.exec_driver_sql(
+            f'CREATE TABLE "{other}".deleted_conversation_sessions ('
+            " session_id VARCHAR PRIMARY KEY, deleted_at TIMESTAMP NOT NULL)")
+        await conn.exec_driver_sql(
+            f'CREATE INDEX {DELETED_AT_INDEX}'
+            f' ON "{other}".deleted_conversation_sessions (deleted_at)')
+        await conn.exec_driver_sql(f'SET search_path TO "{schema}", "{other}", public')
+        await conn.commit()
+        await _setup(conn, schema)
+        before = await _rows(conn)
 
-    await _run(conn, "upgrade")
-    await _run(conn, "downgrade")
+        await _run(conn, "upgrade")
+        assert DELETED_AT_INDEX in await _indexes(conn, schema)
+        await _run(conn, "downgrade")
 
-    assert DELETED_AT_INDEX not in await _indexes(conn, schema)
-    assert await _rows(conn) == before
-    assert DELETED_AT_INDEX in await _indexes(conn, "public")
+        assert DELETED_AT_INDEX not in await _indexes(conn, schema)
+        assert await _rows(conn) == before
+        assert DELETED_AT_INDEX in await _indexes(conn, other)
 
-    # Nothing left to drop: a second downgrade must not reach into `public`.
-    await _run(conn, "downgrade")
-    assert DELETED_AT_INDEX in await _indexes(conn, "public")
+        # Nothing left to drop here: a second downgrade must not reach further.
+        await _run(conn, "downgrade")
+        assert DELETED_AT_INDEX in await _indexes(conn, other)
+    finally:
+        await conn.rollback()
+        await conn.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{other}" CASCADE')
+        await conn.commit()
 
 
 async def test_round_trip_is_clean(schema_conn):

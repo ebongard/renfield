@@ -11,8 +11,19 @@ real Postgres:
   days old stays (the boundary errs towards keeping), measured on the database
   clock whatever the session's time zone is;
 - a record inside the window keeps refusing its id; a pruned one no longer
-  does -- the accepted price of a window, stated here so it is a decision;
+  does: the id is an unknown one again and whoever sends under it owns a new
+  conversation there -- the accepted price of a window, stated here so it is
+  a decision;
+- an expired record is NOT pruned while rows of the deleted conversation
+  survive that a reader hands to the holder of the id -- an attachment
+  (``chat_uploads``), an open Paperless confirm, a Paperless filing still in
+  flight. Without that guard the deleted conversation's attachments would
+  come back with the id, possibly to a different user. The record goes once
+  those rows are gone;
 - a room id deleted again ages from its LAST delete.
+
+Which tables that is, and that a new session-keyed table cannot be forgotten:
+``test_conversation_tombstone_session_keys.py``.
 """
 from __future__ import annotations
 
@@ -23,7 +34,13 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import text
 
-from models.database import Conversation
+import services.conversation_tombstones as tombstones
+from models.database import (
+    ChatUpload,
+    Conversation,
+    PaperlessPendingConfirm,
+    PaperlessPendingFinalize,
+)
 from services.conversation_tombstones import (
     DELETED_AT_INDEX,
     is_deleted_session,
@@ -178,6 +195,129 @@ class TestThePrune:
         ), {"n": DELETED_AT_INDEX})).scalars().all()
         assert len(rows) == 1
         assert "(deleted_at)" in rows[0]
+
+
+async def _upload(db, session_id: str) -> ChatUpload:
+    upload = ChatUpload(
+        session_id=session_id, filename="rechnung.pdf", status="completed",
+        extracted_text="Rechnung 4711",
+    )
+    db.add(upload)
+    await db.commit()
+    return upload
+
+
+async def _remove(db, row) -> None:
+    await db.delete(row)
+    await db.commit()
+
+
+@pytest.mark.database
+class TestSurvivingRowsKeepTheRecord:
+    """The guard of the prune. Every case: a record long past its window."""
+
+    async def test_an_expired_record_with_an_upload_stays_until_the_upload_is_gone(
+        self, db_session,
+    ):
+        from api.routes.chat import session_id_is_reusable
+
+        await _tombstone(db_session, "weg-mit-anhang", "91 days")
+        await _tombstone(db_session, "weg-ohne-anhang", "91 days")
+        upload = await _upload(db_session, "weg-mit-anhang")
+
+        assert await prune_expired_tombstones(db_session, 90) == 1
+
+        assert await _recorded(db_session) == ["weg-mit-anhang"]
+        # So the id stays refused and the attachment stays out of reach.
+        assert await session_id_is_reusable("weg-mit-anhang", None, db_session) is False
+
+        await _remove(db_session, upload)
+
+        assert await prune_expired_tombstones(db_session, 90) == 1
+        assert await _recorded(db_session) == []
+
+    async def test_an_upload_under_another_id_protects_only_its_own_record(self, db_session):
+        await _tombstone(db_session, "weg-a", "91 days")
+        await _upload(db_session, "weg-b")
+
+        assert await prune_expired_tombstones(db_session, 90) == 1
+
+        assert await _recorded(db_session) == []
+
+    async def test_an_open_paperless_confirm_keeps_the_record(self, db_session):
+        """The confirm row carries its own session id; the attachment it
+        points at hangs elsewhere here, so only this guard can hold the record."""
+        await _tombstone(db_session, "weg-rueckfrage", "91 days")
+        upload = await _upload(db_session, "anderswo")
+        confirm = PaperlessPendingConfirm(
+            confirm_token="00000000-0000-4000-8000-000000001529",
+            attachment_id=upload.id, session_id="weg-rueckfrage",
+            llm_output={}, post_fuzzy_output={},
+        )
+        db_session.add(confirm)
+        await db_session.commit()
+
+        assert await prune_expired_tombstones(db_session, 90) == 0
+        assert await _recorded(db_session) == ["weg-rueckfrage"]
+
+        await _remove(db_session, confirm)
+
+        assert await prune_expired_tombstones(db_session, 90) == 1
+        assert await _recorded(db_session) == []
+
+    async def test_a_filing_in_flight_keeps_the_record_a_finalised_one_does_not(
+        self, db_session,
+    ):
+        from models.database import _utcnow
+
+        await _tombstone(db_session, "weg-ablage", "91 days")
+        upload = await _upload(db_session, "anderswo")
+        pending = PaperlessPendingFinalize(
+            task_id="task-1529", chat_upload_id=upload.id, session_id="weg-ablage",
+            filename="rechnung.pdf", deferred_patch={}, original_metadata={},
+        )
+        db_session.add(pending)
+        await db_session.commit()
+
+        assert await prune_expired_tombstones(db_session, 90) == 0
+        assert await _recorded(db_session) == ["weg-ablage"]
+
+        pending.finalized_at = _utcnow()
+        await db_session.commit()
+
+        assert await prune_expired_tombstones(db_session, 90) == 1
+        assert await _recorded(db_session) == []
+
+    async def test_a_surviving_row_does_not_keep_a_record_inside_the_window_from_ageing(
+        self, db_session,
+    ):
+        """The guard only ever keeps; it never prunes by itself."""
+        await _tombstone(db_session, "weg-jung", "1 day")
+        await _upload(db_session, "weg-jung")
+
+        assert await prune_expired_tombstones(db_session, 90) == 0
+        assert await _recorded(db_session) == ["weg-jung"]
+
+    async def test_without_the_guard_the_record_would_go(self, db_session, monkeypatch):
+        """Negative control: the guard, and nothing else, keeps the record of
+        the first test. With it switched off the same rows are pruned -- the
+        state in which the attachment would follow the id to its next owner."""
+        await _tombstone(db_session, "weg-mit-anhang", "91 days")
+        await _upload(db_session, "weg-mit-anhang")
+        monkeypatch.setattr(tombstones, "_prune_guards", lambda: [])
+
+        assert await prune_expired_tombstones(db_session, 90) == 1
+        assert await _recorded(db_session) == []
+
+    async def test_the_task_keeps_a_guarded_record(
+        self, db_session, own_session_to_test_db, monkeypatch,
+    ):
+        monkeypatch.setattr(settings, "conversation_tombstone_retention_days", 90)
+        await _tombstone(db_session, "weg-mit-anhang", "91 days")
+        await _upload(db_session, "weg-mit-anhang")
+
+        assert await builtins._conversation_tombstone_cleanup_handler(SimpleNamespace(), {}) is None
+        assert await _recorded(db_session) == ["weg-mit-anhang"]
 
 
 @pytest.mark.database
