@@ -138,11 +138,26 @@ browser that still held it; everything that outlives a delete and keys on the id
   days past — strict `<`, a record exactly N days old stays; a non-positive value
   never prunes; the cut-off uses the database clock that wrote `deleted_at`. Index
   `ix_deleted_conversation_sessions_deleted_at` (`pc20261111_tombstone_idx`, also
-  declared on the model). A window is safe because a record is needed only until
-  the client holding the stale id has spoken once (it is then swapped to a fresh
-  id); what it gives up is the client that stays silent longer than N days — its
-  stale id is accepted again, the pre-#1485 behaviour, without any deleted content
-  returning. Reasons to bound it: growth is tied to deletes (a job that creates
+  declared on the model).
+  **Guard:** a record is never pruned while rows of the deleted conversation
+  survive that a reader hands to the holder of the id (`_prune_guards`):
+  `chat_uploads` (no FK to `conversations`; `_get_owned_upload`,
+  `_caller_owns_upload`, the session fallback of the forward tools and
+  `_fetch_document_context` all resolve by session id — an expired record would
+  hand the attachments, with owner rights, to whoever recreates the id, in a
+  shared conversation possibly another user), `paperless_pending_confirms`, and
+  an unfinalised `paperless_pending_finalize`. Indexed uploads are never cleaned
+  up, so their record stays for good. **Not guarded**, each with its reason in
+  `SESSION_KEYS_WITHOUT_SESSION_READER`: `conversation_memories` /
+  `kg_relations.source_session_id`, `episodic_memories`, `reminders`,
+  `memory_v2_shadow_log` — no reader selects by session id, so nothing is handed
+  out, but after the prune old and new rows share the id. A new session-keyed
+  table must be cascaded, guarded or exempted with a reason
+  (`test_conversation_tombstone_session_keys.py`).
+  **What a pruned id permits:** it is an unknown id again; a client silent for
+  longer than N days (or a deferred `save_message` writer) creates a new
+  conversation under it, owned by the sender — the pre-#1485 behaviour minus the
+  guarded rows. Reasons to bound it: growth is tied to deletes (a job that creates
   and purges sessions adds rows forever), and a plugin transport may use an
   external identifier as the session id, which would otherwise outlive the delete
   indefinitely. A satellite room id ages from its LAST delete (the trigger

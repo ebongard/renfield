@@ -1978,16 +1978,38 @@ ROUTING_TRACES_RETENTION_DAYS=14
 CONVERSATION_TOMBSTONE_RETENTION_DAYS=0
 ```
 
-Der Vermerk verhindert, dass ein Tab oder Gerät, das eine anderswo gelöschte
-Konversation noch zeigt, sie unter derselben ID neu anlegt (#1485). Er wird nur
-gebraucht, bis dieser Client sich einmal gemeldet hat — dann erhält er eine
-frische ID. **Das Fenster muss deshalb länger sein als die längste Zeit, die ein
-Tab oder Gerät ungenutzt liegt:** meldet sich ein Client erst nach Ablauf, wird
-seine alte ID wieder angenommen (Verhalten vor #1485; Inhalte der gelöschten
-Konversation kehren nicht zurück). Ein Fenster begrenzt das Tabellenwachstum
-(eine Zeile je Löschung) und die Verweildauer von Sitzungs-IDs, die ein
-Plugin-Transport von außen übernimmt (etwa die Kennung eines Chat-Threads).
-Der Stichtag wird mit der Uhr der Datenbank berechnet.
+Der Vermerk verhindert, dass unter der ID einer gelöschten Konversation eine
+neue entsteht (#1485). Gelesen wird er an zwei Stellen: an der Chat-Grenze, wenn
+ein Tab oder Gerät die anderswo gelöschte Konversation noch zeigt (es erhält
+eine frische ID), und beim Schreiben (`save_message`), wenn ein nachlaufender
+Schreiber die ID noch trägt — ein Scan-Ergebnis, eine Paperless-Rückmeldung.
+
+**Was nach Ablauf gilt:** die ID ist wieder eine unbekannte. Meldet sich ein
+Client erst nach N Tagen unter ihr, entsteht dort eine neue Konversation, die
+dem Absender gehört (Verhalten vor #1485) — bei einer geteilten Konversation
+kann das ein anderer Benutzer sein als der, der gelöscht hat. Das Fenster muss
+deshalb länger sein als die längste Zeit, die ein Tab oder Gerät ungenutzt
+liegt.
+
+**Was der Aufräumlauf schützt:** Zeilen, die das Löschen der Konversation
+überleben und über die Sitzungs-ID an deren Inhaber ausgegeben würden. Solange
+unter der ID noch ein Chat-Anhang (`chat_uploads`), eine offene
+Paperless-Rückfrage oder eine laufende Paperless-Ablage liegt, bleibt der
+Vermerk — auch weit über N Tage hinaus. Indexierte Anhänge räumt niemand ab;
+ihr Vermerk bleibt dauerhaft, die übrigen verschwinden, sobald
+`CHAT_UPLOAD_CLEANUP_ENABLED` die Anhänge entfernt hat. Ohne diesen Schutz kämen
+die Anhänge der gelöschten Konversation mit der ID zurück.
+
+**Was nicht geschützt ist:** Herkunftsangaben der gelöschten Konversation
+(Erinnerungen, Wissensgraph, Episoden, Erinnerungs-Termine) behalten die ID und
+teilen sie nach Ablauf mit der neuen Konversation. Keine Abfrage wählt sie über
+die Sitzungs-ID aus, es wird also nichts ausgegeben; die Zuordnung über die ID
+unterscheidet die beiden Konversationen aber nicht mehr.
+
+Ein Fenster begrenzt das Tabellenwachstum (eine Zeile je Löschung) und die
+Verweildauer von Sitzungs-IDs, die ein Plugin-Transport von außen übernimmt
+(etwa die Kennung eines Chat-Threads). Der Stichtag wird mit der Uhr der
+Datenbank berechnet.
 
 ---
 
