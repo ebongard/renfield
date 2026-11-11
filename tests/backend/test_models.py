@@ -754,3 +754,65 @@ class TestPdfSplitModels:
         pg_db_session.add(_proposal(PDF_SPLIT_PROPOSAL_PENDING))
         with pytest.raises(IntegrityError):
             await pg_db_session.flush()
+
+
+class TestPushSubscriptionModel:
+    """#79: one row per browser, owned by a user."""
+
+    @staticmethod
+    async def _owner(db, name):
+        from models.database import Role, User
+
+        role = Role(name=f"role-{name}", permissions=["notifications.view"], is_system=False)
+        db.add(role)
+        await db.flush()
+        user = User(username=name, password_hash="x", role_id=role.id)
+        db.add(user)
+        await db.flush()
+        return user
+
+    @pytest.mark.database
+    @pytest.mark.asyncio
+    async def test_create_and_defaults(self, pg_db_session):
+        from models.database import PushSubscription
+
+        owner = await self._owner(pg_db_session, "push-owner")
+        row = PushSubscription(
+            user_id=owner.id, endpoint="https://fcm.googleapis.com/fcm/send/x",
+            p256dh="p", auth="a",
+        )
+        pg_db_session.add(row)
+        await pg_db_session.flush()
+        await pg_db_session.refresh(row)
+        assert row.id is not None
+        assert row.created_at is not None
+        assert row.device_label is None
+
+    @pytest.mark.database
+    @pytest.mark.asyncio
+    async def test_endpoint_is_unique_across_users(self, pg_db_session):
+        from sqlalchemy.exc import IntegrityError
+
+        from models.database import PushSubscription
+
+        first = await self._owner(pg_db_session, "push-first")
+        second = await self._owner(pg_db_session, "push-second")
+        endpoint = "https://fcm.googleapis.com/fcm/send/same"
+        pg_db_session.add(PushSubscription(user_id=first.id, endpoint=endpoint, p256dh="p", auth="a"))
+        await pg_db_session.flush()
+        pg_db_session.add(PushSubscription(user_id=second.id, endpoint=endpoint, p256dh="p", auth="a"))
+        with pytest.raises(IntegrityError):
+            await pg_db_session.flush()
+
+    @pytest.mark.database
+    @pytest.mark.asyncio
+    async def test_owner_is_mandatory(self, pg_db_session):
+        from sqlalchemy.exc import IntegrityError
+
+        from models.database import PushSubscription
+
+        pg_db_session.add(PushSubscription(
+            user_id=None, endpoint="https://fcm.googleapis.com/fcm/send/y", p256dh="p", auth="a",
+        ))
+        with pytest.raises(IntegrityError):
+            await pg_db_session.flush()

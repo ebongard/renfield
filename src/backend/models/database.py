@@ -2128,6 +2128,35 @@ class RoutingTrace(Base):
     )
 
 
+class PushSubscription(Base):
+    """One browser's Web Push subscription, bound to the user who created it (#79).
+
+    The device IS the ``endpoint``: a push service issues one per browser
+    install, so it is unique across the table. A second account subscribing on
+    the same browser takes the row over -- the device then stops receiving the
+    previous account's pushes. ``p256dh`` and ``auth`` are the browser's public
+    key and shared secret for the payload encryption (RFC 8291); together with
+    the endpoint they are only usable by a holder of the VAPID private key.
+    A deleted user takes their subscriptions along.
+    """
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(String(255), nullable=False)
+    auth = Column(String(255), nullable=False)
+    # The browser's User-Agent at subscribe time, so the owner can tell their
+    # devices apart. Read from the request header, never from the body.
+    device_label = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("uq_push_subscriptions_endpoint", "endpoint", unique=True),
+        Index("idx_push_subscriptions_user", "user_id"),
+    )
+
+
 class ToolOutcomeStat(Base):
     """
     Rolling success/failure counters per (user, tool) pair.

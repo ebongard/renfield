@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from models.database import User
 from services.auth_service import get_user_or_default
+from services.push_preconditions import push_active
 from utils.config import settings
 
 router = APIRouter()
@@ -145,6 +146,10 @@ class FeatureFlags(BaseModel):
     # Not a secret — it only names the registry row. See
     # utils/config.py::voice_browser_client_id.
     voice_client_id: str = ""
+    # Web Push (#79). True only when EVERY precondition holds (flag, auth, a
+    # valid VAPID key pair, contact address) -- the same function the routes
+    # and the sender ask, so the UI never offers a toggle that answers 404.
+    push_notifications_enabled: bool = False
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -177,4 +182,5 @@ async def get_features(
         voice_auth_enabled=settings.voice_auth_enabled,
         speaker_recognition_enabled=settings.speaker_recognition_enabled,
         voice_client_id=settings.voice_browser_client_id,
+        push_notifications_enabled=push_active(),
     )

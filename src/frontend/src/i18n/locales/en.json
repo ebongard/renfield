@@ -2611,5 +2611,33 @@
       "no_embeddings": "Your speaker profile holds no voice sample yet. Record one first.",
       "device_account": "This is a device account, not a person. It has no voice and therefore cannot carry the second factor."
     }
+  },
+  "push": {
+    "title": "Push notifications",
+    "explain": "Alerts this device even while Renfield is closed — for notifications addressed to you or meant for everyone. You switch it on per device.",
+    "contentNote": "The message on the lock screen names no content. It travels through your browser's delivery service (Google, Mozilla, Apple or Microsoft); Renfield fetches the text directly from your instance only after you tap it.",
+    "stateOn": "On — this device is notified",
+    "stateOff": "Off on this device",
+    "stateLoading": "Checking the current state …",
+    "stateDenied": "Blocked in the browser — allow notifications for this site in the browser settings, then it can be switched on here.",
+    "stateUnsupported": "This browser does not support push notifications.",
+    "stateNeedsInstall": "On iPhone and iPad only in the installed app: add Renfield via “Share” → “Add to Home Screen” and open it from there.",
+    "enable": "Switch on for this device",
+    "disable": "Switch off for this device",
+    "enabled": "This device now receives push notifications.",
+    "disabled": "This device no longer receives push notifications.",
+    "failed": "The push notifications could not be changed.",
+    "deviceCount_one": "{{count}} device is registered for your account.",
+    "deviceCount_other": "{{count}} devices are registered for your account.",
+    "errors": {
+      "endpoint_not_allowed": "This browser's delivery service is not permitted on this instance.",
+      "subscription_limit_reached": "Too many devices are already registered for your account. Switch it off on another device first.",
+      "no_service_worker": "The app has not finished loading in this browser. Reload the page and try again."
+    },
+    "generic": {
+      "title": "Renfield",
+      "body": "New notification",
+      "bodyCritical": "New urgent notification"
+    }
   }
 }

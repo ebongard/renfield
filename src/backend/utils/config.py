@@ -1872,6 +1872,26 @@ class Settings(BaseSettings):
     notification_poller_enabled: bool = False           # Master-Switch for MCP notification polling
     notification_poller_startup_delay: int = 30         # Delay before first poll (seconds)
 
+    # Web Push (#79): a content-free wake-up through the browser's push service
+    # for the people the in-app notification reaches. Dark by default. The flag
+    # alone activates nothing: every precondition (auth on, a valid VAPID key
+    # pair, a contact address) is checked in ONE place,
+    # ``services.push_preconditions.push_blocker``. The keys come from the
+    # environment only (``bin/generate-vapid-keys.py`` prints a pair); nothing
+    # is generated or persisted at startup.
+    push_notifications_enabled: bool = False
+    push_vapid_private_key: SecretStr | None = None    # base64url, raw 32-byte P-256 scalar
+    push_vapid_public_key: str = ""                    # base64url, 65-byte uncompressed point
+    push_vapid_claims_email: str = ""                  # contact for the push service ("mailto:" optional)
+    # The endpoint URL is supplied by the browser and the backend POSTs to it,
+    # so it is restricted to the known push services (SSRF). Exact host, or a
+    # leading dot for a suffix match.
+    push_allowed_endpoint_hosts: str = (
+        "fcm.googleapis.com,updates.push.services.mozilla.com,"
+        ".push.apple.com,.notify.windows.com"
+    )
+    push_send_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+
     # Phase 3: Reminders
     proactive_reminders_enabled: bool = False
     proactive_reminder_check_interval: int = 15        # seconds

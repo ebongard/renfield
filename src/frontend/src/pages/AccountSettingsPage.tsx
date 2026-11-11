@@ -26,6 +26,7 @@ import {
 import { extractApiError } from '../utils/axios';
 import Alert from '../components/Alert';
 import PageHeader from '../components/PageHeader';
+import PushNotificationsCard from '../components/PushNotificationsCard';
 
 export default function AccountSettingsPage() {
   const { t } = useTranslation();
@@ -214,6 +215,9 @@ export default function AccountSettingsPage() {
           </button>
         </div>
       </div>
+
+      {/* Web Push (#79). Renders nothing unless the instance has it active. */}
+      <PushNotificationsCard />
 
       {ConfirmDialogComponent}
     </div>

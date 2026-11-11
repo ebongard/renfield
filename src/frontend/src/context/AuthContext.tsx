@@ -6,6 +6,8 @@
  */
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import apiClient, { PASSWORD_CHANGE_REQUIRED_EVENT } from '../utils/axios';
+import { releasePushOnLogout } from '../api/resources/push';
+import { mayHoldPushSubscription } from '../utils/webPush';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '../utils/authTokens';
 import type { User, LoginResponse } from '../types/api';
 // Value import, not `import type`: `SecondFactorRequired` is a class that is
@@ -219,18 +221,31 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const accessToken = getAccessToken();
     const refreshToken = getRefreshToken();
     setUser(null);
-    void apiClient
-      .post(
-        '/api/auth/logout',
-        refreshToken ? { refresh_token: refreshToken } : {},
-        accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined,
-      )
-      .catch(() => {
-        /* already logging out locally; a failed revoke is retried on next login churn */
-      })
-      .finally(() => {
-        clearTokens();
-      });
+    const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+    const revokeSession = () => {
+      void apiClient
+        .post(
+          '/api/auth/logout',
+          refreshToken ? { refresh_token: refreshToken } : {},
+          authHeaders ? { headers: authHeaders } : undefined,
+        )
+        .catch(() => {
+          /* already logging out locally; a failed revoke is retried on next login churn */
+        })
+        .finally(() => {
+          clearTokens();
+        });
+    };
+    // Web Push (#79): a browser that holds a subscription gives it back BEFORE
+    // the session is revoked (the removal needs the session) -- otherwise this
+    // device kept announcing "new notification" for an account that has logged
+    // out. The check is synchronous and false wherever push was never switched
+    // on, so that logout is the single call it always was.
+    if (mayHoldPushSubscription()) {
+      void releasePushOnLogout(authHeaders).finally(revokeSession);
+    } else {
+      revokeSession();
+    }
   }, [clearTokens, getAccessToken, getRefreshToken]);
 
   // Change password

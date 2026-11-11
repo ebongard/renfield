@@ -2308,5 +2308,33 @@
       "no_embeddings": "Il suo profilo vocale non contiene ancora alcun campione vocale. Ne registri prima uno.",
       "device_account": "Questo è un account dispositivo, non una persona. Non ha voce e quindi non può portare il secondo fattore."
     }
+  },
+  "push": {
+    "title": "Notifiche push",
+    "explain": "Avvisa questo dispositivo anche quando Renfield è chiuso — per le notifiche rivolte a lei o destinate a tutti. Si attiva per ogni singolo dispositivo.",
+    "contentNote": "Il messaggio sulla schermata di blocco non riporta alcun contenuto. Passa attraverso il servizio di recapito del suo browser (Google, Mozilla, Apple o Microsoft); Renfield recupera il testo direttamente dalla sua istanza solo dopo il tocco.",
+    "stateOn": "Attive — questo dispositivo viene avvisato",
+    "stateOff": "Disattivate su questo dispositivo",
+    "stateLoading": "Verifica dello stato in corso …",
+    "stateDenied": "Bloccate nel browser — consenta le notifiche per questo sito nelle impostazioni del browser, poi potrà attivarle qui.",
+    "stateUnsupported": "Questo browser non supporta le notifiche push.",
+    "stateNeedsInstall": "Su iPhone e iPad solo nell'app installata: aggiunga Renfield tramite «Condividi» → «Aggiungi alla schermata Home» e la apra da lì.",
+    "enable": "Attiva su questo dispositivo",
+    "disable": "Disattiva su questo dispositivo",
+    "enabled": "Questo dispositivo riceve ora le notifiche push.",
+    "disabled": "Questo dispositivo non riceve più le notifiche push.",
+    "failed": "Non è stato possibile modificare le notifiche push.",
+    "deviceCount_one": "{{count}} dispositivo è registrato per il suo account.",
+    "deviceCount_other": "{{count}} dispositivi sono registrati per il suo account.",
+    "errors": {
+      "endpoint_not_allowed": "Il servizio di recapito di questo browser non è ammesso su questa istanza.",
+      "subscription_limit_reached": "Per il suo account sono già registrati troppi dispositivi. Le disattivi prima su un altro dispositivo.",
+      "no_service_worker": "L'app non è ancora caricata del tutto in questo browser. Ricarichi la pagina e riprovi."
+    },
+    "generic": {
+      "title": "Renfield",
+      "body": "Nuova notifica",
+      "bodyCritical": "Nuova notifica urgente"
+    }
   }
 }

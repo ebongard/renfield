@@ -149,6 +149,10 @@ export interface FeatureFlags {
   voice_auth_enabled: boolean;
   speaker_recognition_enabled: boolean;
   voice_client_id?: string;
+  /** Web Push (#79): true only when the instance has EVERY precondition (flag,
+   *  auth, VAPID key pair, contact address). Off => no toggle, no request to
+   *  `/api/push/*`, no subscription attempt. */
+  push_notifications_enabled?: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {

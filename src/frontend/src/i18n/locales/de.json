@@ -2611,5 +2611,33 @@
       "no_embeddings": "Ihr Sprecherprofil enthält noch keine Stimmprobe. Nehmen Sie zuerst eine auf.",
       "device_account": "Dies ist ein Gerätekonto, kein Mensch. Es hat keine Stimme und kann den zweiten Faktor deshalb nicht tragen."
     }
+  },
+  "push": {
+    "title": "Push-Benachrichtigungen",
+    "explain": "Meldet sich auf diesem Gerät, auch wenn Renfield geschlossen ist — für Benachrichtigungen, die an Sie gerichtet oder für alle bestimmt sind. Sie schalten das je Gerät ein.",
+    "contentNote": "Die Mitteilung auf dem Sperrbildschirm nennt keinen Inhalt. Sie läuft über den Zustelldienst Ihres Browsers (Google, Mozilla, Apple oder Microsoft); den Text holt Renfield erst nach dem Antippen direkt von Ihrer Instanz.",
+    "stateOn": "Ein — dieses Gerät wird benachrichtigt",
+    "stateOff": "Aus auf diesem Gerät",
+    "stateLoading": "Zustand wird ermittelt …",
+    "stateDenied": "Im Browser blockiert — erlauben Sie Benachrichtigungen für diese Seite in den Browser-Einstellungen, dann lässt es sich hier einschalten.",
+    "stateUnsupported": "Dieser Browser unterstützt keine Push-Benachrichtigungen.",
+    "stateNeedsInstall": "Auf iPhone und iPad nur in der installierten App: Renfield über „Teilen“ → „Zum Home-Bildschirm“ hinzufügen und von dort öffnen.",
+    "enable": "Auf diesem Gerät einschalten",
+    "disable": "Auf diesem Gerät ausschalten",
+    "enabled": "Dieses Gerät erhält jetzt Push-Benachrichtigungen.",
+    "disabled": "Dieses Gerät erhält keine Push-Benachrichtigungen mehr.",
+    "failed": "Die Push-Benachrichtigungen ließen sich nicht umstellen.",
+    "deviceCount_one": "{{count}} Gerät ist für Ihr Konto angemeldet.",
+    "deviceCount_other": "{{count}} Geräte sind für Ihr Konto angemeldet.",
+    "errors": {
+      "endpoint_not_allowed": "Der Zustelldienst dieses Browsers ist auf dieser Instanz nicht zugelassen.",
+      "subscription_limit_reached": "Für Ihr Konto sind bereits zu viele Geräte angemeldet. Schalten Sie es zuerst auf einem anderen Gerät aus.",
+      "no_service_worker": "Die App ist in diesem Browser noch nicht vollständig geladen. Laden Sie die Seite neu und versuchen Sie es noch einmal."
+    },
+    "generic": {
+      "title": "Renfield",
+      "body": "Neue Benachrichtigung",
+      "bodyCritical": "Neue dringende Benachrichtigung"
+    }
   }
 }

@@ -227,6 +227,10 @@ export const keys = {
     detail: (id: number) => ['trajectories', 'detail', id] as const,
     stats: () => ['trajectories', 'stats'] as const,
   },
+  push: {
+    all: ['push'] as const,
+    subscriptions: () => ['push', 'subscriptions'] as const,
+  },
   curator: {
     all: ['curator'] as const,
     runs: () => ['curator', 'runs'] as const,
