@@ -49,7 +49,12 @@ export default function HapticFeedbackSetting() {
             {t('account.hapticsExplain')}
           </p>
           <p className="mt-3 text-sm font-medium text-gray-500 dark:text-gray-400" aria-live="polite">
-            {enabled ? t('account.hapticsStateOn') : t('account.hapticsStateOff')}
+            {/* On + reduced motion is its own state: "on" would contradict the hint below. */}
+            {!enabled
+              ? t('account.hapticsStateOff')
+              : reducedMotion
+                ? t('account.hapticsStatePaused')
+                : t('account.hapticsStateOn')}
           </p>
           {!supported && (
             <p className="mt-2 text-xs text-gray-600 dark:text-gray-300">

@@ -4,8 +4,10 @@
  *
  * Three gates, all of which must pass before anything vibrates:
  *   1. the per-device preference (localStorage, default OFF),
- *   2. the API exists (`navigator.vibrate` -- absent on iOS Safari and on most
- *      desktop browsers),
+ *   2. the API exists (`navigator.vibrate` -- absent on iOS Safari). "Exists"
+ *      is all a browser reveals: desktop Chromium has the API and reports
+ *      success although nothing vibrates, so "supported" never means "this
+ *      device has a vibration motor",
  *   3. the OS does not ask for reduced motion. `prefers-reduced-motion` is the
  *      only OS-level signal a browser exposes; there is no query for the
  *      system "vibration off" switch (the browser simply ignores the call).
@@ -27,7 +29,7 @@ export const HAPTIC_PATTERNS: Readonly<Record<HapticPattern, number | readonly n
 
 export const HAPTICS_STORAGE_KEY = 'renfield_haptics_enabled';
 
-/** Whether this browser has a Vibration API at all. */
+/** Whether this browser has a Vibration API at all -- not whether the device has a motor. */
 export function isHapticsSupported(): boolean {
   return typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
 }

@@ -907,7 +907,8 @@ Siehe [MULTILANGUAGE.md](MULTILANGUAGE.md) für die vollständige Anleitung.
 Kurze Vibrationen über die Web Vibration API (`utils/haptics.ts`, `haptic(pattern)` mit `tap` / `success` / `error` / `notification`). Keine Server-Einstellung und kein Feature-Flag: der Schalter steht unter **Mein Konto** (`/settings/account`), gilt nur für den jeweiligen Browser (`localStorage`, Schlüssel `renfield_haptics_enabled`) und ist ohne Zutun aus.
 
 - **Drei Bedingungen**, sonst geschieht nichts: Schalter an, `navigator.vibrate` vorhanden, und das Betriebssystem verlangt keine reduzierte Bewegung (`prefers-reduced-motion` ist das einzige OS-Signal, das ein Browser preisgibt).
-- **Nur Android-Browser vibrieren.** iOS Safari und Desktop-Browser kennen die API nicht; dort ist der Schalter deaktiviert und sagt, warum.
+- **Spürbar nur auf Geräten mit Vibrationsmotor** (praktisch: Android). iOS Safari kennt die API nicht; dort ist der Schalter deaktiviert und sagt, warum. Desktop-Chromium dagegen HAT die API und meldet Erfolg, ohne dass etwas vibriert — der Schalter ist dort bedienbar und wirkungslos. „Unterstützt“ heißt: die API existiert; ob ein Motor da ist, verrät kein Browser (bewusst keine User-Agent-Erkennung).
+- **Reduzierte Bewegung**: ist der Schalter an und das OS-Signal gesetzt, sagt die Statuszeile „pausiert“ statt „ein“.
 - **Wirft nie**: ein blockierter Speicher oder ein vom Browser abgelehnter Aufruf (keine Nutzergeste) bleibt folgenlos; ein gesperrter Speicher heißt „aus".
 - **Einsatzstellen**: Nachricht gesendet, Mikrofon-Knopf, Wake-Word-Schalter (`tap`); erkanntes Wake-Word (`success`); Geräte-Widget im Chat und Smart-Home-Seite beim Umschalten (`tap`); eingehende Benachrichtigung (`notification`); fehlgeschlagene Schnellaktion am Anhang und fehlgeschlagener Scan-Auftrag (`error`).
 - **Nicht gebaut**: Pull-to-Refresh (gibt es in der Oberfläche nicht), native iOS-Haptik.

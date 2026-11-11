@@ -19,7 +19,9 @@ import {
   setReducedMotion,
 } from '../haptics-test-helpers';
 
-const UNSUPPORTED = /Dieser Browser kann nicht vibrieren/;
+const UNSUPPORTED = /Dieser Browser bietet keine Vibrationsfunktion/;
+const STATE_ON = 'Ein — vibriert zur Rückmeldung, sofern das Gerät einen Vibrationsmotor hat';
+const STATE_PAUSED = 'Ein, aber pausiert — „Bewegung reduzieren“ ist aktiv';
 const REDUCED_MOTION = /„Bewegung reduzieren“ aktiv/;
 const NOT_SAVED = /konnte in diesem Browser nicht gespeichert werden/;
 
@@ -45,7 +47,8 @@ describe('HapticFeedbackSetting', () => {
     await userEvent.click(theSwitch());
     expect(theSwitch()).toHaveAttribute('aria-checked', 'true');
     expect(window.localStorage.getItem(HAPTICS_STORAGE_KEY)).toBe('true');
-    expect(screen.getByText('Ein — dieses Gerät vibriert zur Rückmeldung')).toBeInTheDocument();
+    expect(screen.getByText(STATE_ON)).toBeInTheDocument();
+    expect(screen.queryByText(STATE_PAUSED)).not.toBeInTheDocument();
     expect(vibrate).toHaveBeenCalledWith(10);
   });
 
@@ -92,6 +95,19 @@ describe('HapticFeedbackSetting', () => {
     expect(theSwitch()).toHaveAttribute('aria-checked', 'true');
     // ... but nothing vibrates while the OS asks for reduced motion.
     expect(vibrate).not.toHaveBeenCalled();
+  });
+
+  it('on + reduced motion reads as "paused", never as "vibrates"', async () => {
+    installVibrate();
+    setReducedMotion(true);
+    renderWithProviders(<HapticFeedbackSetting />);
+    // Off is off, with or without reduced motion.
+    expect(screen.getByText('Aus')).toBeInTheDocument();
+    await userEvent.click(theSwitch());
+    expect(screen.getByText(STATE_PAUSED)).toBeInTheDocument();
+    // The status line must not contradict the hint right below it.
+    expect(screen.queryByText(STATE_ON)).not.toBeInTheDocument();
+    expect(screen.getByText(REDUCED_MOTION)).toBeInTheDocument();
   });
 
   it('shows no reduced-motion note without the OS setting', () => {

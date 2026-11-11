@@ -15,7 +15,7 @@ export function installVibrate(impl: (pattern: number | number[]) => boolean = (
   return vibrate;
 }
 
-/** Back to jsdom's default: no Vibration API (iOS Safari, desktop). */
+/** Back to jsdom's default: no Vibration API (as on iOS Safari). */
 export function removeVibrate(): void {
   Reflect.deleteProperty(navigator, 'vibrate');
 }
