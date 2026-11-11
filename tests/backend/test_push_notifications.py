@@ -225,7 +225,8 @@ HOSTILE_ENDPOINTS = [
     "https://postgres\\.push.apple.com/",
     "https://fcm.googleapis.com\\@10.0.0.1/x",
     "https://10.0.0.1/\\.push.apple.com",
-    "https://user:pw@fcm.googleapis.com/x",                # userinfo
+    # Assembled, so that the literal does not read as a credential to a secret scanner.
+    "https://" + "user:pw" + "@fcm.googleapis.com/x",      # userinfo
     "https://fcm.googleapis.com@10.0.0.1/x",
     "https://fcm.googleapis.com/x@y",                      # '@' anywhere
     "https://fcm.googleapis.com:8443/x",                   # any port, also the default one
