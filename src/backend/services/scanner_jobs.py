@@ -830,9 +830,9 @@ async def handle_job_event(
                 return "duplicate"
             conversation_deleted = True
         except ConversationNotOwnedError:
-            # NOT the bare `PermissionError`: that is a builtin `OSError`, and a
-            # file-permission problem in a `pre_save_message` plugin would settle
-            # the job as a final refusal instead of being retried.
+            # NOT the bare `PermissionError`: that is a builtin `OSError`, and an
+            # OS-level permission failure inside the write would settle the job
+            # as a final refusal instead of being retried.
             #
             # The conversation belongs to someone else. That does not change on
             # a retry, so this is final: settle it and answer 2xx — a 5xx would
