@@ -17,6 +17,7 @@ import { iconForCode } from '../chat/artifacts/WeatherArtifact';
 import type { NodeHealth, SatelliteState } from './types';
 import type { CoreState, KioskState } from './useKioskModel';
 import type { KioskNowPlaying } from '../../api/resources/kiosk';
+import KioskClock from './KioskClock';
 
 const VW = 1920;
 const VH = 1080;
@@ -124,7 +125,6 @@ export default function KioskConstellation({ kiosk }: Props) {
   const { roles, tools, rooms, peers = [] } = model;
 
   const reduced = usePrefersReducedMotion();
-  const clock = useClock();
   // Fast render tick so an active-subsystem pulse visibly fades on its own,
   // with no data fetch. Content-free — it just advances wall time.
   const pulseNow = usePulseTick(1_000);
@@ -481,10 +481,10 @@ export default function KioskConstellation({ kiosk }: Props) {
         <div className="text-[13px] tracking-[0.35em] mt-1" style={{ color: C.active }}>COMMAND CENTER</div>
       </div>
 
-      {/* clock + daypart */}
-      <div className="absolute bottom-8 left-10 text-white/90">
-        <div className="text-5xl font-display tabular-nums">{clock.time}</div>
-        <div className="text-sm text-white/50 mt-1 capitalize">{clock.date}</div>
+      {/* clock tile — wall time + date from the device clock; owns its own
+          minute-aligned tick, so it re-renders alone (see KioskClock). */}
+      <div className="absolute bottom-8 left-10">
+        <KioskClock />
       </div>
 
       {/* ambient telemetry corner */}
@@ -623,18 +623,4 @@ function usePulseTick(ms: number): number {
     return () => clearInterval(id);
   }, [ms]);
   return now;
-}
-
-function useClock(): { time: string; date: string } {
-  const { i18n } = useTranslation();
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 10_000);
-    return () => clearInterval(id);
-  }, []);
-  const locale = i18n.language?.startsWith('de') ? 'de-DE' : 'en-US';
-  return {
-    time: now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }),
-    date: now.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' }),
-  };
 }
