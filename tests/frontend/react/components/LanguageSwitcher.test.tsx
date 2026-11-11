@@ -434,4 +434,73 @@ describe('LanguageSwitcher', () => {
       });
     });
   });
+
+  describe('Stored preference on page load', () => {
+    // A page load is: i18next starts from the browser's own choice
+    // (localStorage), then the switcher fetches the preference stored on the
+    // account and applies it. Both tests start signed in with the browser at
+    // French and differ only in what the account holds.
+    async function loadPageWithStoredPreference(stored: string) {
+      const { useAuth } = await import('../../../../src/frontend/src/context/AuthContext');
+      vi.mocked(useAuth).mockReturnValue({
+        ...vi.mocked(useAuth)(),
+        authEnabled: true,
+        isAuthenticated: true,
+      });
+      const apiClient = await import('../../../../src/frontend/src/utils/axios');
+      vi.mocked(apiClient.default.get).mockResolvedValue({ data: { language: stored } });
+
+      await i18n.changeLanguage('fr');
+      const queryClient = createTestQueryClient();
+      render(
+        <I18nextProvider i18n={i18n}>
+          <QueryClientProvider client={queryClient}>
+            <LanguageSwitcher />
+          </QueryClientProvider>
+        </I18nextProvider>,
+      );
+      // Wait until the fetched preference has reached the component; only then
+      // has the effect that applies it had its chance to run.
+      await waitFor(() => {
+        expect(queryClient.getQueryData(['preferences', 'language'])).toEqual({ language: stored });
+      });
+    }
+
+    afterEach(async () => {
+      const { useAuth } = await import('../../../../src/frontend/src/context/AuthContext');
+      vi.mocked(useAuth).mockReturnValue({
+        ...vi.mocked(useAuth)(),
+        authEnabled: false,
+        isAuthenticated: false,
+      });
+      const apiClient = await import('../../../../src/frontend/src/utils/axios');
+      vi.mocked(apiClient.default.get).mockResolvedValue({ data: { language: 'de' } });
+    });
+
+    it('stays French when the account holds French', async () => {
+      await loadPageWithStoredPreference('fr');
+
+      expect(i18n.language).toBe('fr');
+      expect(screen.getByText('FR')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Langue' })).toBeInTheDocument();
+      expect(window.localStorage.getItem('renfield_language')).toBe('fr');
+    });
+
+    it('lets the account preference override the browser choice, by design', async () => {
+      // The account preference is what follows a person from device to device,
+      // so on load it wins over whatever this browser remembered -- and it
+      // replaces the remembered value. The consequence: a language the backend
+      // refuses to store (the state after a rejected PUT) does not survive a
+      // reload. That is why every language the switcher offers must be in the
+      // backend's SUPPORTED_LANGUAGES.
+      await loadPageWithStoredPreference('de');
+
+      await waitFor(() => {
+        expect(i18n.language).toBe('de');
+      });
+      expect(screen.getByText('DE')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Sprache' })).toBeInTheDocument();
+      expect(window.localStorage.getItem('renfield_language')).toBe('de');
+    });
+  });
 });
