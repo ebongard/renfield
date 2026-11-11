@@ -902,6 +902,16 @@ Siehe [MULTILANGUAGE.md](MULTILANGUAGE.md) für die vollständige Anleitung.
 - **Responsive**: Mobile-First Design mit adaptivem Layout
 - **Offline**: Funktioniert ohne Internet (Service Worker)
 
+### Haptisches Feedback (#84, je Gerät, Standard: aus)
+
+Kurze Vibrationen über die Web Vibration API (`utils/haptics.ts`, `haptic(pattern)` mit `tap` / `success` / `error` / `notification`). Keine Server-Einstellung und kein Feature-Flag: der Schalter steht unter **Mein Konto** (`/settings/account`), gilt nur für den jeweiligen Browser (`localStorage`, Schlüssel `renfield_haptics_enabled`) und ist ohne Zutun aus.
+
+- **Drei Bedingungen**, sonst geschieht nichts: Schalter an, `navigator.vibrate` vorhanden, und das Betriebssystem verlangt keine reduzierte Bewegung (`prefers-reduced-motion` ist das einzige OS-Signal, das ein Browser preisgibt).
+- **Nur Android-Browser vibrieren.** iOS Safari und Desktop-Browser kennen die API nicht; dort ist der Schalter deaktiviert und sagt, warum.
+- **Wirft nie**: ein blockierter Speicher oder ein vom Browser abgelehnter Aufruf (keine Nutzergeste) bleibt folgenlos; ein gesperrter Speicher heißt „aus".
+- **Einsatzstellen**: Nachricht gesendet, Mikrofon-Knopf, Wake-Word-Schalter (`tap`); erkanntes Wake-Word (`success`); Geräte-Widget im Chat und Smart-Home-Seite beim Umschalten (`tap`); eingehende Benachrichtigung (`notification`); fehlgeschlagene Schnellaktion am Anhang und fehlgeschlagener Scan-Auftrag (`error`).
+- **Nicht gebaut**: Pull-to-Refresh (gibt es in der Oberfläche nicht), native iOS-Haptik.
+
 ## Sicherheit
 
 ### Offline-First
