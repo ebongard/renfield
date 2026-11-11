@@ -338,11 +338,32 @@ async def test_ownership_refusal_is_final_not_retried(conversation):
     await sj.remember_scan_requester(
         _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="s", redis=redis
     )
-    conversation.save_message.side_effect = PermissionError("conversation owned by another user")
+    from services.conversation_service import ConversationNotOwnedError
+
+    conversation.save_message.side_effect = ConversationNotOwnedError("owned by another user")
 
     assert await sj.handle_job_event(MagicMock(), _event(), redis=redis) == "refused"
     assert await sj.handle_job_event(MagicMock(), _event(), redis=redis) == "duplicate"
     assert redis.published == []
+
+
+async def test_a_file_permission_error_is_not_an_ownership_refusal(conversation):
+    """A builtin `PermissionError` is an `OSError` (a `pre_save_message` plugin
+    hitting a read-only path). It stays retryable instead of settling the job
+    as a final, silent refusal."""
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="s", redis=redis
+    )
+    conversation.save_message.side_effect = PermissionError(13, "Permission denied")
+
+    with pytest.raises(PermissionError):
+        await sj.handle_job_event(MagicMock(), _event(), redis=redis)
+    assert f"renfield:scanner:job:{JOB_ID}:reported" not in redis.store
+    assert f"renfield:scanner:job:{JOB_ID}:claim" not in redis.store
+
+    conversation.save_message.side_effect = None
+    assert await sj.handle_job_event(MagicMock(), _event(), redis=redis) == "delivered"
 
 
 async def test_a_pod_crash_between_claim_and_write_is_delivered_by_the_retry(conversation):

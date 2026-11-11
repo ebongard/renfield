@@ -456,7 +456,7 @@ Hardening from the post-deploy review (2026-09-14):
   conversation (`ConversationDeletedError`, #1485). Until 2026-11-11 the delivery
   settled that like an ownership refusal — silently, so a `failed` or `unrouted`
   outcome reached nobody. The two refusals are now separate (the deleted clause
-  sits above `except PermissionError`, its base class):
+  sits above `except ConversationNotOwnedError`, its base class):
   - **not owned** → `refused`, final, silent, as before;
   - **deleted** → `notified`, final (2xx): no message, the conversation is never
     recreated, but the requester gets the same content-free `scan_job_finished`
@@ -468,7 +468,12 @@ Hardening from the post-deploy review (2026-09-14):
   notifies, a delivery that finds it set answers `duplicate`) and it is NOT
   best-effort — if it cannot be written nothing is sent, the request fails (5xx)
   and the scanner's retry notifies. Residuals: a pod that dies between the marker
-  and the publish loses the notice (at-most-once, as on the normal path); the
+  and the publish loses the notice (at-most-once, as on the normal path); so does
+  a `SET NX` that Redis applied but whose reply was lost — the request fails, the
+  retry finds the marker and answers `duplicate`; a delivery that wrote the
+  message but lost both its marker and its reply notifies a second time if the
+  chat is deleted before the retry; the handler narrows the ownership clause to
+  `ConversationNotOwnedError`, so a builtin `PermissionError` is retried; the
   toast still reads "details in the chat" although the chat is gone; a BUTTON
   scan whose configured conversation was deleted is refused earlier
   (`_unattended_requester`) and stays silent — a configuration fault, logged.
