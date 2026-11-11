@@ -1,5 +1,5 @@
 /**
- * The French bundle is a complete, well-formed translation of the English one.
+ * The French bundle is a well-formed translation of the English one.
  *
  * `fr.json` is data, so its proof is mechanical: the key set, the interpolation
  * placeholders and the embedded tags are compared key by key against `en.json`.
@@ -14,9 +14,10 @@
  * Catch-up rule for keys added to `en.json` later: a key that French does not
  * have yet falls back to German at runtime (`fallbackLng`), exactly as the
  * Italian bundle behaves today. That gap is therefore REPORTED here as a
- * warning and only fails the run under `RENFIELD_I18N_STRICT=1`, which is the
- * mode to run before a French release. Everything else in this file -- stale
- * keys, placeholders, empty and untranslated values -- always fails.
+ * warning and only fails the run under `RENFIELD_I18N_STRICT=1`. Nothing sets
+ * that variable on its own, so completeness is NOT enforced; the strict run is
+ * for whoever wants to know where French stands. Everything else in this file
+ * -- stale keys, placeholders, empty and untranslated values -- always fails.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 

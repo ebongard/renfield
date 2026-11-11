@@ -1,6 +1,6 @@
 # Multi-Language Support (i18n)
 
-Renfield unterstützt Mehrsprachigkeit im Frontend mit Deutsch, Englisch, Italienisch und Französisch als verfügbare Sprachen. Deutsch, Englisch und Französisch sind vollständig übersetzt; Italienisch ist es teilweise, fehlende Schlüssel fallen auf Deutsch zurück.
+Renfield unterstützt Mehrsprachigkeit im Frontend mit Deutsch, Englisch, Italienisch und Französisch als verfügbare Sprachen. Pflicht für jeden neuen Schlüssel sind Deutsch und Englisch; Italienisch und Französisch werden nachgezogen, ein dort fehlender Schlüssel fällt auf Deutsch zurück.
 
 ---
 
@@ -90,10 +90,10 @@ function LanguageSwitcher() {
 src/frontend/src/i18n/
 ├── index.ts              # Konfiguration
 └── locales/
-    ├── de.json           # Deutsch (Rückfallsprache, vollständig)
-    ├── en.json           # Englisch (vollständig)
-    ├── it.json           # Italienisch (teilweise)
-    ├── fr.json           # Französisch (vollständig)
+    ├── de.json           # Deutsch (Rückfallsprache, Pflicht)
+    ├── en.json           # Englisch (Pflicht)
+    ├── it.json           # Italienisch (Lücken fallen auf Deutsch zurück)
+    ├── fr.json           # Französisch (Lücken fallen auf Deutsch zurück)
     └── <lang>.pro.json   # Überlagerung der pro-Edition je Sprache
 ```
 
@@ -212,7 +212,7 @@ new Date().toLocaleString(i18n.language);
 
 ### Schritt 1: Keys in den Sprachdateien einfügen
 
-Pflicht sind `de.json` und `en.json`. `fr.json` ist vollständig und bekommt den Schlüssel ebenfalls (siehe „Nachziehen neuer Schlüssel“ unten); `it.json` dort, wo die Nachbarschlüssel vorhanden sind.
+Pflicht sind `de.json` und `en.json`. `it.json` und `fr.json` bekommen den Schlüssel dort, wo die Nachbarschlüssel vorhanden sind (siehe „Nachziehen neuer Schlüssel“ unten).
 
 **de.json:**
 ```json
@@ -374,7 +374,11 @@ GET /api/preferences/language
 PUT /api/preferences/language {"language": "en"}
 ```
 
-Das Backend nimmt nur Codes aus `SUPPORTED_LANGUAGES` an (Vorgabe `de,en,it`) und weist alles andere mit 400 ab. Diese Liste gilt zugleich für die Sprachrouten (STT/TTS). Französisch steht dort **noch nicht**: Die Oberfläche lässt sich auf Französisch umschalten und merkt sich das im Browser, die Präferenz am Benutzerkonto wird aber erst gespeichert, wenn `fr` in `SUPPORTED_LANGUAGES` aufgenommen ist.
+Das Backend nimmt nur Codes aus `SUPPORTED_LANGUAGES` an (Vorgabe `de,en,it,fr`) und weist alles andere mit 400 ab.
+
+**Die gespeicherte Präferenz gewinnt beim Laden.** Bei jedem Seitenaufruf holt der `LanguageSwitcher` die Präferenz des Kontos und stellt die Oberfläche darauf um — auch dann, wenn der Browser eine andere Sprache in `localStorage` hält; der dortige Wert wird dabei überschrieben. So folgt die Sprache der Person von Gerät zu Gerät. Die Kehrseite: Eine Sprache, die der Umschalter anbietet, das Backend aber nicht speichert, hält nur bis zum nächsten Laden — der abgewiesene `PUT` bleibt für den Nutzer unsichtbar. Jede Sprache des Umschalters muss deshalb in `SUPPORTED_LANGUAGES` stehen, und zwar in der laufenden Backend-Konfiguration, **bevor** das Frontend mit der neuen Sprache ausgeliefert wird.
+
+Dieselbe Liste gibt den Code auch für den ausdrücklichen `language`-Parameter der Sprachrouten (`/api/voice/stt`, `/tts`, `/voice-chat`) frei. Die gespeicherte Präferenz selbst liest nur die Präferenzroute; für eine Sprache ohne Piper-Stimme greift TTS auf die Standardstimme zurück.
 
 ---
 
@@ -535,7 +539,7 @@ const LANGUAGES: Language[] = [
 - `tests/frontend/react/i18n/refusalKeys.test.ts` — die Sprache in `LOCALES` aufnehmen.
 - `tests/frontend/react/components/LanguageSwitcher.test.tsx` — Option und Umschalten.
 
-**Nachziehen neuer Schlüssel:** Ein Schlüssel, der in `en.json` hinzukommt und in `fr.json` noch fehlt, fällt zur Laufzeit auf Deutsch zurück. Der Test meldet die Lücke als Warnung und schlägt erst mit `RENFIELD_I18N_STRICT=1` fehl — so vor einer französischen Freigabe laufen lassen:
+**Nachziehen neuer Schlüssel:** Ein Schlüssel, der in `en.json` hinzukommt und in `fr.json` noch fehlt, fällt zur Laufzeit auf Deutsch zurück. Der Test meldet die Lücke nur als Warnung; er schlägt erst mit `RENFIELD_I18N_STRICT=1` fehl, und diese Variable setzt nichts von selbst. Französisch ist damit — wie Italienisch — nicht auf Vollständigkeit verriegelt. Wer den Stand wissen will, ruft den strengen Lauf ausdrücklich auf:
 
 ```bash
 cd tests/frontend/react && RENFIELD_I18N_STRICT=1 npx vitest run i18n/frenchLocale.test.ts
@@ -543,7 +547,7 @@ cd tests/frontend/react && RENFIELD_I18N_STRICT=1 npx vitest run i18n/frenchLoca
 
 ### Schritt 6: Backend (`SUPPORTED_LANGUAGES`)
 
-Damit die Sprache am Benutzerkonto gespeichert wird, muss ihr Code in `SUPPORTED_LANGUAGES` stehen (`utils/config.py`, `k8s/configmap.yaml`). Dieselbe Liste gibt den Code auch für die Sprachrouten frei — vorher prüfen, ob STT/TTS die Sprache tragen.
+Der Code der Sprache muss in `SUPPORTED_LANGUAGES` stehen: Vorgabe in `utils/config.py`, `k8s/configmap.yaml`, die ConfigMap jeder weiteren Instanz und die Angaben in `docs/ENVIRONMENT_VARIABLES.md`. Ohne das springt die Oberfläche beim nächsten Laden auf die gespeicherte Sprache zurück (siehe „Backend-Präferenz“). Reihenfolge beim Ausrollen: erst die Backend-Konfiguration, dann das Frontend. Dieselbe Liste gibt den Code auch für die Sprachrouten frei — vorher prüfen, ob STT/TTS die Sprache tragen.
 
 ### Schritt 7: Piper-Stimme hinzufügen (optional)
 

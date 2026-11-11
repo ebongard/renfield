@@ -45,7 +45,7 @@ A failing test is an issue, not noise: the backend suite is green, so investigat
 - **DESIGN.md is the source of truth.** Before any UI change, read `DESIGN.md` at repo root. Color tokens, fonts, spacing, motion, semantic colors, and the tier visual language are defined there. Do NOT deviate without explicit user approval. In `/review` and `/qa`, flag any code that doesn't match DESIGN.md. (Sanctioned exception: `/kiosk`.)
 - **Dark Mode**: ALL components must use Tailwind `dark:` variants. Never hardcode colors.
 - **i18n**: ALL user-facing strings must use `useTranslation()`. Never hardcode text.
-- **Translations**: Add to BOTH `src/frontend/src/i18n/locales/de.json` and `en.json` (and `it.json` where the neighbouring keys exist; `fr.json` is complete — add the key there too, `frenchLocale.test.ts` reports gaps).
+- **Translations**: Add to BOTH `src/frontend/src/i18n/locales/de.json` and `en.json` (and `it.json` / `fr.json` where the neighbouring keys exist).
 - **Component classes** (in `index.css`): `.card`, `.input`, `.btn-primary`, `.btn-secondary`. New classes per DESIGN.md (e.g., `.tier-badge`, `.atom-row`) must use only DESIGN.md tokens.
 - Never render model-generated HTML/SVG: typed JSON → real React components (the escape boundary is the security story).
 
