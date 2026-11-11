@@ -452,6 +452,26 @@ Hardening from the post-deploy review (2026-09-14):
   message already written does not repeat them. Residual loss: a requester record
   lost from Redis (flush, eviction) before the event arrives still ends in 409s
   until the scanner gives up.
+- **A chat deleted while the scan ran (#1507).** `save_message` refuses a deleted
+  conversation (`ConversationDeletedError`, #1485). Until 2026-11-11 the delivery
+  settled that like an ownership refusal — silently, so a `failed` or `unrouted`
+  outcome reached nobody. The two refusals are now separate (the deleted clause
+  sits above `except PermissionError`, its base class):
+  - **not owned** → `refused`, final, silent, as before;
+  - **deleted** → `notified`, final (2xx): no message, the conversation is never
+    recreated, but the requester gets the same content-free `scan_job_finished`
+    event (status + the old `session_id` as routing key, so the tab that wrote
+    into that chat toasts) and a voice request its fixed room sentence.
+
+  With no message, layer 3 has nothing to find, so in this case the `…:reported`
+  marker is the only record of the delivery: it is set with `NX` (whoever sets it
+  notifies, a delivery that finds it set answers `duplicate`) and it is NOT
+  best-effort — if it cannot be written nothing is sent, the request fails (5xx)
+  and the scanner's retry notifies. Residuals: a pod that dies between the marker
+  and the publish loses the notice (at-most-once, as on the normal path); the
+  toast still reads "details in the chat" although the chat is gone; a BUTTON
+  scan whose configured conversation was deleted is refused earlier
+  (`_unattended_requester`) and stays silent — a configuration fault, logged.
 - **The notice appears only in the tab that asked.** The `scan_job_finished`
   event now carries the conversation's `session_id` — a routing key, not content,
   sent only to sockets that could open that conversation anyway (the owner's; the

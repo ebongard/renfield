@@ -77,6 +77,10 @@ dedup / tier / PDF-Split / Paperless are unchanged.
    a brand-new conversation's row does not exist until `chat_handler` saves at turn end. SQLite test harness:
    unlocked, deliberately.
 - The ws event + room announcement stay **at-most-once** (only after a successful write).
+- 🛑 **Two refusals, two answers (#1507)** — `except ConversationDeletedError` stays ABOVE `except PermissionError`
+  (its base class). Not owned → `refused`, final and SILENT. Deleted since the scan started → `notified`: nothing
+  is written, the conversation is never recreated, but the ws event + room announcement still go out. With no
+  message the `…:reported` marker is the only record there: `SET NX`, NOT best-effort (its failure is a 5xx).
 - `save_message` locks the conversation row `FOR UPDATE` so concurrent appends cannot fork onto a hidden branch.
 
 ## Message content
