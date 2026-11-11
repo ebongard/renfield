@@ -162,6 +162,10 @@ async def test_event_lands_in_the_requesting_conversation(conversation, monkeypa
     _channel, payload = redis.published[0]
     assert json.loads(payload) == {"target": 7, "type": "scan_job_finished", "reason": "done",
                                    "session_id": "session-1"}
+    # Byte-identical to before #1507: the `conversation_deleted` key exists only
+    # for a deleted conversation, never as `false` on the normal path.
+    assert payload == ('{"target": 7, "type": "scan_job_finished", "reason": "done", '
+                       '"session_id": "session-1"}')
 
 
 @contextmanager

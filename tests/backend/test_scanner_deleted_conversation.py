@@ -152,7 +152,7 @@ async def test_a_finished_scan_into_a_deleted_chat_still_toasts(world, session_m
 
     assert _events(world) == [{
         "target": OWNER, "type": "scan_job_finished", "reason": "done",
-        "session_id": DELETED_SESSION,
+        "session_id": DELETED_SESSION, "conversation_deleted": True,
     }]
     # Nothing written, and the deleted conversation is NOT revived (#1485).
     assert await _conversation_and_message_count(session_maker, DELETED_SESSION) == (0, 0)
@@ -177,7 +177,7 @@ async def test_a_failed_or_unrouted_scan_into_a_deleted_chat_still_toasts(
 
     assert _events(world) == [{
         "target": OWNER, "type": "scan_job_finished", "reason": status,
-        "session_id": DELETED_SESSION,
+        "session_id": DELETED_SESSION, "conversation_deleted": True,
     }]
     assert await _conversation_and_message_count(session_maker, DELETED_SESSION) == (0, 0)
 
@@ -212,7 +212,10 @@ async def test_no_free_text_reaches_either_channel(world, session_maker):
     carried = json.dumps(_events(world)) + json.dumps(world.hooks.announcements)
     assert hostile not in carried and "IGNORE" not in carried
     assert TITLE_FROM_REQUEST not in carried
-    assert set(_events(world)[0]) == {"target", "type", "reason", "session_id"}
+    assert set(_events(world)[0]) == {
+        "target", "type", "reason", "session_id", "conversation_deleted",
+    }
+    assert _events(world)[0]["conversation_deleted"] is True
 
 
 async def test_a_redelivered_outcome_notifies_once(world, session_maker):
@@ -295,7 +298,7 @@ async def test_auth_off_reaches_the_household_bucket(world, session_maker, monke
 
     assert _events(world) == [{
         "target": None, "type": "scan_job_finished", "reason": "done",
-        "session_id": DELETED_SESSION,
+        "session_id": DELETED_SESSION, "conversation_deleted": True,
     }]
     assert await _conversation_and_message_count(session_maker, DELETED_SESSION) == (0, 0)
 
@@ -314,3 +317,112 @@ async def test_the_log_says_what_happened_without_the_title(world, session_maker
     line = next(entry for entry in lines if JOB_ID in entry)
     assert "deleted" in line and "scanner_fault" in line and "refused" not in line
     assert TITLE_FROM_REQUEST not in line
+
+
+# --- the id was recreated: row existence decides, never the tombstone ---------
+
+@pytest.mark.parametrize(
+    ("recreated_for", "outcome", "events", "messages"),
+    [(STRANGER, "refused", 0, 1), (OWNER, "delivered", 1, 2)],
+)
+async def test_a_recreated_row_under_the_deleted_id_is_never_notified(
+    world, session_maker, recreated_for, outcome, events, messages,
+):
+    """The satellite path recreates a row under a tombstoned id (its room id is
+    fixed). From then on reach decides again: not owned -> silent, owned ->
+    delivered into it. The deleted branch is for a MISSING row only."""
+    from services.conversation_service import ConversationService
+
+    async with session_maker() as db:
+        await ConversationService(db).save_message(
+            DELETED_SESSION, "user", "wieder da", user_id=recreated_for,
+            allow_deleted_session=True,
+        )
+    await _remember(world, room_id=4)
+
+    assert await _deliver(world, session_maker, _event("done")) == outcome
+
+    assert len(_events(world)) == events
+    assert all("conversation_deleted" not in event for event in _events(world))
+    assert len(world.hooks.announcements) == events
+    assert await _conversation_and_message_count(session_maker, DELETED_SESSION) == (1, messages)
+
+
+# --- the route: what the scanner's retry logic sees ---------------------------
+
+@pytest.fixture
+async def route_client(world, session_maker, monkeypatch):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from slowapi.errors import RateLimitExceeded
+
+    from api.routes import scanner_jobs as route
+    from services.api_rate_limiter import limiter, rate_limit_exceeded_handler
+    from services.database import get_db
+
+    monkeypatch.setattr(route.settings, "folder_ingest_enabled", True)
+    monkeypatch.setattr(route.settings, "scanner_ingest_client_ids", "scanner-hh")
+    app = FastAPI()
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+    app.include_router(route.router, prefix="/api/scanner")
+
+    async def _db():
+        async with session_maker() as db:
+            yield db
+
+    async def _scanner_client(_db, _token):
+        return SimpleNamespace(client_id="scanner-hh", label="Scanner", route="folder")
+
+    app.dependency_overrides[get_db] = _db
+    # An unhandled error must come back as the 500 the scanner would see.
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    with patch("api.routes.scanner_jobs.resolve_folder_ingest_client", _scanner_client), \
+         patch("services.redis_client.get_redis", lambda: world.redis), \
+         patch("utils.hooks.run_hooks", world.hooks):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+
+
+async def _post_done(client):
+    return await client.post(
+        "/api/scanner/job-event",
+        json={"contract_version": "1", "job_id": JOB_ID, "status": "done",
+              "result": {"ok": True, "pages": 5}},
+        headers={"Authorization": "Bearer ok"},
+    )
+
+
+async def test_the_route_answers_a_deleted_chat_with_200_notified(world, route_client):
+    """Final for the scanner: a 2xx, so it does not retry."""
+    await _remember(world)
+
+    response = await _post_done(route_client)
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "notified"}
+    assert len(_events(world)) == 1
+
+
+async def test_the_route_answers_a_failed_marker_write_with_5xx_and_the_retry_notifies_once(
+    world, route_client,
+):
+    await _remember(world, room_id=4)
+    real_set = world.redis.set
+
+    async def set_failing_marker(key, value, ex=None, nx=False):
+        if key == REPORTED_KEY:
+            raise ConnectionError("redis blip")
+        return await real_set(key, value, ex=ex, nx=nx)
+
+    world.redis.set = set_failing_marker
+    response = await _post_done(route_client)
+    assert response.status_code >= 500  # retryable for the scanner
+    assert _events(world) == [] and world.hooks.announcements == []
+
+    world.redis.set = real_set
+    response = await _post_done(route_client)
+    assert (response.status_code, response.json()) == (200, {"status": "notified"})
+    response = await _post_done(route_client)
+    assert (response.status_code, response.json()) == (200, {"status": "duplicate"})
+    assert len(_events(world)) == 1 and len(world.hooks.announcements) == 1

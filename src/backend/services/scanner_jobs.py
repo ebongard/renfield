@@ -853,8 +853,11 @@ async def handle_job_event(
     # In auth-off mode the household's sockets live in the broadcast bucket. The
     # session id lets only the tab driving that conversation show the notice.
     target = requester.get("user_id") if settings.auth_enabled else None
+    # `conversation_deleted` tells the consumer not to point at the chat and not
+    # to reload it (#1507); the key is absent on the normal path.
     await publish_user_event(
         redis, target, EVENT_SCAN_JOB_FINISHED, reason=status, session_id=session_id,
+        conversation_deleted=conversation_deleted,
     )
     await _announce_in_origin_room(requester, status, result)
     if conversation_deleted:

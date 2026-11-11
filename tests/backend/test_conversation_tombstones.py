@@ -616,7 +616,7 @@ class TestTheWriterRefusesADeletedId:
         assert await _row(db_session, "weg-scan") is None
         assert [json.loads(payload) for _channel, payload in redis.published] == [{
             "target": None, "type": "scan_job_finished", "reason": "done",
-            "session_id": "weg-scan",
+            "session_id": "weg-scan", "conversation_deleted": True,
         }]
         # Final: the retry is a duplicate -- no second try, no second notice.
         assert await sj.handle_job_event(db_session, _event(), redis=redis) == "duplicate"

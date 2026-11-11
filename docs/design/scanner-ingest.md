@@ -461,7 +461,11 @@ Hardening from the post-deploy review (2026-09-14):
   - **deleted** → `notified`, final (2xx): no message, the conversation is never
     recreated, but the requester gets the same content-free `scan_job_finished`
     event (status + the old `session_id` as routing key, so the tab that wrote
-    into that chat toasts) and a voice request its fixed room sentence.
+    into that chat toasts) and a voice request its fixed room sentence. The
+    event carries `conversation_deleted: true` (only here; absent otherwise):
+    the toast then says the conversation was deleted instead of "details in the
+    chat", and an open thread on that id is not reloaded (it would come back
+    empty).
 
   With no message, layer 3 has nothing to find, so in this case the `…:reported`
   marker is the only record of the delivery: it is set with `NX` (whoever sets it
@@ -473,8 +477,9 @@ Hardening from the post-deploy review (2026-09-14):
   retry finds the marker and answers `duplicate`; a delivery that wrote the
   message but lost both its marker and its reply notifies a second time if the
   chat is deleted before the retry; the handler narrows the ownership clause to
-  `ConversationNotOwnedError`, so a builtin `PermissionError` is retried; the
-  toast still reads "details in the chat" although the chat is gone; a BUTTON
+  `ConversationNotOwnedError`, so a builtin `PermissionError` is retried; a
+  frontend older than the flag (stale PWA) still shows the chat wording and
+  reloads; a BUTTON
   scan whose configured conversation was deleted is refused earlier
   (`_unattended_requester`) and stays silent — a configuration fault, logged.
 - **The notice appears only in the tab that asked.** The `scan_job_finished`

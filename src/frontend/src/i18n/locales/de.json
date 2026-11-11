@@ -1678,6 +1678,12 @@
       "unrouted": "Scan abgeschlossen, Ziel noch offen – Details im Chat.",
       "failed": "Scan fehlgeschlagen – Details im Chat.",
       "interrupted": "Scan unterbrochen – Details im Chat."
+    },
+    "scanJobConversationDeleted": {
+      "done": "Scan abgeschlossen – die zugehörige Konversation wurde gelöscht.",
+      "unrouted": "Scan abgeschlossen, Ziel noch offen – die zugehörige Konversation wurde gelöscht.",
+      "failed": "Scan fehlgeschlagen – die zugehörige Konversation wurde gelöscht.",
+      "interrupted": "Scan unterbrochen – die zugehörige Konversation wurde gelöscht."
     }
   },
   "errors": {
