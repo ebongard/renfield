@@ -2604,6 +2604,13 @@
     "voicePasswordLabel": "Password to confirm",
     "voicePasswordWhy": "Only for switching off: a session older than your consent should not be able to withdraw it on its own.",
     "voiceStateFailed": "Could not load the state of the second factor",
+    "hapticsTitle": "Haptic feedback",
+    "hapticsExplain": "Short vibrations as feedback, for example when you send a message, switch a device or receive a notification. The setting applies to this device and browser only.",
+    "hapticsStateOn": "On — this device vibrates as feedback",
+    "hapticsStateOff": "Off",
+    "hapticsUnsupported": "This browser cannot vibrate (for example Safari on iPhone, or a computer without a vibration motor). The setting is therefore not available here.",
+    "hapticsReducedMotion": "“Reduce motion” is active on this device. While it is, vibration stays off — even with this setting switched on.",
+    "hapticsNotSaved": "The setting could not be saved in this browser (storage blocked, for example in private mode). Haptic feedback stays off.",
     "voiceBlocker": {
       "voice_path_off": "The voice path is currently switched off on this instance. You can consent now — the requirement takes effect once it is switched on.",
       "recognition_off": "Speaker recognition is switched off on this instance. Without it your voice could never be checked.",

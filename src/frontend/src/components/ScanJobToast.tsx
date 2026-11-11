@@ -4,6 +4,7 @@ import { ScanLine, X } from 'lucide-react';
 
 import { SCAN_JOB_FINISHED_EVENT, type ScanJobFinishedDetail } from '../hooks/useUserEvents';
 import { isTabConversation } from '../utils/tabConversations';
+import { haptic } from '../utils/haptics';
 
 /**
  * Live notice that a background scan the user started has finished.
@@ -44,7 +45,9 @@ export default function ScanJobToast() {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<ScanJobFinishedDetail>).detail;
       if (detail?.sessionId && !isTabConversation(detail.sessionId)) return;
-      setOutcome(toOutcome(detail?.reason));
+      const next = toOutcome(detail?.reason);
+      if (next === 'failed') haptic('error');
+      setOutcome(next);
     };
     window.addEventListener(SCAN_JOB_FINISHED_EVENT, handler);
     return () => window.removeEventListener(SCAN_JOB_FINISHED_EVENT, handler);
