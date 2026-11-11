@@ -130,8 +130,23 @@ browser that still held it; everything that outlives a delete and keys on the id
   atom purge removes conversations through an `ON DELETE CASCADE` no Python code
   sees. DDL once in `services/conversation_tombstones.py`, used by the migration
   `pc20261106_conv_tombstones` and the test harness. No backfill: ids deleted
-  before the migration are recorded nowhere. The table only grows (one short row
-  per deleted conversation); no retention yet.
+  before the migration are recorded nowhere.
+- **Retention (#1529):** `CONVERSATION_TOMBSTONE_RETENTION_DAYS`, default 0 = keep
+  forever (no prune, no query; the table then only grows, one short row per
+  delete). With N > 0 the daily built-in task `conversation_tombstone_cleanup`
+  (`prune_expired_tombstones`) deletes records whose `deleted_at` is MORE than N
+  days past — strict `<`, a record exactly N days old stays; a non-positive value
+  never prunes; the cut-off uses the database clock that wrote `deleted_at`. Index
+  `ix_deleted_conversation_sessions_deleted_at` (`pc20261111_tombstone_idx`, also
+  declared on the model). A window is safe because a record is needed only until
+  the client holding the stale id has spoken once (it is then swapped to a fresh
+  id); what it gives up is the client that stays silent longer than N days — its
+  stale id is accepted again, the pre-#1485 behaviour, without any deleted content
+  returning. Reasons to bound it: growth is tied to deletes (a job that creates
+  and purges sessions adds rows forever), and a plugin transport may use an
+  external identifier as the session id, which would otherwise outlive the delete
+  indefinitely. A satellite room id ages from its LAST delete (the trigger
+  refreshes `deleted_at`).
 - **Boundary:** an id with NO conversation row that is recorded is refused for
   every caller — auth on or off, JWT or device token — at the WS `register` frame
   and first message (`session_replaced` with a fresh id) and in `POST /api/chat/send`

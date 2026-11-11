@@ -1966,6 +1966,31 @@ ROUTING_TRACES_RETENTION_DAYS=14
 
 ---
 
+### Vermerke gelöschter Konversationen (#1485, #1529)
+
+```bash
+# Wie viele Tage der Vermerk einer gelöschten Sitzungs-ID in
+# deleted_conversation_sessions bleibt (0–3650). 0 = unbegrenzt aufbewahren
+# (Vorgabe): nichts wird gelöscht, die Aufgabe sendet keine Abfrage.
+# N > 0: die Aufgabe „Gelöschte Sitzungskennungen aufräumen" (täglich, nicht
+# beim Start) löscht Vermerke, die ÄLTER als N Tage sind; genau N Tage alte
+# bleiben. Ein negativer Wert verhindert den Start.
+CONVERSATION_TOMBSTONE_RETENTION_DAYS=0
+```
+
+Der Vermerk verhindert, dass ein Tab oder Gerät, das eine anderswo gelöschte
+Konversation noch zeigt, sie unter derselben ID neu anlegt (#1485). Er wird nur
+gebraucht, bis dieser Client sich einmal gemeldet hat — dann erhält er eine
+frische ID. **Das Fenster muss deshalb länger sein als die längste Zeit, die ein
+Tab oder Gerät ungenutzt liegt:** meldet sich ein Client erst nach Ablauf, wird
+seine alte ID wieder angenommen (Verhalten vor #1485; Inhalte der gelöschten
+Konversation kehren nicht zurück). Ein Fenster begrenzt das Tabellenwachstum
+(eine Zeile je Löschung) und die Verweildauer von Sitzungs-IDs, die ein
+Plugin-Transport von außen übernimmt (etwa die Kennung eines Chat-Threads).
+Der Stichtag wird mit der Uhr der Datenbank berechnet.
+
+---
+
 ### Trajectory Capture (Self-Learning Phase 2)
 
 ```bash
