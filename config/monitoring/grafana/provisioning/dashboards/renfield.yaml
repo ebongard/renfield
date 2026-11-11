@@ -1,0 +1,19 @@
+# Grafana dashboard provider for the Renfield dashboards (file provisioning).
+#
+# Mount this file into /etc/grafana/provisioning/dashboards/ and the directory
+# ../../dashboards/ of this repository at the `path` below. See ../../../README.md.
+apiVersion: 1
+
+providers:
+  - name: renfield
+    orgId: 1
+    folder: Renfield
+    type: file
+    disableDeletion: false
+    # Edits made in the Grafana UI are not written back to the files; change
+    # the JSON in git instead.
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards/renfield
+      foldersFromFilesStructure: false

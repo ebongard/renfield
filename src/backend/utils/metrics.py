@@ -13,7 +13,9 @@ Usage:
 """
 
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -34,7 +36,7 @@ _circuit_breaker_failures_total = None
 _memory_total = None
 _memory_cleanup_total = None
 _mcp_tool_duration_seconds = None
-_mcp_tool_errors_total = None
+_rag_search_duration_seconds = None
 _agent_outcome_total = None
 _agent_schema_repairs_total = None
 _voice_empty_turn_total = None
@@ -65,7 +67,7 @@ def _init_metrics():
     global _llm_call_duration_seconds, _agent_steps_total
     global _circuit_breaker_state, _circuit_breaker_failures_total
     global _memory_total, _memory_cleanup_total
-    global _mcp_tool_duration_seconds, _mcp_tool_errors_total
+    global _mcp_tool_duration_seconds, _rag_search_duration_seconds
     global _agent_outcome_total, _agent_schema_repairs_total, _injection_attempts_total
     global _voice_empty_turn_total
     global _budget_reductions_total, _output_guard_violations_total
@@ -106,8 +108,8 @@ def _init_metrics():
 
         _llm_call_duration_seconds = Histogram(
             "renfield_llm_call_duration_seconds",
-            "LLM call duration in seconds",
-            ["model", "call_type"],
+            "LLM call duration in seconds (agent loop calls only, see LLM_CALL_TYPES)",
+            ["model", "call_type", "outcome"],
             buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
         )
 
@@ -149,17 +151,27 @@ def _init_metrics():
             ["reason"],
         )
 
+        # One observation per call that was actually DISPATCHED to a server
+        # (#82). Refusals before dispatch (permission, validation, rate limit,
+        # not connected) say nothing about the server and are not observed.
+        # No `tool` label: tool names come from the remote server's tools/list,
+        # so their number is not ours to bound. `outcome` follows the health
+        # verdict's vocabulary (MCP_TOOL_OUTCOMES): only `timeout` is what
+        # `calls_failing` counts; `app_error` is an answer, not an outage.
         _mcp_tool_duration_seconds = Histogram(
             "renfield_mcp_tool_duration_seconds",
-            "MCP tool call duration in seconds",
-            ["server", "tool"],
+            "Duration of MCP tool calls dispatched to a server, by outcome",
+            ["server", "outcome"],
             buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
         )
 
-        _mcp_tool_errors_total = Counter(
-            "renfield_mcp_tool_errors_total",
-            "Total MCP tool call errors",
-            ["server", "tool"],
+        # One observation per RAGRetrieval.search() (#82): embedding, both
+        # retrievers, rerank and context expansion together.
+        _rag_search_duration_seconds = Histogram(
+            "renfield_rag_search_duration_seconds",
+            "Duration of a RAG search (embedding + retrieval + rerank), by outcome",
+            ["outcome"],
+            buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
         )
 
         _agent_outcome_total = Counter(
@@ -338,25 +350,114 @@ def record_http_request(method: str, endpoint: str, status_code: int, duration: 
     _http_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(duration)
 
 
+#: WebSocket route path -> value of the `type` label on
+#: renfield_websocket_connections. A path that is not listed (a plugin route)
+#: counts as WEBSOCKET_TYPE_OTHER, so the label can never carry a raw path.
+WEBSOCKET_TYPES = {
+    "/ws": "chat",
+    "/ws/satellite": "satellite",
+    "/ws/device": "device",
+    "/ws/kiosk": "kiosk",
+    "/ws/user": "user",
+    "/ws/knowledge-graph": "knowledge_graph",
+    "/ws/wakeword": "wakeword",
+}
+WEBSOCKET_TYPE_OTHER = "other"
+_WEBSOCKET_TYPE_VALUES = frozenset({*WEBSOCKET_TYPES.values(), WEBSOCKET_TYPE_OTHER})
+
+
+def _bounded(value: str, allowed: "frozenset[str] | tuple[str, ...]", fallback: str) -> str:
+    """Keep a label value inside its fixed vocabulary."""
+    return value if value in allowed else fallback
+
+
 def record_websocket_connect(ws_type: str):
-    """Record a WebSocket connection opening."""
+    """Record a WebSocket connection opening (`ws_type`: a WEBSOCKET_TYPES value)."""
     if not _metrics_initialized:
         return
+    ws_type = _bounded(ws_type, _WEBSOCKET_TYPE_VALUES, WEBSOCKET_TYPE_OTHER)
     _websocket_connections.labels(type=ws_type).inc()
 
 
 def record_websocket_disconnect(ws_type: str):
-    """Record a WebSocket connection closing."""
+    """Record a WebSocket connection closing (`ws_type`: a WEBSOCKET_TYPES value)."""
     if not _metrics_initialized:
         return
+    ws_type = _bounded(ws_type, _WEBSOCKET_TYPE_VALUES, WEBSOCKET_TYPE_OTHER)
     _websocket_connections.labels(type=ws_type).dec()
 
 
-def record_llm_call(model: str, call_type: str, duration: float):
-    """Record an LLM call duration."""
+def _prime_websocket_connections() -> None:
+    """Export a 0 sample per known type, so an idle type reads 0, not 'no data'."""
+    for ws_type in sorted(_WEBSOCKET_TYPE_VALUES):
+        _websocket_connections.labels(type=ws_type)
+
+
+#: How a timed call ended, as `observe_duration` classifies it.
+CALL_OUTCOMES = ("ok", "timeout", "error")
+
+#: The call types renfield_llm_call_duration_seconds is recorded for: the
+#: agent loop's LLM calls in services/agent_service.py. Other LLM consumers
+#: (router, intent, memory extraction, RAG answers) are not timed here.
+LLM_CALL_TYPES = ("agent_preselect", "agent_step", "agent_retry", "agent_summary")
+
+
+def record_llm_call(model: str, call_type: str, duration: float, outcome: str = "ok"):
+    """Record an LLM call duration.
+
+    `model` is the configured model name of the role (settings or
+    agent_roles.yaml), never something a request supplies.
+    """
     if not _metrics_initialized:
         return
-    _llm_call_duration_seconds.labels(model=model, call_type=call_type).observe(duration)
+    _llm_call_duration_seconds.labels(
+        model=model,
+        call_type=_bounded(call_type, LLM_CALL_TYPES, "other"),
+        outcome=_bounded(outcome, CALL_OUTCOMES, "error"),
+    ).observe(duration)
+
+
+def record_rag_search(duration: float, outcome: str = "ok"):
+    """Record the duration of one RAG search."""
+    if not _metrics_initialized:
+        return
+    _rag_search_duration_seconds.labels(
+        outcome=_bounded(outcome, CALL_OUTCOMES, "error"),
+    ).observe(duration)
+
+
+@contextmanager
+def observe_duration(record: Callable[..., Any], *labels: str) -> Iterator[None]:
+    """Time the enclosed block and report it as ``record(*labels, seconds, outcome)``.
+
+    The outcome is one of CALL_OUTCOMES, read off how the block ended; the
+    block's own exception always propagates unchanged. A cancellation is not
+    recorded: the caller gave up, the callee did nothing wrong. A failure
+    inside `record` is logged and swallowed, so timing can never fail the
+    call it measures. With metrics disabled this only runs the block.
+    """
+    if not _metrics_initialized:
+        yield
+        return
+    started = time.monotonic()
+    outcome: str | None = "ok"
+    try:
+        yield
+    except TimeoutError:
+        outcome = "timeout"
+        raise
+    except Exception:
+        outcome = "error"
+        raise
+    except BaseException:
+        outcome = None
+        raise
+    finally:
+        if outcome is not None:
+            try:
+                record(*labels, time.monotonic() - started, outcome)
+            except Exception as e:
+                logger.warning(f"Could not record a duration metric: {e!r}")
 
 
 def record_agent_steps(steps: int):
@@ -438,13 +539,25 @@ def set_kg_conflation_candidates(count: int):
     _kg_conflation_candidates.set(count)
 
 
-def record_mcp_tool_call(server: str, tool: str, duration: float, success: bool):
-    """Record an MCP tool call with duration and success/failure."""
+#: Outcome of an MCP tool call that reached a server. `timeout` is the only
+#: one the health verdict counts (`calls_failing`); `app_error` is an error
+#: RESULT (isError / inner envelope), i.e. the server answered; `error` is an
+#: exception from the call, a died session included.
+MCP_TOOL_OUTCOMES = ("ok", "app_error", "timeout", "error")
+
+
+def record_mcp_tool_call(server: str, duration: float, outcome: str):
+    """Record one dispatched MCP tool call.
+
+    `server` is the configured server name (config/mcp_servers.yaml), never a
+    name taken from a tool call the model wrote.
+    """
     if not _metrics_initialized:
         return
-    _mcp_tool_duration_seconds.labels(server=server, tool=tool).observe(duration)
-    if not success:
-        _mcp_tool_errors_total.labels(server=server, tool=tool).inc()
+    _mcp_tool_duration_seconds.labels(
+        server=server,
+        outcome=_bounded(outcome, MCP_TOOL_OUTCOMES, "error"),
+    ).observe(duration)
 
 
 def record_mcp_health_tick(problem_count: int | None):
@@ -691,6 +804,48 @@ def normalize_endpoint(path: str) -> str:
     return "/".join("{id}" if _ID_SEGMENT_RE.match(p) else p for p in parts)
 
 
+class WebSocketGaugeMiddleware:
+    """Keep renfield_websocket_connections in step with the open sockets.
+
+    Pure ASGI and the ONE place the gauge moves: it counts a connection when
+    the application accepts it and releases it when the endpoint returns, by
+    whatever path (clean close, client drop, exception, cancellation). A
+    handshake that is refused (auth, origin) is never counted. Installed by
+    `setup_metrics` only, so with metrics disabled it is not in the stack.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope.get("type") != "websocket":
+            await self.app(scope, receive, send)
+            return
+
+        ws_type = WEBSOCKET_TYPES.get(scope.get("path", ""), WEBSOCKET_TYPE_OTHER)
+        accepted = False
+
+        async def counting_send(message: dict) -> None:
+            nonlocal accepted
+            if message.get("type") == "websocket.accept" and not accepted:
+                accepted = True
+                self._record(record_websocket_connect, ws_type)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, counting_send)
+        finally:
+            if accepted:
+                self._record(record_websocket_disconnect, ws_type)
+
+    @staticmethod
+    def _record(record: Callable[[str], None], ws_type: str) -> None:
+        try:
+            record(ws_type)
+        except Exception as e:
+            logger.warning(f"Could not record a WebSocket connection metric: {e!r}")
+
+
 def setup_metrics(app: "FastAPI"):
     """
     Add Prometheus metrics middleware and /metrics endpoint to the app.
@@ -715,6 +870,7 @@ def setup_metrics(app: "FastAPI"):
     _prime_agent_outcome()
     _prime_agent_schema_repairs()
     _prime_voice_empty_turn()
+    _prime_websocket_connections()
 
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request
@@ -747,6 +903,7 @@ def setup_metrics(app: "FastAPI"):
             return response
 
     app.add_middleware(PrometheusMiddleware)
+    app.add_middleware(WebSocketGaugeMiddleware)
 
     # /metrics endpoint
     from fastapi import Response
