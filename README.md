@@ -132,7 +132,7 @@ Multi-source room-level presence tracking:
 - Progressive Web App (desktop, tablet, mobile)
 - Dark mode (light, dark, system)
 - Multilingual (German, English)
-- Prometheus metrics (opt-in)
+- Prometheus metrics (opt-in) with Grafana dashboards (`config/monitoring/`)
 
 ## Quick Start
 

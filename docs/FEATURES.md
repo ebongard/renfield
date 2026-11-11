@@ -976,7 +976,19 @@ Enthält u. a. den MCP-Health-Heartbeat `renfield_mcp_health_ticks_total`,
 `renfield_agent_outcome_total` (wie ein Agent-Lauf endete, mit 0 vorbelegt),
 `renfield_agent_schema_repairs_total` (#1381) und
 `renfield_voice_empty_turn_total` (warum ein Sprachdurchlauf keinen Text
-ergab, #1386).
+ergab, #1386). Seit #82 werden auch die offenen WebSocket-Verbindungen, die
+Dauer der LLM-Aufrufe der Agentenschleife, die MCP-Werkzeugaufrufe je Server
+und Ausgang sowie die RAG-Suche tatsächlich aufgezeichnet.
+
+### Grafana-Dashboards
+
+Drei Dashboards für diese Metriken liegen als JSON für das Datei-Provisioning
+unter `config/monitoring/grafana/` (Überblick, LLM und Agent, Integrationen und
+Wissen); Laden und Grenzen in `config/monitoring/README.md`. Sie lesen nur
+`/metrics` und definieren „gesund" nicht neu: Der MCP-Zustand ist das Urteil
+des Health-Monitors. Eine Nutzer-Aktivitätsansicht gibt es bewusst nicht (keine
+Metrik trägt eine Nutzerkennung). Ein Grafana/Prometheus ist nicht Teil des
+Repositorys.
 
 ### Health Checks
 - `GET /health` — Backend Health Check

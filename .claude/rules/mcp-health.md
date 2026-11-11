@@ -27,6 +27,8 @@ Retry-After is honoured, no automatic retry; signal + alert stay dark).
 - `no_tools`/`plugin_failed`/`rate_limited` are `_UNHEALABLE_CODES` — not self-heal-probed: `tools/list` answers
   fine with `[]`, so a reconnect "recovers" a tool-less server. Same for a `probe_failed` from a BESPOKE probe
   (`search`): it judges the service around the transport (#1509, `_reconnect_cannot_help`).
+- `renfield_mcp_tool_duration_seconds{server,outcome}` is observed on those SAME exits (`_observe_tool_call`),
+  dispatched calls only: `timeout` is the one outcome the verdict counts, `app_error` an answer. No `tool` label.
 - `execute_tool_streaming` shares `execute_tool`'s accounting (caller cancellation records nothing; app error ≠
   disconnect). Connect + `refresh_tools` install tools ONLY through `_install_discovered_tools`.
 - **Error result** = `_detect_inner_error`, TOP level only: a `success`/`ok` BOOLEAN decides alone, else an `error`

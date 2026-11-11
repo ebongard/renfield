@@ -87,7 +87,7 @@ Raumbasierte Präsenzerkennung aus drei Quellen:
 - **Dark Mode** — Hell, Dunkel, System (folgt OS-Präferenz)
 - **Mehrsprachigkeit** — Deutsch und Englisch (react-i18next)
 - **Vollständig Offline** — Keine Cloud-Abhängigkeiten
-- **Prometheus Metrics** — Opt-in `/metrics` Endpoint
+- **Prometheus Metrics** — Opt-in `/metrics` Endpoint, Grafana-Dashboards unter `config/monitoring/`
 
 ## Architektur
 
