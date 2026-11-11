@@ -66,7 +66,7 @@ Rows of the deleted conversation in the tables of
 memories, reminders, a shadow log) keep the id and from then on share it with
 the new conversation's rows; no reader selects them by session id, so nothing
 is handed out, but attribution by id no longer tells the two conversations
-apart. Short-lived Redis state keyed by the id (a remembered scan job, 24 h)
+apart. Short-lived Redis state that carries the id (a remembered scan job, 24 h)
 is outside the database and not guarded: it expires before the smallest
 window of one day does. Choose N above the longest time a browser tab or
 device is expected to sit unused.

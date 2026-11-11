@@ -1979,7 +1979,7 @@ CONVERSATION_TOMBSTONE_RETENTION_DAYS=0
 ```
 
 Der Vermerk verhindert, dass unter der ID einer gelöschten Konversation eine
-neue entsteht (#1485). Gelesen wird er an zwei Stellen: an der Chat-Grenze, wenn
+neue entsteht (#1485). Gelesen wird er unter anderem an zwei Stellen: an der Chat-Grenze, wenn
 ein Tab oder Gerät die anderswo gelöschte Konversation noch zeigt (es erhält
 eine frische ID), und beim Schreiben (`save_message`), wenn ein nachlaufender
 Schreiber die ID noch trägt — ein Scan-Ergebnis, eine Paperless-Rückmeldung.
