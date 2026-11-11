@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -35,8 +36,10 @@ from loguru import logger
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from models.database import PushSubscription, User
+from models.permissions import Permission
 from services.push_preconditions import push_active, vapid_private_key, vapid_subject
 from utils.config import settings
 
@@ -83,24 +86,25 @@ class PushTarget:
 # ---------------------------------------------------------------------------
 
 
-def endpoint_allowed(endpoint: str) -> bool:
-    """Whether the backend may POST to this subscription endpoint.
+#: Longest endpoint taken; the request model has the same cap.
+_MAX_ENDPOINT_LENGTH = 2048
 
-    The URL comes from a browser and is requested by the server: without a
-    restriction any account could aim the backend at an address inside the
-    network. Only https, no credentials, default port, and a host of a known
-    push service (``PUSH_ALLOWED_ENDPOINT_HOSTS``).
-    """
-    try:
-        parts = urlsplit(endpoint)
-        port = parts.port
-    except ValueError:
-        return False
-    host = (parts.hostname or "").lower()
-    if parts.scheme != "https" or not host or parts.username or parts.password:
-        return False
-    if port not in (None, 443):
-        return False
+#: The ONLY shape an endpoint may have, matched against the raw text as a
+#: whole. The authority is ``https://`` followed by a lower-case DNS name and
+#: then either the end or a ``/`` -- so there is no room for userinfo (``@``),
+#: a port, a backslash, ``%`` or whitespace inside the host, an IPv6 bracket or
+#: a non-ASCII letter, and nothing after the host can be read as part of it by
+#: ANY parser. Path and query take the characters real push services use.
+_ENDPOINT_SHAPE = re.compile(
+    r"https://(?P<host>[a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:/[A-Za-z0-9._~:/?&=%+,;!$'()*-]*)?"
+)
+
+
+class EndpointRefused(Exception):
+    """The sender was handed an endpoint the allowlist does not cover."""
+
+
+def _allowlisted(host: str) -> bool:
     for entry in settings.push_allowed_endpoint_hosts.split(","):
         entry = entry.strip().lower()
         if not entry:
@@ -111,6 +115,64 @@ def endpoint_allowed(endpoint: str) -> bool:
         elif host == entry:
             return True
     return False
+
+
+def _every_parser_agrees(endpoint: str, host: str) -> bool:
+    """The host that was checked is the host that will be requested.
+
+    The decision is made on the raw text; the request is made by ``requests``,
+    which parses with urllib3. Both it and the standard library must name the
+    same host, https, no port and no credentials -- a disagreement (or a
+    parser that is not there) refuses the endpoint.
+    """
+    try:
+        from urllib3.util import parse_url
+
+        sent = parse_url(endpoint)
+        plain = urlsplit(endpoint)
+        return (
+            sent.scheme == "https"
+            and sent.host == host
+            and sent.port is None
+            and sent.auth is None
+            and plain.scheme == "https"
+            and plain.hostname == host
+            and plain.port is None
+            and plain.username is None
+            and plain.password is None
+        )
+    except Exception:
+        return False
+
+
+def endpoint_allowed(endpoint: object) -> bool:
+    """Whether the backend may POST to this subscription endpoint.
+
+    The URL comes from a browser and is requested by the server: without a
+    restriction any account could aim the backend at an address inside the
+    network. Asked when a subscription is stored AND again directly before
+    every send (a row may predate a narrower list or a stricter check).
+
+    Strict rather than clever: the endpoint has to be in canonical form
+    already -- lower-case host, no port, nothing unusual -- and is refused
+    otherwise. Browsers hand out canonical endpoints, and the text that was
+    checked is the text that is sent, unchanged.
+    """
+    if not isinstance(endpoint, str) or len(endpoint) > _MAX_ENDPOINT_LENGTH:
+        return False
+    match = _ENDPOINT_SHAPE.fullmatch(endpoint)
+    if match is None:
+        return False
+    host = match["host"]
+    labels = host.split(".")
+    if any(label.startswith("-") or label.endswith("-") or len(label) > 63 for label in labels):
+        return False
+    # A name, never an address: an IP literal ends in a number in every
+    # spelling (dotted, hex, octal); a single-label name or a bare integer
+    # never gets past the shape above.
+    if not labels[-1].isalpha():
+        return False
+    return _allowlisted(host) and _every_parser_agrees(endpoint, host)
 
 
 # ---------------------------------------------------------------------------
@@ -197,25 +259,51 @@ async def delete_subscription(db: AsyncSession, *, user_id: int, endpoint: str) 
 # ---------------------------------------------------------------------------
 
 
+def _may_receive_push(owner: User) -> bool:
+    """The owner still holds the permission the subscribe route asked for.
+
+    A role can change after a device was subscribed. The row stays (the role
+    may come back, and the owner can still remove it); it is just not sent to.
+    Fails closed: an owner whose permissions cannot be read gets nothing.
+    """
+    try:
+        return bool(owner.has_permission(Permission.NOTIFICATIONS_VIEW.value))
+    except Exception as e:
+        logger.warning(
+            f"Web Push: permissions of user #{getattr(owner, 'id', '?')} unreadable "
+            f"({type(e).__name__}); not pushed"
+        )
+        return False
+
+
 async def select_push_recipients(db: AsyncSession, notification: Any) -> list[PushSubscription]:
     """The subscriptions whose owner the in-app notification reaches.
 
     ``NotificationService.is_visible_to`` decides, row by row; the SQL only
     narrows the candidates (active accounts, and the addressee when there is
-    one). ``notification`` needs ``target_user_id`` and ``privacy``.
+    one). On top of that the owner must still hold ``notifications.view``, the
+    permission the subscribe route requires -- so push recipients are the
+    in-app recipients who may have a device at all, never more.
+    ``notification`` needs ``target_user_id`` and ``privacy``.
     """
     from services.notification_service import NotificationService
 
     query = (
-        select(PushSubscription)
+        select(PushSubscription, User)
         .join(User, User.id == PushSubscription.user_id)
+        .options(selectinload(User.role))
         .where(User.is_active.is_(True))
         .order_by(PushSubscription.id)
     )
     if notification.target_user_id is not None:
         query = query.where(PushSubscription.user_id == notification.target_user_id)
-    rows = (await db.execute(query)).scalars().all()
-    return [row for row in rows if NotificationService.is_visible_to(notification, row.user_id)]
+    rows = (await db.execute(query)).all()
+    return [
+        subscription
+        for subscription, owner in rows
+        if _may_receive_push(owner)
+        and NotificationService.is_visible_to(notification, subscription.user_id)
+    ]
 
 
 def build_payload(target: PushTarget) -> dict[str, Any]:
@@ -237,17 +325,29 @@ def build_payload(target: PushTarget) -> dict[str, Any]:
 def _send_blocking(subscription_info: dict[str, Any], data: str, timeout: float) -> None:
     """One push, synchronously. Runs in a worker thread -- ``pywebpush`` uses
     ``requests``. Imported here so the module loads without the package."""
+    # The last gate before the network: nothing is sent to an endpoint the
+    # allowlist does not cover, whatever path led here.
+    if not endpoint_allowed(subscription_info.get("endpoint")):
+        raise EndpointRefused
+
+    import requests
     from pywebpush import webpush
 
-    webpush(
-        subscription_info=subscription_info,
-        data=data,
-        vapid_private_key=vapid_private_key(),
-        # A fresh dict per call: pywebpush adds ``aud`` and ``exp`` to it.
-        vapid_claims={"sub": vapid_subject()},
-        ttl=int(settings.proactive_notification_ttl),
-        timeout=timeout,
-    )
+    with requests.Session() as session:
+        # ``requests`` follows redirects, and a 307/308 repeats the POST: an
+        # allowed host could send the request anywhere. A push service has no
+        # reason to redirect, so the first redirect ends the send as a failure.
+        session.max_redirects = 0
+        webpush(
+            subscription_info=subscription_info,
+            data=data,
+            vapid_private_key=vapid_private_key(),
+            # A fresh dict per call: pywebpush adds ``aud`` and ``exp`` to it.
+            vapid_claims={"sub": vapid_subject()},
+            ttl=int(settings.proactive_notification_ttl),
+            timeout=timeout,
+            requests_session=session,
+        )
 
 
 async def _send_one(subscription_id: int, subscription_info: dict[str, Any], data: str) -> str:

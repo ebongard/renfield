@@ -103,6 +103,40 @@ export async function subscribeDevice(publicKey: string): Promise<PushSubscripti
   return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
 }
 
+/**
+ * Which account switched push on in THIS browser. A per-browser note, written
+ * only when push is switched on: it lets the app notice that somebody else is
+ * logged in now. Storage can be unavailable (private window) -- then there is
+ * simply no note.
+ */
+const PUSH_OWNER_KEY = 'renfield_push_owner';
+
+export function pushOwner(): number | null {
+  try {
+    const raw = localStorage.getItem(PUSH_OWNER_KEY);
+    const id = raw === null ? Number.NaN : Number(raw);
+    return Number.isInteger(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberPushOwner(userId: number): void {
+  try {
+    localStorage.setItem(PUSH_OWNER_KEY, String(userId));
+  } catch {
+    // No note, see above.
+  }
+}
+
+export function forgetPushOwner(): void {
+  try {
+    localStorage.removeItem(PUSH_OWNER_KEY);
+  } catch {
+    // Nothing to forget.
+  }
+}
+
 /** True when the browser MAY hold a subscription worth releasing -- a cheap,
  *  synchronous check, so a logout without push stays exactly as it was. */
 export function mayHoldPushSubscription(): boolean {

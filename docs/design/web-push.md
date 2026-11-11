@@ -28,6 +28,7 @@ Since #1244 one rule decides who may see a notification: `NotificationService.is
 | Unaddressed, `personal` / `confidential` / unknown | nobody | nobody |
 | Admin / `notifications.manage` | sees everything (oversight) | **only what the row above gives anyone** |
 | Deactivated account | cannot log in | skipped (`users.is_active`) |
+| Role without `notifications.view` | lists public ones | nothing (cannot subscribe; skipped if it lost the permission later) |
 | Auth off | unrestricted | feature inactive (precondition) |
 
 `tests/backend/test_push_notifications.py::TestRecipients::test_push_reaches_exactly_whom_the_in_app_list_reaches`
@@ -44,6 +45,13 @@ Two deliberate differences, both on the narrow side:
 The routes are gated on `notifications.view` (Familie and Admin hold it; Gast and the kiosk device
 account do not). The notification list itself only requires a login, so a guest can see public
 notifications in-app but cannot subscribe a device: push recipients ⊆ in-app recipients.
+
+**The sender asks for the same permission again.** A role can change after a device was subscribed;
+`select_push_recipients` skips a subscription whose owner no longer holds `notifications.view`
+(`User.has_permission`, failing closed when the role cannot be read). The row stays — the role may
+come back — and `DELETE /api/push/subscribe` is the one route that needs only a login, so such an
+account can still take its device back. So the exact statement is: push recipients = in-app
+recipients who hold `notifications.view`.
 
 ## 3. What leaves the house
 
@@ -100,10 +108,28 @@ User-Agent), `created_at`.
   stops receiving the first account's pushes. **Logout releases the subscription** (server row, then
   browser) before the session is revoked. *Not taken:* keeping the device subscribed across logout —
   convenient, but the device would announce activity for an account that is not logged in on it.
+- **A session that ends without a logout releases it too** — expired or revoked token, failed
+  refresh, a token that is gone, `/auth/me` failing (all in `AuthContext`; there is no other place
+  that ends a session client-side). No session is left for the server call, so the browser
+  unsubscribes by itself (`releasePushOnSessionEnd`); the push service then answers the next send
+  with 410 and the server drops the row. A login that *replaces* a session (SSO return, token
+  overwrite) is caught by a per-browser note of who switched push on (`renfield_push_owner` in
+  localStorage, written only when push is switched on): a different account in `/auth/me` releases
+  the subscription. Until one of these runs — the app has to be opened once — a shared device can
+  still show the generic line for the previous account; it never shows content.
 - **Endpoint allowlist** (`PUSH_ALLOWED_ENDPOINT_HOSTS`): the URL comes from a browser and the
   backend POSTs to it; without a restriction any account could aim the backend at an internal
-  address. https only, no credentials, default port, known push-service hosts. Checked on subscribe
-  and again before every send.
+  address. The check is on the **raw text** and strict: `https://`, a lower-case DNS name, then the
+  end or `/` — no userinfo or `@` anywhere, no port (not even `:443`), no backslash, whitespace,
+  control character, `%` in the host, IP literal in any spelling, non-ASCII letter or fragment. An
+  endpoint that is not already canonical is refused, never normalised, so the text that was checked
+  is the text that is sent. On top, urllib3's parser (the one `requests` sends with) and the
+  standard library must both name the checked host; a disagreement or a missing parser refuses.
+  (The first version decided with `urlsplit` alone and let `https://192.168.1.1\.push.apple.com/`
+  through, which `requests` sends to `192.168.1.1`.) Asked on subscribe, when selecting recipients,
+  and once more inside the function that sends.
+- **No redirects.** `requests` would follow a 307/308 and repeat the POST wherever it points; the
+  send uses a session with `max_redirects = 0`, so a redirect is a failed send.
 - At most 20 devices per account (each row is one outbound request per notification).
 - The keys are stored in the clear: they are the browser's public key and a shared secret that are
   only usable together with the VAPID private key. *Not taken:* Fernet at rest.
@@ -139,6 +165,12 @@ send fails softly.
 
 ## 8. Rollout (per instance — both run this code)
 
+0. **Before merging: the migration shares its parent with another open PR.** `pc20261111_push_subs`
+   and the tombstone PR's `pc20261111_tombstone_idx` both have `down_revision =
+   "pc20261110_routing_traces"`. Whichever merges SECOND must rebase its `down_revision` onto the
+   first one's revision (and the assertion in its migration test) — not add a merge revision —
+   otherwise Alembic has two heads, `upgrade head` fails and the deploy gate's image-head check
+   breaks. If one is already deployed, query the LIVE head first. The order is the owner's call.
 1. **Migration before the rollout** (`bin/deploy-production.sh … --migrate`). A new pod before the
    migration fails every query on `push_subscriptions`; with the flag off nothing queries it, but the
    deploy gate compares heads regardless.

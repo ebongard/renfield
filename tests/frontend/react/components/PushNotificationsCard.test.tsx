@@ -23,6 +23,7 @@ import {
 } from '../pushBrowserMock';
 import PushNotificationsCard from '../../../../src/frontend/src/components/PushNotificationsCard';
 import { applicationServerKeyBytes } from '../../../../src/frontend/src/utils/webPush';
+import { notePushSessionUser } from '../../../../src/frontend/src/api/resources/push';
 
 // "AQID" is base64url for the bytes 1, 2, 3.
 const PUBLIC_KEY = 'AQID';
@@ -154,13 +155,20 @@ describe('PushNotificationsCard', () => {
   it('switching on: prompt, subscribe with the instance key, bind on the server', async () => {
     const browser = installPushBrowser({ permission: 'default', promptAnswer: 'granted' });
     const api = mockApi();
+    // What the auth context does when it learns who is logged in.
+    localStorage.removeItem('renfield_push_owner');
+    notePushSessionUser(42);
     renderWithProviders(<PushNotificationsCard />);
 
     const button = await screen.findByRole('button', { name: ENABLE });
     await waitFor(() => expect(button).toBeEnabled());
+    expect(localStorage.getItem('renfield_push_owner')).toBeNull();
     await userEvent.click(button);
 
     expect(await screen.findByText('Ein — dieses Gerät wird benachrichtigt')).toBeInTheDocument();
+    // The browser notes whose subscription this is, so that another account
+    // logging in here later can be told apart.
+    expect(localStorage.getItem('renfield_push_owner')).toBe('42');
     expect(browser.subscribe).toHaveBeenCalledTimes(1);
     const init = browser.subscribe.mock.calls[0][0];
     expect(init.userVisibleOnly).toBe(true);

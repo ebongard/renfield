@@ -30,7 +30,7 @@ from models.database import User
 from models.permissions import Permission
 from services import push_service
 from services.api_rate_limiter import limiter
-from services.auth_service import require_permission
+from services.auth_service import get_current_user, require_permission
 from services.database import get_db
 from services.push_preconditions import push_active, vapid_public_key
 from utils.config import settings
@@ -46,7 +46,9 @@ def require_push_active() -> None:
 router = APIRouter(dependencies=[Depends(require_push_active)])
 
 # The same permission that names "may view notifications". A role without it
-# (Gast, the kiosk device account) gets no push.
+# (Gast, the kiosk device account) gets no push: it cannot subscribe, and the
+# sender skips a device whose owner no longer holds it. Removing one's own
+# subscription is the one route that asks for a login only.
 _require_user = require_permission(Permission.NOTIFICATIONS_VIEW)
 
 
@@ -176,7 +178,9 @@ async def unsubscribe(
     request: Request,
     body: UnsubscribeRequest,
     db: AsyncSession = Depends(get_db),
-    user: User | None = Depends(_require_user),
+    # A login, NOT the permission: an account whose role lost
+    # ``notifications.view`` must still be able to take its own device back.
+    user: User | None = Depends(get_current_user),
 ) -> Response:
     """Remove the caller's subscription for this browser."""
     removed = await push_service.delete_subscription(

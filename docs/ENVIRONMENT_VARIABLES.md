@@ -1114,6 +1114,8 @@ PUSH_VAPID_PUBLIC_KEY=
 PUSH_VAPID_CLAIMS_EMAIL=
 
 # Zugelassene Zustelldienste: exakter Hostname oder führender Punkt für eine Endung.
+# Nur DNS-Namen: eine IP-Adresse, ein Port oder ein einteiliger Name wird auch dann
+# abgelehnt, wenn er hier steht (Begründung: design/web-push.md §5).
 PUSH_ALLOWED_ENDPOINT_HOSTS=fcm.googleapis.com,updates.push.services.mozilla.com,.push.apple.com,.notify.windows.com
 # Zeitlimit je Zustellversuch in Sekunden (0 < x <= 60).
 PUSH_SEND_TIMEOUT_SECONDS=10

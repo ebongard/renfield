@@ -11,7 +11,11 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import apiClient from '../../utils/axios';
 import {
+  forgetPushOwner,
   getDeviceSubscription,
+  mayHoldPushSubscription,
+  pushOwner,
+  rememberPushOwner,
   subscribeDevice,
   subscriptionBody,
 } from '../../utils/webPush';
@@ -61,7 +65,51 @@ async function enablePushOnThisDevice(): Promise<string> {
     await subscription.unsubscribe().catch(() => undefined);
     throw error;
   }
+  if (sessionUserId !== null) rememberPushOwner(sessionUserId);
   return body.endpoint;
+}
+
+/** Who is logged in on this browser, as the auth context last learned it. */
+let sessionUserId: number | null = null;
+
+/**
+ * Browser side only, no server call: for every way a session ends WITHOUT a
+ * logout (expired or revoked token, failed refresh, another account taking
+ * the browser over). There is no session left to remove the server row with;
+ * once the browser has unsubscribed, the push service answers the next send
+ * with 410 and the server drops the row by itself. Never rejects.
+ */
+export async function releasePushLocally(): Promise<void> {
+  forgetPushOwner();
+  try {
+    const subscription = await getDeviceSubscription();
+    await subscription?.unsubscribe();
+  } catch {
+    // Best effort: there is nobody to report this to.
+  }
+}
+
+/**
+ * The session on this browser is gone and nobody pressed "log out". Without
+ * this the device stayed bound to the previous account, and the next person
+ * on a shared tablet was shown that account's alerts. A no-op (one synchronous
+ * check) wherever push was never switched on.
+ */
+export function releasePushOnSessionEnd(): void {
+  sessionUserId = null;
+  if (mayHoldPushSubscription()) void releasePushLocally();
+}
+
+/**
+ * The app has just learned who is logged in. If this browser's subscription
+ * was made by a DIFFERENT account (a login or SSO return that replaced the
+ * session without ending it), it is released.
+ */
+export function notePushSessionUser(userId: number): void {
+  sessionUserId = userId;
+  if (!mayHoldPushSubscription()) return;
+  const owner = pushOwner();
+  if (owner !== null && owner !== userId) void releasePushLocally();
 }
 
 /**
@@ -74,6 +122,7 @@ async function enablePushOnThisDevice(): Promise<string> {
 export async function disablePushOnThisDevice(
   headers?: Record<string, string>,
 ): Promise<void> {
+  forgetPushOwner();
   const subscription = await getDeviceSubscription();
   if (!subscription) return;
   try {

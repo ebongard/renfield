@@ -6,7 +6,11 @@
  */
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import apiClient, { PASSWORD_CHANGE_REQUIRED_EVENT } from '../utils/axios';
-import { releasePushOnLogout } from '../api/resources/push';
+import {
+  notePushSessionUser,
+  releasePushOnLogout,
+  releasePushOnSessionEnd,
+} from '../api/resources/push';
 import { mayHoldPushSubscription } from '../utils/webPush';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '../utils/authTokens';
 import type { User, LoginResponse } from '../types/api';
@@ -132,6 +136,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch {
       clearTokens();
       setUser(null);
+      // Web Push (#79): a session that ends without a logout gives the
+      // device's subscription back as well -- see `releasePushOnSessionEnd`.
+      releasePushOnSessionEnd();
       return false;
     }
   }, [getRefreshToken, setTokens, clearTokens]);
@@ -144,6 +151,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const token = getAccessToken();
     if (!token && !cookieAuthRef.current) {
       setUser(null);
+      // The token is gone (cleared elsewhere, another tab): no session, so no
+      // subscription either.
+      releasePushOnSessionEnd();
       return null;
     }
 
@@ -152,6 +162,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // localStorage Bearer if present, else the cookie carries auth.
       const response = await apiClient.get('/api/auth/me');
       setUser(response.data);
+      // A subscription another account made in this browser is released.
+      if (typeof response.data?.id === 'number') notePushSessionUser(response.data.id);
       return response.data;
     } catch (error: unknown) {
       // Token might be expired, try to refresh
@@ -166,6 +178,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
       clearTokens();
       setUser(null);
+      releasePushOnSessionEnd();
       return null;
     }
   }, [getAccessToken, clearTokens, refreshAccessToken]);

@@ -206,43 +206,150 @@ class TestRequirement:
 
 
 # =============================================================== allowlist
+# Shaped like what the four push services really hand out.
+LEGITIMATE_ENDPOINTS = [
+    "https://fcm.googleapis.com/fcm/send/dQw4w9WgXcQ:APA91bHPRgkF3JUikC4ENAHEeMrd41Zxv3hVZjC9KtT8OvPVGJ-hQMRKRrZuJAEcl7B338qju59zJMjw2DELjzEvxwYv7hH5Ynpc1ODQ0aT4U4OFEeco8ohsN5PjL1iC2dNtk2BAokeMCg2ZXKqpc8FXKmhX94kIxQ",
+    "https://fcm.googleapis.com/wp/eXaMpLe_-0123456789",
+    "https://updates.push.services.mozilla.com/wpush/v2/gAAAAABl0_exAmple-TOKEN_with=padding",
+    "https://web.push.apple.com/QGzExampleToken0123456789-_",
+    "https://wns2-by3p.notify.windows.com/w/?token=BQYAAACx%2bExample%2fToken%3d",
+    "https://db5p.notify.windows.com/w/?token=abc",
+]
+
+# Every way the checked host and the requested host could differ, plus
+# everything that is simply not a push service. The first entries are the
+# reported hole: ``urlsplit`` keeps a backslash inside the host, the library
+# that sends ends the host at it.
+HOSTILE_ENDPOINTS = [
+    "https://192.168.1.1\\.push.apple.com/x",              # backslash: parser differential
+    "https://postgres\\.push.apple.com/",
+    "https://fcm.googleapis.com\\@10.0.0.1/x",
+    "https://10.0.0.1/\\.push.apple.com",
+    "https://user:pw@fcm.googleapis.com/x",                # userinfo
+    "https://fcm.googleapis.com@10.0.0.1/x",
+    "https://fcm.googleapis.com/x@y",                      # '@' anywhere
+    "https://fcm.googleapis.com:8443/x",                   # any port, also the default one
+    "https://fcm.googleapis.com:443/x",
+    "https://fcm.googleapis.com:notaport/x",
+    "https://fcm.googleapis.com:/x",
+    "https://127.0.0.1/x",                                 # IP literals, every spelling
+    "https://[::1]/x",
+    "https://[::ffff:127.0.0.1]/x",
+    "https://2130706433/x",
+    "https://0x7f000001/x",
+    "https://0x7f.0.0.1/x",
+    "https://017700000001/x",
+    "https://127.1/x",
+    "https://FCM.googleapis.com/fcm/send/abc",             # mixed case
+    "HTTPS://fcm.googleapis.com/fcm/send/abc",
+    "https://fcm.googleapis.com./x",                       # trailing dot
+    "https://fcm.googleapis.com../x",
+    "https://evil-push.apple.com.attacker.tld/x",          # suffix lookalikes
+    "https://fcm.googleapis.com.evil.example/x",
+    "https://evilpush.apple.com/x",
+    "https://push.apple.com/x",                            # the suffix itself is not a member
+    "https://xn--fcm-googleapis-com.example/x",            # punycode / IDN
+    "https://web.push.xn--pple-43d.com/x",
+    "https://fcm.googleapıs.com/x",                   # dotless i
+    "https://web.push.аpple.com/x",                   # Cyrillic a
+    "https://fcm。googleapis。com/x",              # ideographic full stop
+    "https://fcm.google\tapis.com/x",                      # whitespace / control characters
+    "https://fcm.googleapis.com\n.evil.example/x",
+    "https://fcm.googleapis.com\r\n/x",
+    "https://fcm.googleapis.com/x\n",
+    "https://fcm.googleapis.com /x",
+    " https://fcm.googleapis.com/x",
+    "https://fcm.googleapis.com/x y",
+    "https://fcm.googleapis.com\x00.evil.example/x",
+    "https://fcm.googleapis.com%2f.evil.example/x",        # percent-encoding in the host
+    "https://127.0.0.1%23.push.apple.com/x",
+    "https://10.0.0.1#.push.apple.com/x",                  # host ended by '#', '?', '/'
+    "https://10.0.0.1?.push.apple.com",
+    "https://evil.example/.push.apple.com",
+    "https://fcm.googleapis.com?x",
+    "https://fcm.googleapis.com/x#frag",
+    "https://-fcm.googleapis.com/x",                       # malformed labels
+    "https://fcm-.googleapis.com/x",
+    "https://.fcm.googleapis.com/x",
+    "http://fcm.googleapis.com/fcm/send/abc",              # not https
+    "https:/fcm.googleapis.com/x",
+    "https:///fcm.googleapis.com/x",
+    "//fcm.googleapis.com/x",
+    "fcm.googleapis.com/x",
+    "https://backend.renfield.svc/api/internal",           # inside the network
+    "https://localhost/x",
+    "https://postgres/x",
+    "https://fcm.googleapis.com/" + "a" * 2048,             # over the length cap
+]
+
+
 @pytest.mark.unit
 class TestEndpointAllowlist:
-    @pytest.mark.parametrize(
-        "endpoint",
-        [
-            "https://fcm.googleapis.com/fcm/send/abc",
-            "https://updates.push.services.mozilla.com/wpush/v2/abc",
-            "https://web.push.apple.com/abc",
-            "https://db5p.notify.windows.com/w/?token=abc",
-            "https://FCM.googleapis.com:443/fcm/send/abc",
-        ],
-    )
+    @pytest.mark.parametrize("endpoint", LEGITIMATE_ENDPOINTS)
     def test_known_push_services(self, endpoint):
         assert push_service.endpoint_allowed(endpoint) is True
 
-    @pytest.mark.parametrize(
-        "endpoint",
-        [
-            "http://fcm.googleapis.com/fcm/send/abc",           # not https
-            "https://backend.renfield.svc:8000/api/internal",    # inside the network
-            "https://127.0.0.1/x",
-            "https://fcm.googleapis.com.evil.example/x",         # suffix trick
-            "https://evilpush.apple.com/x",                      # not a subdomain match
-            "https://user:pw@fcm.googleapis.com/x",              # credentials
-            "https://fcm.googleapis.com:8443/x",                 # odd port
-            "https://fcm.googleapis.com:notaport/x",
-            "fcm.googleapis.com/x",
-            "",
-        ],
-    )
+    @pytest.mark.parametrize("endpoint", [*HOSTILE_ENDPOINTS, "", None, 5, b"https://fcm.googleapis.com/x"])
     def test_everything_else_is_refused(self, endpoint):
         assert push_service.endpoint_allowed(endpoint) is False
+
+    def test_the_reported_hole_would_have_reached_an_internal_host(self):
+        """Why the table above exists: the library that sends reads another
+        host out of this text than the standard library does."""
+        from urllib3.util import parse_url
+
+        hole = HOSTILE_ENDPOINTS[0]
+        assert parse_url(hole).host == "192.168.1.1"
 
     def test_the_list_is_configurable(self, monkeypatch):
         monkeypatch.setattr(settings, "push_allowed_endpoint_hosts", "push.example.org")
         assert push_service.endpoint_allowed("https://push.example.org/x") is True
         assert push_service.endpoint_allowed("https://fcm.googleapis.com/x") is False
+
+    @pytest.mark.parametrize(
+        "listed, endpoint",
+        [
+            ("127.0.0.1", "https://127.0.0.1/x"),
+            (".0.0.1", "https://127.0.0.1/x"),
+            ("localhost", "https://localhost/x"),
+            ("[::1]", "https://[::1]/x"),
+        ],
+    )
+    def test_an_address_is_refused_even_when_an_operator_lists_it(self, monkeypatch, listed, endpoint):
+        monkeypatch.setattr(settings, "push_allowed_endpoint_hosts", listed)
+        assert push_service.endpoint_allowed(endpoint) is False
+
+    def test_a_parser_that_disagrees_refuses(self, monkeypatch):
+        """The cross-check is not decoration: if the sending parser ever names
+        another host for a text the shape lets through, the answer is no."""
+        import urllib3.util
+
+        endpoint = LEGITIMATE_ENDPOINTS[0]
+        assert push_service.endpoint_allowed(endpoint) is True
+        monkeypatch.setattr(
+            urllib3.util, "parse_url",
+            lambda url: SimpleNamespace(scheme="https", host="10.0.0.1", port=None, auth=None),
+        )
+        assert push_service.endpoint_allowed(endpoint) is False
+
+    def test_a_missing_parser_refuses(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "urllib3.util", None)
+        assert push_service.endpoint_allowed(LEGITIMATE_ENDPOINTS[0]) is False
+
+    @pytest.mark.parametrize("endpoint", HOSTILE_ENDPOINTS)
+    def test_the_sender_itself_refuses_before_any_request(self, push_stub, push_on, endpoint):
+        """The second point: directly before the send, whatever the caller did."""
+        info = {"endpoint": endpoint, "keys": {"p256dh": P256DH, "auth": AUTH}}
+        with pytest.raises(push_service.EndpointRefused):
+            push_service._send_blocking(info, "{}", 1.0)
+        assert push_stub.calls == []
+
+    def test_the_send_does_not_follow_redirects(self, push_stub, push_on):
+        """``requests`` would repeat the POST at wherever a 307 points."""
+        info = {"endpoint": LEGITIMATE_ENDPOINTS[0], "keys": {"p256dh": P256DH, "auth": AUTH}}
+        push_service._send_blocking(info, "{}", 1.0)
+        (call,) = push_stub.calls
+        assert call["requests_session"].max_redirects == 0
 
 
 # ================================================================== people
@@ -264,7 +371,9 @@ async def people(db_session: AsyncSession) -> dict[str, User]:
     return {
         "alice": await _user(db_session, "alice", ["notifications.view"]),
         "bob": await _user(db_session, "bob", ["notifications.view"]),
-        "admin": await _user(db_session, "admin", ["admin"]),
+        # As the seeded Admin role: ``admin`` alone does not imply the
+        # notification permissions, the role lists them.
+        "admin": await _user(db_session, "admin", ["admin", "notifications.manage"]),
         "manager": await _user(db_session, "manager", ["notifications.manage"]),
         "guest": await _user(db_session, "guest", ["chat.own"]),
     }
@@ -374,7 +483,7 @@ class TestRoutes:
         resp = await _call(async_client, method, path, _body())
         assert resp.status_code == 401, resp.text
 
-    @pytest.mark.parametrize("method, path", ROUTES)
+    @pytest.mark.parametrize("method, path", [r for r in ROUTES if r[0] != "DELETE"])
     async def test_without_the_permission_is_refused(
         self, async_client: AsyncClient, push_routes, push_on, people, db_session, method, path,
     ):
@@ -382,6 +491,49 @@ class TestRoutes:
         resp = await _call(async_client, method, path, _body())
         assert resp.status_code == 403, resp.text
         assert await _rows(db_session) == []
+
+    async def test_without_the_permission_one_can_still_remove_ones_own_device(
+        self, async_client: AsyncClient, push_routes, push_on, people, db_session,
+    ):
+        """A role that lost ``notifications.view`` after subscribing must be
+        able to take its device back -- and still only its own."""
+        await _subscribe(db_session, people["guest"], 1)
+        await _subscribe(db_session, people["alice"], 2)
+        _as(push_routes, people["guest"], ["chat.own"])
+
+        foreign = await async_client.request(
+            "DELETE", "/api/push/subscribe", json={"endpoint": ENDPOINT.format(2)},
+        )
+        assert foreign.status_code == 404, foreign.text
+        own = await async_client.request(
+            "DELETE", "/api/push/subscribe", json={"endpoint": ENDPOINT.format(1)},
+        )
+        assert own.status_code == 204, own.text
+        assert await _rows(db_session) == [(people["alice"].id, ENDPOINT.format(2))]
+
+    @pytest.mark.parametrize("endpoint", HOSTILE_ENDPOINTS)
+    async def test_a_hostile_endpoint_is_never_stored(
+        self, async_client: AsyncClient, push_routes, push_on, people, db_session, endpoint,
+    ):
+        """The first point: subscribing. (Over-long ones fail the model's own
+        length cap, the rest the allowlist -- 422 either way, nothing stored.)"""
+        _as(push_routes, people["alice"], ["notifications.view"])
+        resp = await async_client.post(
+            "/api/push/subscribe", json={**_body(), "endpoint": endpoint},
+        )
+        assert resp.status_code == 422, resp.text
+        assert await _rows(db_session) == []
+
+    @pytest.mark.parametrize("endpoint", LEGITIMATE_ENDPOINTS)
+    async def test_a_real_push_service_endpoint_is_stored_unchanged(
+        self, async_client: AsyncClient, push_routes, push_on, people, db_session, endpoint,
+    ):
+        _as(push_routes, people["alice"], ["notifications.view"])
+        resp = await async_client.post(
+            "/api/push/subscribe", json={**_body(), "endpoint": endpoint},
+        )
+        assert resp.status_code == 201, resp.text
+        assert await _rows(db_session) == [(people["alice"].id, endpoint)]
 
     async def test_vapid_key(self, async_client: AsyncClient, push_routes, push_on, people):
         _as(push_routes, people["alice"], ["notifications.view"])
@@ -548,14 +700,18 @@ class TestRecipients:
     ):
         """Side by side: for every notification, the owners of the selected
         subscriptions are the users whose OWN (non-oversight) notification
-        list contains it. One rule, read through two doors."""
+        list contains it -- among the accounts that may have a device at all
+        (``notifications.view``, the permission the subscribe route asks for).
+        One rule, read through two doors."""
         from services.notification_service import NotificationService
 
         for n, user in enumerate(people.values(), start=1):
             await _subscribe(db_session, user, n)
         service = NotificationService(db_session)
+        may_subscribe = {user.id for name, user in people.items() if name != "guest"}
 
         compared = 0
+        guest_sees_in_app = 0
         for name, notification in notifications.items():
             in_app = set()
             for user in people.values():
@@ -568,14 +724,18 @@ class TestRecipients:
                 row.user_id
                 for row in await push_service.select_push_recipients(db_session, notification)
             }
-            assert pushed == in_app, name
+            assert pushed == in_app & may_subscribe, name
+            guest_sees_in_app += people["guest"].id in in_app
             compared += 1
         assert compared == len(notifications) == 8
+        # The difference is real, not an empty set: the guest lists the two
+        # public broadcasts in-app and is pushed neither.
+        assert guest_sees_in_app == 2
 
     async def test_expected_recipients_spelled_out(self, db_session, people, notifications):
         for n, user in enumerate(people.values(), start=1):
             await _subscribe(db_session, user, n)
-        everyone = {user.id for user in people.values()}
+        everyone = {user.id for name, user in people.items() if name != "guest"}
         expected = {
             "broadcast": everyone,
             "legacy_null_privacy": everyone,
@@ -611,6 +771,53 @@ class TestRecipients:
         targeted = _notification("Fuer Carl", "personal", gone.id)
         assert await push_service.select_push_recipients(db_session, targeted) == []
         assert await push_service.select_push_recipients(db_session, notifications["broadcast"]) == []
+
+    async def test_a_role_that_lost_the_permission_gets_nothing_but_keeps_the_row(
+        self, db_session, people, notifications,
+    ):
+        """Subscribed as Familie, later moved to a role without
+        ``notifications.view``: no push any more, addressed or public."""
+        await _subscribe(db_session, people["alice"], 1)
+        await _subscribe(db_session, people["bob"], 2)
+        assert len(await push_service.select_push_recipients(db_session, notifications["for_alice"])) == 1
+
+        bob_id = people["bob"].id
+        for_alice = _target(notifications["for_alice"])
+        broadcast_target = _target(notifications["broadcast"])
+        role = await db_session.get(Role, people["alice"].role_id)
+        role.permissions = ["chat.own"]
+        await db_session.commit()
+        db_session.expire_all()
+
+        assert await push_service.select_push_recipients(db_session, for_alice) == []
+        broadcast = await push_service.select_push_recipients(db_session, broadcast_target)
+        assert [row.user_id for row in broadcast] == [bob_id]
+        assert len(await _rows(db_session)) == 2
+
+    async def test_unreadable_permissions_fail_closed(
+        self, db_session, people, notifications, monkeypatch, warnings_seen,
+    ):
+        await _subscribe(db_session, people["alice"], 1)
+
+        def _boom(self, permission):
+            raise RuntimeError("role lookup failed")
+
+        monkeypatch.setattr(User, "has_permission", _boom)
+        assert await push_service.select_push_recipients(db_session, notifications["for_alice"]) == []
+        assert await push_service.select_push_recipients(db_session, notifications["broadcast"]) == []
+        assert any("not pushed" in line for line in warnings_seen)
+
+    async def test_a_device_taken_over_stops_serving_the_previous_account(
+        self, db_session, people, notifications,
+    ):
+        """One row per endpoint: the second account on the same browser MOVES
+        the row, so the first account's notifications no longer reach it."""
+        await _subscribe(db_session, people["alice"], 1)
+        await _subscribe(db_session, people["bob"], 1)
+        assert await _rows(db_session) == [(people["bob"].id, ENDPOINT.format(1))]
+        assert await push_service.select_push_recipients(db_session, notifications["for_alice"]) == []
+        mine = await push_service.select_push_recipients(db_session, notifications["public_for_bob"])
+        assert [row.endpoint for row in mine] == [ENDPOINT.format(1)]
 
     async def test_a_deleted_account_takes_its_devices_along(self, db_session, people):
         await _subscribe(db_session, people["alice"], 1)
@@ -770,6 +977,22 @@ class TestSender:
         monkeypatch.setattr(settings, "push_allowed_endpoint_hosts", "push.example.org")
         await push_service.deliver_push(_target(notifications["for_alice"]))
         assert push_stub.calls == []
+
+    async def test_a_stored_hostile_endpoint_is_not_requested(
+        self, db_session, own_session_to_test_db, push_on, push_stub, people, notifications,
+    ):
+        """A row written before the check was tightened (here: straight into
+        the table) is caught at the second point and never sent to."""
+        db_session.add(PushSubscription(
+            user_id=people["alice"].id, endpoint=HOSTILE_ENDPOINTS[0], p256dh=P256DH, auth=AUTH,
+        ))
+        await db_session.commit()
+        await _subscribe(db_session, people["alice"], 2)
+
+        counts = await push_service.deliver_push(_target(notifications["for_alice"]))
+
+        assert counts == {"sent": 1, "gone": 0, "failed": 0}
+        assert [c["subscription_info"]["endpoint"] for c in push_stub.calls] == [ENDPOINT.format(2)]
 
     async def test_a_hanging_send_is_cut_off(
         self, db_session, own_session_to_test_db, push_on, push_stub, people, notifications,
