@@ -450,6 +450,16 @@ Home Assistant Automation → POST /api/notifications/webhook
 - **MCP-Polling:** `NOTIFICATION_POLLER_ENABLED=true` lässt Renfield MCP-Server (E-Mail, Kalender) aktiv nach Events abfragen, statt nur Push-Webhooks zu empfangen.
 - Vollständiger Einrichtungs-Guide + HA-Vorlagen: [`docs/PROACTIVE_NOTIFICATIONS.md`](PROACTIVE_NOTIFICATIONS.md) und [`docs/PROACTIVE_SCHEDULING_TEMPLATES.md`](PROACTIVE_SCHEDULING_TEMPLATES.md).
 
+### Web Push (#79, `PUSH_NOTIFICATIONS_ENABLED`, opt-in/dark)
+
+- **Was**: Eine Benachrichtigung meldet sich auch bei geschlossenem Browser als Systemmitteilung — über die Web Push API (VAPID), ohne Firebase-SDK und ohne eigene App. Design: [`design/web-push.md`](design/web-push.md).
+- **Wen**: genau die Personen, die die Benachrichtigung auch in der App erreicht (dieselbe Regel `is_visible_to` wie seit #1244): die adressierte Person, bei öffentlichen Meldungen ohne Adressat alle. Die Admin-Übersicht ist keine Zustellung.
+- **Inhalt**: Der Push trägt **keinen Text** — nur Kennung und Dringlichkeit. Auf dem Sperrbildschirm steht „Neue Benachrichtigung“; den Inhalt holt die App nach dem Antippen authentifiziert von der eigenen Instanz und zeigt ihn im gewohnten Toast.
+- **Einschalten**: je Gerät unter „Mein Konto“ (`/settings/account`). Die Browser-Rückfrage erscheint nur auf diesen Klick. Auf iPhone/iPad nur in der installierten App (Home-Bildschirm); nicht unterstützte und blockierte Zustände werden benannt. Abmelden gibt das Gerät wieder frei.
+- **Voraussetzungen** (alle an einer Stelle, `services/push_preconditions.py`): Flag, `AUTH_ENABLED`, zusammengehöriges VAPID-Schlüsselpaar aus der Umgebung (`bin/generate-vapid-keys.py`), Kontaktadresse. Fehlt eine, bleibt die Funktion aus: die Routen antworten 404, es gibt keine Karte und beim Start genau eine WARNING.
+- **Nicht gebaut**: Kategorien je Ereignisart (das Backend kennt keine), Volltext im Push, Wiederholungsversuche. Abgelaufene Abonnements (404/410 vom Zustelldienst) werden entfernt.
+- **Stand**: gebaut und getestet gegen eine Attrappe des Zustelldienstes; **noch keine echte Zustellung** und auf keiner Instanz eingeschaltet.
+
 ### Erinnerungen
 
 - **Zeitgesteuert**: Reminder mit Fälligkeitsdatum

@@ -1096,6 +1096,54 @@ Siehe `docs/PROACTIVE_SCHEDULING_TEMPLATES.md` für fertige Templates.
 
 ---
 
+### Web Push (#79)
+
+Systemmitteilung bei geschlossenem Browser für die Personen, die eine Benachrichtigung auch in der
+App erreicht. Design, Empfängerregel und Rollout: [`design/web-push.md`](design/web-push.md).
+
+```bash
+# Schalter (opt-in). Allein bewirkt er nichts: siehe Voraussetzungen.
+PUSH_NOTIFICATIONS_ENABLED=false
+
+# VAPID-Schlüsselpaar — ein Paar JE INSTANZ, erzeugt mit `python bin/generate-vapid-keys.py`.
+# base64url ohne Auffüllung: privater Schlüssel = roher 32-Byte-Skalar (P-256),
+# öffentlicher = unkomprimierter 65-Byte-Punkt.
+PUSH_VAPID_PRIVATE_KEY=          # GEHEIMNIS — Secret, nie ConfigMap, nie git
+PUSH_VAPID_PUBLIC_KEY=
+# Kontaktadresse für den Zustelldienst (VAPID-Claim `sub`; „mailto:“ wird ergänzt).
+PUSH_VAPID_CLAIMS_EMAIL=
+
+# Zugelassene Zustelldienste: exakter Hostname oder führender Punkt für eine Endung.
+PUSH_ALLOWED_ENDPOINT_HOSTS=fcm.googleapis.com,updates.push.services.mozilla.com,.push.apple.com,.notify.windows.com
+# Zeitlimit je Zustellversuch in Sekunden (0 < x <= 60).
+PUSH_SEND_TIMEOUT_SECONDS=10
+```
+
+**Defaults:** alles aus bzw. leer; `PUSH_ALLOWED_ENDPOINT_HOSTS` und `PUSH_SEND_TIMEOUT_SECONDS` wie oben.
+
+**Voraussetzungen** (eine Funktion, `services/push_preconditions.push_blocker`, die Routen, Versand und
+`/api/config/features` gemeinsam fragen): `PUSH_NOTIFICATIONS_ENABLED=true` **und** `AUTH_ENABLED=true`
+**und** ein zusammengehöriges Schlüsselpaar **und** eine Kontaktadresse. Fehlt eine davon, bleibt die
+Funktion aus — `/api/push/*` antwortet 404, es wird nichts versendet, die Oberfläche zeigt keine
+Karte — und der Start schreibt genau eine WARNING mit dem Grund (`vapid_key_missing`,
+`vapid_key_malformed`, `vapid_key_mismatch`, `vapid_claims_email_missing`, `auth_off`).
+
+- **Die Schlüssel werden nie vom Backend erzeugt oder gespeichert.** Sie kommen ausschließlich aus der
+  Umgebung; in Kubernetes aus dem Secret `renfield-env-private`, der Schalter aus der ConfigMap.
+- **Ein neues Schlüsselpaar entwertet alle Abonnements** — jedes Gerät muss neu eingeschaltet werden.
+- **Die Allowlist ist ein SSRF-Riegel:** die Endpunkt-URL liefert der Browser, das Backend ruft sie auf.
+  Nur erweitern, wenn ein Browser einen weiteren Zustelldienst nutzt.
+- **Ausgehender Verkehr:** Backend und Worker brauchen HTTPS zu den Zustelldiensten.
+- **Reihenfolge beim Ausrollen:** Migration `pc20261111_push_subs` vor dem Rollout
+  (`bin/deploy-production.sh … --migrate`), dann Secret, dann Schalter, dann alle vier
+  Backend-Bild-Deployments neu starten. Beide Instanzen einzeln.
+
+**Endpunkte** (nur bei aktiver Funktion; Recht `notifications.view`; der Besitzer ist immer das
+angemeldete Konto): `GET /api/push/vapid-key`, `GET /api/push/subscriptions`,
+`POST /api/push/subscribe`, `DELETE /api/push/subscribe`.
+
+---
+
 ### Presence Detection
 
 ```bash
