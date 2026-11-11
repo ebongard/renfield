@@ -186,6 +186,40 @@ describe('LanguageSwitcher', () => {
       });
     });
 
+    it('switches the visible interface to French when Français is selected', async () => {
+      const user = userEvent.setup();
+      renderWithI18n(<LanguageSwitcher />, { language: 'de' });
+
+      // German first: the code on the button and its accessible name.
+      expect(screen.getByText('DE')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Sprache' })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button'));
+      await user.click(screen.getByRole('option', { name: /français/i }));
+
+      await waitFor(() => {
+        expect(i18n.language).toBe('fr');
+      });
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+      expect(screen.getByText('FR')).toBeInTheDocument();
+      expect(screen.queryByText('DE')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Langue' })).toBeInTheDocument();
+      expect(window.localStorage.getItem('renfield_language')).toBe('fr');
+    });
+
+    it('marks French as the selected option and shows its flag in compact mode', async () => {
+      const user = userEvent.setup();
+      renderWithI18n(<LanguageSwitcher compact />, { language: 'fr' });
+
+      expect(screen.getByText('🇫🇷')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Langue' }));
+
+      expect(screen.getByRole('listbox', { name: 'Langue' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /français/i })).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByRole('option', { name: /deutsch/i })).toHaveAttribute('aria-selected', 'false');
+    });
+
     it('stores language preference in localStorage', async () => {
       const user = userEvent.setup();
       renderWithI18n(<LanguageSwitcher />, { language: 'de' });
@@ -247,7 +281,8 @@ describe('LanguageSwitcher', () => {
       expect(screen.getByRole('option', { name: /deutsch/i })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: /english/i })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: /italiano/i })).toBeInTheDocument();
-      expect(options.length).toBeGreaterThanOrEqual(3);
+      expect(screen.getByRole('option', { name: /français/i })).toBeInTheDocument();
+      expect(options.length).toBeGreaterThanOrEqual(4);
     });
 
     it('current language has aria-selected', async () => {
@@ -369,6 +404,32 @@ describe('LanguageSwitcher', () => {
         expect(mockedPut).toHaveBeenCalledWith(
           '/api/preferences/language',
           { language: 'en' },
+        );
+      });
+    });
+
+    it('sends the French code to the backend when authenticated', async () => {
+      // State the authenticated session explicitly rather than rely on test order.
+      const { useAuth } = await import('../../../../src/frontend/src/context/AuthContext');
+      vi.mocked(useAuth).mockReturnValue({
+        ...vi.mocked(useAuth)(),
+        authEnabled: true,
+        isAuthenticated: true,
+      });
+
+      const apiClient = await import('../../../../src/frontend/src/utils/axios');
+      const mockedPut = vi.mocked(apiClient.default.put);
+      const user = userEvent.setup();
+
+      renderWithI18n(<LanguageSwitcher />);
+
+      await user.click(screen.getByRole('button'));
+      await user.click(screen.getByRole('option', { name: /français/i }));
+
+      await waitFor(() => {
+        expect(mockedPut).toHaveBeenCalledWith(
+          '/api/preferences/language',
+          { language: 'fr' },
         );
       });
     });

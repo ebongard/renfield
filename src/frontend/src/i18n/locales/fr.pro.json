@@ -1,0 +1,55 @@
+{
+  "_comment": "Edition='pro' overlay applied on top of fr.json when VITE_APP_EDITION=pro. Replaces household-flavored Circles vocabulary with enterprise/banking-friendly equivalents (visibility / team / organization / confidential). Keys not listed here fall through to fr.json. See src/i18n/index.ts merge logic.",
+  "auth": {
+    "personalAssistant": "IA pour la gestion des mises en production",
+    "tenantPrefix": "Se connecter à",
+    "signInWithSso": "Se connecter avec Microsoft"
+  },
+  "nav": {
+    "brain": "Connaissances (classique)",
+    "memory": "Notes",
+    "brainReview": "File de révision",
+    "circles": "Visibilité",
+    "scheduledTasks": "Tâches planifiées"
+  },
+  "scheduledTasks": {
+    "title": "Tâches planifiées",
+    "subtitle": "Gérez les traitements automatisés et les processus récurrents"
+  },
+  "memory": {
+    "title": "Notes",
+    "subtitle": "Contexte à long terme pour les mises en production, les tickets et les décisions"
+  },
+  "circles": {
+    "tier": {
+      "0": "Personnel",
+      "1": "Confidentiel",
+      "2": "Équipe",
+      "3": "Organisation"
+    },
+    "tierDescription": {
+      "0": "Visible uniquement par moi.",
+      "1": "Visible par les destinataires confidentiels.",
+      "2": "Visible par mon équipe.",
+      "3": "Visible par toute l'organisation."
+    },
+    "brainTitle": "Base de connaissances",
+    "brainSubtitle": "Recherchez dans les documents, les tickets, les mises en production et le contexte enregistré.",
+    "brainSearchPlaceholder": "Essayez «\u00a0mises en production ouvertes\u00a0» ou «\u00a0PROJ-1234\u00a0»...",
+    "brainEmpty": "Saisissez une requête ci-dessus pour lancer la recherche. Essayez «\u00a0mises en production ouvertes\u00a0», «\u00a0mes tickets\u00a0» ou «\u00a0rétro du sprint 23\u00a0».",
+    "brainNoMatches": "Aucune entrée de connaissances ne correspond. Essayez une requête plus large ou une autre formulation.",
+    "tierAriaLabel": "Visibilité {{tier}}\u00a0: {{label}}",
+    "tierPickerLabel": "Choisir la visibilité",
+    "settingsTitle": "Visibilité et membres",
+    "settingsSubtitle": "Gérez les niveaux de visibilité et les personnes invitées dans chacun.",
+    "defaultCaptureTier": "Visibilité par défaut",
+    "defaultCaptureHint": "Les nouvelles entrées sont enregistrées avec cette visibilité par défaut.",
+    "noMembers": "Aucun membre dans vos niveaux de visibilité pour l'instant.",
+    "removeMemberConfirm": "Retirer {{name}} de tous les niveaux de visibilité\u00a0?",
+    "peersSubtitle": "Instances {{appName}} appairées d'autres membres de l'organisation.",
+    "peersManageHint": "L'appairage de nouveaux pairs se fait depuis la page des paramètres de visibilité\u00a0:",
+    "pairingSubtitle": "Appairez votre {{appName}} avec celui d'un autre membre de l'organisation pour les requêtes fédérées.",
+    "pairInitiateStep3Instruction": "C'est presque terminé — quelle visibilité souhaitez-vous accorder à {{name}}\u00a0?",
+    "pairAcceptStep2Instruction": "Acceptez l'appairage avec {{name}}. Quelle visibilité souhaitez-vous lui accorder\u00a0?"
+  }
+}
