@@ -24,7 +24,16 @@ import { useTranslation } from 'react-i18next';
 
 const MINUTE_MS = 60_000;
 
-const TIME_OPTIONS: Intl.DateTimeFormatOptions = { timeStyle: 'short' };
+/** `timeStyle` gives each locale its own short time (`00:00`, `9:41 PM`), but an
+ *  engine that predates it ignores the option silently and formats a date-only
+ *  string. Such an engine does not echo the option back, so ask once and fall
+ *  back to explicit fields, which every engine honours. */
+export function timeOptions(): Intl.DateTimeFormatOptions {
+  const probe = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).resolvedOptions();
+  return 'timeStyle' in probe ? { timeStyle: 'short' } : { hour: '2-digit', minute: '2-digit' };
+}
+
+const TIME_OPTIONS: Intl.DateTimeFormatOptions = timeOptions();
 const DATE_OPTIONS: Intl.DateTimeFormatOptions = { weekday: 'long', day: 'numeric', month: 'long' };
 
 function currentMinute(): number {

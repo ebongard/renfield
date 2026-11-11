@@ -9,7 +9,7 @@ import { act, cleanup, screen } from '@testing-library/react';
 import { useState } from 'react';
 import i18n from '../../../../src/frontend/src/i18n';
 import { renderWithProviders } from '../test-utils';
-import KioskClock from '../../../../src/frontend/src/components/kiosk/KioskClock';
+import KioskClock, { timeOptions } from '../../../../src/frontend/src/components/kiosk/KioskClock';
 
 const ORIGINAL_TZ = process.env.TZ;
 
@@ -211,7 +211,7 @@ describe('KioskClock', () => {
     remove.mockRestore();
   });
 
-  it('shows no seconds and no animation under reduced motion', () => {
+  it('shows no seconds, animation class or inline style, with or without reduced motion', () => {
     stubReducedMotion();
     renderWithProviders(<KioskClock />);
     expect(timeText()).toBe('21:41');
@@ -287,5 +287,30 @@ describe('KioskClock', () => {
     expect(parentRenders).toBe(parentAfterMount + 1);
     expect(clockRender.mock.calls.length).toBe(clockAfterTick);
     clockRender.mockRestore();
+  });
+});
+
+describe('timeOptions', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('uses the locale-aware short time style where the engine supports it', () => {
+    expect(timeOptions()).toEqual({ timeStyle: 'short' });
+  });
+
+  it('falls back to explicit hour and minute on an engine that ignores timeStyle', () => {
+    // An engine that predates `timeStyle` drops the option and does not echo it back.
+    vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function legacyEngine() {
+      return { resolvedOptions: () => ({ locale: 'de' }) } as Intl.DateTimeFormat;
+    } as unknown as typeof Intl.DateTimeFormat);
+
+    expect(timeOptions()).toEqual({ hour: '2-digit', minute: '2-digit' });
+  });
+
+  it('formats a time, not a date, from the fallback fields', () => {
+    const text = new Intl.DateTimeFormat('de', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+      .format(new Date('2026-11-11T00:00:00Z'));
+    expect(text).toBe('00:00');
   });
 });
