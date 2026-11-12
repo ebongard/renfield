@@ -24,6 +24,7 @@ roles at startup. The gate fails closed: a lookup error denies.
   `now_playing_changed`, `tool_health_changed`, `internal_health_changed`, `weather_updated`, `turn_activity`). Backend
   refreshers (weather, internal health) are `_kiosk_clients`-gated and diff-gated; the gate resets on kiosk-connect and
   advances only after a successful broadcast.
+- **The clock tile (`KioskClock.tsx`) is device time ONLY** — no payload, no fetch; its one minute-aligned timer redraws, it never loads data.
 - **Every payload is content-free** — counts, role/room names, `{subsystem_id, at}`; never utterance, entity or user id.
   Now-playing: one per room, PLAYING-only, no user ids. `KIOSK_WEATHER_LOCATION` is env-only, never committed.
 - **Do not "fix" the glow to match DESIGN.md.** The kiosk DELIBERATELY breaks it (sanctioned, TODOS.md line 315); the

@@ -47,6 +47,15 @@ by a new read-only ADMIN endpoint and self-hiding when unavailable:
   content-minimal — room + what's playing + media kind, **no user ids**); empty
   when media-follow is off or nothing plays.
 
+A third tile, the **clock** (bottom-left, #263, `components/kiosk/KioskClock.tsx`), is not fed by anything: wall
+time and date come from the device clock alone — no endpoint, no socket message. It formats through `Intl` in the
+active UI language and renders a `<time dateTime>` without a live region. One `setTimeout` is aimed at the next
+minute boundary and re-aimed from `Date.now()` after every fire (no drift from a chained interval), `visibilitychange`
+re-syncs after a hidden tab or device sleep, and the memoised component owns its state so a tick re-renders the clock
+alone. It shows no seconds and has no motion in any mode. It stays OUT of the staleness display on purpose: the time
+remains true while the board's data is stale, and the banner plus the red core carry that signal — a dimmed or frozen
+clock would state a wrong time instead.
+
 **Kiosk status colours = the physical satellite LED ring (2026-07-03).** The
 kiosk colour-codes voice STATUS to match the LEDs the household sees on the
 devices (`src/satellite/renfield_satellite/hardware/led.py`): **idle=blue,
