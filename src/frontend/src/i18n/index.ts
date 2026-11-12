@@ -5,9 +5,11 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 import de from './locales/de.json';
 import en from './locales/en.json';
 import it from './locales/it.json';
+import fr from './locales/fr.json';
 import dePro from './locales/de.pro.json';
 import enPro from './locales/en.pro.json';
 import itPro from './locales/it.pro.json';
+import frPro from './locales/fr.pro.json';
 
 /**
  * Recursively merge two plain-object trees. Source values win when keys
@@ -51,13 +53,14 @@ function deepMerge<T extends Record<string, unknown>>(base: T, overlay: Record<s
  *
  * Driven by the `VITE_APP_EDITION` build arg so the same source tree
  * produces both bundles. The pro overlays live alongside the base
- * locales as `de.pro.json` / `en.pro.json` and only list the keys that
+ * locales as `<lang>.pro.json` and only list the keys that
  * differ from the base.
  */
 const edition = (import.meta.env.VITE_APP_EDITION || 'community') as 'community' | 'pro';
 const deResources = edition === 'pro' ? deepMerge(de, dePro as Record<string, unknown>) : de;
 const enResources = edition === 'pro' ? deepMerge(en, enPro as Record<string, unknown>) : en;
 const itResources = edition === 'pro' ? deepMerge(it, itPro as Record<string, unknown>) : it;
+const frResources = edition === 'pro' ? deepMerge(fr, frPro as Record<string, unknown>) : fr;
 
 i18n
   .use(LanguageDetector)
@@ -66,10 +69,11 @@ i18n
     resources: {
       de: { translation: deResources },
       en: { translation: enResources },
-      it: { translation: itResources }
+      it: { translation: itResources },
+      fr: { translation: frResources }
     },
     fallbackLng: 'de',
-    supportedLngs: ['de', 'en', 'it'],
+    supportedLngs: ['de', 'en', 'it', 'fr'],
     detection: {
       order: ['localStorage', 'navigator'],
       caches: ['localStorage'],

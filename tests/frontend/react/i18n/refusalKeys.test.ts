@@ -22,8 +22,9 @@ import { resolve } from 'node:path';
 import de from '../../../../src/frontend/src/i18n/locales/de.json';
 import en from '../../../../src/frontend/src/i18n/locales/en.json';
 import it_ from '../../../../src/frontend/src/i18n/locales/it.json';
+import fr from '../../../../src/frontend/src/i18n/locales/fr.json';
 
-const LOCALES: Record<string, unknown> = { de, en, it: it_ };
+const LOCALES: Record<string, unknown> = { de, en, it: it_, fr };
 
 const SERVICE = resolve(
   __dirname, '../../../../src/backend/services/kg_reconciler_service.py',
@@ -77,12 +78,15 @@ describe('refusal codes and locale files', () => {
     },
   );
 
-  it('keeps the three languages congruent in the cluster branch', () => {
+  it('keeps the languages congruent in the cluster branch', () => {
     const keys = (loc: string): string[] => Object.keys(
       (lookup(LOCALES[loc], 'circles.mergeProposals.cluster') ?? {}) as object,
     ).sort();
     expect(keys('en')).toEqual(keys('de'));
     expect(keys('it')).toEqual(keys('de'));
+    // French has a third plural category; its `_many` forms have no
+    // counterpart in the other languages and are set aside here.
+    expect(keys('fr').filter((key) => !key.endsWith('_many'))).toEqual(keys('de'));
   });
 
   it('has a general fallback for an UNKNOWN code', () => {

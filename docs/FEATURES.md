@@ -875,6 +875,7 @@ Siehe [ACCESS_CONTROL.md](ACCESS_CONTROL.md) für vollständige Dokumentation.
 ### Unterstützte Sprachen
 - **Deutsch (de)**: Vollständig übersetzt (Standard)
 - **Englisch (en)**: Vollständig übersetzt
+- **Französisch (fr)** und **Italienisch (it)**: Übersetzt; ein dort fehlender Schlüssel fällt auf Deutsch zurück
 
 ### Implementierung
 - **react-i18next** für Frontend-Internationalisierung
