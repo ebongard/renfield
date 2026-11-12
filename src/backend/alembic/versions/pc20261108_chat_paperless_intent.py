@@ -18,9 +18,26 @@ branch_labels: None = None
 depends_on: None = None
 
 
+TABLE = "chat_uploads"
+COLUMN = "paperless_intent"
+
+
+def _has_column() -> bool:
+    """A fresh install already has it: the baseline builds the tables from the
+    current models, and this migration then runs on top of that."""
+    inspector = sa.inspect(op.get_bind())
+    if TABLE not in inspector.get_table_names():
+        return False
+    return COLUMN in {c["name"] for c in inspector.get_columns(TABLE)}
+
+
 def upgrade() -> None:
-    op.add_column("chat_uploads", sa.Column("paperless_intent", sa.String(16), nullable=True))
+    if _has_column():
+        return
+    op.add_column(TABLE, sa.Column(COLUMN, sa.String(16), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("chat_uploads", "paperless_intent")
+    if not _has_column():
+        return
+    op.drop_column(TABLE, COLUMN)

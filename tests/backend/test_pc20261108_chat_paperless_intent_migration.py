@@ -113,6 +113,37 @@ async def test_round_trip_keeps_rows_and_reads_null(schema_conn):
     assert await _has_column(conn, schema)
 
 
+async def test_upgrade_on_a_fresh_install_keeps_the_column_and_its_values(schema_conn):
+    """The baseline builds ``chat_uploads`` from the current models, column
+    included; the migration then runs on top and must leave it alone."""
+    conn, schema = schema_conn
+    await conn.exec_driver_sql(
+        "CREATE TABLE chat_uploads (id INTEGER PRIMARY KEY, session_id VARCHAR(128) NOT NULL,"
+        " filename VARCHAR(255) NOT NULL, paperless_intent VARCHAR(16))"
+    )
+    await conn.execute(text("INSERT INTO chat_uploads VALUES (1, 's', 'a.pdf', 'requested')"))
+    await conn.commit()
+
+    await _run(conn, "upgrade")
+
+    assert await _has_column(conn, schema)
+    assert (await conn.execute(text("SELECT paperless_intent FROM chat_uploads"))).all() == [("requested",)]
+
+
+async def test_downgrade_without_the_column_is_a_no_op(schema_conn):
+    conn, schema = schema_conn
+    await conn.exec_driver_sql(
+        "CREATE TABLE chat_uploads (id INTEGER PRIMARY KEY, session_id VARCHAR(128) NOT NULL,"
+        " filename VARCHAR(255) NOT NULL)"
+    )
+    await conn.commit()
+
+    await _run(conn, "downgrade")
+
+    assert not await _has_column(conn, schema)
+    assert (await conn.execute(text("SELECT count(*) FROM chat_uploads"))).scalar() == 0
+
+
 def test_revision_chain():
     mig = _load_migration()
     assert mig.revision == "pc20261108_chat_pl_intent"
