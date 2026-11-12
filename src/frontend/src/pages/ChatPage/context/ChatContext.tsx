@@ -10,6 +10,7 @@ import { WAKEWORD_CONFIG } from '../../../config/wakeword';
 import { useChatSessions } from '../../../hooks/useChatSessions';
 import { useReloadOnScanJobFinished } from '../../../hooks/useReloadOnScanJobFinished';
 import { rememberTabConversation } from '../../../utils/tabConversations';
+import { haptic } from '../../../utils/haptics';
 import {
   useChatWebSocket,
   useAudioRecording,
@@ -666,6 +667,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     wakeWordActivatedRef.current = true;
 
     playActivationSound();
+    haptic('success');
 
     await new Promise((r) => setTimeout(r, WAKEWORD_CONFIG.activationDelayMs));
 
@@ -1525,7 +1527,12 @@ export function ChatProvider({ children }: ChatProviderProps) {
     else void voiceStream.startRecording();
   }, [voiceStream]);
   const startRecording = VOICE_STREAM_ENABLED ? startStreamRecording : audioRec.startRecording;
-  const toggleRecording = VOICE_STREAM_ENABLED ? toggleStreamRecording : audioRec.toggleRecording;
+  const toggleRecordingRaw = VOICE_STREAM_ENABLED ? toggleStreamRecording : audioRec.toggleRecording;
+  // The mic button's one handler -- the tap lives here, not on the button.
+  const toggleRecording = useCallback(() => {
+    haptic('tap');
+    toggleRecordingRaw();
+  }, [toggleRecordingRaw]);
 
   // Keep the latest wake-word/recording values in refs so the recovery effects
   // below read them without depending on (and re-running for) every
@@ -1706,6 +1713,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
     opts?: { correctedIntent?: string; forkFromMessageId?: number; suppressAppend?: boolean },
   ): Promise<void> => {
     if (!text.trim()) return;
+
+    // A typed/clicked send is a touch interaction; a voice turn sends itself
+    // and must not buzz the device the person is speaking into.
+    if (!fromVoice) haptic('tap');
 
     try {
       if (typeof localStorage !== 'undefined' && localStorage.getItem('renfield_voice_timing')) {
@@ -1985,6 +1996,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Auto-clear action result after 3s
   useEffect(() => {
     if (!actionResult) return;
+    if (!actionResult.success) haptic('error');
     const timer = setTimeout(clearResult, 3000);
     return () => clearTimeout(timer);
   }, [actionResult, clearResult]);

@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Lightbulb, Play, Loader, Thermometer, Minus, Plus } from 'lucide-react';
 import type { DeviceControlData, DeviceControlDevice } from './artifactSchema';
+import { haptic } from '../../../utils/haptics';
 
 export type DeviceActionResult = {
   success: boolean;
@@ -73,6 +74,7 @@ export default function DeviceControlArtifact({
   // Toggle a light/switch, or run a scene.
   const handleToggle = async (d: DeviceControlDevice) => {
     if (!onAction || pending.has(d.entity_id)) return;
+    haptic('tap');
     const scene = d.domain === 'scene';
     const action = scene ? 'activate' : 'toggle';
     const prev = states[d.entity_id];

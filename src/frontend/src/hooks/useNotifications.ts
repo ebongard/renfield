@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useDevice } from '../context/DeviceContext';
+import { haptic } from '../utils/haptics';
 
 export interface NotificationData {
   notification_id: number;
@@ -35,6 +36,7 @@ export function useNotifications() {
   useEffect(() => {
     const handler = (event: Event) => {
       const data = (event as CustomEvent).detail as NotificationData;
+      haptic('notification');
       setNotifications(prev => {
         const updated = [data, ...prev];
         return updated;

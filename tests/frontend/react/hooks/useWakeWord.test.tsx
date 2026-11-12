@@ -350,6 +350,31 @@ describe('useWakeWord', () => {
       // Will attempt to enable (and fail due to missing module)
       expect(result.current.isLoading).toBe(false);
     });
+
+    it('toggle taps when haptic feedback is on, and only then (#84)', async () => {
+      const vibrate = vi.fn(() => true);
+      Object.defineProperty(navigator, 'vibrate', { configurable: true, writable: true, value: vibrate });
+      try {
+        const { useWakeWord } = await import('../../../../src/frontend/src/hooks/useWakeWord');
+        const { result } = renderHook(() => useWakeWord());
+
+        // Preference off (the default): the toggle works, nothing vibrates.
+        await act(async () => {
+          await result.current.toggle();
+        });
+        expect(vibrate).not.toHaveBeenCalled();
+
+        localStorage.setItem('renfield_haptics_enabled', 'true');
+        await act(async () => {
+          await result.current.toggle();
+        });
+        expect(vibrate).toHaveBeenCalledTimes(1);
+        expect(vibrate).toHaveBeenCalledWith(10);
+      } finally {
+        Reflect.deleteProperty(navigator, 'vibrate');
+        localStorage.removeItem('renfield_haptics_enabled');
+      }
+    });
   });
 
   describe('Config Update Events', () => {

@@ -26,6 +26,7 @@ import {
 import { extractApiError } from '../utils/axios';
 import Alert from '../components/Alert';
 import PageHeader from '../components/PageHeader';
+import HapticFeedbackSetting from '../components/HapticFeedbackSetting';
 
 export default function AccountSettingsPage() {
   const { t } = useTranslation();
@@ -214,6 +215,9 @@ export default function AccountSettingsPage() {
           </button>
         </div>
       </div>
+
+      {/* Per-device, not per-account: stored in this browser only. */}
+      <HapticFeedbackSetting />
 
       {ConfirmDialogComponent}
     </div>

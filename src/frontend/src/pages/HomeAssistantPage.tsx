@@ -4,6 +4,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Lightbulb, Power, Search, Loader, Sun, Thermometer } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useHaStatesQuery, useToggleHaEntity, type HaEntity } from '../api/resources/homeAssistant';
+import { haptic } from '../utils/haptics';
 
 interface DomainOption {
   key: string;
@@ -47,6 +48,7 @@ export default function HomeAssistantPage() {
   }, [entities, selectedDomain, searchQuery]);
 
   const toggleEntity = (entityId: string) => {
+    haptic('tap');
     toggleMutation.mutate(entityId);
   };
 
