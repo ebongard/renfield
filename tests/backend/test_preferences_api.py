@@ -53,6 +53,18 @@ def _make_mock_user(preferred_language: str = "de", username: str = "testuser"):
     return user
 
 
+def _default_settings():
+    """Settings carrying the code defaults only.
+
+    `model_construct` skips the environment and `.env`, so a
+    `SUPPORTED_LANGUAGES` set on the machine running the test cannot stand in
+    for the default this is meant to measure.
+    """
+    from utils.config import Settings
+
+    return Settings.model_construct()
+
+
 def _create_test_app(
     user=None,
     optional_user=None,
@@ -172,6 +184,41 @@ class TestSetLanguagePreference:
                 )
         assert resp.status_code == 400
         assert "Unsupported language" in resp.json()["detail"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("code", ["de", "en", "it", "fr"])
+    async def test_default_settings_accept_every_frontend_language(self, mock_db_session, code):
+        """Every language the switcher offers is storable under the DEFAULT settings.
+
+        Deliberately no patched list: the frontend applies the stored preference
+        on each page load, so a language the default list rejects cannot survive
+        a reload (French did exactly that before `fr` was added, #124).
+        """
+        user = _make_mock_user(preferred_language="de")
+        with patch("api.routes.preferences.settings", _default_settings()):
+            app = _create_test_app(user=user, optional_user=user, db_session=mock_db_session)
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.put("/api/preferences/language", json={"language": code})
+        assert resp.status_code == 200
+        assert user.preferred_language == code
+        mock_db_session.commit.assert_awaited_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_default_settings_still_reject_an_unknown_language(self, mock_db_session):
+        """Widening the list for French must not have turned the check off."""
+        user = _make_mock_user(preferred_language="de")
+        with patch("api.routes.preferences.settings", _default_settings()):
+            app = _create_test_app(user=user, optional_user=user, db_session=mock_db_session)
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.put("/api/preferences/language", json={"language": "xx"})
+        assert resp.status_code == 400
+        assert "Unsupported language" in resp.json()["detail"]
+        assert user.preferred_language == "de"
+        mock_db_session.commit.assert_not_awaited()
 
     @pytest.mark.unit
     @pytest.mark.asyncio

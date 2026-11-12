@@ -16,7 +16,7 @@ import {
   ComboboxOption,
 } from '@headlessui/react';
 import { DayPicker } from 'react-day-picker';
-import { de, enUS, it } from 'date-fns/locale';
+import { de, enUS, fr, it, type Locale } from 'date-fns/locale';
 import { Check, Plus, RotateCcw } from 'lucide-react';
 // react-day-picker's base stylesheet is imported once globally in main.tsx.
 
@@ -181,6 +181,10 @@ function useOutside(refs: RefObject<HTMLElement | null>[], onOutside: () => void
   }, []);
 }
 
+// Calendar locale per UI language (the two-letter prefix of the i18n code);
+// anything not listed here falls back to English.
+const CALENDAR_LOCALES: Record<string, Locale> = { de, it, fr };
+
 interface CalendarPopoverProps {
   value: string;               // 'YYYY-MM-DD' or ''
   ariaLabel: string;
@@ -245,7 +249,7 @@ export function CalendarPopover({ value, ariaLabel, locale, placeholder, t, onCo
             // day is re-clicked — treat that as "confirm the shown date" (commit
             // + close) rather than a dead no-op.
             onSelect={(d) => { const picked = d ?? selected; if (picked) onCommit(iso(picked)); else onCancel(); }}
-            locale={locale.startsWith('de') ? de : locale.startsWith('it') ? it : enUS}
+            locale={CALENDAR_LOCALES[locale.slice(0, 2)] ?? enUS}
             weekStartsOn={1}
           />
           <div className="mt-1 flex justify-end border-t border-gray-100 pt-1.5 dark:border-gray-700">
