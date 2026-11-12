@@ -126,6 +126,7 @@ async def test_upgrade_on_a_fresh_install_keeps_the_column_and_its_values(schema
 
     await _run(conn, "upgrade")
 
+    assert await _has_column(conn, schema)
     assert (await conn.execute(text("SELECT paperless_intent FROM chat_uploads"))).all() == [("requested",)]
 
 
