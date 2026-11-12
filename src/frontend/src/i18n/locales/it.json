@@ -1294,6 +1294,12 @@
       "unrouted": "Scansione completata, destinazione ancora aperta – dettagli nella chat.",
       "failed": "Scansione non riuscita – dettagli nella chat.",
       "interrupted": "Scansione interrotta – dettagli nella chat."
+    },
+    "scanJobConversationDeleted": {
+      "done": "Scansione completata – la conversazione è stata eliminata.",
+      "unrouted": "Scansione completata, destinazione ancora aperta – la conversazione è stata eliminata.",
+      "failed": "Scansione non riuscita – la conversazione è stata eliminata.",
+      "interrupted": "Scansione interrotta – la conversazione è stata eliminata."
     }
   },
   "errors": {

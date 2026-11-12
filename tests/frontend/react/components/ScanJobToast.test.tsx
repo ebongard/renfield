@@ -57,6 +57,55 @@ describe('ScanJobToast — only in the tab that asked', () => {
   });
 });
 
+function announceIntoDeleted(reason: string, sessionId: string): void {
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(SCAN_JOB_FINISHED_EVENT, {
+        detail: { reason, sessionId, conversationDeleted: true },
+      }),
+    );
+  });
+}
+
+describe('ScanJobToast — the conversation was deleted while the scan ran (#1507)', () => {
+  it.each(['done', 'unrouted', 'failed', 'interrupted'])(
+    'words the %s outcome without pointing at the chat',
+    (reason) => {
+      rememberTabConversation('session-gone');
+      render(<ScanJobToast />);
+      announceIntoDeleted(reason, 'session-gone');
+      const toast = screen.getByRole('status');
+      expect(toast).toHaveTextContent(`notifications.scanJobConversationDeleted.${reason}`);
+      expect(toast).not.toHaveTextContent(`notifications.scanJob.${reason}`);
+    },
+  );
+
+  it('still shows only in the tab that wrote into that conversation', () => {
+    rememberTabConversation('session-mine');
+    render(<ScanJobToast />);
+    announceIntoDeleted('failed', 'session-of-another-tab');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('goes back to the chat wording for the next normal scan', () => {
+    rememberTabConversation('session-gone');
+    rememberTabConversation('session-mine');
+    render(<ScanJobToast />);
+    announceIntoDeleted('failed', 'session-gone');
+    announce('done', 'session-mine');
+    expect(screen.getByRole('status')).toHaveTextContent('notifications.scanJob.done');
+  });
+
+  it.each(['de', 'en', 'it'])('has all four strings in %s, none naming the chat', async (lang) => {
+    const locale = (await import(`../../../../src/frontend/src/i18n/locales/${lang}.json`)).default;
+    const texts = locale.notifications.scanJobConversationDeleted as Record<string, string>;
+    expect(Object.keys(texts).sort()).toEqual(['done', 'failed', 'interrupted', 'unrouted']);
+    for (const text of Object.values(texts)) {
+      expect(text).not.toMatch(/details|dettagli|chat/i);
+    }
+  });
+});
+
 describe('ScanJobToast', () => {
   it('renders nothing until a scan finishes', () => {
     render(<ScanJobToast />);

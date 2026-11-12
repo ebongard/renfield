@@ -1678,6 +1678,12 @@
       "unrouted": "Scan finished, destination still open – details in the chat.",
       "failed": "Scan failed – details in the chat.",
       "interrupted": "Scan interrupted – details in the chat."
+    },
+    "scanJobConversationDeleted": {
+      "done": "Scan finished – its conversation was deleted.",
+      "unrouted": "Scan finished, destination still open – its conversation was deleted.",
+      "failed": "Scan failed – its conversation was deleted.",
+      "interrupted": "Scan interrupted – its conversation was deleted."
     }
   },
   "errors": {

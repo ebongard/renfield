@@ -1684,6 +1684,12 @@
       "unrouted": "Numérisation terminée, destination encore à définir – détails dans le chat.",
       "failed": "Échec de la numérisation – détails dans le chat.",
       "interrupted": "Numérisation interrompue – détails dans le chat."
+    },
+    "scanJobConversationDeleted": {
+      "done": "Numérisation terminée – sa conversation a été supprimée.",
+      "unrouted": "Numérisation terminée, destination encore à définir – sa conversation a été supprimée.",
+      "failed": "Échec de la numérisation – sa conversation a été supprimée.",
+      "interrupted": "Numérisation interrompue – sa conversation a été supprimée."
     }
   },
   "errors": {

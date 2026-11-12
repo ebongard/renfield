@@ -16,7 +16,9 @@ byte-identical to before. Exposed to the browser via `/api/config/features` (`us
   (`_schedule_user_events_subscriber` in `api/lifecycle.py` → `run_user_events_subscriber`) that fans out to ITS local
   `UserEventRegistry`. Reason: ingest completion runs in the `document-worker` pod, which cannot reach the API pod's
   in-memory sockets — and every replica subscribes, so this is the only shape that is worker-reachable AND replica-safe.
-- **Payload is content-free:** `{type, reason}` — no doc id, title or filename. The browser's follow-up fetch is
+- **Payload is content-free:** `{type, reason}` (scan events add `session_id` as routing key and, only when that
+  conversation was deleted, `conversation_deleted: true` — the coalescer key includes both) — no doc id, title
+  or filename. The browser's follow-up fetch is
   re-filtered server-side, which is what keeps it circle/privacy-safe.
 - **Emit points are best-effort and after-commit** — an emit failure must never break the caller.
 

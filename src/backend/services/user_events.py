@@ -55,6 +55,7 @@ _SEND_TIMEOUT_SECONDS = 5.0
 
 def build_event(
     event_type: str, reason: str | None = None, session_id: str | None = None,
+    *, conversation_deleted: bool = False,
 ) -> dict[str, Any]:
     """A content-free event payload. Deliberately no document identity.
 
@@ -62,12 +63,18 @@ def build_event(
     driving it can react while other tabs stay quiet. It is a routing key, not
     content, and it reaches only sockets that could already open that
     conversation: the owner's in auth-on, the single household's in auth-off
-    (where every conversation is readable anyway)."""
+    (where every conversation is readable anyway).
+
+    ``conversation_deleted`` states that this conversation no longer exists
+    (#1507): the consumer must not point at it or reload it. The key is present
+    ONLY when true, so every other event stays byte-identical."""
     event: dict[str, Any] = {"type": event_type}
     if reason:
         event["reason"] = reason
     if session_id:
         event["session_id"] = session_id
+    if conversation_deleted is True:
+        event["conversation_deleted"] = True
     return event
 
 
@@ -78,6 +85,7 @@ async def publish_user_event(
     reason: str | None = None,
     *,
     session_id: str | None = None,
+    conversation_deleted: bool = False,
 ) -> None:
     """PUBLISH one event to the shared channel. Callable from ANY process — the
     worker passes its own ``aioredis`` client, the API pod passes ``get_redis()``.
@@ -87,9 +95,12 @@ async def publish_user_event(
     that emitted it, so failures are swallowed with a warning.
     """
     try:
-        payload = json.dumps(
-            {"target": target_user_id, **build_event(event_type, reason, session_id)}
-        )
+        payload = json.dumps({
+            "target": target_user_id,
+            **build_event(
+                event_type, reason, session_id, conversation_deleted=conversation_deleted,
+            ),
+        })
         await redis.publish(USER_EVENTS_CHANNEL, payload)
     except Exception as exc:
         logger.warning(f"user-events: publish failed ({event_type}/{reason}): {exc}")
@@ -211,15 +222,22 @@ class EventCoalescer:
     def __init__(self, window_seconds: float, flush) -> None:
         self._window = window_seconds
         self._flush = flush  # async (target, event) -> Any
-        self._pending: dict[tuple[int | None, str, str | None], dict[str, Any]] = {}
+        self._pending: dict[tuple[int | None, str, str | None, bool], dict[str, Any]] = {}
         self._task: asyncio.Task | None = None
 
     @staticmethod
-    def _key(target: int | None, event: dict[str, Any]) -> tuple[int | None, str, str | None]:
+    def _key(
+        target: int | None, event: dict[str, Any],
+    ) -> tuple[int | None, str, str | None, bool]:
         # The session is part of the key: two conversations' events inside one
         # window are two different signals (each tab reacts to its own), and
-        # last-wins would silently drop one of them.
-        return (target, event.get("type", ""), event.get("session_id"))
+        # last-wins would silently drop one of them. So is the deleted flag
+        # (#1507): "reload this thread" and "this thread is gone" for one
+        # session id are opposite instructions and must not merge.
+        return (
+            target, event.get("type", ""), event.get("session_id"),
+            event.get("conversation_deleted") is True,
+        )
 
     def submit(self, target: int | None, event: dict[str, Any]) -> None:
         if self._window <= 0:
@@ -242,7 +260,7 @@ class EventCoalescer:
         # stranded until the next submit() (L2).
         while self._pending:
             pending, self._pending = self._pending, {}
-            for (target, _type, _session), event in pending.items():
+            for (target, *_rest), event in pending.items():
                 try:
                     await self._flush(target, event)
                 except Exception as exc:

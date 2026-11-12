@@ -144,7 +144,8 @@ browser that still held it; everything that outlives a delete and keys on the id
   `ConversationService.save_message` refuses to CREATE a row under a recorded id
   (`ConversationDeletedError`, a subclass of `ConversationNotOwnedError`): the WS
   turn falls into its replacement path (under auth-off too, where the turn has no
-  identity), the scanner settles `refused`, the Paperless announcement is skipped.
+  identity), the scanner writes nothing and notifies the requester live only
+  (`notified`, #1507), the Paperless announcement is skipped.
   Only the satellite opts in (`allow_deleted_session=True`): its room id is fixed
   per day. The Paperless announcement writes in its own session after the filing
   committed — a refused `save_message` rolls its session back, and a shared one
