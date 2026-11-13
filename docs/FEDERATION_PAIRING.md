@@ -182,6 +182,9 @@ must never be treated as the local owner.
   applies to itself (linked: asks as itself; unlinked: the far side's pairing
   decides). The granted tier on a row is what THIS instance gives the far side,
   not what the viewer receives over there.
+  The time label reads "last request … ago" / "never asked" REGARDLESS of the
+  flag: that wording is a copy correction (the value always was a request
+  time), not part of the gated feature.
 - **Re-tier:** change the tier from the peers page.
 - **Revoke:** `DELETE /api/federation/peers/{peer_id}` (or the peers-page
   control) — removes the peer; the other side still holds its record until it
