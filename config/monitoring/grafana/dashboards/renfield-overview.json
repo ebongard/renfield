@@ -203,7 +203,7 @@
         "justifyMode": "auto",
         "reduceOptions": {
           "calcs": [
-            "lastNotNull"
+            "last"
           ],
           "fields": "",
           "values": false
@@ -396,7 +396,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Share of 5xx responses",
-      "description": "Server errors as a share of all HTTP requests.",
+      "description": "Server errors as a share of all HTTP requests. 0 % while no request ended in a 5xx; no line = no requests in the window.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -422,7 +422,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(renfield_http_requests_total{job=~\"$job\", status_code=~\"5..\"}[$__rate_interval])) / sum(rate(renfield_http_requests_total{job=~\"$job\"}[$__rate_interval]))",
+          "expr": "(sum(rate(renfield_http_requests_total{job=~\"$job\", status_code=~\"5..\"}[$__rate_interval])) or sum(rate(renfield_http_requests_total{job=~\"$job\"}[$__rate_interval])) * 0) / sum(rate(renfield_http_requests_total{job=~\"$job\"}[$__rate_interval]))",
           "legendFormat": "5xx share",
           "editorMode": "code",
           "range": true
@@ -512,7 +512,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Slowest endpoints (p95, top 10)",
-      "description": "The endpoint label is the route template, never a concrete path.",
+      "description": "The endpoint label is the route template, never a concrete path. An endpoint without a request in the window has no p95 and is left out.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -536,7 +536,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(10, histogram_quantile(0.95, sum by (le, endpoint) (rate(renfield_http_request_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval]))))",
+          "expr": "topk(10, histogram_quantile(0.95, sum by (le, endpoint) (rate(renfield_http_request_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval]))) > 0)",
           "legendFormat": "{{endpoint}}",
           "editorMode": "code",
           "range": true
@@ -615,9 +615,9 @@
     },
     {
       "id": 13,
-      "type": "timeseries",
+      "type": "state-timeline",
       "title": "Circuit breaker state",
-      "description": "0 = closed, 1 = open, 2 = half open.",
+      "description": "One band per breaker: closed, open or half open. A breaker exports its state only when it changes, so one that never opened since the backend started has no band, and the time before a first change is 'no state reported'. While no breaker has changed state at all, Grafana has nothing to draw and says 'Data does not have a time field'. 'unknown' = a state name the metric has no number for (exported as -1).",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -630,19 +630,38 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "noValue": "no state reported",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 0
+          },
           "mappings": [
             {
               "type": "value",
               "options": {
+                "-1": {
+                  "text": "unknown",
+                  "color": "purple",
+                  "index": 0
+                },
                 "0": {
-                  "text": "closed"
+                  "text": "closed",
+                  "color": "green",
+                  "index": 1
                 },
                 "1": {
-                  "text": "open"
+                  "text": "open",
+                  "color": "red",
+                  "index": 2
                 },
                 "2": {
-                  "text": "half open"
+                  "text": "half open",
+                  "color": "yellow",
+                  "index": 3
                 }
               }
             }
@@ -664,14 +683,18 @@
         }
       ],
       "options": {
+        "alignValue": "left",
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
+          "mode": "single",
+          "sort": "none"
         }
       }
     },

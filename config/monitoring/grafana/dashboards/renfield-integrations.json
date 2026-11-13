@@ -166,7 +166,7 @@
         "justifyMode": "auto",
         "reduceOptions": {
           "calcs": [
-            "lastNotNull"
+            "last"
           ],
           "fields": "",
           "values": false
@@ -186,8 +186,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 6,
-        "y": 1
+        "x": 0,
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -239,15 +239,15 @@
       "id": 4,
       "type": "timeseries",
       "title": "Share of tool calls that timed out, by server",
-      "description": "Timeouts are the only call outcome the health verdict counts (calls_failing): an error result is an answer, a timeout is a server that did not answer.",
+      "description": "Timeouts are the only call outcome the health verdict counts (calls_failing): an error result is an answer, a timeout is a server that did not answer. A server that never timed out has no timeout series; it is drawn at 0 % from its call total. No line = no calls to that server in the window.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 18,
+        "x": 6,
         "y": 1
       },
       "fieldConfig": {
@@ -265,7 +265,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (server) (rate(renfield_mcp_tool_duration_seconds_count{job=~\"$job\", server=~\"$server\", outcome=\"timeout\"}[$__rate_interval])) / sum by (server) (rate(renfield_mcp_tool_duration_seconds_count{job=~\"$job\", server=~\"$server\"}[$__rate_interval]))",
+          "expr": "(sum by (server) (rate(renfield_mcp_tool_duration_seconds_count{job=~\"$job\", server=~\"$server\", outcome=\"timeout\"}[$__rate_interval])) or sum by (server) (rate(renfield_mcp_tool_duration_seconds_count{job=~\"$job\", server=~\"$server\"}[$__rate_interval])) * 0) / sum by (server) (rate(renfield_mcp_tool_duration_seconds_count{job=~\"$job\", server=~\"$server\"}[$__rate_interval]))",
           "legendFormat": "{{server}}",
           "editorMode": "code",
           "range": true
@@ -644,9 +644,9 @@
     },
     {
       "id": 14,
-      "type": "timeseries",
+      "type": "stat",
       "title": "Active memories",
-      "description": "Set by the memory cleanup run, so it moves in steps. No line until the first cleanup run after a backend start: not counted yet is not zero.",
+      "description": "Set by the memory cleanup run, so it moves in steps; the line behind the number is its history over the dashboard's time range. 'not counted yet' = no cleanup run since the backend started: that is not zero. A count, not a health signal, so the number carries no threshold colour.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -673,7 +673,11 @@
                 }
               }
             }
-          ]
+          ],
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
         },
         "overrides": []
       },
@@ -691,15 +695,17 @@
         }
       ],
       "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "textMode": "auto"
       }
     },
     {
@@ -750,9 +756,9 @@
     },
     {
       "id": 16,
-      "type": "timeseries",
+      "type": "stat",
       "title": "Knowledge graph conflation candidates",
-      "description": "Distinct-name, same-type entity pairs that embed close enough to risk a wrong merge. Expected 0. No line = no scan has run since the backend started (KG_CONFLATION_MONITOR_ENABLED off, or not yet due); that is not a clean result.",
+      "description": "Distinct-name, same-type entity pairs that embed close enough to risk a wrong merge. Expected 0 (green); red from 1. The line behind the number is its history over the dashboard's time range. 'no scan yet' = no scan has run since the backend started (KG_CONFLATION_MONITOR_ENABLED off, or not yet due); that is not a clean result.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -810,15 +816,17 @@
         }
       ],
       "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "textMode": "auto"
       }
     }
   ]
