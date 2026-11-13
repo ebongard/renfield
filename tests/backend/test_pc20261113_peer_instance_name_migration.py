@@ -46,12 +46,32 @@ def _load_migration():
 
 @pytest.fixture
 async def schema_conn(pg_url):
-    engine = create_async_engine(pg_url, poolclass=NullPool, future=True)
+    """A connection that sees ONE schema: a throwaway one.
+
+    🛑 `public` is deliberately NOT on the search path. This migration decides
+    by reflection whether a column is there, and its DDL names the tables
+    unqualified -- with `public` visible, a test whose throwaway schema lacks
+    the table reflected and altered the shared `public.peer_users` instead,
+    and the downgrade dropped the column there for the rest of the run.
+
+    The path is set as a connection parameter, not by `SET`, because the
+    dialect asks `current_schema()` once on its first connection and reflects
+    there from then on: the throwaway schema has to exist, and be first, before
+    that connection opens.
+    """
     schema = f"pcin_{uuid.uuid4().hex[:12]}"
+    admin = create_async_engine(pg_url, poolclass=NullPool, future=True)
+    async with admin.connect() as setup:
+        await setup.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+        await setup.commit()
+    engine = create_async_engine(
+        pg_url, poolclass=NullPool, future=True,
+        connect_args={"server_settings": {"search_path": f'"{schema}"'}},
+    )
     conn = await engine.connect()
     try:
-        await conn.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
-        await conn.exec_driver_sql(f'SET search_path TO "{schema}", public')
+        assert (await conn.execute(text("SELECT current_schema()"))).scalar() == schema
+        assert (await conn.execute(text("SHOW search_path"))).scalar() == f'"{schema}"'
         await conn.commit()
         yield conn, schema
     finally:
@@ -59,13 +79,14 @@ async def schema_conn(pg_url):
             await conn.rollback()
         except Exception:
             pass
-        try:
-            await conn.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-            await conn.commit()
-        except Exception:
-            pass
         await conn.close()
         await engine.dispose()
+        try:
+            async with admin.connect() as teardown:
+                await teardown.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                await teardown.commit()
+        finally:
+            await admin.dispose()
 
 
 async def _run(conn, direction: str) -> None:
@@ -229,13 +250,44 @@ async def test_downgrade_without_the_columns_is_a_no_op(schema_conn):
     assert await _count(conn, "federation_query_log") == 1
 
 
-async def test_without_the_tables_nothing_is_created(schema_conn):
+async def _public_columns(conn) -> list[tuple[str, str]]:
+    """The two columns as the SHARED `public` schema holds them right now."""
+    rows = (await conn.execute(text(
+        "SELECT table_name, column_name FROM information_schema.columns"
+        " WHERE table_schema = 'public'"
+        "   AND (table_name, column_name) IN"
+        "       (('peer_users', 'remote_instance_name'),"
+        "        ('federation_query_log', 'peer_instance_name_snapshot'))"
+        " ORDER BY 1, 2"
+    ))).all()
+    return [tuple(r) for r in rows]
+
+
+async def test_without_the_tables_nothing_is_created_and_public_is_untouched(schema_conn):
+    """Both tables exist on every database at ``pc20261111_push_subs``; one
+    without them is broken. The upgrade then says so instead of passing, the
+    downgrade has nothing to take back, and neither creates anything.
+
+    🛑 And neither reaches past its own schema. An earlier version of this test
+    kept `public` on the search path: the migration reflected the shared
+    `public.peer_users` through it, the downgrade dropped the column THERE, and
+    every later test of the run that writes a pairing failed on a missing
+    column. It was green on its own and in most orders.
+    """
+    from sqlalchemy.exc import ProgrammingError
+
     conn, schema = schema_conn
-    await _run(conn, "upgrade")
+    public_before = await _public_columns(conn)
+
+    with pytest.raises(ProgrammingError, match="peer_users"):
+        await _run(conn, "upgrade")
+    await conn.rollback()
     await _run(conn, "downgrade")
+
     assert (await conn.execute(text(
         "SELECT count(*) FROM information_schema.tables WHERE table_schema = :s"
     ), {"s": schema})).scalar() == 0
+    assert await _public_columns(conn) == public_before
 
 
 async def test_migration_and_model_describe_the_same_columns(schema_conn):
