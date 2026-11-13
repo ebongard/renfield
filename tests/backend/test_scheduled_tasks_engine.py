@@ -592,6 +592,7 @@ _GATE_OFF_CASES = [
     ("_memory_cleanup_handler", {"memory_enabled": False}),
     ("_meeting_retention_handler", {"meeting_transcription_enabled": False}),
     ("_trajectory_cleanup_handler", {"trajectory_capture_enabled": False}),
+    ("_conversation_tombstone_cleanup_handler", {"conversation_tombstone_retention_days": 0}),
     ("_kg_conflation_monitor_handler", {"kg_conflation_monitor_enabled": False}),
     ("_paperless_reconciler_handler", {"folder_ingest_to_paperless": False, "email_ingest_to_paperless": False}),
     ("_obligation_deadline_notifier_handler", {"obligation_notifier_enabled": False}),
@@ -717,7 +718,9 @@ class TestBatchBCHandlers:
         # +1: check the Paperless search index (fix B)
         # +1: expire routing traces (#1524) -- deliberately UNGATED: the rows
         # hold full user messages and must expire with the flag off too.
-        assert len(seeds) == 29
+        # +1: prune conversation tombstones (#1529) -- self-gates on
+        # conversation_tombstone_retention_days, 0 = keep forever.
+        assert len(seeds) == 30
         names = [s.name for s in seeds]
         # Names are the ON CONFLICT seed key — a duplicate would silently drop a
         # built-in. Expressed against len(seeds) so adding a built-in updates ONE

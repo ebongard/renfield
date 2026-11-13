@@ -1966,6 +1966,53 @@ ROUTING_TRACES_RETENTION_DAYS=14
 
 ---
 
+### Vermerke gelöschter Konversationen (#1485, #1529)
+
+```bash
+# Wie viele Tage der Vermerk einer gelöschten Sitzungs-ID in
+# deleted_conversation_sessions bleibt (0–3650). 0 = unbegrenzt aufbewahren
+# (Vorgabe): nichts wird gelöscht, die Aufgabe sendet keine Abfrage.
+# N > 0: die Aufgabe „Gelöschte Sitzungskennungen aufräumen" (täglich, nicht
+# beim Start) löscht Vermerke, die ÄLTER als N Tage sind; genau N Tage alte
+# bleiben. Ein negativer Wert verhindert den Start.
+CONVERSATION_TOMBSTONE_RETENTION_DAYS=0
+```
+
+Der Vermerk verhindert, dass unter der ID einer gelöschten Konversation eine
+neue entsteht (#1485). Gelesen wird er unter anderem an zwei Stellen: an der Chat-Grenze, wenn
+ein Tab oder Gerät die anderswo gelöschte Konversation noch zeigt (es erhält
+eine frische ID), und beim Schreiben (`save_message`), wenn ein nachlaufender
+Schreiber die ID noch trägt — ein Scan-Ergebnis, eine Paperless-Rückmeldung.
+
+**Was nach Ablauf gilt:** die ID ist wieder eine unbekannte. Meldet sich ein
+Client erst nach N Tagen unter ihr, entsteht dort eine neue Konversation, die
+dem Absender gehört (Verhalten vor #1485) — bei einer geteilten Konversation
+kann das ein anderer Benutzer sein als der, der gelöscht hat. Das Fenster muss
+deshalb länger sein als die längste Zeit, die ein Tab oder Gerät ungenutzt
+liegt.
+
+**Was der Aufräumlauf schützt:** Zeilen, die das Löschen der Konversation
+überleben und über die Sitzungs-ID an deren Inhaber ausgegeben würden. Solange
+unter der ID noch ein Chat-Anhang (`chat_uploads`), eine offene
+Paperless-Rückfrage oder eine laufende Paperless-Ablage liegt, bleibt der
+Vermerk — auch weit über N Tage hinaus. Indexierte Anhänge räumt niemand ab;
+ihr Vermerk bleibt dauerhaft, die übrigen verschwinden, sobald
+`CHAT_UPLOAD_CLEANUP_ENABLED` die Anhänge entfernt hat. Ohne diesen Schutz kämen
+die Anhänge der gelöschten Konversation mit der ID zurück.
+
+**Was nicht geschützt ist:** Herkunftsangaben der gelöschten Konversation
+(Erinnerungen, Wissensgraph, Episoden, Erinnerungs-Termine) behalten die ID und
+teilen sie nach Ablauf mit der neuen Konversation. Keine Abfrage wählt sie über
+die Sitzungs-ID aus, es wird also nichts ausgegeben; die Zuordnung über die ID
+unterscheidet die beiden Konversationen aber nicht mehr.
+
+Ein Fenster begrenzt das Tabellenwachstum (eine Zeile je Löschung) und die
+Verweildauer von Sitzungs-IDs, die ein Plugin-Transport von außen übernimmt
+(etwa die Kennung eines Chat-Threads). Der Stichtag wird mit der Uhr der
+Datenbank berechnet.
+
+---
+
 ### Trajectory Capture (Self-Learning Phase 2)
 
 ```bash

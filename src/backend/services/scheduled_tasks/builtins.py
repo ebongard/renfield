@@ -294,6 +294,22 @@ async def _routing_trace_cleanup_handler(app: FastAPI, params: dict) -> str | No
     return f"deleted={deleted}" if deleted else None
 
 
+async def _conversation_tombstone_cleanup_handler(app: FastAPI, params: dict) -> str | None:
+    # 0 = keep forever: return before a session is opened, so no query runs.
+    retention_days = settings.conversation_tombstone_retention_days
+    if retention_days <= 0:
+        return "skipped: conversation_tombstone_retention_days is 0 (keep forever)"
+    from services.conversation_tombstones import prune_expired_tombstones
+    from services.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db_session:
+        deleted = await prune_expired_tombstones(db_session, retention_days)
+    if deleted:
+        logger.info(f"Conversation tombstones: {deleted} pruned (older than {retention_days} days)")
+        return f"deleted={deleted}"
+    return None
+
+
 async def _kg_conflation_monitor_handler(app: FastAPI, params: dict) -> str | None:
     if not settings.kg_conflation_monitor_enabled:
         return "skipped: kg_conflation_monitor_enabled is off"
@@ -563,6 +579,7 @@ def register_builtin_handlers() -> None:
     register_handler("meeting_retention", _meeting_retention_handler)
     register_handler("trajectory_cleanup", _trajectory_cleanup_handler)
     register_handler("routing_trace_cleanup", _routing_trace_cleanup_handler)
+    register_handler("conversation_tombstone_cleanup", _conversation_tombstone_cleanup_handler)
     register_handler("kg_conflation_monitor", _kg_conflation_monitor_handler)
     register_handler("paperless_reconciler", _paperless_reconciler_handler)
     # Phase 3 Batch C
@@ -651,6 +668,10 @@ def builtin_task_seeds() -> list[TaskSeed]:
         TaskSeed(name="Meeting-Aufbewahrung", handler_key="meeting_retention", interval_seconds=86400, run_at_boot=True, enabled=True),
         TaskSeed(name="Trajektorien aufräumen", handler_key="trajectory_cleanup", interval_seconds=settings.trajectory_cleanup_interval, run_at_boot=True, enabled=True),
         TaskSeed(name="Routing-Spuren aufräumen", handler_key="routing_trace_cleanup", interval_seconds=86400, run_at_boot=True, enabled=True),
+        # #1529: self-gates on conversation_tombstone_retention_days (0 = keep
+        # forever, the default). Not run_at_boot: nothing here is urgent, and a
+        # restart must not be what triggers a delete.
+        TaskSeed(name="Gelöschte Sitzungskennungen aufräumen", handler_key="conversation_tombstone_cleanup", interval_seconds=86400, enabled=True),
         TaskSeed(name="KG-Konflations-Monitor", handler_key="kg_conflation_monitor", interval_seconds=settings.kg_conflation_monitor_interval, run_at_boot=True, enabled=True),
         TaskSeed(name="Paperless-Ablage nachziehen", handler_key="paperless_reconciler", interval_seconds=settings.paperless_reconciler_interval, run_at_boot=True, enabled=True),
         # --- Phase 3 Batch C ---
