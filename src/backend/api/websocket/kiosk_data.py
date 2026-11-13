@@ -442,8 +442,30 @@ _PEER_REACHABLE_WITHIN_SECONDS = 300
 # glance without hammering the DB.
 _PEER_STATUS_REFRESH_SECONDS = 60
 
-# Last peer list PUSHED to the kiosk hub (diff-gate). None until the first push.
+# With the signed check on, an unchanged peer list is pushed again once the
+# last push is this old. The display treats a verdict as stale when it has
+# heard nothing about the peers for 20 minutes (`PEER_CHECK_STALE_MS`); a
+# socket that went silent without closing is only told apart from "nothing
+# changed" by this beat. Ten minutes is a choice: well inside the 20, and half
+# as often as the checks themselves run.
+_PEER_STATUS_REAFFIRM_SECONDS = 600
+
+# Last peer list PUSHED to the kiosk hub (diff-gate), WITHOUT each entry's
+# `checked_at` -- see `_comparable`. None until the first push.
 _peer_status_last_pushed: list[dict] | None = None
+# `time.monotonic()` of that push.
+_peer_status_last_pushed_at: float = 0.0
+
+
+def _comparable(peers: list[dict]) -> list[dict]:
+    """What the diff gate compares: everything except `checked_at`.
+
+    Every probe moves `checked_at`, so comparing it would push the whole list
+    after every check (every 5 minutes per pairing) although nothing a person
+    can see has changed. A result that EXPIRES still pushes: it changes the
+    state to `unknown`.
+    """
+    return [{k: v for k, v in peer.items() if k != "checked_at"} for peer in peers]
 
 
 def reset_peer_status_gate() -> None:
@@ -456,16 +478,36 @@ def reset_peer_status_gate() -> None:
 async def compute_peer_status() -> list[dict]:
     """Content-free federation-peer status for the kiosk.
 
-    One node per remote identity (dedup by pubkey). No pubkey, no message
-    content, no endpoint -- names, timestamps and state codes only. Shared by
-    the snapshot builder and the refresher.
+    One node per remote identity (grouped by pubkey). No pubkey, no message
+    content, no endpoint and no host name -- names, timestamps and state codes
+    only. Shared by the snapshot builder and the refresher.
+
+    Several accounts here can each hold a pairing with the same far instance:
+    several rows, one node. What the node shows is decided the same way on
+    every call (rows are read in id order):
+      ``id``, ``name``  the row with the LOWEST id -- stable across pushes, so
+                        the node keeps its identity on the wall.
+      ``instance_name`` the first row with a VERIFIED name.
+      ``last_seen_at``  the latest over the group.
+      reading           the most recently checked one (a tie: the lowest id).
+      ``recently_active`` true when any row is.
+      ``pulse_ids``     ONLY for such a group: every row's tool-server name
+                        (``peer_<id>``). A turn runs through the asking
+                        account's own row, and whichever it was, the node has
+                        to light. A single row sends no such key -- its one
+                        pulse id follows from ``id``.
 
     Keys, in three layers:
       always      ``id``, ``name`` (the PERSON who paired), ``last_seen_at``,
                   ``reachable``.
-      with a label ``instance_name`` -- the far INSTANCE's verified name, else
-                  the host of its stored endpoint. The key is absent when there
-                  is neither, so such a peer's entry is what it always was.
+      with a name ``instance_name`` -- the name the far INSTANCE told us in
+                  a verified attachment, and nothing else. The key is absent
+                  without one, so such a peer's entry is what it always was
+                  (the person's name alone).
+                  🛑 Never the host of the stored endpoint. The peers page,
+                  the audit view and the chat line fall back to it, behind a
+                  login; a wall display is read by whoever stands in the hall,
+                  and its payloads carry no address of anything.
       flag on     ``reachability`` (reachable / unreachable / unknown),
                   ``reachability_reason`` (machine code, localised by the
                   frontend), ``checked_at``, ``recently_active``. ``reachable``
@@ -478,14 +520,16 @@ async def compute_peer_status() -> list[dict]:
 
     from models.database import PeerUser
     from services.database import AsyncSessionLocal
-    from services.federation_instance_name import peer_instance_label
+    from services.federation_instance_name import stored_instance_name
 
     probing = settings.federation_reachability_enabled
     now = datetime.now(UTC)
     asked: dict = {}
     async with AsyncSessionLocal() as db:
         rows = (
-            await db.execute(select(PeerUser).where(PeerUser.revoked_at.is_(None)))
+            await db.execute(
+                select(PeerUser).where(PeerUser.revoked_at.is_(None)).order_by(PeerUser.id)
+            )
         ).scalars().all()
         if probing and rows:
             from services.federation_reachability import last_asked_at
@@ -501,15 +545,18 @@ async def compute_peer_status() -> list[dict]:
 
         readings = await read_reachability([peer.id for peer in rows])
 
+    # Different circle owners can pair with the same remote node; the kiosk
+    # shows one node per remote identity. Insertion order = id order.
+    groups: dict[str, list] = {}
+    for row in rows:
+        groups.setdefault(row.remote_pubkey, []).append(row)
+
     peers: list[dict] = []
-    seen: set = set()
-    for peer in rows:
-        # Different circle owners can pair with the same remote node; the kiosk
-        # shows one node per remote identity.
-        if peer.remote_pubkey in seen:
-            continue
-        seen.add(peer.remote_pubkey)
-        last_seen = peer.last_seen_at
+    for members in groups.values():
+        peer = members[0]
+        last_seen = max(
+            (m.last_seen_at for m in members if m.last_seen_at is not None), default=None,
+        )
         reachable = False
         if last_seen is not None:
             ls = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
@@ -520,9 +567,15 @@ async def compute_peer_status() -> list[dict]:
             "last_seen_at": last_seen.isoformat() if last_seen else None,
             "reachable": reachable,
         }
-        instance_name = peer_instance_label(peer)
-        if instance_name:
-            entry["instance_name"] = instance_name
+        verified_name = next(
+            (name for name in (stored_instance_name(m) for m in members) if name), None,
+        )
+        if verified_name:
+            entry["instance_name"] = verified_name
+        if len(members) > 1:
+            from services.peer_mcp_registry import FEDERATION_SERVER_PREFIX
+
+            entry["pulse_ids"] = [f"{FEDERATION_SERVER_PREFIX}{m.id}" for m in members]
         if probing:
             from services.federation_reachability import (
                 NOT_CHECKED,
@@ -530,15 +583,22 @@ async def compute_peer_status() -> list[dict]:
                 recently_active,
             )
 
-            reading = readings.get(peer.id, NOT_CHECKED).as_payload()
+            latest = NOT_CHECKED
+            for m in members:
+                candidate = readings.get(m.id)
+                if candidate is not None and candidate.checked_at is not None and (
+                    latest.checked_at is None or candidate.checked_at > latest.checked_at
+                ):
+                    latest = candidate
+            reading = latest.as_payload()
             # ONE definition of "reachable" per payload: with the probe on, the
             # legacy boolean says what the probe says.
             entry["reachable"] = reading["state"] == STATE_REACHABLE
             entry["reachability"] = reading["state"]
             entry["reachability_reason"] = reading["reason"]
             entry["checked_at"] = reading["checked_at"]
-            entry["recently_active"] = recently_active(
-                last_seen, asked.get(peer.id), now=now,
+            entry["recently_active"] = any(
+                recently_active(m.last_seen_at, asked.get(m.id), now=now) for m in members
             )
         peers.append(entry)
     return peers
@@ -581,20 +641,44 @@ def schedule_peer_probe_on_connect() -> None:
 async def refresh_and_push_peer_status() -> None:
     """Recompute peer reachability → PUSH a ``peer_status_changed`` delta on
     change. Diff-gated, fire-and-forget — same pattern as the internal-health and
-    weather refreshers."""
-    global _peer_status_last_pushed
+    weather refreshers.
+
+    "Change" leaves the time of the check out (`_comparable`). With the signed
+    check on, an unchanged list is re-affirmed every
+    `_PEER_STATUS_REAFFIRM_SECONDS`, with its current `checked_at` values.
+    """
+    global _peer_status_last_pushed, _peer_status_last_pushed_at
     peers = await compute_peer_status()
-    if peers == _peer_status_last_pushed:
-        return
+    comparable = _comparable(peers)
+    if comparable == _peer_status_last_pushed:
+        reaffirm_due = (
+            settings.federation_reachability_enabled
+            and bool(peers)
+            and time.monotonic() - _peer_status_last_pushed_at >= _PEER_STATUS_REAFFIRM_SECONDS
+        )
+        if not reaffirm_due:
+            return
     try:
+        from datetime import UTC
+
         from api.websocket.kiosk_handler import broadcast_kiosk_event
 
-        await broadcast_kiosk_event({"type": "peer_status_changed", "peers": peers})
+        # `at` is the server's clock at this push. The display measures the
+        # age of a `checked_at` against it and adds its own elapsed time since
+        # receipt -- never its own wall clock against a server timestamp, which
+        # a tablet running fast or slow would get wrong. Outside `peers`, so
+        # the diff gate above does not see it.
+        await broadcast_kiosk_event({
+            "type": "peer_status_changed",
+            "at": datetime.now(UTC).isoformat(),
+            "peers": peers,
+        })
     except Exception as e:
         # Do NOT advance the gate on a failed broadcast (see internal-health).
         logger.debug(f"kiosk peer_status_changed broadcast failed: {e}")
         return
-    _peer_status_last_pushed = peers
+    _peer_status_last_pushed = comparable
+    _peer_status_last_pushed_at = time.monotonic()
 
 
 # ---------------------------------------------------------------------------

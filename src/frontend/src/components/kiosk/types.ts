@@ -75,9 +75,11 @@ export interface PeerNode {
   /** A real request went either way within the last few minutes. Only known
    *  while the backend runs the reachability check. */
   recentlyActive: boolean;
-  /** The subsystem id a `turn_activity` names when a turn asked this peer
-   *  (`peer_<id>`): the node pulses on it, as a tool node does. */
-  pulseId: string;
+  /** The subsystem ids a `turn_activity` can name when a turn asked this
+   *  peer (`peer_<id>`): the node pulses on ANY of them, as a tool node does.
+   *  More than one when several accounts here are paired with the same far
+   *  instance -- each turn runs through the asking account's own pairing. */
+  pulseIds: string[];
   /** Tooltip: the localised state and reason. */
   hint?: string;
 }

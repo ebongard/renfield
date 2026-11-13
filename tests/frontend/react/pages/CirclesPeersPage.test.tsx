@@ -14,10 +14,11 @@
  * `recently_active`.
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import type { AxiosResponse } from 'axios';
 import CirclesPeersPage from '../../../../src/frontend/src/pages/CirclesPeersPage';
-import { renderWithRouter } from '../test-utils';
+import { createTestQueryClient, renderWithRouter } from '../test-utils';
+import { keys } from '../../../../src/frontend/src/api/keys';
 import i18n from '../../../../src/frontend/src/i18n';
 import apiClient from '../../../../src/frontend/src/utils/axios';
 import type { FederationPeer, IdentityLink } from '../../../../src/frontend/src/api/resources/federation';
@@ -62,7 +63,7 @@ const minutesAgo = (n: number): string =>
 
 /** The legacy shape: exactly what a flag-off backend sends. */
 const legacyPeer: FederationPeer = {
-  id: '1',
+  id: 1,
   remote_display_name: 'Far Instance',
   remote_pubkey: PUBKEY,
   circle_tier: 2,
@@ -267,7 +268,10 @@ describe('CirclesPeersPage', () => {
       last_asked_at: null,
       recently_active: false,
     };
-    const checkNow = () => screen.getByRole('button', { name: i18n.t('circles.peerReachCheckNow') });
+    // The button's accessible name says WHICH peer it checks (a page lists
+    // several); its visible text stays the short "check now".
+    const checkNow = (peer = 'Far Instance') =>
+      screen.getByRole('button', { name: i18n.t('circles.peerReachCheckNowFor', { peer }) });
 
     it('says nothing about reachability when the backend sends none', async () => {
       serve([legacyPeer]);
@@ -347,7 +351,7 @@ describe('CirclesPeersPage', () => {
     it('checks a row nobody has checked ONCE when the page shows it', async () => {
       // Without a connected wall display nothing keeps the readings current,
       // so the page would otherwise open on "not checked" for every row.
-      serve([unchecked, { ...reachable, id: '2' }]);
+      serve([unchecked, { ...reachable, id: 2 }]);
       mockedPost.mockResolvedValue(
         response({ state: 'reachable', reason: null, checked_at: minutesAgo(0) }),
       );
@@ -371,15 +375,81 @@ describe('CirclesPeersPage', () => {
       expect(mockedPost).toHaveBeenCalledTimes(1);
     });
 
-    it('stays quiet when the check it started by itself fails', async () => {
+    it('stays quiet when the check it started by itself fails -- but leaves a debug line', async () => {
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
       serve([unchecked]);
-      mockedPost.mockRejectedValue(new Error('boom'));
+      const boom = new Error('boom');
+      mockedPost.mockRejectedValue(boom);
       renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
 
       await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(checkNow()).not.toBeDisabled());
       expect(screen.queryByText(i18n.t('circles.peerReachCheckFailed'))).not.toBeInTheDocument();
       expect(screen.getByTestId('peer-reach-1')).toHaveAttribute('data-reach-state', 'unknown');
+      // Silent to the person; whoever debugs it finds the row id and the error.
+      expect(debug).toHaveBeenCalledTimes(1);
+      expect(debug.mock.calls[0]).toEqual([expect.stringContaining('reachability check failed'), 1, boom]);
+      debug.mockRestore();
+    });
+
+    it('names the peer on each "check now" button and announces the state politely', async () => {
+      serve([
+        { ...reachable, instance_name: 'Instance B' },
+        { ...reachable, id: 2, remote_display_name: 'Someone Else' },
+      ]);
+      renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+
+      await screen.findByTestId('peer-reach-1');
+      // Two rows, two buttons with the same visible text -- told apart by name.
+      expect(checkNow('Instance B · Far Instance')).toHaveTextContent(i18n.t('circles.peerReachCheckNow'));
+      expect(checkNow('Someone Else')).toBeInTheDocument();
+
+      const status = screen.getByTestId('peer-reach-status-1');
+      expect(status).toHaveAttribute('aria-live', 'polite');
+      expect(status).toHaveTextContent(i18n.t('circles.peerReachState.reachable'));
+      // The button is NOT inside the live region: its "checking…" is not news.
+      expect(within(status).queryByRole('button')).not.toBeInTheDocument();
+    });
+
+    it('keeps a fresh reading when a list fetch that was already under way lands after it', async () => {
+      // The list answer was computed BEFORE the check ran. Landing after the
+      // check's answer it used to put the old reading back -- and with an
+      // unchecked row the page, having asked once, would never ask again.
+      const queryClient = createTestQueryClient();
+      let listCalls = 0;
+      let releaseStaleList: () => void = () => {};
+      mockedGet.mockImplementation((url: string) => {
+        if (url === '/api/federation/links/mine') return Promise.resolve(response([]));
+        if (url !== '/api/federation/peers') return Promise.reject(new Error(`unexpected GET ${url}`));
+        listCalls += 1;
+        if (listCalls === 1) return Promise.resolve(response({ peers: [reachable] }));
+        return new Promise((resolve) => {
+          releaseStaleList = () => resolve(response({ peers: [reachable] }));
+        });
+      });
+      let answerCheck: () => void = () => {};
+      mockedPost.mockImplementation(() => new Promise((resolve) => {
+        answerCheck = () => resolve(
+          response({ state: 'unreachable', reason: 'pin_mismatch', checked_at: minutesAgo(0) }),
+        );
+      }));
+      renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers', queryClient });
+
+      await screen.findByTestId('peer-reach-1');
+      fireEvent.click(checkNow());
+      await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(1));
+      void queryClient.refetchQueries({ queryKey: keys.federation.peers() }).catch(() => {});
+      await waitFor(() => expect(listCalls).toBe(2));
+
+      await act(async () => { answerCheck(); });
+      await waitFor(() => {
+        expect(screen.getByTestId('peer-reach-1')).toHaveAttribute('data-reach-state', 'unreachable');
+      });
+      await act(async () => {
+        releaseStaleList();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(screen.getByTestId('peer-reach-1')).toHaveAttribute('data-reach-state', 'unreachable');
     });
 
     it('starts no check at all when the backend sends no reachability', async () => {

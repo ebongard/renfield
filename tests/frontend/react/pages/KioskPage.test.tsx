@@ -386,6 +386,124 @@ describe('KioskPage', () => {
       expect(peerNode(3)!.querySelector('title')?.textContent).toBe(words);
     });
 
+    it.each([
+      ['reachable', null, null],
+      ['unreachable', '8 5', null],
+      ['unknown', '1 6', 'round'],
+    ])('draws the state %s in the ring\u2019s LINE, not in its colour alone', async (state, dash, cap) => {
+      // WCAG 1.4.1: the state rides two channels. This pins the second one --
+      // without it the line could go and only the data attribute would notice.
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', {
+        peers: [probedPeer({ reachability: state, reachable: state === 'reachable' })],
+      }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      const ring = peerNode(3)!.querySelector('[data-peer-ring]')!;
+      expect(ring.getAttribute('stroke-dasharray')).toBe(dash);
+      expect(ring.getAttribute('stroke-linecap')).toBe(cap);
+    });
+
+    it('explains the three ring lines in the legend while the check is on', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      const rows = [...screen.getByTestId('kiosk-peer-legend').querySelectorAll('[data-peer-legend]')];
+      expect(rows.map((row) => row.getAttribute('data-peer-legend'))).toEqual(
+        ['reachable', 'unreachable', 'unknown']);
+      expect(rows.map((row) => row.textContent)).toEqual(
+        ['Instanz erreichbar', 'Instanz nicht erreichbar', 'Instanz: unbekannt']);
+      // Each swatch is a ring in its state's own line.
+      expect(rows.map((row) => (row.querySelector('span') as HTMLElement).style.borderStyle)).toEqual(
+        ['solid', 'dashed', 'dotted']);
+    });
+
+    it('leaves "unknown" out of the legend while the check is off, and shows none without peers', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', {
+        peers: [{ id: 3, name: 'alex', last_seen_at: minutesAgo(1), reachable: true }],
+      }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      const states = () => [...document.querySelectorAll('[data-peer-legend]')]
+        .map((row) => row.getAttribute('data-peer-legend'));
+      expect(states()).toEqual(['reachable', 'unreachable']);
+
+      act(() => { lastSocket().fireMessage({ type: 'peer_status_changed', peers: [] }); });
+      await waitFor(() => expect(peerNode(3)).toBeNull());
+      expect(screen.queryByTestId('kiosk-peer-legend')).toBeNull();
+    });
+
+    it('clips a long name on the wall and keeps the full one as tooltip TEXT only', async () => {
+      const long = 'Instance-With-A-Very-Long-Name-That-Its-Owner-Chose-0123456789-ab';
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer({ instance_name: long })] }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      const node = peerNode(3)!;
+      const primary = node.querySelector('[data-peer-label="primary"]')!.textContent!;
+      expect(Array.from(primary)).toHaveLength(22);
+      expect(primary.endsWith('…')).toBe(true);
+      expect(node.querySelector('[data-peer-label="secondary"]')!.textContent).toBe('alex');
+      // The full name is there for whoever points at the node ...
+      expect(node.querySelector('title')!.textContent).toBe(`${long} · alex — erreichbar`);
+      // ... and in no attribute: it is text the far side chose.
+      for (const el of [node, ...node.querySelectorAll('*')]) {
+        for (const attr of el.attributes) expect(attr.value).not.toContain(long);
+      }
+    });
+
+    it('lights the one node of a group whichever account\u2019s pairing the turn ran through', async () => {
+      // Two accounts here are paired with the same far instance: one node,
+      // two tool servers. The turn names the ASKING account's `peer_<id>`.
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', {
+        peers: [probedPeer({ pulse_ids: ['peer_3', 'peer_8'] }), probedPeer({ id: 31 })],
+      }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      expect(peerNode(8)).toBeNull();
+      act(() => {
+        lastSocket().fireMessage({
+          type: 'turn_activity', role: 'general', subsystems: ['peer_8'], ok: true,
+          at: new Date().toISOString(),
+        });
+      });
+      await waitFor(() => expect(peerNode(3)!.getAttribute('data-peer-active')).toBe('1'));
+      expect(peerNode(31)!.getAttribute('data-peer-active')).toBeNull();
+    });
+
+    it('measures the age of a check on the server\u2019s clock, not the tablet\u2019s', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      const serverNow = Date.now() - 25 * 60_000;   // this tablet runs 25 minutes fast
+      const naive = (ms: number) => new Date(ms).toISOString().replace('Z', '');
+
+      // Checked one minute ago BY THE SERVER'S CLOCK: a real outage must show.
+      act(() => {
+        lastSocket().fireMessage({
+          type: 'peer_status_changed',
+          at: new Date(serverNow).toISOString().replace('Z', '+00:00'),
+          peers: [probedPeer({
+            reachability: 'unreachable', reachability_reason: 'pin_mismatch', reachable: false,
+            checked_at: naive(serverNow - 60_000),
+          })],
+        });
+      });
+      await waitFor(() =>
+        expect(peerNode(3)?.getAttribute('data-peer-reachability')).toBe('unreachable'));
+
+      // Checked 21 minutes ago by the server's clock: old, and it says so.
+      act(() => {
+        lastSocket().fireMessage({
+          type: 'peer_status_changed',
+          at: new Date(serverNow).toISOString().replace('Z', '+00:00'),
+          peers: [probedPeer({ checked_at: naive(serverNow - 21 * 60_000) })],
+        });
+      });
+      await waitFor(() =>
+        expect(peerNode(3)?.getAttribute('data-peer-reachability')).toBe('unknown'));
+      expect(peerNode(3)!.querySelector('title')?.textContent).toBe(
+        'Erreichbarkeit unbekannt — Geprüft, aber das Ergebnis ist veraltet.');
+    });
+
     it('never renders a raw reason code it has no text for', async () => {
       renderWithProviders(<KioskPage />);
       await pushSnapshot(snapshot('idle', {
@@ -422,7 +540,7 @@ describe('KioskPage', () => {
         expect(peerNode(3)?.getAttribute('data-peer-reachability')).toBe('unreachable'));
     });
 
-    it('lights the ARC node when a turn asked the peer -- and no tool node appears', async () => {
+    it('lights the ARC node when a turn asked the peer; the pulse itself creates no tool node', async () => {
       renderWithProviders(<KioskPage />);
       await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
       await waitFor(() => expect(peerNode(3)).not.toBeNull());
@@ -436,10 +554,13 @@ describe('KioskPage', () => {
         });
       });
       await waitFor(() => expect(peerNode(3)!.getAttribute('data-peer-active')).toBe('1'));
-      // The pulse did not materialise a `peer_3` node on the tools ring ...
+      // What this proves: a PULSE naming `peer_3` does not materialise a node
+      // on the tools ring and moves no count. That the backend keeps a peer's
+      // server out of `mcp.servers` in the first place is the backend's
+      // doing and is tested there (tests/backend/test_kiosk_peer_node.py);
+      // this fixture never contained such a server.
       expect(document.querySelector('[data-tool-id="peer_3"]')).toBeNull();
       expect(document.querySelectorAll('[data-tool-id]')).toHaveLength(toolNodesBefore);
-      // ... and the tool-health corner counts what it counted before.
       expect(screen.getByText('1/2 gesund')).toBeInTheDocument();
     });
 
@@ -460,15 +581,6 @@ describe('KioskPage', () => {
       expect(peerNode(31)!.getAttribute('data-peer-active')).toBeNull();
     });
 
-    it('counts no peer among the tools', async () => {
-      // The backend leaves a peer's `peer_<id>` server out of `mcp.servers`;
-      // the snapshot below is what it sends for one paired instance.
-      renderWithProviders(<KioskPage />);
-      await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
-      await waitFor(() => expect(peerNode(3)).not.toBeNull());
-      expect(screen.getByText('1/2 gesund')).toBeInTheDocument();
-      expect(document.querySelector('[data-tool-id^="peer_"]')).toBeNull();
-    });
   });
 
   it('does not duplicate a synthetic node when a real MCP server owns its id', async () => {

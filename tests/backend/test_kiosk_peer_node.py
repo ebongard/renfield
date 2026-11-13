@@ -10,8 +10,10 @@ has no session behind it) and as a ring on the peers arc. This file pins:
   - it is recognised by TRANSPORT, never by the `peer_` name prefix;
   - what the arc node's payload carries: unchanged with the reachability
     feature off, the documented extra keys with it on, the instance name only
-    when there is one -- and never a key, an address or any content;
-  - a probe happens because a wall display is there, not on a free timer.
+    when the far side sent a VERIFIED one -- and never a key, an address, a
+    host name or any content;
+  - the periodic check is consumer-gated: it runs while a wall display is
+    connected, and not otherwise.
 """
 from __future__ import annotations
 
@@ -298,13 +300,27 @@ class TestArcPayloadFeatureOff:
         assert _entry(peers, pairings["named"])["reachable"] is False    # never seen
         assert all(PROBE_KEYS.isdisjoint(p) for p in peers)
 
-    async def test_a_label_adds_exactly_one_key(self, pairings, feature_off):
+    async def test_a_verified_name_adds_exactly_one_key(self, pairings, feature_off):
         peers = await compute_peer_status()
-        named, hosted = _entry(peers, pairings["named"]), _entry(peers, pairings["hosted"])
-        assert set(named) == set(hosted) == LEGACY_PEER_KEYS | {"instance_name"}
+        named = _entry(peers, pairings["named"])
+        assert set(named) == LEGACY_PEER_KEYS | {"instance_name"}
         assert named["instance_name"] == "Instance B"
-        assert hosted["instance_name"] == "other.example.org"
         assert named["name"] == "evdb", "the person stays in `name`"
+
+    async def test_an_endpoint_host_is_no_label_on_the_wall(self, pairings, feature_off):
+        """🛑 The peers page falls back to the host of the stored endpoint
+        while no name is known -- behind a login. The wall display does not:
+        its payload is content-free (`.claude/rules/kiosk.md`), and a host
+        name is an address. Without a verified name the node shows the person
+        alone, exactly as before this feature."""
+        hosted = _entry(await compute_peer_status(), pairings["hosted"])
+        assert set(hosted) == LEGACY_PEER_KEYS
+        assert hosted == {
+            "id": pairings["hosted"].id,
+            "name": "evdb",
+            "last_seen_at": pairings["hosted"].last_seen_at.isoformat(),
+            "reachable": False,
+        }
 
     async def test_a_revoked_pairing_is_not_on_the_wall(self, pairings, feature_off):
         ids = {p["id"] for p in await compute_peer_status()}
@@ -376,13 +392,129 @@ class TestArcPayloadFeatureOn:
     async def test_the_payload_is_content_free(
         self, pairings, monkeypatch, memory_store, flag,
     ):
-        """Names, times and state codes. No key, no address, no fingerprint,
-        no query text -- with the feature on or off."""
+        """Names, times and state codes. No key, no address, no host name, no
+        fingerprint, no query text -- with the feature on or off."""
         monkeypatch.setattr(settings, "federation_reachability_enabled", flag)
         await memory_store.save(pairings["named"].id, PING_REACHABLE, time.time())
         rendered = repr(await compute_peer_status())
-        for secret in ("bc" * 32, "ab" * 32, "f0" * 32, "https://", ":8443", "tls_fingerprint"):
+        for secret in (
+            "bc" * 32, "ab" * 32, "f0" * 32, "https://", ":8443", "tls_fingerprint",
+            "far.example.org", "other.example.org", "example.org",
+        ):
             assert secret not in rendered, secret
+
+
+# =============================================================================
+# Two accounts paired with the SAME far instance: still one node
+# =============================================================================
+
+
+@pytest.fixture
+async def twin(db_session, pairings):
+    """Two accounts here are paired with ONE far instance: two rows on one
+    remote key, each with its own id, person and reading.
+
+    🛑 The row with the HIGHER id is written FIRST. A table this small is read
+    front to back, so an unordered select returns the higher id first -- which
+    is how the surviving row, and with it the node's identity, the person
+    shown and the pulse id, used to depend on where a row happened to lie.
+    """
+    second_owner = User(
+        username="kiosk-peer-second", password_hash="x", role_id=pairings["owner"].role_id)
+    db_session.add(second_owner)
+    await db_session.flush()
+    now = datetime.now(UTC).replace(tzinfo=None)
+
+    def _row(row_id: int, owner_id: int, **kw) -> PeerUser:
+        return PeerUser(
+            id=row_id, circle_owner_id=owner_id, remote_pubkey="ef" * 32,
+            granted_tier=2, paired_at=now - timedelta(days=1),
+            transport_config={"endpoints": ["https://twin.example.org"]}, **kw,
+        )
+
+    high = _row(
+        9002, second_owner.id, remote_display_name="second person",
+        remote_instance_name="Instance C", last_seen_at=now - timedelta(minutes=2),
+    )
+    db_session.add(high)
+    await db_session.commit()
+    low = _row(
+        9001, pairings["owner"].id, remote_display_name="evdb",
+        last_seen_at=now - timedelta(days=2),
+    )
+    db_session.add(low)
+    await db_session.commit()
+    return {"low": low, "high": high}
+
+
+def _group_entry(peers: list[dict], *rows: PeerUser) -> dict:
+    ids = {row.id for row in rows}
+    found = [p for p in peers if p["id"] in ids]
+    assert len(found) == 1, f"one node per remote identity, got {found}"
+    return found[0]
+
+
+@pytest.mark.database
+class TestOneNodePerRemoteIdentity:
+    async def test_the_node_is_the_lowest_row_and_names_every_pulse_id(
+        self, pairings, twin, feature_off,
+    ):
+        low, high = twin["low"], twin["high"]
+        peers = await compute_peer_status()
+        assert len(peers) == 4
+        entry = _group_entry(peers, low, high)
+        assert entry["id"] == low.id, "the lowest row id, whatever order the heap returns"
+        assert entry["name"] == "evdb", "the person of that same row"
+        # A turn runs through the asking account's own row: both must light the node.
+        assert entry["pulse_ids"] == [f"peer_{low.id}", f"peer_{high.id}"]
+
+    async def test_the_same_node_on_every_push(self, pairings, twin, feature_off):
+        first = await compute_peer_status()
+        second = await compute_peer_status()
+        assert first == second
+        assert [p["id"] for p in first] == sorted(p["id"] for p in first)
+
+    async def test_a_single_pairing_sends_no_pulse_ids(self, pairings, twin, feature_off):
+        peers = await compute_peer_status()
+        assert "pulse_ids" not in _entry(peers, pairings["plain"])
+        assert "pulse_ids" not in _entry(peers, pairings["named"])
+
+    async def test_the_verified_name_of_any_row_and_the_latest_request_count(
+        self, pairings, twin, feature_off,
+    ):
+        entry = _group_entry(await compute_peer_status(), twin["low"], twin["high"])
+        # The lower row was told no name; the second row was.
+        assert entry["instance_name"] == "Instance C"
+        # The lower row was last seen two days ago, the second two minutes ago.
+        assert entry["last_seen_at"] == twin["high"].last_seen_at.isoformat()
+        assert entry["reachable"] is True
+
+    @pytest.mark.parametrize("newer", ["first", "second"])
+    async def test_the_most_recent_check_is_the_one_shown(
+        self, pairings, twin, feature_on, memory_store, newer,
+    ):
+        low, high, now = twin["low"], twin["high"], time.time()
+        await memory_store.save(
+            low.id, PING_PIN_MISMATCH, now - (0 if newer == "first" else 200))
+        await memory_store.save(
+            high.id, PING_REACHABLE, now - (0 if newer == "second" else 200))
+        entry = _group_entry(await compute_peer_status(), low, high)
+        if newer == "first":
+            assert (entry["reachability"], entry["reachability_reason"]) == (
+                "unreachable", "pin_mismatch")
+        else:
+            assert (entry["reachability"], entry["reachability_reason"]) == ("reachable", None)
+        assert entry["recently_active"] is True, "the second row was seen two minutes ago"
+
+    async def test_one_checked_row_is_enough(self, pairings, twin, feature_on, memory_store):
+        await memory_store.save(twin["high"].id, PING_REACHABLE, time.time())
+        entry = _group_entry(await compute_peer_status(), twin["low"], twin["high"])
+        assert entry["reachability"] == "reachable"
+        assert entry["checked_at"] is not None
+
+    async def test_the_group_stays_content_free(self, pairings, twin, feature_on):
+        rendered = repr(await compute_peer_status())
+        assert "ef" * 32 not in rendered and "twin.example.org" not in rendered
 
 
 # =============================================================================
@@ -439,8 +571,8 @@ class TestProbeTriggers:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_no_wall_display_no_probe(self, order, feature_on, monkeypatch):
-        """🛑 Not a free-running poll: the refresher tick does nothing while
-        nobody is watching, so no ping leaves the instance."""
+        """🛑 Consumer-gated: the refresher tick does nothing while nobody is
+        watching, so no ping leaves the instance."""
         import api.lifecycle as lifecycle
 
         ticks: list = []

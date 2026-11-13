@@ -1757,10 +1757,12 @@
       "unsupported": "L'istanza non risponde alle verifiche di raggiungibilità (versione precedente o funzione disattivata dall'altra parte).",
       "invalid_response": "Non è stato possibile ricondurre la risposta alla chiave abbinata.",
       "no_endpoint": "Per questo abbinamento non è registrato alcun indirizzo.",
-      "not_checked": "Non ancora verificato."
+      "not_checked": "Non ancora verificato.",
+      "stale": "Verificato, ma il risultato è vecchio."
     },
     "peerReachCheckedAt": "verificato {{when}}",
     "peerReachCheckNow": "Verifica ora",
+    "peerReachCheckNowFor": "Verifica ora la raggiungibilità di {{peer}}",
     "peerReachChecking": "Verifica in corso…",
     "peerReachCheckFailed": "Impossibile verificare la raggiungibilità.",
     "peerRecentlyActive": "Attivo di recente",
@@ -2176,7 +2178,12 @@
         "unreachable": "non raggiungibile",
         "unknown": "raggiungibilità sconosciuta"
       },
-      "recentlyActive": "attivo di recente"
+      "recentlyActive": "attivo di recente",
+      "legend": {
+        "reachable": "istanza raggiungibile",
+        "unreachable": "istanza non raggiungibile",
+        "unknown": "istanza: sconosciuto"
+      }
     },
     "subsystem": {
       "knowledge": "Conoscenza",

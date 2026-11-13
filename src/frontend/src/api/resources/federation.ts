@@ -6,7 +6,8 @@ import { keys, STALE } from '../keys';
 import type { CircleTier } from '../../components/TierBadge';
 
 export interface FederationPeer {
-  id: string;
+  /** The pairing's row id -- a JSON number, as the backend sends it. */
+  id: number;
   remote_display_name: string;
   remote_pubkey: string;
   circle_tier: CircleTier | number;
@@ -111,7 +112,7 @@ async function fetchAuditEntries(args: { peerPubkey: string | null; limit: numbe
   return response.data.entries ?? [];
 }
 
-async function deletePeerRequest(peerId: string): Promise<void> {
+async function deletePeerRequest(peerId: number): Promise<void> {
   await apiClient.delete(`/api/federation/peers/${peerId}`);
 }
 
@@ -150,7 +151,7 @@ export function useDeleteFederationPeer() {
   );
 }
 
-async function checkPeerRequest(peerId: string): Promise<PeerReachability> {
+async function checkPeerRequest(peerId: number): Promise<PeerReachability> {
   const response = await apiClient.post<PeerReachability>(`/api/federation/peers/${peerId}/check`);
   return response.data;
 }
@@ -167,11 +168,14 @@ export function useCheckFederationPeer() {
   return useApiMutation(
     {
       mutationFn: checkPeerRequest,
-      onSuccess: (reachability, peerId) => {
+      onSuccess: async (reachability, peerId) => {
+        // 🛑 Cancel a list fetch that is still in flight BEFORE writing. Its
+        // response was computed before this check ran; landing afterwards it
+        // would put `checked_at: null` back over the fresh reading -- and the
+        // page, having checked this row once already, would not ask again.
+        await queryClient.cancelQueries({ queryKey: keys.federation.peers() });
         queryClient.setQueryData<FederationPeer[]>(keys.federation.peers(), (peers) =>
-          peers?.map((peer) =>
-            String(peer.id) === String(peerId) ? { ...peer, reachability } : peer,
-          ),
+          peers?.map((peer) => (peer.id === peerId ? { ...peer, reachability } : peer)),
         );
       },
     },

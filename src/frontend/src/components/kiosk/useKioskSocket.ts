@@ -133,6 +133,23 @@ export interface KioskPeer {
   checked_at?: string | null;
   /** A real request in either direction within the last few minutes. */
   recently_active?: boolean;
+  /** Present only when SEVERAL pairings here point at this one far instance:
+   *  the tool-server name of each (`peer_<id>`), any of which a turn may name. */
+  pulse_ids?: string[];
+}
+
+/** When the peer list in the model was received, on two clocks.
+ *
+ *  A `checked_at` is a time on the SERVER's clock. Its age is therefore taken
+ *  on the server's clock (`serverAt - checked_at`, both from one payload) and
+ *  continued on the device's own clock from the moment of receipt -- the
+ *  display never compares its wall clock with a server timestamp. A tablet
+ *  running twenty minutes fast or slow reads the same age as one that is right. */
+export interface KioskPeerClock {
+  /** Device clock (`Date.now()`) when the list arrived. */
+  receivedAt: number;
+  /** The payload's own `at`, as epoch ms; null when the server sent none. */
+  serverAt: number | null;
 }
 
 /** The full folded model the kiosk derives its view from. */
@@ -148,6 +165,8 @@ export interface KioskLiveModel {
   roles: AgentRoleInfo[];
   activity: RoleActivityEntry[];
   peers: KioskPeer[];
+  /** Receipt stamp of `peers`; null until a list has arrived. */
+  peersClock: KioskPeerClock | null;
   weather: KioskWeather | null;
   nowPlaying: KioskNowPlaying[];
   /** id → health verdict for the internal-only subsystem pseudo-nodes
@@ -245,6 +264,8 @@ interface InternalHealthChangedDelta {
 
 interface PeerStatusChangedDelta {
   type: 'peer_status_changed';
+  /** The server's clock at the push (ISO with offset). */
+  at?: string;
   peers?: KioskPeer[];
 }
 
@@ -283,6 +304,7 @@ const EMPTY_MODEL: KioskLiveModel = {
   roles: [],
   activity: [],
   peers: [],
+  peersClock: null,
   weather: null,
   nowPlaying: [],
   internalHealth: {},
@@ -300,6 +322,21 @@ function parseAtMs(iso: string | undefined): number {
   if (!iso) return Date.now();
   const ms = Date.parse(iso.endsWith('Z') ? iso : `${iso}Z`);
   return Number.isFinite(ms) ? ms : Date.now();
+}
+
+/** A server timestamp as epoch ms, or null. Unlike `parseAtMs` this never
+ *  falls back to the device clock, and it leaves a string that already carries
+ *  a zone (`Z` or `+00:00`, as the snapshot's `at` does) alone -- appending a
+ *  `Z` to those yields an invalid date. */
+export function parseServerMs(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const zoned = /(Z|[+-]\d{2}:?\d{2})$/.test(iso);
+  const ms = Date.parse(zoned ? iso : `${iso}Z`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function peerClock(at: string | null | undefined): KioskPeerClock {
+  return { receivedAt: Date.now(), serverAt: parseServerMs(at) };
 }
 
 function hydrate(prev: KioskLiveModel, msg: SnapshotMessage): KioskLiveModel {
@@ -323,6 +360,7 @@ function hydrate(prev: KioskLiveModel, msg: SnapshotMessage): KioskLiveModel {
     roles: msg.roles ?? [],
     activity: msg.activity ?? [],
     peers: msg.peers ?? [],
+    peersClock: peerClock(msg.at),
     weather: msg.weather ?? null,
     nowPlaying: msg.now_playing ?? [],
     internalHealth: foldInternalHealth(msg.internal_health),
@@ -470,7 +508,7 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
       // Full replace — backend diff-pushes the whole peer set on any reachability
       // change, so peer nodes go green/red live instead of only on reconnect.
       const delta = msg as PeerStatusChangedDelta;
-      return { ...state, peers: delta.peers ?? [] };
+      return { ...state, peers: delta.peers ?? [], peersClock: peerClock(delta.at) };
     }
 
     case 'chat_activity': {

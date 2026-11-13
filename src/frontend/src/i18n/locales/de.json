@@ -2157,10 +2157,12 @@
       "unsupported": "Die Instanz beantwortet keine Erreichbarkeitsprüfung (ältere Version oder dort abgeschaltet).",
       "invalid_response": "Die Antwort ließ sich nicht dem gekoppelten Schlüssel zuordnen.",
       "no_endpoint": "Für diese Kopplung ist keine Adresse hinterlegt.",
-      "not_checked": "Noch nicht geprüft."
+      "not_checked": "Noch nicht geprüft.",
+      "stale": "Geprüft, aber das Ergebnis ist veraltet."
     },
     "peerReachCheckedAt": "geprüft {{when}}",
     "peerReachCheckNow": "Jetzt prüfen",
+    "peerReachCheckNowFor": "Erreichbarkeit von {{peer}} jetzt prüfen",
     "peerReachChecking": "Prüfe …",
     "peerReachCheckFailed": "Die Erreichbarkeit konnte nicht geprüft werden.",
     "peerRecentlyActive": "Kürzlich aktiv",
@@ -2590,7 +2592,12 @@
         "unreachable": "nicht erreichbar",
         "unknown": "Erreichbarkeit unbekannt"
       },
-      "recentlyActive": "kürzlich aktiv"
+      "recentlyActive": "kürzlich aktiv",
+      "legend": {
+        "reachable": "Instanz erreichbar",
+        "unreachable": "Instanz nicht erreichbar",
+        "unknown": "Instanz: unbekannt"
+      }
     },
     "subsystem": {
       "knowledge": "Wissen",

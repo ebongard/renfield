@@ -61,8 +61,8 @@ export default function CirclesPeersPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [revokingIds, setRevokingIds] = useState<Set<string>>(() => new Set());
-  const [checkingIds, setCheckingIds] = useState<Set<string>>(() => new Set());
+  const [revokingIds, setRevokingIds] = useState<Set<number>>(() => new Set());
+  const [checkingIds, setCheckingIds] = useState<Set<number>>(() => new Set());
 
   useEffect(() => {
     if (success) {
@@ -97,12 +97,14 @@ export default function CirclesPeersPage() {
   // One signed round trip on demand. The answer lands in the cached list (see
   // `useCheckFederationPeer`), so the row redraws by itself. `quiet` = nobody
   // pressed anything: a failure leaves the row as it was and raises no alert.
-  const runCheck = useCallback(async (peerId: string, quiet: boolean) => {
+  const runCheck = useCallback(async (peerId: number, quiet: boolean) => {
     setCheckingIds((prev) => new Set(prev).add(peerId));
     try {
       await checkPeerAsync(peerId);
     } catch (err) {
       if (!quiet) setError(extractApiError(err, t('circles.peerReachCheckFailed')));
+      // Silent to the person, not to whoever debugs it: the row id only.
+      else console.debug('[federation] automatic reachability check failed for pairing', peerId, err);
     } finally {
       setCheckingIds((prev) => {
         const next = new Set(prev);
@@ -112,12 +114,12 @@ export default function CirclesPeersPage() {
     }
   }, [checkPeerAsync, t]);
 
-  // The readings are kept current only while a wall display is connected (no
-  // free-running poll on the server). A row without a reading -- never
+  // The readings are kept current only while a wall display is connected (the
+  // server's periodic check is consumer-gated). A row without a reading -- never
   // checked, or the last one expired -- is therefore checked ONCE when this
   // page shows it: a person opening the page is the demand. Once per row and
   // page visit; the server caps it per pairing on top.
-  const autoChecked = useRef<Set<string>>(new Set());
+  const autoChecked = useRef<Set<number>>(new Set());
   const peerList = peersQuery.data;
   useEffect(() => {
     for (const peer of peerList ?? []) {
@@ -261,6 +263,14 @@ export default function CirclesPeersPage() {
                       data-testid={`peer-reach-${peer.id}`}
                       data-reach-state={reachState}
                     >
+                      {/* The state, its reason and its time change when a check
+                          comes back; a screen reader hears that without the
+                          button's own "checking…" being read into it. */}
+                      <span
+                        className="contents"
+                        aria-live="polite"
+                        data-testid={`peer-reach-status-${peer.id}`}
+                      >
                       <span className={`inline-flex items-center gap-1 font-medium ${reachLook.className}`}>
                         <reachLook.Icon className="w-3.5 h-3.5" aria-hidden="true" />
                         {t(`circles.peerReachState.${reachState}`)}
@@ -276,10 +286,14 @@ export default function CirclesPeersPage() {
                           {t('circles.peerReachCheckedAt', { when: relativeWhen(reach.checked_at) })}
                         </span>
                       )}
+                      </span>
                       <button
                         type="button"
                         onClick={() => runCheck(peer.id, false)}
                         disabled={checking}
+                        aria-label={t('circles.peerReachCheckNowFor', {
+                          peer: formatPeerLabel(peer.instance_name, peer.remote_display_name),
+                        })}
                         className="inline-flex items-center gap-1 text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50 disabled:no-underline"
                       >
                         <RefreshCw
@@ -451,7 +465,7 @@ export default function CirclesPeersPage() {
 
       <LinkIdentityInitiatorModal
         isOpen={linkPeer !== null}
-        peerId={linkPeer ? Number(linkPeer.id) : null}
+        peerId={linkPeer ? linkPeer.id : null}
         /* Running text ("your account at <peer>"): the primary name. */
         peerName={linkPeer ? peerLabelParts(linkPeer.instance_name, linkPeer.remote_display_name).primary : undefined}
         onClose={() => setLinkPeer(null)}

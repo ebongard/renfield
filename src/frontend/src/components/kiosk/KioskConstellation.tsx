@@ -18,6 +18,7 @@ import type { NodeHealth, SatelliteState } from './types';
 import type { CoreState, KioskState } from './useKioskModel';
 import type { KioskNowPlaying } from '../../api/resources/kiosk';
 import KioskClock from './KioskClock';
+import { PEER_ARC, PEER_LABEL_FONT, PEER_RING_DASH, layoutPeerArc } from './peerArc';
 
 const VW = 1920;
 const VH = 1080;
@@ -26,7 +27,7 @@ const CY = VH / 2;
 const R_ROLES = 210;
 const R_TOOLS = 340;
 const R_ROOMS = 452;
-const R_PEERS = 520;
+const R_PEERS = PEER_ARC.radius;
 const R_CORE = 96;
 
 const C = {
@@ -90,25 +91,6 @@ function healthColor(h: NodeHealth): string {
   if (h === 'off') return C.off; // disabled-by-config: muted, not the red of 'down'
   return C.unknown;
 }
-/** Where a peer's label goes: above the node, instance over person -- unless
- *  that would leave the viewBox. A single peer sits at the very top of the arc
- *  (y = CY - R_PEERS = 20), where a label above it is cut off by the screen
- *  edge; there it stands beside the node instead, on the outer side. */
-function peerLabelAt(x: number, y: number, lines: 1 | 2): {
-  x: number; anchor: 'start' | 'middle' | 'end'; primaryY: number; secondaryY: number;
-} {
-  const secondaryY = y - 18;
-  const primaryY = lines === 2 ? secondaryY - 18 : secondaryY;
-  // 16 = the primary line's font size: its glyphs reach that far above the baseline.
-  if (primaryY - 16 >= 0) return { x, anchor: 'middle', primaryY, secondaryY };
-  const left = x < CX - 4;
-  return {
-    x: left ? x - 20 : x + 20,
-    anchor: left ? 'end' : 'start',
-    primaryY: lines === 2 ? y - 3 : y + 5,
-    secondaryY: y + 15,
-  };
-}
 function anchorFor(x: number): 'start' | 'middle' | 'end' {
   const dx = x - CX;
   if (dx > 4) return 'start';
@@ -159,7 +141,11 @@ export default function KioskConstellation({ kiosk }: Props) {
 
   const at = (i: number, n: number, offset = 0) => (n > 0 ? (360 / n) * i + offset : 0);
   const toolOffset = tools.length > 0 ? 180 / tools.length : 0;
-  const peerAngle = (i: number, n: number) => (n > 1 ? -50 + (100 / (n - 1)) * i : 0);
+  // Positions, clipped texts and label placement of the peers arc (peerArc.ts).
+  const peerPlaces = layoutPeerArc(peers);
+  // The third state only exists while the backend runs the signed check; the
+  // tooltip is set exactly then (useKioskModel).
+  const peersChecked = peers.some((peer) => peer.hint !== undefined);
   const coreColor = CORE_COLOR[core];
 
   // Radiating "voice" spikes when listening/speaking.
@@ -418,26 +404,32 @@ export default function KioskConstellation({ kiosk }: Props) {
 
         {/* PEERS outer arc */}
         {peers.map((peer, i) => {
-          const deg = peerAngle(i, peers.length);
-          const [x, y] = polar(R_PEERS, deg);
+          const place = peerPlaces[i];
+          const { x, y, label } = place;
           // A paired instance has this ONE node; it carries the name, the
           // reachability and the activity. The state rides two channels (WCAG
           // 1.4.1 — not colour alone): colour AND the ring's line -- solid =
-          // reachable, dashed = unreachable, dotted and muted = unknown, the
-          // same line language as the tools ring ('down' / 'unknown').
+          // reachable, long dashes = unreachable, dots and muted = unknown
+          // (PEER_RING_DASH; wide enough to be told apart across a room).
           const reachable = peer.reachability === 'reachable';
           const unknown = peer.reachability === 'unknown';
           const col = reachable ? C.active : unknown ? C.unknown : C.down;
-          // A turn that asked this peer names `peer_<id>` in turn_activity:
-          // the node lights and an expanding ring runs, as on a tool node.
-          const pulse = pulseFor(peer.pulseId);
+          // A turn that asked this peer names `peer_<id>` in turn_activity --
+          // the id of the ASKING account's pairing, so any of the node's ids
+          // lights it; an expanding ring runs, as on a tool node.
+          const pulse = Math.max(0, ...peer.pulseIds.map(pulseFor));
           const active = pulse > 0;
           const ringR = reduced ? 20 : 14 + (1 - pulse) * 16;
-          const label = peerLabelAt(x, y, peer.sublabel ? 2 : 1);
+          // A clipped label keeps its full text reachable -- as TEXT in the
+          // tooltip, never in an attribute: the name is chosen by the far side.
+          const fullLabel = place.clipped
+            ? [peer.label, peer.sublabel].filter(Boolean).join(' · ')
+            : '';
+          const tooltip = [fullLabel, peer.hint].filter(Boolean).join(' — ');
           return (
             <g key={`peer-${peer.id}`} data-peer-id={peer.id} data-peer-reachability={peer.reachability}
               data-peer-active={active ? '1' : undefined} data-peer-recent={peer.recentlyActive ? '1' : undefined}>
-              {peer.hint && <title>{peer.hint}</title>}
+              {tooltip && <title>{tooltip}</title>}
               {active && (
                 <circle cx={x} cy={y} r={ringR} fill="none" stroke={C.active}
                   strokeWidth={2} strokeOpacity={0.28 + 0.55 * pulse}
@@ -446,16 +438,20 @@ export default function KioskConstellation({ kiosk }: Props) {
               <circle cx={x} cy={y} r={9} fill={active ? C.active : 'none'}
                 stroke={active ? C.active : col} strokeWidth={2.5}
                 strokeOpacity={unknown && !active ? 0.55 : 1}
-                strokeDasharray={reachable ? undefined : unknown ? '1 3' : '3 3'}
+                strokeDasharray={PEER_RING_DASH[peer.reachability]}
+                strokeLinecap={unknown ? 'round' : undefined}
+                data-peer-ring=""
                 filter={reachable || active ? 'url(#k-glow)' : undefined} />
               {/* Recently active (a real request went either way): a filled
                   centre -- a second fact, independent of the ring around it. */}
               {peer.recentlyActive && !active && <circle cx={x} cy={y} r={3.5} fill={C.cream} />}
-              <text x={label.x} y={label.primaryY} textAnchor={label.anchor} fontSize={16}
-                fill={active ? '#eafffb' : C.dim} fontWeight={active ? 600 : 400}>{peer.label}</text>
-              {peer.sublabel && (
-                <text x={label.x} y={label.secondaryY} textAnchor={label.anchor} fontSize={13}
-                  fill={C.dim} fillOpacity={0.75}>{peer.sublabel}</text>
+              <text x={label.x} y={label.primaryY} textAnchor={label.anchor}
+                fontSize={PEER_LABEL_FONT.primary} data-peer-label="primary"
+                fill={active ? '#eafffb' : C.dim} fontWeight={active ? 600 : 400}>{place.primary}</text>
+              {place.secondary && (
+                <text x={label.x} y={label.secondaryY} textAnchor={label.anchor}
+                  fontSize={PEER_LABEL_FONT.secondary} data-peer-label="secondary"
+                  fill={C.dim} fillOpacity={0.75}>{place.secondary}</text>
               )}
             </g>
           );
@@ -580,6 +576,24 @@ export default function KioskConstellation({ kiosk }: Props) {
             <span className="inline-block w-2.5 h-2.5 rounded-full" style={row.swatch} />
           </span>
         ))}
+        {/* The peers arc speaks in line AND colour; the legend shows both, and
+            only while there is a peer to read them on. */}
+        {peers.length > 0 && (
+          <div className="mt-1.5 flex flex-col gap-1.5" data-testid="kiosk-peer-legend">
+            {([
+              { state: 'reachable', border: `2px solid ${C.active}`, opacity: 1 },
+              { state: 'unreachable', border: `2px dashed ${C.down}`, opacity: 1 },
+              ...(peersChecked ? [{ state: 'unknown', border: `2px dotted ${C.unknown}`, opacity: 0.55 }] : []),
+            ]).map((row) => (
+              <span key={row.state} data-peer-legend={row.state}
+                className="inline-flex items-center justify-end gap-2 text-white/45">
+                {t(`kiosk.peer.legend.${row.state}`)}
+                <span className="inline-block w-3 h-3 rounded-full"
+                  style={{ border: row.border, opacity: row.opacity }} />
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

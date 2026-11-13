@@ -12,7 +12,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { roleLabel } from '../chat/AgentRoleBadge';
-import { useKioskSocket, type KioskLiveModel, type KioskPeer } from './useKioskSocket';
+import {
+  parseServerMs,
+  useKioskSocket,
+  type KioskLiveModel,
+  type KioskPeer,
+  type KioskPeerClock,
+} from './useKioskSocket';
 import type { KioskWeather, KioskNowPlaying } from '../../api/resources/kiosk';
 import { peerLabelParts } from '../../utils/peerLabel';
 import type { CommandCenterModel, NodeHealth, PeerNode, PeerReachability, ToolNode } from './types';
@@ -48,9 +54,12 @@ const CLOCK_TICK_MS = 15_000;
  *  delta). Not applied while the check is on -- see `peerNodeFor`. */
 const PEER_OFFLINE_MS = 10 * 60_000;
 /** Reachability check ON: a verdict whose check is older than this renders
- *  `unknown`. The backend drops a result after 15 min
- *  (`RESULT_TTL_SECONDS` in services/federation_reachability.py) and pushes
- *  that; this is the second guard for a delta lost on a dropped socket. */
+ *  `unknown` with the reason `stale`. The backend is the authority: it checks
+ *  every pairing every 5 min while a display is connected, re-affirms an
+ *  unchanged list at least every 10 min, and pushes `unknown` itself when a
+ *  result expires. So a healthy socket never gets near this; it is the guard
+ *  for a socket that went SILENT without closing. Measured without the
+ *  device's wall clock -- see `peerAgeMs`. */
 const PEER_CHECK_STALE_MS = 20 * 60_000;
 /** Aggregated per-server success rate below this (with enough calls) = degraded. */
 const DEGRADED_SUCCESS_RATE = 0.8;
@@ -94,34 +103,54 @@ function parseNaiveUtcMs(iso: string): number {
 
 const PEER_STATES: readonly PeerReachability[] = ['reachable', 'unreachable', 'unknown'];
 
+/** How old a server timestamp is NOW, without trusting the device's wall
+ *  clock: its age on the server's clock when the list arrived, plus the time
+ *  that has passed on the device since then. Both terms are differences on
+ *  ONE clock each, so a device that runs fast or slow reads the same age.
+ *
+ *  Without a server stamp (a backend older than this build) there is nothing
+ *  to anchor on, and the two clocks are compared directly as before. */
+export function peerAgeMs(iso: string, now: number, clock?: KioskPeerClock | null): number {
+  const at = parseServerMs(iso);
+  if (at === null) return NaN;
+  if (!clock || clock.serverAt === null) return now - at;
+  return Math.max(0, clock.serverAt - at) + Math.max(0, now - clock.receivedAt);
+}
+
 /** The arc node of one paired instance -- everything except the localised
  *  tooltip. Pure, so the rules below can be tested without a socket.
  *
  *  A paired instance has ONE node. The backend keeps its `peer_<id>` tool
  *  server out of `mcp.servers`, so nothing here has to hide it; what a turn
- *  that asked the peer still names is the subsystem `peer_<id>`, and that is
- *  the node's `pulseId`.
+ *  that asked the peer still names is the subsystem `peer_<id>` of the asking
+ *  account's pairing. Those are the node's `pulseIds`: one for a single
+ *  pairing, all of them when several accounts are paired with this instance.
  *
  *  Two rules for the state, chosen by what the backend sent:
  *
  *  - `reachability` present (the signed check is on): the backend's verdict
  *    stands, three-valued. `last_seen_at` plays NO part -- a ping does not move
  *    it, so gating on it would paint a reachable but quiet instance red. The
- *    wall-clock backstop is on `checked_at` instead, and it degrades to
- *    `unknown`, never to `unreachable`: a reading nobody refreshed is not a
- *    finding about the far side.
+ *    backstop is on the AGE of `checked_at` instead (`peerAgeMs`), and it
+ *    degrades to `unknown`, never to `unreachable`: a reading nobody refreshed
+ *    is not a finding about the far side. Its reason is `stale` -- "checked,
+ *    but the result is old" -- which is not the same as never checked.
  *  - absent (check off, or an older backend): the rule the wall has always
  *    had -- the peer queried us recently (`reachable`) and `last_seen_at` is
  *    younger than `PEER_OFFLINE_MS`. Two-valued; it cannot say `unknown`.
  */
-export function peerNodeFor(peer: KioskPeer, now: number): PeerNode {
+export function peerNodeFor(peer: KioskPeer, now: number, clock?: KioskPeerClock | null): PeerNode {
   const id = String(peer.id);
   const { primary, secondary } = peerLabelParts(peer.instance_name, peer.name);
-  const base = { id, label: primary, sublabel: secondary, pulseId: `peer_${id}` };
+  const sent = Array.isArray(peer.pulse_ids)
+    ? peer.pulse_ids.filter((p): p is string => typeof p === 'string' && p !== '')
+    : [];
+  const pulseIds = sent.length > 0 ? sent : [`peer_${id}`];
+  const base = { id, label: primary, sublabel: secondary, pulseIds };
 
   if (typeof peer.reachability !== 'string') {
-    const lastSeen = peer.last_seen_at ? parseNaiveUtcMs(peer.last_seen_at) : NaN;
-    const fresh = Number.isFinite(lastSeen) && now - lastSeen < PEER_OFFLINE_MS;
+    const seenAge = peer.last_seen_at ? peerAgeMs(peer.last_seen_at, now, clock) : NaN;
+    const fresh = Number.isFinite(seenAge) && seenAge < PEER_OFFLINE_MS;
     return {
       ...base,
       reachability: peer.reachable && fresh ? 'reachable' : 'unreachable',
@@ -130,15 +159,17 @@ export function peerNodeFor(peer: KioskPeer, now: number): PeerNode {
   }
 
   const known = PEER_STATES.find((state) => state === peer.reachability);
-  const checkedAt = peer.checked_at ? parseNaiveUtcMs(peer.checked_at) : NaN;
-  const current = Number.isFinite(checkedAt) && now - checkedAt < PEER_CHECK_STALE_MS;
-  // A state this build does not know, or a verdict whose check is missing or
-  // too old to stand behind: unknown.
-  const stale = (known === 'reachable' || known === 'unreachable') && !current;
+  const checkedAge = peer.checked_at ? peerAgeMs(peer.checked_at, now, clock) : NaN;
+  // A verdict with no check behind it was never checked; one whose check is
+  // too old to stand behind is stale. Either way the wall says unknown -- and
+  // so it does for a state this build does not know.
+  const verdict = known === 'reachable' || known === 'unreachable';
+  const unchecked = verdict && !Number.isFinite(checkedAge);
+  const stale = verdict && Number.isFinite(checkedAge) && checkedAge >= PEER_CHECK_STALE_MS;
   return {
     ...base,
-    reachability: !known || stale ? 'unknown' : known,
-    reason: stale ? 'not_checked' : (peer.reachability_reason ?? null),
+    reachability: !known || unchecked || stale ? 'unknown' : known,
+    reason: stale ? 'stale' : unchecked ? 'not_checked' : (peer.reachability_reason ?? null),
     recentlyActive: peer.recently_active === true,
   };
 }
@@ -351,7 +382,7 @@ function buildCommandCenterModel(
   // backstop stays as a second guard behind it, so a delta lost on the socket
   // cannot freeze a verdict until the next reconnect. Rules: `peerNodeFor`.
   const peers = live.peers.map((peer) => {
-    const node = peerNodeFor(peer, now);
+    const node = peerNodeFor(peer, now, live.peersClock);
     // The tooltip says what the ring shows, in words -- only while the signed
     // check is on. Without it the ring is the old "asked us recently" light,
     // which never had a tooltip and gets no reachability wording now.
