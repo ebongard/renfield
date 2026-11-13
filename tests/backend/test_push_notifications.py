@@ -921,6 +921,68 @@ class TestSender:
         )
         assert odd["urgency"] == "info"
 
+    @pytest.mark.parametrize(
+        ("urgency", "header"),
+        [("critical", "high"), ("info", "normal"), ("low", "low")],
+    )
+    async def test_the_urgency_header_follows_the_notification(
+        self, db_session, own_session_to_test_db, push_on, push_stub, people, urgency, header,
+    ):
+        """RFC 8030 ``Urgency``, through the whole path from the stored row."""
+        await _subscribe(db_session, people["alice"], 1)
+        notification = Notification(
+            event_type="test.push", title="Frist Steuerbescheid", message="morgen faellig",
+            urgency=urgency, privacy="personal", target_user_id=people["alice"].id,
+            status="delivered",
+        )
+        db_session.add(notification)
+        await db_session.commit()
+
+        counts = await push_service.deliver_push(_target(notification))
+
+        assert counts == {"sent": 1, "gone": 0, "failed": 0}
+        (call,) = push_stub.calls
+        assert call["headers"] == {"Urgency": header}
+        # The payload keeps the application's own word.
+        assert json.loads(call["data"])["urgency"] == urgency
+
+    @pytest.mark.parametrize("urgency", ["free text", "HIGH", "high", "very-low", "", None, 7])
+    def test_an_unknown_urgency_is_sent_as_normal(self, push_stub, push_on, urgency):
+        """Never passed through unmapped, and never a reason to fail the send."""
+        info = {"endpoint": LEGITIMATE_ENDPOINTS[0], "keys": {"p256dh": P256DH, "auth": AUTH}}
+        push_service._send_blocking(info, "{}", 1.0, urgency)
+        (call,) = push_stub.calls
+        assert call["headers"] == {"Urgency": "normal"}
+
+    def test_a_send_without_an_urgency_is_normal(self, push_stub, push_on):
+        info = {"endpoint": LEGITIMATE_ENDPOINTS[0], "keys": {"p256dh": P256DH, "auth": AUTH}}
+        push_service._send_blocking(info, "{}", 1.0)
+        (call,) = push_stub.calls
+        assert call["headers"] == {"Urgency": "normal"}
+
+    def test_the_header_leaves_ttl_and_vapid_to_the_library(self, push_stub, push_on):
+        """The extra-headers dict carries the urgency and nothing that could
+        displace what the library adds: TTL and the VAPID signature still go
+        in through their own parameters."""
+        info = {"endpoint": LEGITIMATE_ENDPOINTS[0], "keys": {"p256dh": P256DH, "auth": AUTH}}
+        push_service._send_blocking(info, "{}", 1.0, "critical")
+        (call,) = push_stub.calls
+        assert {name.lower() for name in call["headers"]} == {"urgency"}
+        assert call["ttl"] == int(settings.proactive_notification_ttl) > 0
+        assert call["vapid_private_key"] == PRIVATE_KEY
+        assert call["vapid_claims"] == {"sub": "mailto:ops@example.com"}
+
+    def test_the_mapping_only_yields_rfc_8030_values(self):
+        from models.database import URGENCY_LEVELS
+
+        rfc = {"very-low", "low", "normal", "high"}
+        assert push_service.RFC8030_URGENCIES == rfc
+        assert set(push_service._URGENCY_HEADER) == set(URGENCY_LEVELS)
+        assert set(push_service._URGENCY_HEADER.values()) <= rfc
+        odd = [None, "", "free text", "CRITICAL", " critical", 0, 3.5, b"low", ["low"], {"low": 1}]
+        for value in [*URGENCY_LEVELS, *rfc, *odd]:
+            assert push_service.urgency_header(value) in rfc
+
     @pytest.mark.parametrize("status", [404, 410])
     async def test_a_gone_subscription_is_removed(
         self, db_session, own_session_to_test_db, push_on, push_stub, people, notifications, status,

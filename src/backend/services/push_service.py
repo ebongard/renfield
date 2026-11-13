@@ -317,14 +317,38 @@ def build_payload(target: PushTarget) -> dict[str, Any]:
     }
 
 
+#: RFC 8030 section 5.3 knows exactly these four values for ``Urgency``.
+RFC8030_URGENCIES = frozenset({"very-low", "low", "normal", "high"})
+
+#: The application's urgency vocabulary (``models.database.URGENCY_LEVELS``)
+#: in the push service's terms. The ONE place this is decided.
+_URGENCY_HEADER = {"critical": "high", "info": "normal", "low": "low"}
+
+
+def urgency_header(urgency: object) -> str:
+    """The ``Urgency`` header for a notification's urgency.
+
+    Tells the push service how hard to try on a dozing device. Always one of
+    ``RFC8030_URGENCIES``: an unknown or missing application value becomes
+    ``normal`` (the push service's own default), so nothing the application
+    stores is passed through and no send fails over it.
+    """
+    return _URGENCY_HEADER.get(urgency, "normal") if isinstance(urgency, str) else "normal"
+
+
 # ---------------------------------------------------------------------------
 # Sender
 # ---------------------------------------------------------------------------
 
 
-def _send_blocking(subscription_info: dict[str, Any], data: str, timeout: float) -> None:
+def _send_blocking(
+    subscription_info: dict[str, Any], data: str, timeout: float, urgency: str | None = None
+) -> None:
     """One push, synchronously. Runs in a worker thread -- ``pywebpush`` uses
-    ``requests``. Imported here so the module loads without the package."""
+    ``requests``. Imported here so the module loads without the package.
+
+    ``urgency`` is the APPLICATION's value; it is mapped here, directly before
+    the request, so no caller can put anything else into the header."""
     # The last gate before the network: nothing is sent to an endpoint the
     # allowlist does not cover, whatever path led here.
     if not endpoint_allowed(subscription_info.get("endpoint")):
@@ -346,17 +370,25 @@ def _send_blocking(subscription_info: dict[str, Any], data: str, timeout: float)
             vapid_claims={"sub": vapid_subject()},
             ttl=int(settings.proactive_notification_ttl),
             timeout=timeout,
+            # Extra headers go in through the library's own parameter. It adds
+            # ``TTL`` and the VAPID ``Authorization`` on top of this dict.
+            headers={"Urgency": urgency_header(urgency)},
             requests_session=session,
         )
 
 
-async def _send_one(subscription_id: int, subscription_info: dict[str, Any], data: str) -> str:
+async def _send_one(
+    subscription_id: int,
+    subscription_info: dict[str, Any],
+    data: str,
+    urgency: str | None = None,
+) -> str:
     timeout = settings.push_send_timeout_seconds
     try:
         # The thread itself cannot be cancelled; it ends with the library's
         # own timeout. The outer limit only stops this task from waiting on it.
         await asyncio.wait_for(
-            asyncio.to_thread(_send_blocking, subscription_info, data, timeout),
+            asyncio.to_thread(_send_blocking, subscription_info, data, timeout, urgency),
             timeout=timeout + _OUTER_TIMEOUT_MARGIN_SECONDS,
         )
         return _SENT
@@ -393,7 +425,7 @@ async def deliver_push(target: PushTarget) -> dict[str, int]:
 
     data = json.dumps(build_payload(target), separators=(",", ":"))
     outcomes = await asyncio.gather(
-        *(_send_one(row_id, info, data) for row_id, info in recipients)
+        *(_send_one(row_id, info, data, target.urgency) for row_id, info in recipients)
     )
     gone = [row_id for (row_id, _info), outcome in zip(recipients, outcomes, strict=True) if outcome == _GONE]
     for outcome in outcomes:

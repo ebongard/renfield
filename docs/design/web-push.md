@@ -1,9 +1,11 @@
 # Web Push — a content-free wake-up for proactive notifications (#79)
 
 **Status:** built, **dark by default** (`PUSH_NOTIFICATIONS_ENABLED=false`). Not rolled out on any instance.
-No real push round trip has been made: the sender is tested against a stub of `pywebpush`, the worker
-handlers as plain functions and once as the built bundle in a fake worker scope. The first real
-delivery is a rollout step (see §7).
+No real push round trip has been made. The unit tests run the sender against a stub of `pywebpush`,
+the worker handlers as plain functions and once as the built bundle in a fake worker scope. On top
+of that the wire format was measured once (2026-11-13, §6 "Measured"): the real `pywebpush` in the
+production image, sending to a local stand-in for the push service. A real browser subscription and
+a real vendor push service have not been reached; the first real delivery is a rollout step (see §8).
 
 ## 1. What it is
 
@@ -63,7 +65,18 @@ text. The payload is minimal anyway:
 {"v": 1, "kind": "notification", "notification_id": 4711, "urgency": "info"}
 ```
 
-No title, no message, no `event_type`, no room, no name. Reasons, in order of weight:
+No title, no message, no `event_type`, no room, no name.
+
+**What the push service does see** (outside the encryption, as with every Web Push): the endpoint,
+the time, the size of the body, the `TTL` (`PROACTIVE_NOTIFICATION_TTL`), the VAPID signature with
+the instance's contact address, and the `Urgency` header (RFC 8030 §5.3). The header tells the push
+service how hard to try on a dozing device and is derived from the notification's urgency by one
+mapping, `push_service.urgency_header`: `critical` → `high`, `info` → `normal`, `low` → `low`,
+anything else or nothing → `normal`. It is always one of the four RFC values; an application value
+is never passed through. So the push service learns the urgency class of a notification — one of
+three steps — and nothing else about it. No `Topic` header is sent.
+
+Reasons for the content-free payload, in order of weight:
 
 1. **The lock screen.** What a push shows, it shows on a locked phone lying on a table. A reminder
    used to be public to the whole household until #1244 closed that; a push with the text would
@@ -146,6 +159,18 @@ which is a gain: the device WebSocket only exists in the API pod.
 
 `pywebpush` is imported inside the sender. Without the package the module still imports and each
 send fails softly.
+
+**Measured (2026-11-13).** One throwaway container of the production image without network, the
+unchanged allowlist, an allowlisted host name resolved to a local TLS stand-in that records what it
+receives; only the two database accesses of `deliver_push` were replaced. Proven there:
+`Authorization: vapid` with a JWT that verifies against the configured key (`aud` = endpoint origin,
+`sub` = the mailto address), `Content-Encoding: aes128gcm`, `TTL: 86400`, `Urgency` as mapped above;
+the body decrypts with the subscription's key to exactly the payload of §3 (68–73 bytes plain, 171–176
+encrypted, depending on the urgency word) and contains nothing of title or message; a 307 is not followed (the second server sees
+no connection); 404/410 delete the row, 500 does not; a service that never answers ends the send
+after `PUSH_SEND_TIMEOUT_SECONDS`. **Not proven by it:** a subscription created by a real browser,
+the service worker decrypting and showing it, a vendor service accepting the request (Apple's rules
+for `sub` among them), real 403/410 answers, and egress from the pods.
 
 ## 7. Frontend
 
