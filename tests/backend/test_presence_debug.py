@@ -432,6 +432,23 @@ class TestSocketGate:
         await handler.presence_debug_live(ws, token="t")
         _assert_refused(ws, UNVERIFIED)
 
+    async def test_an_error_while_evaluating_the_permission_denies_retryably(
+        self, monkeypatch
+    ):
+        """The user loads, but reading the permission raises (e.g. a detached
+        role). Must end like a failed lookup — 4001 after accept — not as an
+        exception before the handshake is answered."""
+        broken = MagicMock()
+        broken.has_permission.side_effect = RuntimeError("role not loaded")
+        ws = await _run_gate(
+            monkeypatch,
+            auth_result={"authenticated": True, "user_id": 1},
+            user=broken,
+        )
+        broken.has_permission.assert_called_once()
+        _assert_refused(ws, UNVERIFIED)
+        assert ws.accepted is True
+
     async def test_the_two_refusals_carry_different_codes(self, monkeypatch):
         """Only a CONFIRMED "not an admin" may be final for the client. A lookup
         that failed is refused just the same (fail closed) but must stay

@@ -73,15 +73,18 @@ async def _admin_verdict(user_id: int | None) -> bool | None:
     ``False`` differ solely in the close code (see module docstring)."""
     if user_id is None:
         return None
+    # The whole check sits in the try: an error anywhere in it — loading the
+    # user OR evaluating the permission — is "could not tell", never a crash
+    # before the handshake is answered.
     try:
         async with AsyncSessionLocal() as db:
             user = await get_user_by_id(db, user_id)
+        if user is None:
+            return None
+        return bool(user.has_permission(Permission.ADMIN))
     except Exception as e:
         logger.warning(f"presence-debug WS permission check failed: {e}")
         return None
-    if user is None:
-        return None
-    return bool(user.has_permission(Permission.ADMIN))
 
 
 @router.websocket("/ws/presence-debug")
