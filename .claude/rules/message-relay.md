@@ -17,6 +17,8 @@ disambiguated by tool description + prompt (`prompts/agent.yaml`), NOT by role r
 - Optional camera occupancy check (`ANNOUNCE_CAMERA_OCCUPANCY_CHECK`): counts people via the vision model to catch
   BLE-untracked bystanders. Backend→satellite `capture_snapshot` WS request; **the snapshot is never persisted**. It
   fires only for `personal` messages whose BLE gate already passed — never for public announcements.
+- A user whose room is only a held guess (`presence.uncertain_user_ids()`: an old voice sighting, the phone heard
+  elsewhere) is not proof of presence in the booked room and a possible listener in every other — both gates read it.
 
 ## Permission gate — FAIL-CLOSED on `HA_CONTROL`
 Both announce tools are gated in `ha_glue_execute_tool` / `_HA_CONTROL_GATED_TOOLS` (`ha_glue/bootstrap.py`, the same

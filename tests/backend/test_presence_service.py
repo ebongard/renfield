@@ -32,6 +32,8 @@ def service():
     svc._filter_alpha_down = 0.1
     svc._filter_fresh_seconds = 35.0
     svc._switch_enter_margin_db = 8.0
+    svc._voice_hold_seconds = 0.0
+    svc._voice_release_margin_db = 0.0
     svc._room_names = {}
     svc._user_names = {}
     svc._user_first_names = {}
@@ -918,6 +920,373 @@ class TestVoicePresence:
             user_id=1, room_id=20, room_name="Living Room",
         )
         assert service.get_user_presence(1).room_id == 20
+
+
+@pytest.mark.unit
+class TestVoiceHold:
+    """A voice sighting is certain, a BLE reading an estimate: for
+    ``presence_voice_hold_seconds`` BLE may confirm the voice room but must not
+    move the user out of it. Seen live: a turn in the kitchen was undone three
+    seconds later by a reading at the RSSI floor from another room."""
+
+    MAC = "AA:BB:CC:DD:EE:01"
+
+    def _svc(self, service_with_devices, *, filtered: bool, hold: float = 60.0):
+        svc = service_with_devices
+        svc._filter_enabled = filtered
+        svc._voice_hold_seconds = hold
+        return svc
+
+    async def _voice(self, svc, room_id, name):
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock):
+            await svc.register_voice_presence(user_id=1, room_id=room_id, room_name=name)
+
+    async def _ble(self, svc, sat, room_id, rssi, name):
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock) as hooks:
+            await svc.process_ble_report(sat, room_id, [{"mac": self.MAC, "rssi": rssi}], name)
+        return hooks
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("filtered", [True, False])
+    async def test_ble_from_another_room_does_not_undo_a_voice_sighting(
+        self, service_with_devices, filtered
+    ):
+        svc = self._svc(service_with_devices, filtered=filtered)
+        # The phone is heard only by the far satellite, weakly.
+        await self._ble(svc, "sat-far", 20, -78, "Far")
+        await self._ble(svc, "sat-far", 20, -78, "Far")
+        assert svc.get_user_presence(1).room_id == 20
+
+        await self._voice(svc, 10, "Kitchen")
+        assert svc.get_user_presence(1).room_id == 10
+
+        for _ in range(5):
+            hooks = await self._ble(svc, "sat-far", 20, -78, "Far")
+            assert hooks.call_count == 0  # no leave/enter events either
+        presence = svc.get_user_presence(1)
+        assert presence.room_id == 10
+        assert presence.room_name == "Kitchen"
+        assert presence.confidence == 1.0  # the BLE estimate did not overwrite it
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("filtered", [True, False])
+    async def test_ble_takes_over_again_after_the_hold(self, service_with_devices, filtered):
+        svc = self._svc(service_with_devices, filtered=filtered)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -60, "Far")
+        assert svc.get_user_presence(1).room_id == 10
+
+        svc.get_user_presence(1).voice_hold_until = time.time() - 1
+        await self._ble(svc, "sat-far", 20, -60, "Far")
+        await self._ble(svc, "sat-far", 20, -60, "Far")
+        assert svc.get_user_presence(1).room_id == 20
+
+    @pytest.mark.asyncio
+    async def test_hold_keeps_the_user_alive_while_the_phone_is_heard_elsewhere(
+        self, service_with_devices
+    ):
+        """During the hold a BLE reading still refreshes ``last_seen`` — the
+        person is at home, only the room is not BLE's to decide."""
+        svc = self._svc(service_with_devices, filtered=True)
+        await self._voice(svc, 10, "Kitchen")
+        svc.get_user_presence(1).last_seen = time.time() - 100
+        await self._ble(svc, "sat-far", 20, -70, "Far")
+        assert time.time() - svc.get_user_presence(1).last_seen < 5
+        assert svc.get_user_presence(1).room_id == 10
+
+    @pytest.mark.asyncio
+    async def test_ble_in_the_voice_room_is_not_blocked(self, service_with_devices):
+        svc = self._svc(service_with_devices, filtered=True)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-kitchen", 10, -50, "Kitchen")
+        presence = svc.get_user_presence(1)
+        assert presence.room_id == 10
+        assert presence.satellite_id == "sat-kitchen"
+
+    @pytest.mark.asyncio
+    async def test_a_second_voice_sighting_moves_at_once_and_restarts_the_hold(
+        self, service_with_devices
+    ):
+        svc = self._svc(service_with_devices, filtered=True)
+        await self._voice(svc, 10, "Kitchen")
+        first = svc.get_user_presence(1).voice_hold_until
+        await self._voice(svc, 30, "Living Room")
+        presence = svc.get_user_presence(1)
+        assert presence.room_id == 30
+        assert presence.voice_hold_until >= first
+        await self._ble(svc, "sat-kitchen", 10, -50, "Kitchen")
+        assert svc.get_user_presence(1).room_id == 30
+
+    @pytest.mark.asyncio
+    async def test_voice_in_the_same_room_extends_the_hold(self, service_with_devices):
+        svc = self._svc(service_with_devices, filtered=True)
+        await self._voice(svc, 10, "Kitchen")
+        svc.get_user_presence(1).voice_hold_until = time.time() + 1
+        await self._voice(svc, 10, "Kitchen")
+        assert svc.get_user_presence(1).voice_hold_until > time.time() + 50
+
+    @pytest.mark.asyncio
+    async def test_hold_of_zero_is_the_old_behaviour(self, service_with_devices):
+        """0 switches the hold off: the next BLE scan moves the user at once
+        (the filter holds no value for the voice room)."""
+        svc = self._svc(service_with_devices, filtered=True, hold=0.0)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -78, "Far")
+        assert svc.get_user_presence(1).room_id == 20
+
+    @pytest.mark.asyncio
+    async def test_hold_of_zero_keeps_a_pending_ble_candidate(self, service_with_devices):
+        """Legacy path, hold off: a candidate that had one scan before the
+        voice move still needs only one more — exactly as before the hold."""
+        svc = self._svc(service_with_devices, filtered=False, hold=0.0)
+        await self._ble(svc, "sat-a", 10, -50, "A")
+        await self._ble(svc, "sat-far", 20, -40, "Far")  # candidate, 1 of 2
+        assert svc.get_user_presence(1).pending_room_count == 1
+        await self._voice(svc, 30, "Living Room")
+        assert svc.get_user_presence(1).pending_room_count == 1
+        await self._ble(svc, "sat-far", 20, -40, "Far")
+        assert svc.get_user_presence(1).room_id == 20
+
+    @pytest.mark.asyncio
+    async def test_hold_voids_a_pending_ble_candidate(self, service_with_devices):
+        svc = self._svc(service_with_devices, filtered=False)
+        await self._ble(svc, "sat-a", 10, -50, "A")
+        await self._ble(svc, "sat-far", 20, -40, "Far")
+        await self._voice(svc, 30, "Living Room")
+        assert svc.get_user_presence(1).pending_room_count == 0
+
+    @pytest.mark.asyncio
+    async def test_hold_does_not_block_another_user(self, service_with_devices):
+        svc = self._svc(service_with_devices, filtered=True)
+        await self._voice(svc, 10, "Kitchen")
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock):
+            await svc.process_ble_report(
+                "sat-far", 20, [{"mac": "AA:BB:CC:DD:EE:03", "rssi": -60}], "Far"
+            )
+        assert svc.get_user_presence(2).room_id == 20
+        assert svc.get_user_presence(1).room_id == 10
+
+
+@pytest.mark.unit
+class TestVoiceRelease:
+    """After the hold: a voice/auth room the phone was never heard in has no
+    filtered RSSI. It must not lose to any reading by default — the last
+    certain sighting stands until a room's FILTERED value is the release margin
+    above the RSSI floor. Floor -80, margin 10 → -70 dBm."""
+
+    MAC = "AA:BB:CC:DD:EE:01"
+
+    def _svc(self, service_with_devices, margin: float = 10.0):
+        svc = service_with_devices
+        svc._filter_enabled = True
+        svc._voice_hold_seconds = 60.0
+        svc._voice_release_margin_db = margin
+        return svc
+
+    async def _voice(self, svc, room_id, name):
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock):
+            await svc.register_voice_presence(user_id=1, room_id=room_id, room_name=name)
+        svc.get_user_presence(1).voice_hold_until = time.time() - 1  # hold is over
+
+    async def _ble(self, svc, sat, room_id, rssi, name, times=1):
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock):
+            for _ in range(times):
+                await svc.process_ble_report(sat, room_id, [{"mac": self.MAC, "rssi": rssi}], name)
+
+    @pytest.mark.asyncio
+    async def test_a_weak_reading_elsewhere_does_not_take_the_user_back(self, service_with_devices):
+        """The live case: phone heard only by a far satellite near the floor."""
+        svc = self._svc(service_with_devices)
+        await self._ble(svc, "sat-far", 20, -76, "Far", times=3)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -76, "Far", times=40)
+        presence = svc.get_user_presence(1)
+        assert presence.room_id == 10
+        assert presence.voice_pinned is True
+        # The phone is still heard, so the person is not marked absent.
+        assert time.time() - presence.last_seen < 5
+
+    @pytest.mark.asyncio
+    async def test_a_clearly_stronger_room_takes_over(self, service_with_devices):
+        svc = self._svc(service_with_devices)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -62, "Far", times=4)
+        presence = svc.get_user_presence(1)
+        assert presence.room_id == 20
+        assert presence.voice_pinned is False
+
+    @pytest.mark.asyncio
+    async def test_the_threshold_is_on_the_filtered_value(self, service_with_devices):
+        """-68 is above -70, but the filter starts a new room at the floor:
+        one reading gives -74 (stay), the second -71 (stay), the third -69.5."""
+        svc = self._svc(service_with_devices)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -68, "Far", times=2)
+        assert svc.get_user_presence(1).room_id == 10
+        await self._ble(svc, "sat-far", 20, -68, "Far")
+        assert svc.get_user_presence(1).room_id == 20
+
+    @pytest.mark.asyncio
+    async def test_margin_of_zero_is_the_old_rule(self, service_with_devices):
+        svc = self._svc(service_with_devices, margin=0.0)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -79, "Far")
+        assert svc.get_user_presence(1).room_id == 20
+
+    @pytest.mark.asyncio
+    async def test_a_weak_reading_in_the_voice_room_does_not_end_the_pin(self, service_with_devices):
+        """BLE agreeing for a few scans must not hand the room over to BLE:
+        when that reading ages out, the room would be lost to the next weak
+        reading from elsewhere — the original flip, two minutes late."""
+        svc = self._svc(service_with_devices)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-kitchen", 10, -78, "Kitchen", times=2)
+        assert svc.get_user_presence(1).voice_pinned is True
+        # The kitchen stops hearing the phone entirely; a weak far reading remains.
+        svc._sightings[self.MAC] = []
+        await self._ble(svc, "sat-far", 20, -78, "Far", times=20)
+        assert svc.get_user_presence(1).room_id == 10
+        await self._ble(svc, "sat-far", 20, -60, "Far", times=4)
+        assert svc.get_user_presence(1).room_id == 20
+
+    @pytest.mark.asyncio
+    async def test_voice_in_a_weakly_heard_room_is_pinned_too(self, service_with_devices):
+        """The phone was heard weakly in the voice room AND elsewhere before the
+        turn. The pin must not depend on that: once the voice room's reading
+        ages out, a floor-level reading elsewhere still must not win."""
+        svc = self._svc(service_with_devices)
+        await self._ble(svc, "sat-kitchen", 10, -78, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -76, "Far")
+        await self._voice(svc, 10, "Kitchen")
+        assert svc.get_user_presence(1).voice_pinned is True
+        svc._sightings[self.MAC] = []
+        await self._ble(svc, "sat-far", 20, -76, "Far", times=20)
+        assert svc.get_user_presence(1).room_id == 10
+
+    @pytest.mark.asyncio
+    async def test_a_second_device_does_not_end_the_pin(self, service_with_devices):
+        """The filter state is per user but rebuilt per device key; a second
+        device heard in the voice room must not clear the pin for the first."""
+        svc = self._svc(service_with_devices)
+        second = "AA:BB:CC:DD:EE:02"  # also user 1
+        await self._voice(svc, 10, "Kitchen")
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock):
+            for _ in range(10):
+                await svc.process_ble_report("sat-kitchen", 10, [{"mac": second, "rssi": -78}], "Kitchen")
+                await svc.process_ble_report("sat-far", 20, [{"mac": self.MAC, "rssi": -78}], "Far")
+        assert svc.get_user_presence(1).room_id == 10
+
+    @pytest.mark.asyncio
+    async def test_ble_moving_the_user_ends_the_pin(self, service_with_devices):
+        svc = self._svc(service_with_devices)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -55, "Far", times=3)
+        presence = svc.get_user_presence(1)
+        assert presence.room_id == 20
+        assert presence.voice_pinned is False
+        # From here the room is BLE's: when it ages out, the signal is followed.
+        svc._sightings[self.MAC] = []
+        await self._ble(svc, "sat-b", 30, -78, "B")
+        assert svc.get_user_presence(1).room_id == 30
+
+    @pytest.mark.asyncio
+    async def test_release_works_without_a_hold(self, service_with_devices):
+        svc = self._svc(service_with_devices)
+        svc._voice_hold_seconds = 0.0
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -78, "Far", times=10)
+        assert svc.get_user_presence(1).room_id == 10
+
+    @pytest.mark.asyncio
+    async def test_the_legacy_path_ignores_the_pin(self, service_with_devices):
+        svc = self._svc(service_with_devices)
+        svc._filter_enabled = False
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -78, "Far", times=2)
+        assert svc.get_user_presence(1).room_id == 20
+
+    async def _register(self, svc, room_id, name):
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock):
+            await svc.register_voice_presence(user_id=1, room_id=room_id, room_name=name)
+
+    @pytest.mark.asyncio
+    async def test_location_is_uncertain_only_for_a_held_guess(self, service_with_devices):
+        svc = self._svc(service_with_devices)
+        assert svc.is_location_uncertain(1) is False  # not tracked
+        await self._register(svc, 10, "Kitchen")
+        assert svc.is_location_uncertain(1) is False  # a fresh sighting is evidence
+        svc.get_user_presence(1).room_evidence_at = time.time() - 61
+        assert svc.is_location_uncertain(1) is True  # nothing has placed them there since
+        assert svc.uncertain_user_ids() == [1]
+        await self._ble(svc, "sat-kitchen", 10, -60, "Kitchen")
+        assert svc.is_location_uncertain(1) is False  # BLE vouches for the room
+        assert svc.uncertain_user_ids() == []
+
+    @pytest.mark.asyncio
+    async def test_a_ble_placed_user_is_never_uncertain(self, service_with_devices):
+        svc = self._svc(service_with_devices)
+        await self._ble(svc, "sat-a", 10, -78, "A", times=2)
+        svc.get_user_presence(1).room_evidence_at = 0.0
+        assert svc.is_location_uncertain(1) is False
+
+    @pytest.mark.asyncio
+    async def test_legacy_path_ble_confirmation_keeps_the_room_certain(self, service_with_devices):
+        """Filter off: there is no filtered RSSI at all. A user who spoke in a
+        room and whose phone is heard there must not count as a guess — that
+        would block every confidential notification in the household."""
+        svc = self._svc(service_with_devices)
+        svc._filter_enabled = False
+        await self._register(svc, 10, "Kitchen")
+        svc.get_user_presence(1).room_evidence_at = time.time() - 300
+        svc.get_user_presence(1).voice_hold_until = time.time() - 240
+        await self._ble(svc, "sat-kitchen", 10, -60, "Kitchen")
+        assert svc.is_location_uncertain(1) is False
+
+    @pytest.mark.asyncio
+    async def test_without_a_hold_a_sighting_still_counts_for_one_ble_window(self, service_with_devices):
+        svc = self._svc(service_with_devices)
+        svc._voice_hold_seconds = 0.0
+        await self._register(svc, 10, "Kitchen")
+        assert svc.is_location_uncertain(1) is False
+        svc.get_user_presence(1).room_evidence_at = time.time() - 36  # fresh window is 35 s
+        assert svc.is_location_uncertain(1) is True
+
+    @pytest.mark.asyncio
+    async def test_a_room_winning_on_old_readings_is_not_fresh_evidence(self, service_with_devices):
+        """The phone was heard strongly in the voice room and then only weakly
+        elsewhere. The room still wins on its slowly decaying filter value, but
+        that is not a new reading: the evidence time must stay where the last
+        reading in the room was."""
+        svc = self._svc(service_with_devices)
+        await self._register(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-kitchen", 10, -50, "Kitchen", times=3)
+        # The last kitchen reading is 70 s old; the sighting itself too.
+        for s_ in svc._sightings[self.MAC]:
+            s_.timestamp -= 70
+        presence = svc.get_user_presence(1)
+        presence.room_evidence_at -= 70
+        presence.voice_hold_until = time.time() - 10
+        await self._ble(svc, "sat-far", 20, -78, "Far")
+        assert svc.get_user_presence(1).room_id == 10  # still wins on the old value
+        assert svc.is_location_uncertain(1) is True
+
+    @pytest.mark.asyncio
+    async def test_a_second_device_elsewhere_does_not_make_the_verdict_flicker(self, service_with_devices):
+        """Phone heard in the voice room, a second device heard elsewhere: the
+        verdict must not depend on which device reported last."""
+        svc = self._svc(service_with_devices)
+        second = "AA:BB:CC:DD:EE:02"  # also user 1
+        await self._register(svc, 10, "Kitchen")
+        svc.get_user_presence(1).voice_hold_until = time.time() - 1
+        verdicts = []
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock):
+            for _ in range(6):
+                await svc.process_ble_report("sat-kitchen", 10, [{"mac": self.MAC, "rssi": -60}], "Kitchen")
+                verdicts.append(svc.is_location_uncertain(1))
+                await svc.process_ble_report("sat-far", 20, [{"mac": second, "rssi": -78}], "Far")
+                verdicts.append(svc.is_location_uncertain(1))
+        assert verdicts == [False] * 12
+        assert svc.get_user_presence(1).room_id == 10
 
 
 @pytest.mark.unit

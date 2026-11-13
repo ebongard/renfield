@@ -103,6 +103,7 @@ class TestConfidentialPrivacy:
     async def test_confidential_user_alone(self):
         """Confidential TTS plays when target user is alone in their room."""
         presence = MagicMock()
+        presence.uncertain_user_ids.return_value = []
         presence.is_user_alone_in_room.return_value = True
 
         with patch(PATCH_SETTINGS) as mock_settings, \
@@ -119,6 +120,7 @@ class TestConfidentialPrivacy:
     async def test_confidential_user_not_alone(self):
         """Confidential TTS suppressed when others are in the room."""
         presence = MagicMock()
+        presence.uncertain_user_ids.return_value = []
         presence.is_user_alone_in_room.return_value = False
 
         with patch(PATCH_SETTINGS) as mock_settings, \
@@ -134,6 +136,7 @@ class TestConfidentialPrivacy:
     async def test_confidential_user_not_tracked(self):
         """Confidential TTS suppressed when user is not tracked (conservative)."""
         presence = MagicMock()
+        presence.uncertain_user_ids.return_value = []
         presence.is_user_alone_in_room.return_value = None  # not tracked
 
         with patch(PATCH_SETTINGS) as mock_settings, \
@@ -161,6 +164,7 @@ class TestConfidentialPrivacy:
     async def test_confidential_user_wrong_room(self):
         """Confidential: user not alone in their room — TTS suppressed."""
         presence = MagicMock()
+        presence.uncertain_user_ids.return_value = []
         presence.is_user_alone_in_room.return_value = False
 
         with patch(PATCH_SETTINGS) as mock_settings, \
@@ -173,6 +177,85 @@ class TestConfidentialPrivacy:
 
 
 # ---------------------------------------------------------------------------
+# A room that is only a held guess
+# ---------------------------------------------------------------------------
+
+class TestUncertainLocation:
+    """A user whose room rests on an old voice sighting (phone heard elsewhere)
+    may be anywhere. The gate must not conclude from such a booking who can or
+    cannot overhear."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_confidential_suppressed_when_the_target_room_is_a_guess(self):
+        presence = MagicMock()
+        presence.is_user_alone_in_room.return_value = True
+        presence.uncertain_user_ids.return_value = [1]
+
+        with patch(PATCH_SETTINGS) as mock_settings, \
+             patch(PATCH_PRESENCE, return_value=presence):
+            mock_settings.presence_enabled = True
+            result = await ha_should_play_tts_for_notification(
+                privacy="confidential", target_user_id=1, room_id=10
+            )
+        assert result is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_confidential_suppressed_when_someone_else_may_be_in_the_room(self):
+        """The target is alone as booked, but another user's room is a guess —
+        that person may be standing next to the target."""
+        presence = MagicMock()
+        presence.is_user_alone_in_room.return_value = True
+        presence.uncertain_user_ids.return_value = [3]
+
+        with patch(PATCH_SETTINGS) as mock_settings, \
+             patch(PATCH_PRESENCE, return_value=presence):
+            mock_settings.presence_enabled = True
+            result = await ha_should_play_tts_for_notification(
+                privacy="confidential", target_user_id=1, room_id=10
+            )
+        assert result is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_personal_counts_an_uncertain_user_as_a_possible_listener(self):
+        """Room holds one household member; a guest's room is a guess."""
+        presence = MagicMock()
+        presence.get_room_occupants.return_value = [_make_presence(1)]
+        presence.uncertain_user_ids.return_value = [3]
+
+        users = [_make_user(1, "Admin"), _make_user(3, "Gast")]
+        db = _mock_db_returning_users(users)
+
+        with patch(PATCH_SETTINGS) as mock_settings, \
+             patch(PATCH_PRESENCE, return_value=presence), \
+             _patch_session_local(db):
+            mock_settings.presence_enabled = True
+            mock_settings.presence_household_roles = "Admin,Familie"
+            result = await ha_should_play_tts_for_notification(
+                privacy="personal", target_user_id=None, room_id=10
+            )
+        assert result is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_personal_suppressed_when_the_only_occupant_is_a_guess(self):
+        """Nobody is known to be in the room — same as an empty room."""
+        presence = MagicMock()
+        presence.get_room_occupants.return_value = [_make_presence(1)]
+        presence.uncertain_user_ids.return_value = [1]
+
+        with patch(PATCH_SETTINGS) as mock_settings, \
+             patch(PATCH_PRESENCE, return_value=presence):
+            mock_settings.presence_enabled = True
+            result = await ha_should_play_tts_for_notification(
+                privacy="personal", target_user_id=None, room_id=10
+            )
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
 # Personal
 # ---------------------------------------------------------------------------
 
@@ -182,6 +265,7 @@ class TestPersonalPrivacy:
     async def test_personal_all_household(self):
         """Personal TTS plays when all room occupants are household members."""
         presence = MagicMock()
+        presence.uncertain_user_ids.return_value = []
         presence.get_room_occupants.return_value = [
             _make_presence(1), _make_presence(2),
         ]
@@ -204,6 +288,7 @@ class TestPersonalPrivacy:
     async def test_personal_non_household_occupant(self):
         """Personal TTS suppressed when a non-household member is in the room."""
         presence = MagicMock()
+        presence.uncertain_user_ids.return_value = []
         presence.get_room_occupants.return_value = [
             _make_presence(1), _make_presence(3),
         ]
@@ -226,6 +311,7 @@ class TestPersonalPrivacy:
     async def test_personal_no_occupants(self):
         """Personal TTS suppressed when room has no occupants (conservative)."""
         presence = MagicMock()
+        presence.uncertain_user_ids.return_value = []
         presence.get_room_occupants.return_value = []
 
         with patch(PATCH_SETTINGS) as mock_settings, \
