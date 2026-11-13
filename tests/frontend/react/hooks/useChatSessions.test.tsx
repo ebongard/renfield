@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   renderHook as rawRenderHook,
   waitFor,
@@ -374,5 +374,75 @@ describe('groupConversationsByDate', () => {
     const grouped = groupConversationsByDate(conversations as Conversation[]);
 
     expect(grouped.today).toHaveLength(1);
+  });
+});
+
+// The backend sends `updated_at` as naive UTC (`.isoformat()` of a zone-less
+// column). The zone is pinned per test through `process.env.TZ`: vitest runs
+// with `pool: 'forks'`, so each file is a real Node process and Node re-reads
+// TZ on assignment. Only `Date` is faked, so nothing else waits on a timer.
+describe('groupConversationsByDate — naive UTC around local midnight', () => {
+  const originalTz = process.env.TZ;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  function conversation(updatedAt: string): Conversation {
+    return {
+      session_id: 's',
+      preview: '',
+      message_count: 1,
+      created_at: updatedAt,
+      updated_at: updatedAt,
+    };
+  }
+
+  function pin(tz: string, nowUtc: string) {
+    process.env.TZ = tz;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(nowUtc));
+  }
+
+  it('the pinned zone is really in effect', () => {
+    // Negative control for the harness: without a working TZ switch the two
+    // tests below would pass or fail for the wrong reason.
+    pin('Europe/Berlin', '2026-07-17T23:30:00Z');
+    expect(new Date().getTimezoneOffset()).toBe(-120);
+    expect(new Date().getDate()).toBe(18);
+  });
+
+  it('east of UTC: a chat from just after local midnight is today, not yesterday', () => {
+    // Now: 01:30 local on the 18th. Chat: 22:30 UTC = 00:30 local on the 18th.
+    pin('Europe/Berlin', '2026-07-17T23:30:00Z');
+
+    const grouped = groupConversationsByDate([conversation('2026-07-17T22:30:00.123456')]);
+
+    expect(grouped.today).toHaveLength(1);
+    expect(grouped.yesterday).toHaveLength(0);
+  });
+
+  it('west of UTC: a chat from late last evening is yesterday, not today', () => {
+    // Now: 22:00 local on the 17th. Chat: 03:30 UTC = 23:30 local on the 16th.
+    pin('America/New_York', '2026-07-18T02:00:00Z');
+
+    const grouped = groupConversationsByDate([conversation('2026-07-17T03:30:00')]);
+
+    expect(grouped.yesterday).toHaveLength(1);
+    expect(grouped.today).toHaveLength(0);
+  });
+
+  it('a timestamp that already carries a zone is taken as it is', () => {
+    pin('Europe/Berlin', '2026-07-17T23:30:00Z');
+
+    const grouped = groupConversationsByDate([
+      conversation('2026-07-17T22:30:00Z'),
+      conversation('2026-07-17T23:00:00+02:00'),
+    ]);
+
+    expect(grouped.today).toHaveLength(1);
+    expect(grouped.yesterday).toHaveLength(1);
   });
 });

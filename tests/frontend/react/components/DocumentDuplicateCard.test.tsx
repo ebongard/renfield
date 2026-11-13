@@ -3,7 +3,7 @@
  * Presentational: survivor radio + per-pair supersede/delete choice + delete
  * warning. German default.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import DocumentDuplicateCard from '../../../../src/frontend/src/components/DocumentDuplicateCard';
 import { renderWithRouter } from '../test-utils';
@@ -67,5 +67,30 @@ describe('DocumentDuplicateCard', () => {
     renderWithRouter(<DocumentDuplicateCard proposal={proposal()} onApprove={vi.fn()} onReject={onReject} />);
     fireEvent.click(screen.getByRole('button', { name: 'Kein Duplikat' }));
     expect(onReject).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DocumentDuplicateCard — naive UTC upload date', () => {
+  const originalTz = process.env.TZ;
+
+  afterEach(() => {
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  it('shows the LOCAL calendar day of a zone-less timestamp', () => {
+    // 23:30 UTC on the 17th is 01:30 on the 18th in Berlin.
+    process.env.TZ = 'Europe/Berlin';
+    renderWithRouter(
+      <DocumentDuplicateCard
+        proposal={proposal({
+          document_a: doc({ id: 44, name: 'Rechnung A', created_at: '2026-07-17T23:30:00.5' }),
+        })}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/18\.7\.2026/)).toBeInTheDocument();
+    expect(screen.queryByText(/17\.7\.2026/)).not.toBeInTheDocument();
   });
 });

@@ -16,7 +16,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { formatDate } from '../../utils/datetime';
+import { formatDate, toLocalDate } from '../../utils/datetime';
 import { Clock, Eye, MoreHorizontal } from 'lucide-react';
 
 import { CitationChip } from './CitationChip';
@@ -163,7 +163,8 @@ function ObservedFieldsSection({ observed }: { observed: ObservedField[] }) {
 
   // Show 5 most-recent by default; expand reveals the full list.
   const sorted = [...observed].sort(
-    (a, b) => new Date(b.fetched_at).getTime() - new Date(a.fetched_at).getTime(),
+    (a, b) =>
+      (toLocalDate(b.fetched_at)?.getTime() ?? 0) - (toLocalDate(a.fetched_at)?.getTime() ?? 0),
   );
   const VISIBLE = 5;
   const visible = expanded ? sorted : sorted.slice(0, VISIBLE);
@@ -231,8 +232,9 @@ function formatTimestamp(iso: string, locale: string): string {
   // an absolute short-date otherwise. Avoids "2026-05-12T06:24:11.689175"
   // dominating the row while staying precise enough for audit context.
   try {
-    const t = new Date(iso).getTime();
-    if (!Number.isFinite(t)) return iso;
+    const parsed = toLocalDate(iso);
+    if (!parsed) return iso;
+    const t = parsed.getTime();
     const deltaMin = (Date.now() - t) / 60000;
     if (deltaMin < 1) return locale.startsWith('de') ? 'gerade eben' : 'just now';
     if (deltaMin < 60) {
