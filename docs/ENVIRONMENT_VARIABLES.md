@@ -1195,6 +1195,7 @@ PRESENCE_RSSI_FILTER_ALPHA_UP=0.5       # EWMA-Gewicht wenn ein Raum STÄRKER wi
 PRESENCE_RSSI_FILTER_ALPHA_DOWN=0.1     # EWMA-Gewicht wenn SCHWÄCHER (langsam — dämpft Abgänge + Streu-Werte)
 PRESENCE_FILTER_FRESH_SECONDS=35.0      # ein Raum, der so lange nicht gehört wurde, verfällt Richtung Boden
 PRESENCE_SWITCH_ENTER_MARGIN_DB=8.0     # dB, um die der GEFILTERTE Wert des Herausforderers den aktuellen Raum schlagen muss (ersetzt den Scan-Count)
+PRESENCE_VOICE_HOLD_SECONDS=60.0        # Sekunden, in denen eine Sprach-/Auth-Sichtung den Raum gegen BLE-Messwerte hält (0 = aus: der nächste BLE-Scan darf sofort umbuchen)
 PRESENCE_HOUSEHOLD_ROLES="Admin,Familie" # Rollen die als Haushaltsmitglieder gelten (für Privacy-TTS)
 PRESENCE_ANALYTICS_TIMEZONE="Europe/Berlin" # Lokale Zeitzone für Heatmap-/Prognose-Stunden+Tage (Events werden UTC gespeichert); ungültiger Wert => UTC
 

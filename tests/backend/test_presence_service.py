@@ -32,6 +32,7 @@ def service():
     svc._filter_alpha_down = 0.1
     svc._filter_fresh_seconds = 35.0
     svc._switch_enter_margin_db = 8.0
+    svc._voice_hold_seconds = 0.0
     svc._room_names = {}
     svc._user_names = {}
     svc._user_first_names = {}
@@ -918,6 +919,130 @@ class TestVoicePresence:
             user_id=1, room_id=20, room_name="Living Room",
         )
         assert service.get_user_presence(1).room_id == 20
+
+
+@pytest.mark.unit
+class TestVoiceHold:
+    """A voice sighting is certain, a BLE reading an estimate: for
+    ``presence_voice_hold_seconds`` BLE may confirm the voice room but must not
+    move the user out of it. Seen live: a turn in the kitchen was undone three
+    seconds later by a reading at the RSSI floor from another room."""
+
+    MAC = "AA:BB:CC:DD:EE:01"
+
+    def _svc(self, service_with_devices, *, filtered: bool, hold: float = 60.0):
+        svc = service_with_devices
+        svc._filter_enabled = filtered
+        svc._voice_hold_seconds = hold
+        return svc
+
+    async def _voice(self, svc, room_id, name):
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock):
+            await svc.register_voice_presence(user_id=1, room_id=room_id, room_name=name)
+
+    async def _ble(self, svc, sat, room_id, rssi, name):
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock) as hooks:
+            await svc.process_ble_report(sat, room_id, [{"mac": self.MAC, "rssi": rssi}], name)
+        return hooks
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("filtered", [True, False])
+    async def test_ble_from_another_room_does_not_undo_a_voice_sighting(
+        self, service_with_devices, filtered
+    ):
+        svc = self._svc(service_with_devices, filtered=filtered)
+        # The phone is heard only by the far satellite, weakly.
+        await self._ble(svc, "sat-far", 20, -78, "Far")
+        await self._ble(svc, "sat-far", 20, -78, "Far")
+        assert svc.get_user_presence(1).room_id == 20
+
+        await self._voice(svc, 10, "Kitchen")
+        assert svc.get_user_presence(1).room_id == 10
+
+        for _ in range(5):
+            hooks = await self._ble(svc, "sat-far", 20, -78, "Far")
+            assert hooks.call_count == 0  # no leave/enter events either
+        presence = svc.get_user_presence(1)
+        assert presence.room_id == 10
+        assert presence.room_name == "Kitchen"
+        assert presence.confidence == 1.0  # the BLE estimate did not overwrite it
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("filtered", [True, False])
+    async def test_ble_takes_over_again_after_the_hold(self, service_with_devices, filtered):
+        svc = self._svc(service_with_devices, filtered=filtered)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -60, "Far")
+        assert svc.get_user_presence(1).room_id == 10
+
+        svc.get_user_presence(1).voice_hold_until = time.time() - 1
+        await self._ble(svc, "sat-far", 20, -60, "Far")
+        await self._ble(svc, "sat-far", 20, -60, "Far")
+        assert svc.get_user_presence(1).room_id == 20
+
+    @pytest.mark.asyncio
+    async def test_hold_keeps_the_user_alive_while_the_phone_is_heard_elsewhere(
+        self, service_with_devices
+    ):
+        """During the hold a BLE reading still refreshes ``last_seen`` — the
+        person is at home, only the room is not BLE's to decide."""
+        svc = self._svc(service_with_devices, filtered=True)
+        await self._voice(svc, 10, "Kitchen")
+        svc.get_user_presence(1).last_seen = time.time() - 100
+        await self._ble(svc, "sat-far", 20, -70, "Far")
+        assert time.time() - svc.get_user_presence(1).last_seen < 5
+        assert svc.get_user_presence(1).room_id == 10
+
+    @pytest.mark.asyncio
+    async def test_ble_in_the_voice_room_is_not_blocked(self, service_with_devices):
+        svc = self._svc(service_with_devices, filtered=True)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-kitchen", 10, -50, "Kitchen")
+        presence = svc.get_user_presence(1)
+        assert presence.room_id == 10
+        assert presence.satellite_id == "sat-kitchen"
+
+    @pytest.mark.asyncio
+    async def test_a_second_voice_sighting_moves_at_once_and_restarts_the_hold(
+        self, service_with_devices
+    ):
+        svc = self._svc(service_with_devices, filtered=True)
+        await self._voice(svc, 10, "Kitchen")
+        first = svc.get_user_presence(1).voice_hold_until
+        await self._voice(svc, 30, "Living Room")
+        presence = svc.get_user_presence(1)
+        assert presence.room_id == 30
+        assert presence.voice_hold_until >= first
+        await self._ble(svc, "sat-kitchen", 10, -50, "Kitchen")
+        assert svc.get_user_presence(1).room_id == 30
+
+    @pytest.mark.asyncio
+    async def test_voice_in_the_same_room_extends_the_hold(self, service_with_devices):
+        svc = self._svc(service_with_devices, filtered=True)
+        await self._voice(svc, 10, "Kitchen")
+        svc.get_user_presence(1).voice_hold_until = time.time() + 1
+        await self._voice(svc, 10, "Kitchen")
+        assert svc.get_user_presence(1).voice_hold_until > time.time() + 50
+
+    @pytest.mark.asyncio
+    async def test_hold_of_zero_is_the_old_behaviour(self, service_with_devices):
+        """0 switches the hold off: the next BLE scan moves the user at once
+        (the filter holds no value for the voice room)."""
+        svc = self._svc(service_with_devices, filtered=True, hold=0.0)
+        await self._voice(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-far", 20, -78, "Far")
+        assert svc.get_user_presence(1).room_id == 20
+
+    @pytest.mark.asyncio
+    async def test_hold_does_not_block_another_user(self, service_with_devices):
+        svc = self._svc(service_with_devices, filtered=True)
+        await self._voice(svc, 10, "Kitchen")
+        with patch("utils.hooks.run_hooks", new_callable=AsyncMock):
+            await svc.process_ble_report(
+                "sat-far", 20, [{"mac": "AA:BB:CC:DD:EE:03", "rssi": -60}], "Far"
+            )
+        assert svc.get_user_presence(2).room_id == 20
+        assert svc.get_user_presence(1).room_id == 10
 
 
 @pytest.mark.unit

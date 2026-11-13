@@ -73,6 +73,9 @@ class UserPresence:
     # release). Drives margin-based room selection instead of the raw-mean +
     # scan-count scheme. Empty when the filter is disabled.
     room_rssi_filtered: dict[int, float] = field(default_factory=dict)
+    # Wall-clock time until which a voice/auth sighting pins the room: a BLE
+    # reading cannot move the user out of it before then. 0.0 = no hold.
+    voice_hold_until: float = 0.0
 
 
 class PresenceService:
@@ -98,6 +101,7 @@ class PresenceService:
         self._filter_alpha_down: float = float(ha_glue_settings.presence_rssi_filter_alpha_down)
         self._filter_fresh_seconds: float = float(ha_glue_settings.presence_filter_fresh_seconds)
         self._switch_enter_margin_db: float = float(ha_glue_settings.presence_switch_enter_margin_db)
+        self._voice_hold_seconds: float = float(ha_glue_settings.presence_voice_hold_seconds)
         self._room_names: dict[int, str] = {}            # room_id → name cache
         self._user_names: dict[int, str] = {}            # user_id → username
         self._user_first_names: dict[int, str] = {}      # user_id → first_name
@@ -401,6 +405,20 @@ class PresenceService:
 
         current.last_seen = best_timestamp
 
+        # --- Voice hold ------------------------------------------------------
+        # A voice/auth sighting is certain; a BLE reading is an estimate. Until
+        # the hold runs out, BLE may confirm the voice room but not replace it.
+        # Without this the next scan undid the voice move: the filter holds no
+        # value for a room the phone was never heard in, which reads as "current
+        # room gone, follow the signal". The filter state above keeps updating,
+        # so the decision after the hold rests on current readings.
+        if (
+            current.room_id is not None
+            and best_room_id != current.room_id
+            and time.time() < current.voice_hold_until
+        ):
+            return
+
         # Confidence: RSSI component (70%) + satellite count component (30%)
         mean_rssi = sum(best_rssi_values) / len(best_rssi_values)
         rssi_conf = max(0.0, min(1.0, (mean_rssi + 90) / 60.0))
@@ -566,6 +584,7 @@ class PresenceService:
             # Same room — just refresh last_seen, no hooks
             current.last_seen = now
             current.confidence = confidence
+            current.voice_hold_until = now + self._voice_hold_seconds
             return
 
         # Different room or first appearance — bypass hysteresis
@@ -605,6 +624,10 @@ class PresenceService:
         current.confidence = confidence
         current.last_seen = now
         current.consecutive_room_count = 1
+        current.voice_hold_until = now + self._voice_hold_seconds
+        # A BLE candidate that was counting towards a switch is void now.
+        current.pending_room_id = None
+        current.pending_room_count = 0
 
         # Fire enter event for new room
         self._pending_events.append(("presence_enter_room", {
