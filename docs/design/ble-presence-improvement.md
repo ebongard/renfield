@@ -206,8 +206,12 @@ value. Only BLE MOVING the user ends the pin. BLE merely agreeing does not: a we
 would otherwise hand the room to BLE and lose it the moment that reading ages out (and a second device of the
 same user, whose pass rebuilds the per-user filter, would do the same).
 
-**A held room is a guess, and the privacy gate treats it as unknown.** `is_location_uncertain()` is true once
-the hold is over while the phone is not heard in the pinned room. `ha_should_play_tts_for_notification` then
+**A held room is a guess, and the privacy gates treat it as unknown.** `UserPresence.room_evidence_at` records
+when something last placed the user in the current room (a sighting, or a BLE pass whose best room was this
+one). `is_location_uncertain()` is true for a pinned user once that is older than the longer of the hold and
+the BLE freshness window — per user, so it neither flickers with several devices nor depends on the filter
+(the legacy path has none). The message relay (`announce_in_room`) drops such a user from the room's occupants
+and blocks when a non-recipient is among them. `ha_should_play_tts_for_notification` likewise
 fails closed: a `confidential` notification is not spoken while ANY tracked user's room is a guess (the target
 may not be there, someone else may be), and for `personal` such a user counts as a possible listener in every
 room and not as an occupant of the booked one. Display surfaces (kiosk, history) and media follow keep using

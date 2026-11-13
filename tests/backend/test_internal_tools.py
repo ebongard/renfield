@@ -3473,7 +3473,8 @@ class TestAnnounceInRoom:
     @staticmethod
     def _patch_deps(*, occupants, room_name="Arbeitszimmer", room_id=2,
                     tts=b"WAVDATA", play_ok=True, name_to_id=None,
-                    camera_sat=False, snapshot=None, people=None, fail_closed=False):
+                    camera_sat=False, snapshot=None, people=None, fail_closed=False,
+                    uncertain=None):
         import sys
         from types import ModuleType
 
@@ -3493,6 +3494,7 @@ class TestAnnounceInRoom:
         presence = MagicMock()
         presence.get_room_occupants = MagicMock(return_value=occupants)
         presence.find_user_by_name = MagicMock(side_effect=lambda n: (name_to_id or {}).get(n))
+        presence.uncertain_user_ids = MagicMock(return_value=list(uncertain or []))
 
         piper = MagicMock()
         piper.synthesize_to_bytes = AsyncMock(return_value=tts)
@@ -3676,6 +3678,49 @@ class TestAnnounceInRoom:
         assert result["data"]["recipients_present"] == 2  # E + J present, X is the outsider
         deps.piper.synthesize_to_bytes.assert_not_called()
         deps.audio.play_audio.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_personal_blocked_when_a_non_recipient_may_be_anywhere(self, internal_tools):
+        """Only the recipient is booked in the room, but another user's room is
+        a held guess — that person may be standing in this one."""
+        occ = [MagicMock(user_id=2)]
+        with self._patch_deps(occupants=occ, name_to_id={"Anna": 2}, uncertain=[9]) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Anna"],
+            })
+        assert result["success"] is False
+        assert result.get("blocked") == "not_private"
+        deps.piper.synthesize_to_bytes.assert_not_called()
+        deps.audio.play_audio.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_personal_blocked_when_the_recipient_is_only_a_guess(self, internal_tools):
+        """The recipient is booked in the room on a held guess: no proof of
+        presence, same as nobody tracked there."""
+        occ = [MagicMock(user_id=2)]
+        with self._patch_deps(occupants=occ, name_to_id={"Anna": 2}, uncertain=[2]) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Anna"],
+            })
+        assert result["success"] is False
+        assert result.get("blocked") == "not_private"
+        assert result["data"]["occupants"] == 0
+        deps.audio.play_audio.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_personal_announced_when_only_a_recipient_elsewhere_is_a_guess(self, internal_tools):
+        """One recipient is certainly in the room; the other recipient's room is
+        a guess. Whoever of them hears it is meant to."""
+        occ = [MagicMock(user_id=2)]
+        with self._patch_deps(occupants=occ, name_to_id={"Anna": 2, "Ben": 3}, uncertain=[3]) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Anna", "Ben"],
+            })
+        assert result["success"] is True
+        deps.audio.play_audio.assert_awaited_once()
 
     @pytest.mark.unit
     async def test_force_bypasses_gate_after_consent(self, internal_tools):

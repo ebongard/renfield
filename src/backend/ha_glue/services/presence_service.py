@@ -83,6 +83,11 @@ class UserPresence:
     # agrees for a scan: a weak reading in the voice room would end the pin and
     # the room would be lost the moment that reading ages out.
     voice_pinned: bool = False
+    # When something last placed the user in the CURRENT room: a voice/auth
+    # sighting, or a BLE pass whose best room was this one. Per user, not per
+    # device or filter state, so it does not flicker with several devices and
+    # works on the legacy path too. Drives ``is_location_uncertain``.
+    room_evidence_at: float = 0.0
 
 
 class PresenceService:
@@ -444,6 +449,7 @@ class PresenceService:
 
         # --- Same room? reinforce and stop -----------------------------------
         if best_room_id == current.room_id:
+            current.room_evidence_at = time.time()
             current.consecutive_room_count += 1
             current.pending_room_id = None
             current.pending_room_count = 0
@@ -476,6 +482,7 @@ class PresenceService:
         current.room_id = best_room_id
         current.room_name = self._room_names.get(best_room_id) if best_room_id else None
         current.voice_pinned = False
+        current.room_evidence_at = time.time()
         current.satellite_id = best_satellite_id
         current.consecutive_room_count = 1
         current.pending_room_id = None
@@ -603,6 +610,7 @@ class PresenceService:
             current.confidence = confidence
             current.voice_hold_until = now + self._voice_hold_seconds
             current.voice_pinned = True
+            current.room_evidence_at = now
             return
 
         # Different room or first appearance — bypass hysteresis
@@ -644,6 +652,7 @@ class PresenceService:
         current.consecutive_room_count = 1
         current.voice_hold_until = now + self._voice_hold_seconds
         current.voice_pinned = True
+        current.room_evidence_at = now
         if self._voice_hold_seconds > 0:
             # A BLE candidate that was counting towards a switch is void now.
             # Only with the hold on, so that 0 leaves the old path untouched.
@@ -691,18 +700,24 @@ class PresenceService:
     def is_location_uncertain(self, user_id: int, now: float | None = None) -> bool:
         """Whether the user's room is a HELD GUESS rather than current evidence.
 
-        True when the room rests on a voice/auth sighting whose hold has run
-        out and the phone is not heard there: the room is kept because nothing
-        clearly better exists (see ``_should_switch_filtered``), not because
-        anything places the person there now. Good enough for a display;
-        anything that decides who can overhear must treat it as unknown.
+        True when the room rests on a voice/auth sighting (``voice_pinned``)
+        and nothing has placed the user there for a while: no further
+        sighting, and no BLE pass whose best room was this one. The room is
+        then kept because nothing clearly better exists (see
+        ``_should_switch_filtered``), not because anything puts the person
+        there now. Good enough for a display; anything that decides who can
+        overhear must treat it as unknown.
+
+        "A while" is the longer of the voice hold and the BLE freshness window,
+        so a sighting counts as evidence for at least one BLE window even with
+        the hold switched off. A user BLE placed is never uncertain here.
         """
         presence = self._presence.get(user_id)
         if presence is None or presence.room_id is None or not presence.voice_pinned:
             return False
-        if (now if now is not None else time.time()) < presence.voice_hold_until:
-            return False
-        return presence.room_id not in presence.room_rssi_filtered
+        current_time = now if now is not None else time.time()
+        window = max(self._voice_hold_seconds, self._filter_fresh_seconds)
+        return current_time - presence.room_evidence_at > window
 
     def uncertain_user_ids(self) -> list[int]:
         """Users at home whose room is a held guess (``is_location_uncertain``)."""
