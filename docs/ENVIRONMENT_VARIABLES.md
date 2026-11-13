@@ -242,8 +242,30 @@ Segmente zu `{id}` (Kardinalitätsschutz).
 - `/metrics` Endpoint im Prometheus-Format verfügbar
 - MCP-Health-Heartbeat: `renfield_mcp_health_ticks_total` + `renfield_mcp_health_problem_servers` (#1107)
 - HTTP Request Counter + Latency Histogram
-- WebSocket Connection Gauge
-- LLM Call Duration Histogram
+- `renfield_websocket_connections{type}`: offene WebSocket-Verbindungen je Art
+  (`chat`, `satellite`, `device`, `kiosk`, `user`, `knowledge_graph`,
+  `wakeword`, sonst `other`). Gezählt an EINER Stelle
+  (`utils/metrics.py::WebSocketGaugeMiddleware`): ab dem `accept`, bis der
+  Endpunkt zurückkehrt; ein abgelehnter Handshake zählt nie (#82)
+- `renfield_llm_call_duration_seconds{model,call_type,outcome}`: Dauer der
+  LLM-Aufrufe der Agentenschleife (`agent_preselect`, `agent_step`,
+  `agent_retry`, `agent_summary`; `outcome` = `ok`/`timeout`/`error`). Andere
+  LLM-Aufrufe (Router, Intent, Erinnerungs-Extraktion, RAG-Antwort) werden
+  NICHT gemessen (#82)
+- `renfield_mcp_tool_duration_seconds{server,outcome}`: Dauer der an einen
+  MCP-Server abgesetzten Werkzeugaufrufe. `outcome` folgt dem Gesundheitsurteil:
+  `ok`, `app_error` (der Server hat mit einem Fehlerergebnis geantwortet),
+  `timeout` (das Einzige, was `calls_failing` zählt), `error` (Ausnahme oder
+  tote Sitzung). Abweisungen VOR dem Absetzen (Berechtigung, Validierung,
+  Rate-Limit, nicht verbunden) werden nicht gezählt; die Funktionssonden des
+  Health-Monitors schon. Aufrufe an Föderations-Peers werden bewusst NICHT
+  gemessen (der Peer-Name ist personenbezogen). Bewusst kein `tool`-Label (#82)
+- Die drei Gauges ohne Label (`renfield_mcp_health_problem_servers`,
+  `renfield_memory_active_total`, `renfield_kg_conflation_candidates`) stehen
+  auf `NaN`, bis ihr Lauf im Prozess zum ersten Mal gemessen hat: „nie
+  gemessen" ist keine gemessene Null (#82)
+- `renfield_rag_search_duration_seconds{outcome}`: Dauer einer RAG-Suche
+  (Embedding, Abruf, Rerank, Kontexterweiterung; #82)
 - Agent Steps Histogram
 - `renfield_agent_outcome_total{outcome}`: wie ein Agent-Lauf endete, ein Wert je
   `AgentService.run()` (ein orchestrierter Zug zählt je Teil-Agent). Werte in
@@ -264,6 +286,11 @@ Segmente zu `{id}` (Kardinalitätsschutz).
 - Alle drei mit 0 vorbelegt, damit `increase()` auch das erste Ereignis sieht
 - Circuit Breaker State + Failures
 
+Die WebSocket-, LLM- und MCP-Metriken standen seit 2026-02 in dieser Liste,
+hatten aber bis #82 keinen Aufrufer und blieben leer. Kein Label trägt eine
+Nutzer-, Sitzungs- oder Gerätekennung. Nur der Backend-Prozess exportiert:
+die Worker (Dokumente, Meetings, PDF-Split) haben kein `/metrics`.
+
 **Prometheus Scrape Config:**
 ```yaml
 scrape_configs:
@@ -271,6 +298,11 @@ scrape_configs:
     static_configs:
       - targets: ['renfield-backend:8000']
 ```
+
+**Grafana-Dashboards:** drei Dashboards als JSON samt Provisioning-Datei unter
+`config/monitoring/grafana/`, Anleitung in `config/monitoring/README.md`. Ein
+Grafana oder Prometheus gehört NICHT zum Repository und wird nicht mit
+ausgerollt.
 
 ---
 

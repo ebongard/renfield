@@ -16,8 +16,8 @@ class TestMetricsRecordingFunctions:
 
     @pytest.mark.unit
     def test_record_mcp_tool_call_no_crash(self):
-        record_mcp_tool_call("homeassistant", "get_states", 1.5, True)
-        record_mcp_tool_call("homeassistant", "get_states", 2.0, False)
+        record_mcp_tool_call("homeassistant", 1.5, "ok")
+        record_mcp_tool_call("homeassistant", 2.0, "timeout")
 
     @pytest.mark.unit
     def test_record_agent_outcome_no_crash(self):
