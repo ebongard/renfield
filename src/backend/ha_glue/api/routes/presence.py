@@ -5,8 +5,6 @@ Endpoints for room occupancy, user presence, BLE device management,
 and presence analytics (heatmap, predictions).
 """
 
-import hashlib
-import time
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ha_glue.services.presence_debug import build_sightings_payload, redact_device_key
 from ha_glue.services.presence_service import get_presence_service
 from ha_glue.utils.config import ha_glue_settings
 from models.database import User
@@ -80,14 +79,8 @@ async def get_presence_status():
 # --- Diagnostics: raw per-satellite RSSI sightings ---
 
 
-def _redact_device_key(key: str) -> str:
-    """Stable, non-reversible short id for a device sighting key so the
-    diagnostic can tell devices apart WITHOUT leaking the raw MAC or the
-    user-chosen `irk:<label>` nickname (both are device-fingerprinting PII).
-    Prefixed so an admin still sees whether it was MAC- or IRK-resolved."""
-    prefix = "irk" if key.startswith("irk:") else "mac"
-    digest = hashlib.sha256(key.encode()).hexdigest()[:8]
-    return f"{prefix}:{digest}"
+# Kept under its historical name: the redaction lives with the payload builder.
+_redact_device_key = redact_device_key
 
 
 @router.get("/debug/sightings")
@@ -101,40 +94,13 @@ async def get_debug_sightings(
 
     Exposes cross-user presence + movement traces, so it is gated on ADMIN like
     the device/IRK management endpoints in this router. The per-device `key` is
-    a redacted hash (never the raw MAC / IRK label)."""
+    a redacted hash (never the raw MAC / IRK label).
+
+    Same payload as the `/ws/presence-debug` socket pushes (one builder:
+    `ha_glue.services.presence_debug.build_sightings_payload`)."""
     if not ha_glue_settings.presence_enabled:
-        return {"now": round(time.time(), 3), "devices": []}
-    presence = get_presence_service()
-    now = time.time()
-    out = []
-    for key, sightings in presence._sightings.items():
-        uid = presence._user_for_key(key)
-        cur = presence._presence.get(uid) if uid is not None else None
-        out.append({
-            "key": _redact_device_key(key),
-            "user_id": uid,
-            "user_name": presence.get_user_name(uid) if uid is not None else None,
-            "current_room_id": cur.room_id if cur else None,
-            "current_room_name": cur.room_name if cur else None,
-            "current_confidence": round(cur.confidence, 3) if cur else None,
-            "filtered_by_room": {
-                (presence._room_names.get(rid, str(rid))): round(v, 2)
-                for rid, v in (cur.room_rssi_filtered.items() if cur else {})
-            },
-            "sightings": [
-                {
-                    "satellite_id": s.satellite_id,
-                    "room_id": s.room_id,
-                    "room_name": (presence._room_names.get(s.room_id)
-                                  if s.room_id is not None else None),
-                    "rssi": s.rssi,
-                    "timestamp": round(s.timestamp, 3),
-                    "age_s": round(now - s.timestamp, 2),
-                }
-                for s in sorted(sightings, key=lambda x: x.timestamp)
-            ],
-        })
-    return {"now": round(now, 3), "devices": out}
+        return build_sightings_payload(None)
+    return build_sightings_payload(get_presence_service())
 
 
 # --- Room occupancy ---

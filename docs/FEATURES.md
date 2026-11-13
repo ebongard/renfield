@@ -1150,6 +1150,8 @@ PRESENCE_WEBHOOK_SECRET=""
 - `GET /api/presence/rooms` — Alle Räume mit Anwesenden
 - `GET /api/presence/user/{id}` — Standort + allein?
 - `POST /api/presence/devices` — BLE-Gerät registrieren (Admin)
+- `GET /api/presence/debug/sightings` — Diagnose (Admin): Rohmesswerte je erfasstem Gerät und Satellit, geglättete Werte je Raum, Schwellen; Geräteschlüssel geschwärzt (`mac:<hash>` / `irk:<hash>`)
+- `WS /ws/presence-debug` — dieselbe Nutzlast als Push (Admin): ein `snapshot` beim Verbinden, danach höchstens einer pro Sekunde nach BLE-Meldungen. Speist den Reiter **Messwerte** auf `/admin/presence`; kein Polling, und ohne verbundenen Betrachter fällt keine Arbeit an.
 
 ### Präsenz-Historie (persistent, überlebt Neustarts)
 

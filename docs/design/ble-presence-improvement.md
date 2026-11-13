@@ -159,6 +159,37 @@ continuous scan + smoothing (and later IRK). Metrics: presence-detection
 latency, room-arbitration flip rate, % time known devices resolved after MAC
 rotation.
 
+## Live readings view (admin diagnostic)
+
+The numbers behind a room decision used to be reachable only as JSON
+(`GET /api/presence/debug/sightings`). The **Readings** tab on `/admin/presence`
+(`components/presence/LiveReadings.tsx`) shows them live: per tracked device the
+person, the room the system places them in and its confidence; one row per
+satellite with latest / mean / min–max RSSI, reading count, age and a trend
+line over the sighting window; connected satellites that did NOT hear the
+device ("not heard" — as telling as a weak reading); and per room the filtered
+value with the threshold a challenger needs (`current + PRESENCE_SWITCH_ENTER_MARGIN_DB`).
+
+- **One payload builder** (`ha_glue/services/presence_debug.py::build_sightings_payload`)
+  serves the REST route and the socket. It adds `enabled`, `settings`
+  (`rssi_floor_dbm`, `switch_enter_margin_db`, `stale_timeout_s`,
+  `rssi_filter_enabled`), `satellites` (connected roster, in-memory) and per
+  device `filtered_rooms` (id-keyed) to the earlier response; nothing was removed.
+- **Push, not poll:** ADMIN-gated `/ws/presence-debug`
+  (`ha_glue/api/websocket/presence_debug_handler.py`) sends one `snapshot` on
+  connect and a fresh one after BLE reports, coalesced to at most one per second.
+  `process_ble_report` calls `note_ble_report()`, which returns at once while no
+  viewer is connected — the diagnostic costs nothing unwatched. Frontend:
+  `hooks/usePresenceReadings.ts` (the only timer is the reconnect backoff).
+- **Gate:** ADMIN on both, fail-closed (a permission lookup error refuses the
+  socket). The payload is every tracked person's movement trace; the device
+  `key` stays a redacted hash, never the raw MAC or the IRK label.
+- **Limits:** sightings live in the memory of the pod that holds the satellite
+  sockets, so the view shows that pod's state (same as the REST route). A device
+  that fell silent keeps its last readings until the next report for it prunes
+  them; the age column makes that visible. No new flag — like the REST route it
+  follows `PRESENCE_ENABLED` only.
+
 ## Open questions
 - Bond per-satellite vs central IRK distribution?
 - Audit: which household devices use stable vs randomized addresses today?
