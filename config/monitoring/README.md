@@ -11,12 +11,16 @@ They read nothing else: no logs, no database, no other exporter.
 
 ## Status
 
-These files have **not been loaded into a Grafana**. What is checked is what
-can be checked without one (`tests/backend/test_grafana_dashboards.py`): the
-JSON structure, that every series and label in a panel exists in the backend's
-metric registry, and that every such series has a recorder that is called.
-Layout, units and legends are unseen. Expect to adjust those on first load, and
-change the JSON in git, not in the UI.
+Loaded once into a throwaway Grafana 13.3 with a Prometheus 3.16 scraping the
+real `utils.metrics` (2026-11-13): provisioning is clean and every query
+evaluates, on a freshly started backend and with samples flowing. What that
+load showed and no structural check had seen (texts that a graph panel never
+draws, shares that read "No data" while nothing failed, a reducer that hid NaN
+behind an older value) is fixed and pinned in
+`tests/backend/test_grafana_dashboards.py`, next to the checks that need no
+Grafana: the JSON structure, that every series and label in a panel exists in
+the backend's metric registry, and that every such series has a recorder that
+is called. Change the JSON in git, not in the UI.
 
 ## Prerequisites
 
@@ -83,9 +87,31 @@ The dashboards do not define health a second time.
   server it is, and why, is in `/api/mcp/status`; there is no per-server status
   metric.
 - The same holds for **Active memories** and **Knowledge graph conflation
-  candidates**: NaN ("not counted yet", "no scan yet") until their job first
-  ran in this backend process, so an instance without the job never shows a
-  clean zero it did not measure.
+  candidates**: NaN ("not counted yet", "no scan yet", in orange) until their
+  job first ran in this backend process, so an instance without the job never
+  shows a clean zero it did not measure. Both are stat panels with the history
+  as a line behind the number. Conflation candidates are green at 0 and red
+  from 1; the number of active memories is a count and carries no colour.
+- These three panels show the NEWEST sample, NaN included: after a backend
+  restart they read "no verdict" / "not counted yet" / "no scan yet" again
+  until the job has run, they do not keep the number from before the restart.
+- A share (**Share of 5xx responses**, **Share of tool calls that timed out,
+  by server**, **Share of runs that did not end in a final answer**) is 0 %
+  while requests, calls or runs happen and none of them failed, and every
+  server that was called has a line. No line means nothing happened in the
+  window, so there is no share to state.
+- **Circuit breaker state** is one band per breaker (closed, open, half open;
+  "unknown" for a state the gauge has no number for). A breaker exports its
+  state only when it changes: one that never opened has no band, and the time
+  before a first change is "no state reported". While no breaker has changed
+  state at all the panel has nothing to draw and Grafana says "Data does not
+  have a time field"; **Open circuit breakers** reads 0 then.
+- The rate panels on counters that carry a label (failed logins, denials,
+  guard hits, router fallbacks, embedding errors, tool calls, RAG searches)
+  read "No data" until the first such event of a backend process: the series
+  does not exist before. That is not drawn as a zero line, because a zero
+  without the label has no name in the legend and would stay beside the real
+  series afterwards.
 - **MCP health monitor ticks** is red at 0: monitor off or stuck.
 - **Tool calls by outcome** separates `timeout` from `app_error` because the
   verdict does: only timeouts count against a server (`calls_failing`). A
