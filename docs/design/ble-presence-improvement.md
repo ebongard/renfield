@@ -202,11 +202,20 @@ filtered value, and the first reading from elsewhere would win by default. The p
 the same thing; the owner chose the person. `UserPresence.voice_pinned` marks a room that rests on a voice/auth
 sighting BLE has not confirmed. For such a room `_should_switch_filtered` measures the challenger against the
 RSSI floor plus `PRESENCE_VOICE_RELEASE_MARGIN_DB` (default 10 → −70 dBm at the −80 floor), on the filtered
-value. BLE confirming the room, or moving the user, ends the pin; from then on the old rules apply.
+value. Only BLE MOVING the user ends the pin. BLE merely agreeing does not: a weak reading in the voice room
+would otherwise hand the room to BLE and lose it the moment that reading ages out (and a second device of the
+same user, whose pass rebuilds the per-user filter, would do the same).
+
+**A held room is a guess, and the privacy gate treats it as unknown.** `is_location_uncertain()` is true once
+the hold is over while the phone is not heard in the pinned room. `ha_should_play_tts_for_notification` then
+fails closed: a `confidential` notification is not spoken while ANY tracked user's room is a guess (the target
+may not be there, someone else may be), and for `personal` such a user counts as a possible listener in every
+room and not as an occupant of the booked one. Display surfaces (kiosk, history) and media follow keep using
+the booked room.
 
 Consequences, intended: someone who speaks in a room and leaves the phone elsewhere stays in that room for as
 long as the phone is heard only weakly; they become absent when the phone is not heard for
-`PRESENCE_STALE_TIMEOUT`. The 10 dB is a choice. The readings behind it: on 2026-11-13 the phantom room's
+`PRESENCE_STALE_TIMEOUT` (the sweep runs on BLE reports, so only while some satellite still reports). The 10 dB is a choice. The readings behind it: on 2026-11-13 the phantom room's
 filtered value sat between −75 and −78 dBm over one minute, while entries with the phone in the room reach
 −60 and better. `0` restores the old rule. Legacy (non-filter) path: unchanged apart from the hold.
 

@@ -77,16 +77,26 @@ async def ha_should_play_tts_for_notification(
         if alone is None:
             # User not tracked by BLE — fail-safe: don't play
             return False
+        # A room that is only a held guess (an old voice sighting, the phone
+        # heard elsewhere) says nothing about who can overhear: neither that
+        # the target is there, nor that somebody else is not.
+        if presence.uncertain_user_ids():
+            return False
         return alone
 
     if privacy == "personal":
         if room_id is None:
             return False
-        occupants = presence.get_room_occupants(room_id)
+        uncertain = set(presence.uncertain_user_ids())
+        occupants = [
+            o for o in presence.get_room_occupants(room_id) if o.user_id not in uncertain
+        ]
         if not occupants:
             return False
 
-        occupant_ids = [o.user_id for o in occupants]
+        # Someone whose room is only a held guess may be standing in this one:
+        # they count as a possible listener wherever they are booked.
+        occupant_ids = [o.user_id for o in occupants] + sorted(uncertain)
         async with AsyncSessionLocal() as db:
             return await _all_household_members(occupant_ids, db)
 

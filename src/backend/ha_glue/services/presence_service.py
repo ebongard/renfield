@@ -76,10 +76,12 @@ class UserPresence:
     # Wall-clock time until which a voice/auth sighting pins the room: a BLE
     # reading cannot move the user out of it before then. 0.0 = no hold.
     voice_hold_until: float = 0.0
-    # True while the current room rests on a voice/auth sighting that BLE has
-    # not confirmed. Such a room has no filtered RSSI of its own, so a BLE
+    # True from a voice/auth sighting until BLE moves the user. While it is set
+    # and the room has no filtered RSSI (the phone is not heard there), a BLE
     # challenger is measured against the floor plus the release margin instead
-    # of winning by default. Cleared once BLE places the user itself.
+    # of winning by default. It is deliberately NOT cleared when BLE merely
+    # agrees for a scan: a weak reading in the voice room would end the pin and
+    # the room would be lost the moment that reading ages out.
     voice_pinned: bool = False
 
 
@@ -442,7 +444,6 @@ class PresenceService:
 
         # --- Same room? reinforce and stop -----------------------------------
         if best_room_id == current.room_id:
-            current.voice_pinned = False  # BLE confirms the room: its evidence now
             current.consecutive_room_count += 1
             current.pending_room_id = None
             current.pending_room_count = 0
@@ -601,9 +602,7 @@ class PresenceService:
             current.last_seen = now
             current.confidence = confidence
             current.voice_hold_until = now + self._voice_hold_seconds
-            # Pin only a room BLE is not vouching for; if the phone is heard
-            # here, the ordinary margin rule already protects the room.
-            current.voice_pinned = room_id not in current.room_rssi_filtered
+            current.voice_pinned = True
             return
 
         # Different room or first appearance — bypass hysteresis
@@ -644,8 +643,7 @@ class PresenceService:
         current.last_seen = now
         current.consecutive_room_count = 1
         current.voice_hold_until = now + self._voice_hold_seconds
-        # Pin only a room BLE is not vouching for (see the same-room branch).
-        current.voice_pinned = room_id not in current.room_rssi_filtered
+        current.voice_pinned = True
         if self._voice_hold_seconds > 0:
             # A BLE candidate that was counting towards a switch is void now.
             # Only with the hold on, so that 0 leaves the old path untouched.
@@ -689,6 +687,27 @@ class PresenceService:
     def get_all_presence(self) -> dict[int, UserPresence]:
         """Get all current presence data."""
         return dict(self._presence)
+
+    def is_location_uncertain(self, user_id: int, now: float | None = None) -> bool:
+        """Whether the user's room is a HELD GUESS rather than current evidence.
+
+        True when the room rests on a voice/auth sighting whose hold has run
+        out and the phone is not heard there: the room is kept because nothing
+        clearly better exists (see ``_should_switch_filtered``), not because
+        anything places the person there now. Good enough for a display;
+        anything that decides who can overhear must treat it as unknown.
+        """
+        presence = self._presence.get(user_id)
+        if presence is None or presence.room_id is None or not presence.voice_pinned:
+            return False
+        if (now if now is not None else time.time()) < presence.voice_hold_until:
+            return False
+        return presence.room_id not in presence.room_rssi_filtered
+
+    def uncertain_user_ids(self) -> list[int]:
+        """Users at home whose room is a held guess (``is_location_uncertain``)."""
+        now = time.time()
+        return [uid for uid in self._presence if self.is_location_uncertain(uid, now)]
 
     def is_user_alone_in_room(self, user_id: int) -> bool | None:
         """
