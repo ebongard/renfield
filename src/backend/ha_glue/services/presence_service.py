@@ -91,6 +91,23 @@ class UserPresence:
     room_evidence_at: float = 0.0
 
 
+def _build_placement_shadow():
+    """The placement v2 shadow, or None with one ERROR line when it cannot be
+    built — for ANY reason, a failing import included. It is a diagnostic:
+    presence tracking must come up without it. (Unusable settings are reported
+    by ``from_settings`` itself, which then returns None.)"""
+    try:
+        from ha_glue.services.presence_placement_shadow import PlacementShadow
+
+        return PlacementShadow.from_settings()
+    except Exception as e:
+        logger.error(
+            f"Presence v2 shadow: could not be built, stays OFF ({type(e).__name__}: {e}). "
+            "Presence tracking is unaffected."
+        )
+        return None
+
+
 class PresenceService:
     """
     In-memory presence tracking service.
@@ -125,6 +142,13 @@ class PresenceService:
         # satellites). label → user_id, and label → decrypted IRK hex.
         self._irk_label_to_user: dict[str, int] = {}
         self._irks_hex: dict[str, str] = {}
+        # Placement v2, stage 1: a second decision that runs beside this one
+        # and is only logged (presence_placement_shadow.py). None unless the
+        # flag is on — the module is not even imported then. Nothing in this
+        # service ever reads a verdict from it.
+        self._placement_shadow = None
+        if ha_glue_settings.presence_placement_v2_shadow_enabled:
+            self._placement_shadow = _build_placement_shadow()
 
     async def load_device_registry(self, db: AsyncSession):
         """Load UserBleDevice table into MAC → user_id cache."""
@@ -280,6 +304,11 @@ class PresenceService:
 
         # Clean up stale presence
         self._cleanup_stale(now)
+
+        # Placement v2 shadow: compares, logs, changes nothing here.
+        shadow = getattr(self, "_placement_shadow", None)
+        if shadow is not None:
+            shadow.observe_report(self, now)
 
         # Live readings view (admin diagnostic): no-op unless a viewer is connected.
         note_ble_report()
@@ -608,6 +637,12 @@ class PresenceService:
 
         if room_name and room_id:
             self._room_names[room_id] = room_name
+
+        # Placement v2 shadow: a voice sighting is ground truth, so record what
+        # both decisions believed BEFORE it is booked. Logs only.
+        shadow = getattr(self, "_placement_shadow", None)
+        if shadow is not None:
+            shadow.note_voice_sighting(self, user_id, room_id, now)
 
         current = self._presence.get(user_id)
 
