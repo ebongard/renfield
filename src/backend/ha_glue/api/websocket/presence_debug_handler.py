@@ -20,6 +20,14 @@ a content-free projection:
     which a browser reports as close code 1006 — indistinguishable from a
     network failure, so the page would "reconnect" forever instead of saying
     "access denied". Nothing is sent on a refused socket before the close.
+    Both refusals deny; they differ in what the client may do next:
+
+      - ``WSAuthError.FORBIDDEN`` (4403): the user was loaded and does NOT
+        hold ADMIN. Confirmed, final — the client shows "no access" and stops.
+      - ``WSAuthError.UNAUTHORIZED`` (4001): the server could not establish
+        who is asking — no/expired token, no user behind it, or the permission
+        lookup failed. Still refused (fail closed), but possibly temporary
+        (rollout, token refresh), so the client retries with backoff.
   * The socket has a maximum lifetime. The ADMIN check runs at the handshake
     only, so a revoked role or an ended session would otherwise keep reading
     for as long as the tab stays open. After ``MAX_SESSION_SECONDS`` the server
@@ -49,26 +57,31 @@ MAX_SESSION_SECONDS = 15 * 60
 SESSION_RENEWAL_CLOSE_CODE = 1000
 
 
-async def _refuse(websocket: WebSocket, reason: str) -> None:
+async def _refuse(websocket: WebSocket, code: int, reason: str) -> None:
     """Refuse with a close code the browser can read (see module docstring)."""
     try:
         await websocket.accept()
-        await websocket.close(code=WSAuthError.UNAUTHORIZED, reason=reason)
+        await websocket.close(code=code, reason=reason)
     except Exception as e:
         logger.debug(f"presence-debug refusal could not be delivered: {e}")
 
 
-async def _is_admin(user_id: int | None) -> bool:
-    """Whether ``user_id`` holds ADMIN. A lookup error denies."""
+async def _admin_verdict(user_id: int | None) -> bool | None:
+    """``True`` = holds ADMIN. ``False`` = the user was loaded and does not —
+    a confirmed refusal. ``None`` = could not tell (no user behind the token,
+    unknown user, lookup error). Only ``True`` opens the socket; ``None`` and
+    ``False`` differ solely in the close code (see module docstring)."""
     if user_id is None:
-        return False
+        return None
     try:
         async with AsyncSessionLocal() as db:
             user = await get_user_by_id(db, user_id)
-        return bool(user and user.has_permission(Permission.ADMIN))
     except Exception as e:
         logger.warning(f"presence-debug WS permission check failed: {e}")
-        return False
+        return None
+    if user is None:
+        return None
+    return bool(user.has_permission(Permission.ADMIN))
 
 
 @router.websocket("/ws/presence-debug")
@@ -78,14 +91,19 @@ async def presence_debug_live(
 ):
     auth_result = await authenticate_websocket(websocket, token)
     if not auth_result:
-        await _refuse(websocket, "Authentication required")
+        await _refuse(websocket, WSAuthError.UNAUTHORIZED, "Authentication required")
         return
 
-    if not auth_result.get("auth_skipped") and not await _is_admin(
-        auth_result.get("user_id")
-    ):
-        await _refuse(websocket, "admin permission required")
-        return
+    if not auth_result.get("auth_skipped"):
+        verdict = await _admin_verdict(auth_result.get("user_id"))
+        if verdict is None:
+            await _refuse(
+                websocket, WSAuthError.UNAUTHORIZED, "could not verify permission"
+            )
+            return
+        if not verdict:
+            await _refuse(websocket, WSAuthError.FORBIDDEN, "admin permission required")
+            return
 
     await websocket.accept()
 

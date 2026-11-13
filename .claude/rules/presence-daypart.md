@@ -41,7 +41,8 @@ Loaded only when the daypart / LED-dimming / presence services are read. BLE/IRK
 ## Live readings (`/ws/presence-debug`, tab "Readings" on `/admin/presence`)
 - **Never poll, never work unwatched:** push only, `note_ble_report()` is a no-op without a connected viewer; ONE
   builder (`presence_debug.build_sightings_payload`) for socket + REST. ADMIN, fail-closed; device key stays a hash.
-- Refusal = `accept()` THEN close 4001 (a pre-accept close reaches the browser as 1006 = "network down"); the socket
+- Refusal = `accept()` THEN close (a pre-accept close reaches the browser as 1006 = "network down"): 4403 ONLY for a
+  loaded non-admin (final), 4001 for "could not verify" (client retries — a lookup error must not lock out); the socket
   ends itself after `MAX_SESSION_SECONDS` so the role is re-checked. The view mirrors `_should_switch_filtered` —
   change the switch rule (hold, pin, margins) and `summarizeRooms` in `LiveReadings.tsx` must follow.
 

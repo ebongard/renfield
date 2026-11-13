@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { debug } from '../utils/debug';
 import { getWebSocketUrl } from '../utils/env';
-import { fetchWsToken } from '../utils/wsToken';
+import { requestWsToken } from '../utils/wsToken';
 
 // ---- wire shapes (ha_glue/services/presence_debug.py) ----------------------
 
@@ -124,11 +124,12 @@ function toSnapshot(msg: SnapshotMessage): PresenceReadingsSnapshot {
 
 // ---- connection lifecycle --------------------------------------------------
 
-/** `connecting` = first attempt, nothing received yet; `live` = socket open;
- *  `reconnecting` = the socket dropped (or never opened) and a retry is due —
- *  the last snapshot, if any, is kept but no longer current; `denied` = the
- *  server refused the socket (not logged in, or no admin role) — final, no
- *  retry, and no snapshot is kept. */
+/** `connecting` = first attempt, nothing received yet; `live` = a snapshot
+ *  arrived on the current socket; `reconnecting` = the socket dropped, was
+ *  refused for a possibly temporary reason, or its token could not be fetched,
+ *  and a retry is due — the last snapshot, if any, is kept but no longer
+ *  current; `denied` = the server CONFIRMED that this account is not an admin
+ *  — final, no retry, and no snapshot is kept. */
 export type PresenceReadingsStatus = 'connecting' | 'live' | 'reconnecting' | 'denied';
 
 export interface PresenceReadingsState {
@@ -139,26 +140,32 @@ export interface PresenceReadingsState {
 const INITIAL_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30_000;
 
-/** The server's refusal codes (backend `WSAuthError`: unauthorized, token
- *  expired, token invalid, auth required). It accepts the handshake before
- *  closing with one of them, so the browser sees the code instead of a bare
- *  1006. */
-const AUTH_CLOSE_CODES: ReadonlySet<number> = new Set([4001, 4002, 4003, 4004]);
+/** Backend `WSAuthError.FORBIDDEN`: the user was identified and does not hold
+ *  the admin role. The ONLY final refusal. The server's other refusal (4001:
+ *  it could not establish who is asking — missing/expired token, a failed
+ *  lookup) may be temporary and goes through the ordinary backoff like any
+ *  drop. The server accepts the handshake before closing with either, so the
+ *  browser sees the code instead of a bare 1006. */
+const FORBIDDEN_CLOSE_CODE = 4403;
 
 /** Normal closure. The server ends every socket after a maximum lifetime so
  *  the next handshake re-checks the admin role; that close is planned and gets
  *  an immediate, silent reconnect. */
 const PLANNED_CLOSE_CODE = 1000;
 
-async function readingsWsUrl(): Promise<string> {
+/** The socket URL, or null when the token request FAILED. A failed request is
+ *  not "no token needed": on an auth-on instance a token-less socket would be
+ *  refused, and a hiccup (rollout, access-token refresh) would read as a
+ *  refusal. The faucet itself says when no token is required — it answers
+ *  successfully with `token: null` (auth off). With auth on it hands out a
+ *  token in Bearer and in cookie mode alike, so no mode detection is needed. */
+async function readingsWsUrl(): Promise<string | null> {
   // getWebSocketUrl() returns `.../ws`; strip it and append our own path.
-  let url = getWebSocketUrl().replace(/\/ws$/, '') + '/ws/presence-debug';
+  const url = getWebSocketUrl().replace(/\/ws$/, '') + '/ws/presence-debug';
   // Short-lived, WS-scoped token (never the long-lived access JWT in a URL).
-  // null → open without one: auth off, or a cookie session the server reads
-  // from the handshake itself.
-  const token = await fetchWsToken();
-  if (token) url += `?token=${token}`;
-  return url;
+  const result = await requestWsToken();
+  if (!result.ok) return null;
+  return result.token ? `${url}?token=${result.token}` : url;
 }
 
 export function usePresenceReadings(): PresenceReadingsState {
@@ -188,6 +195,11 @@ export function usePresenceReadings(): PresenceReadingsState {
       const url = await readingsWsUrl();
       // The effect may have torn down during the async token fetch.
       if (closedRef.current) return;
+      if (url === null) {
+        debug.log('Presence readings: WS token request failed — retrying');
+        scheduleReconnect();
+        return;
+      }
 
       let ws: WebSocket;
       try {
@@ -203,10 +215,9 @@ export function usePresenceReadings(): PresenceReadingsState {
       // normally right after the handshake cannot drive a tight loop.
       let hydrated = false;
 
-      ws.onopen = () => {
-        attemptRef.current = 0;
-        setStatus('live');
-      };
+      // No onopen handler: the server accepts the handshake even when it then
+      // refuses, so an open socket proves nothing. "Live" and the backoff
+      // reset wait for the first snapshot.
 
       ws.onmessage = (event: MessageEvent) => {
         let msg: unknown;
@@ -217,15 +228,17 @@ export function usePresenceReadings(): PresenceReadingsState {
         }
         if (isSnapshot(msg)) {
           hydrated = true;
+          attemptRef.current = 0;
+          setStatus('live');
           setSnapshot(toSnapshot(msg));
         }
       };
 
       ws.onclose = (event: CloseEvent) => {
         if (closedRef.current || wsRef.current !== ws) return;
-        if (AUTH_CLOSE_CODES.has(event.code)) {
-          // Refused: retrying cannot help, and readings received under a role
-          // that is gone must not stay on screen.
+        if (event.code === FORBIDDEN_CLOSE_CODE) {
+          // Confirmed not an admin: retrying cannot help, and readings
+          // received under a role that is gone must not stay on screen.
           debug.log('Presence readings WS refused:', event.code);
           closedRef.current = true;
           wsRef.current = null;

@@ -11,7 +11,7 @@ vi.mock('../../../../src/frontend/src/utils/axios', () => ({
 }));
 
 import apiClient from '../../../../src/frontend/src/utils/axios';
-import { fetchVoiceToken, fetchWsToken } from '../../../../src/frontend/src/utils/wsToken';
+import { fetchVoiceToken, fetchWsToken, requestWsToken } from '../../../../src/frontend/src/utils/wsToken';
 
 const post = apiClient.post as unknown as ReturnType<typeof vi.fn>;
 
@@ -45,5 +45,24 @@ describe('fetchWsToken', () => {
   it('returns null when the response has no data', async () => {
     post.mockResolvedValueOnce({});
     await expect(fetchWsToken()).resolves.toBeNull();
+  });
+});
+
+describe('requestWsToken', () => {
+  beforeEach(() => {
+    post.mockReset();
+  });
+
+  it('keeps "no token needed" apart from a failed request', async () => {
+    post.mockResolvedValueOnce({ data: { token: null } });
+    await expect(requestWsToken()).resolves.toEqual({ ok: true, token: null });
+    post.mockRejectedValueOnce(new Error('network'));
+    await expect(requestWsToken()).resolves.toEqual({ ok: false });
+  });
+
+  it('returns the scoped token on success', async () => {
+    post.mockResolvedValueOnce({ data: { token: 'ws-scoped-token' } });
+    await expect(requestWsToken()).resolves.toEqual({ ok: true, token: 'ws-scoped-token' });
+    expect(post).toHaveBeenCalledWith('/api/ws/token', null, { params: { purpose: 'ws' } });
   });
 });

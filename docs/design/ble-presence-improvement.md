@@ -184,11 +184,18 @@ value with the threshold a challenger needs (`current + PRESENCE_SWITCH_ENTER_MA
 - **Gate:** ADMIN on both, fail-closed (a permission lookup error refuses the
   socket). The payload is every tracked person's movement trace; the device
   `key` stays a redacted hash, never the raw MAC or the IRK label.
-- **A refusal is readable:** the handler accepts the handshake and then closes
-  with 4001. Closing before `accept` answers the upgrade with HTTP 403, which a
-  browser reports as 1006 — the page could not tell "denied" from "network
-  down". The hook shows "no access", drops any snapshot it holds and stops
-  retrying (codes 4001–4004).
+- **A refusal is readable, and only a confirmed one is final:** the handler
+  accepts the handshake and then closes with an application code. Closing
+  before `accept` answers the upgrade with HTTP 403, which a browser reports as
+  1006 — the page could not tell "denied" from "network down". Two codes, both
+  denying, nothing sent on either: `WSAuthError.FORBIDDEN` (4403) = the user was
+  loaded and is not an admin → the hook shows "no access", drops any snapshot
+  and stops; `WSAuthError.UNAUTHORIZED` (4001) = the server could not establish
+  who is asking (no/expired token, no user, lookup error) → possibly temporary,
+  the hook retries with backoff ("reconnecting"). The hook also never opens a
+  token-less socket after a FAILED token request (`requestWsToken` keeps a
+  failure apart from the faucet's "no token needed"); "live" and the backoff
+  reset wait for the first snapshot, since an accepted handshake proves nothing.
 - **Maximum socket lifetime** (`MAX_SESSION_SECONDS`, 15 min): the ADMIN check
   runs at the handshake only, and this stream is personal data. The server
   closes normally (1000); the hook reconnects at once, without a status change

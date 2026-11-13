@@ -403,6 +403,11 @@ class WSAuthError:
     TOKEN_EXPIRED = 4002
     TOKEN_INVALID = 4003
     AUTH_REQUIRED = 4004
+    # Identity established, permission missing — the WebSocket twin of HTTP 403.
+    # FINAL for the client: retrying with the same account cannot help. The
+    # 4001-4004 codes above all mean "could not establish who you are", which a
+    # client may retry (fresh token, backend back up).
+    FORBIDDEN = 4403
 
 
 async def close_unauthorized(websocket: WebSocket, code: int = WSAuthError.UNAUTHORIZED, reason: str = "Unauthorized"):

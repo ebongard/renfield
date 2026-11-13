@@ -6,11 +6,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { usePresenceReadings } from '../../../../src/frontend/src/hooks/usePresenceReadings';
+import { requestWsToken } from '../../../../src/frontend/src/utils/wsToken';
 
 // The hook awaits a short-lived WS-scoped token before constructing the socket.
 vi.mock('../../../../src/frontend/src/utils/wsToken', () => ({
-  fetchWsToken: vi.fn().mockResolvedValue('test-ws-token'),
+  requestWsToken: vi.fn(),
 }));
+
+const tokenRequest = vi.mocked(requestWsToken);
+const TOKEN_OK = { ok: true, token: 'test-ws-token' } as const;
+const TOKEN_FAILED = { ok: false } as const;
 
 async function flushConnect(): Promise<void> {
   await Promise.resolve();
@@ -96,6 +101,8 @@ function snapshot(rssi: number) {
 
 beforeEach(() => {
   MockWebSocket.instances = [];
+  tokenRequest.mockReset();
+  tokenRequest.mockResolvedValue(TOKEN_OK);
   vi.stubGlobal('WebSocket', MockWebSocket);
 });
 
@@ -248,8 +255,38 @@ describe('usePresenceReadings', () => {
     });
   });
 
+  it('shows access denied on the confirmed refusal, drops the readings and stops retrying', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(snapshot(-55));
+    });
+    act(() => latest().fireClose(4403));
+    expect(result.current.status).toBe('denied');
+    // Readings received under a role that is gone do not stay on screen.
+    expect(result.current.snapshot).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(result.current.status).toBe('denied');
+  });
+
+  it('shows access denied when the very first handshake is refused for good', async () => {
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    act(() => {
+      latest().fireOpen();
+      latest().fireClose(4403);
+    });
+    expect(result.current.status).toBe('denied');
+  });
+
   it.each([4001, 4002, 4003, 4004])(
-    'shows access denied on close code %i, drops the readings and stops retrying',
+    'treats close code %i ("could not verify") as temporary: reconnecting, with backoff',
     async (code) => {
       vi.useFakeTimers();
       const { result } = renderHook(() => usePresenceReadings());
@@ -259,26 +296,126 @@ describe('usePresenceReadings', () => {
         latest().fireMessage(snapshot(-55));
       });
       act(() => latest().fireClose(code));
-      expect(result.current.status).toBe('denied');
-      // Readings received under a role that is gone do not stay on screen.
-      expect(result.current.snapshot).toBeNull();
-      expect(vi.getTimerCount()).toBe(0);
+      expect(result.current.status).toBe('reconnecting');
+      expect(result.current.snapshot?.devices[0].sightings[0].rssi).toBe(-55);
+
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(120_000);
+        vi.advanceTimersByTime(1000);
+        await flushConnect();
       });
-      expect(MockWebSocket.instances).toHaveLength(1);
-      expect(result.current.status).toBe('denied');
+      expect(MockWebSocket.instances).toHaveLength(2);
+      act(() => {
+        latest().fireOpen();
+        latest().fireMessage(snapshot(-49));
+      });
+      expect(result.current.status).toBe('live');
+      expect(result.current.snapshot?.devices[0].sightings[0].rssi).toBe(-49);
     },
   );
 
-  it('shows access denied when the very first handshake is refused', async () => {
+  it('backs off further while the server keeps answering "could not verify"', async () => {
+    // The server ACCEPTS before it refuses, so an opened socket must not
+    // reset the backoff — or a refusing server would be hit every second.
+    vi.useFakeTimers();
     const { result } = renderHook(() => usePresenceReadings());
     await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireClose(4001);
     });
-    expect(result.current.status).toBe('denied');
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await flushConnect();
+    });
+    expect(MockWebSocket.instances).toHaveLength(2);
+    act(() => {
+      latest().fireOpen();
+      latest().fireClose(4001);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1999);
+      await flushConnect();
+    });
+    expect(MockWebSocket.instances).toHaveLength(2);
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await flushConnect();
+    });
+    expect(MockWebSocket.instances).toHaveLength(3);
+    // An accepted handshake alone is not "live".
+    act(() => latest().fireOpen());
+    expect(result.current.status).toBe('reconnecting');
+  });
+
+  it('does not open a socket when the token request fails, and goes live once it succeeds', async () => {
+    vi.useFakeTimers();
+    tokenRequest.mockResolvedValueOnce(TOKEN_FAILED);
+    const { result } = renderHook(() => usePresenceReadings());
+    await act(async () => {
+      await flushConnect();
+    });
+    // No token-less socket (an auth-on server would refuse it): retry instead.
+    expect(MockWebSocket.instances).toHaveLength(0);
+    expect(result.current.status).toBe('reconnecting');
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await flushConnect();
+    });
+    expect(tokenRequest).toHaveBeenCalledTimes(2);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(latest().url).toContain('?token=test-ws-token');
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(snapshot(-55));
+    });
+    expect(result.current.status).toBe('live');
+  });
+
+  it('a failed token request at the 15-minute renewal ends in reconnecting, not denied', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(snapshot(-55));
+    });
+
+    tokenRequest.mockResolvedValueOnce(TOKEN_FAILED);
+    await act(async () => {
+      latest().fireClose(1000);
+      await flushConnect();
+    });
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(result.current.status).toBe('reconnecting');
+    expect(result.current.snapshot?.devices[0].sightings[0].rssi).toBe(-55);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await flushConnect();
+    });
+    expect(MockWebSocket.instances).toHaveLength(2);
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(snapshot(-51));
+    });
+    expect(result.current.status).toBe('live');
+    expect(result.current.snapshot?.devices[0].sightings[0].rssi).toBe(-51);
+  });
+
+  it('connects without a token when the server says none is needed', async () => {
+    // Auth off: the faucet answers successfully with token null. (With auth on
+    // it hands out a token in cookie mode too, so that path is the first test.)
+    tokenRequest.mockResolvedValue({ ok: true, token: null });
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(latest().url).toMatch(/\/ws\/presence-debug$/);
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(snapshot(-55));
+    });
+    expect(result.current.status).toBe('live');
   });
 
   it('reconnects at once and silently after a planned close (session renewal)', async () => {
@@ -359,7 +496,7 @@ describe('usePresenceReadings', () => {
     });
     act(() => {
       latest().fireOpen();
-      latest().fireClose(4001);
+      latest().fireClose(4403);
     });
     expect(result.current.status).toBe('denied');
     expect(result.current.snapshot).toBeNull();

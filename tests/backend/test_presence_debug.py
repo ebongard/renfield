@@ -341,11 +341,17 @@ def _user_with(permissions: list[str]):
     return usr
 
 
-def _assert_refused(ws) -> None:
-    """Refused = closed with the auth code the BROWSER can read (which takes an
+# Confirmed "not an admin" — final for the client.
+FORBIDDEN = 4403
+# "Could not establish who is asking" — refused all the same, but retryable.
+UNVERIFIED = 4001
+
+
+def _assert_refused(ws, code: int) -> None:
+    """Refused = closed with a code the BROWSER can read (which takes an
     accepted handshake), nothing sent, never registered, never served."""
     assert ws.closed_with is not None
-    assert ws.closed_with["code"] == 4001
+    assert ws.closed_with["code"] == code
     assert ws.sent == []
     assert ws.receive_calls == 0
     assert ws not in hub._debug_clients
@@ -388,7 +394,7 @@ class TestSocketGate:
             auth_result={"authenticated": True, "user_id": 2},
             user=_user_with(list(family)),
         )
-        _assert_refused(ws)
+        _assert_refused(ws, FORBIDDEN)
 
     async def test_rooms_manage_alone_is_not_enough(self, monkeypatch):
         ws = await _run_gate(
@@ -396,23 +402,23 @@ class TestSocketGate:
             auth_result={"authenticated": True, "user_id": 2},
             user=_user_with(["rooms.manage", "kiosk.view"]),
         )
-        _assert_refused(ws)
+        _assert_refused(ws, FORBIDDEN)
 
     async def test_unauthenticated_is_refused(self, monkeypatch):
         ws = await _run_gate(monkeypatch, auth_result=None, user=None)
-        _assert_refused(ws)
+        _assert_refused(ws, UNVERIFIED)
 
     async def test_a_token_without_a_user_is_refused(self, monkeypatch):
         ws = await _run_gate(
             monkeypatch, auth_result={"authenticated": True}, user=_user_with(["admin"])
         )
-        _assert_refused(ws)
+        _assert_refused(ws, UNVERIFIED)
 
     async def test_an_unknown_user_is_refused(self, monkeypatch):
         ws = await _run_gate(
             monkeypatch, auth_result={"authenticated": True, "user_id": 9}, user=None
         )
-        _assert_refused(ws)
+        _assert_refused(ws, UNVERIFIED)
 
     async def test_a_lookup_failure_denies(self, monkeypatch):
         monkeypatch.setattr(
@@ -424,7 +430,40 @@ class TestSocketGate:
         )
         ws = _GateWS()
         await handler.presence_debug_live(ws, token="t")
-        _assert_refused(ws)
+        _assert_refused(ws, UNVERIFIED)
+
+    async def test_the_two_refusals_carry_different_codes(self, monkeypatch):
+        """Only a CONFIRMED "not an admin" may be final for the client. A lookup
+        that failed is refused just the same (fail closed) but must stay
+        distinguishable, or one database hiccup locks an admin out until a
+        page reload."""
+        from services.websocket_auth import WSAuthError
+
+        assert (WSAuthError.FORBIDDEN, WSAuthError.UNAUTHORIZED) == (FORBIDDEN, UNVERIFIED)
+        assert FORBIDDEN not in {
+            WSAuthError.UNAUTHORIZED, WSAuthError.TOKEN_EXPIRED,
+            WSAuthError.TOKEN_INVALID, WSAuthError.AUTH_REQUIRED,
+        }
+
+        confirmed = await _run_gate(
+            monkeypatch,
+            auth_result={"authenticated": True, "user_id": 2},
+            user=_user_with(["rooms.read"]),
+        )
+        assert confirmed.closed_with == {
+            "code": FORBIDDEN, "reason": "admin permission required",
+        }
+
+        monkeypatch.setattr(
+            handler, "get_user_by_id", AsyncMock(side_effect=RuntimeError("db down"))
+        )
+        failed = _GateWS()
+        await handler.presence_debug_live(failed, token="t")
+        assert failed.closed_with == {
+            "code": UNVERIFIED, "reason": "could not verify permission",
+        }
+        # Both deny: nothing was sent on either socket.
+        assert confirmed.sent == [] and failed.sent == []
 
     async def test_a_refusal_is_readable_by_a_browser(self, monkeypatch):
         """Closing before accept answers the upgrade with HTTP 403, which a
@@ -653,7 +692,7 @@ class TestSessionLifetime:
 
         second = _IdleWS()
         await asyncio.wait_for(handler.presence_debug_live(second, token="t"), timeout=2)
-        _assert_refused(second)
+        _assert_refused(second, FORBIDDEN)
         assert lookup.await_count == 2
 
 
