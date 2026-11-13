@@ -109,11 +109,30 @@ function foldInternalHealth(list: KioskInternalHealth[] | undefined): InternalHe
   return map;
 }
 
+/** One paired instance as `compute_peer_status` sends it (content-free: names,
+ *  timestamps and state codes only). The four keys at the top are always
+ *  there; the rest are additive and ABSENT when the backend has nothing to say
+ *  -- an older backend, an instance without a label, or the reachability check
+ *  switched off (`FEDERATION_REACHABILITY_ENABLED`). */
 export interface KioskPeer {
-  id: string;
+  /** The pairing's row id. The backend sends a JSON number. */
+  id: string | number;
+  /** The PERSON who paired. */
   name: string;
+  /** Time of the peer's last authenticated request to us. */
   last_seen_at: string | null;
+  /** Probe off: "queried us recently". Probe on: mirrors `reachability`. */
   reachable: boolean;
+  /** The far INSTANCE's label (verified name, else its endpoint host). */
+  instance_name?: string;
+  /** Result of the last signed round trip. Present = the probe is on. */
+  reachability?: 'reachable' | 'unreachable' | 'unknown' | (string & {});
+  /** Machine code behind a non-reachable state; localised by the view. */
+  reachability_reason?: string | null;
+  /** Naive-UTC ISO time of that round trip; null = never / expired. */
+  checked_at?: string | null;
+  /** A real request in either direction within the last few minutes. */
+  recently_active?: boolean;
 }
 
 /** The full folded model the kiosk derives its view from. */

@@ -65,7 +65,12 @@ interface SnapOverrides {
   now_playing?: unknown[];
   mcp?: unknown;
   internal_health?: unknown[];
+  peers?: unknown[];
 }
+
+/** A naive-UTC stamp `minutes` ago, the shape the backend sends. */
+const minutesAgo = (minutes: number): string =>
+  new Date(Date.now() - minutes * 60_000).toISOString().replace('Z', '');
 
 function snapshot(satState: string, over: SnapOverrides = {}) {
   return {
@@ -85,7 +90,7 @@ function snapshot(satState: string, over: SnapOverrides = {}) {
     internal_health: over.internal_health ?? [],
     roles,
     activity: [],
-    peers: [],
+    peers: over.peers ?? [],
     weather: over.weather ?? null,
     now_playing: over.now_playing ?? [],
   };
@@ -306,6 +311,164 @@ describe('KioskPage', () => {
     expect(Math.abs(shown - Date.now())).toBeLessThan(2 * 60_000);
     // Exactly one clock — the tile replaced the former inline readout.
     expect(screen.getAllByTestId('kiosk-clock')).toHaveLength(1);
+  });
+
+  describe('a paired instance has ONE node, on the peers arc', () => {
+    const peerNode = (id: number | string) => document.querySelector(`[data-peer-id="${id}"]`);
+    const lastSocket = () => MockWebSocket.instances[MockWebSocket.instances.length - 1];
+
+    /** The check is ON: the backend sends the verdict of its signed round trip. */
+    const probedPeer = (over: Record<string, unknown> = {}) => ({
+      id: 3,
+      name: 'alex',
+      instance_name: 'Instance B',
+      last_seen_at: null,
+      reachable: true,
+      reachability: 'reachable',
+      reachability_reason: null,
+      checked_at: minutesAgo(1),
+      recently_active: false,
+      ...over,
+    });
+
+    it('labels the node with the instance first and the person second', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      const texts = [...peerNode(3)!.querySelectorAll('text')].map((el) => el.textContent);
+      expect(texts).toEqual(['Instance B', 'alex']);
+    });
+
+    it('shows the person alone for a peer without an instance label', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', {
+        peers: [{ id: 3, name: 'alex', last_seen_at: minutesAgo(1), reachable: true }],
+      }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      const texts = [...peerNode(3)!.querySelectorAll('text')].map((el) => el.textContent);
+      expect(texts).toEqual(['alex']);
+      // The check is off: the old two-valued light, and no reachability tooltip.
+      expect(peerNode(3)!.getAttribute('data-peer-reachability')).toBe('reachable');
+      expect(peerNode(3)!.querySelector('title')).toBeNull();
+    });
+
+    it('keeps the label of a single peer inside the screen', async () => {
+      // One peer sits at the very top of the arc (y = 20 of 1080). A label
+      // ABOVE it is cut off by the screen edge -- and since the peer has no
+      // second node any more, that label is the only place its name appears.
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      for (const text of peerNode(3)!.querySelectorAll('text')) {
+        const baseline = Number(text.getAttribute('y'));
+        const size = Number(text.getAttribute('font-size'));
+        expect(baseline - size).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it.each([
+      ['reachable', null, 'erreichbar'],
+      ['unreachable', 'pin_mismatch', 'nicht erreichbar — Das Zertifikat der Instanz ist nicht mehr das bei der Kopplung gemerkte.'],
+      ['unknown', 'unsupported', 'Erreichbarkeit unbekannt — Die Instanz beantwortet keine Erreichbarkeitsprüfung (ältere Version oder dort abgeschaltet).'],
+      ['unknown', 'not_checked', 'Erreichbarkeit unbekannt — Noch nicht geprüft.'],
+    ])('shows the state %s (%s) on the node and says it in words', async (state, reason, words) => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', {
+        peers: [probedPeer({
+          reachability: state,
+          reachability_reason: reason,
+          reachable: state === 'reachable',
+          checked_at: reason === 'not_checked' ? null : minutesAgo(1),
+        })],
+      }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      expect(peerNode(3)!.getAttribute('data-peer-reachability')).toBe(state);
+      expect(peerNode(3)!.querySelector('title')?.textContent).toBe(words);
+    });
+
+    it('never renders a raw reason code it has no text for', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', {
+        peers: [probedPeer({
+          reachability: 'unreachable', reachability_reason: 'some_future_code', reachable: false,
+        })],
+      }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      expect(peerNode(3)!.querySelector('title')?.textContent).toBe('nicht erreichbar');
+    });
+
+    it('marks a recently active peer, in the tooltip too', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer({ recently_active: true })] }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      expect(peerNode(3)!.getAttribute('data-peer-recent')).toBe('1');
+      expect(peerNode(3)!.querySelector('title')?.textContent).toBe('erreichbar · kürzlich aktiv');
+    });
+
+    it('follows a peer_status_changed delta live', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
+      await waitFor(() =>
+        expect(peerNode(3)?.getAttribute('data-peer-reachability')).toBe('reachable'));
+      act(() => {
+        lastSocket().fireMessage({
+          type: 'peer_status_changed',
+          peers: [probedPeer({
+            reachability: 'unreachable', reachability_reason: 'unreachable', reachable: false,
+          })],
+        });
+      });
+      await waitFor(() =>
+        expect(peerNode(3)?.getAttribute('data-peer-reachability')).toBe('unreachable'));
+    });
+
+    it('lights the ARC node when a turn asked the peer -- and no tool node appears', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      expect(peerNode(3)!.getAttribute('data-peer-active')).toBeNull();
+      const toolNodesBefore = document.querySelectorAll('[data-tool-id]').length;
+
+      act(() => {
+        lastSocket().fireMessage({
+          type: 'turn_activity', role: 'general', subsystems: ['peer_3'], ok: true,
+          at: new Date().toISOString(),
+        });
+      });
+      await waitFor(() => expect(peerNode(3)!.getAttribute('data-peer-active')).toBe('1'));
+      // The pulse did not materialise a `peer_3` node on the tools ring ...
+      expect(document.querySelector('[data-tool-id="peer_3"]')).toBeNull();
+      expect(document.querySelectorAll('[data-tool-id]')).toHaveLength(toolNodesBefore);
+      // ... and the tool-health corner counts what it counted before.
+      expect(screen.getByText('1/2 gesund')).toBeInTheDocument();
+    });
+
+    it('lights only the peer that was asked', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', {
+        peers: [probedPeer(), probedPeer({ id: 31, instance_name: 'Instance C' })],
+      }));
+      await waitFor(() => expect(peerNode(31)).not.toBeNull());
+      act(() => {
+        lastSocket().fireMessage({
+          type: 'turn_activity', role: 'general', subsystems: ['peer_3'], ok: true,
+          at: new Date().toISOString(),
+        });
+      });
+      await waitFor(() => expect(peerNode(3)!.getAttribute('data-peer-active')).toBe('1'));
+      // `peer_3` must not light peer 31 (a prefix is not a match).
+      expect(peerNode(31)!.getAttribute('data-peer-active')).toBeNull();
+    });
+
+    it('counts no peer among the tools', async () => {
+      // The backend leaves a peer's `peer_<id>` server out of `mcp.servers`;
+      // the snapshot below is what it sends for one paired instance.
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
+      await waitFor(() => expect(peerNode(3)).not.toBeNull());
+      expect(screen.getByText('1/2 gesund')).toBeInTheDocument();
+      expect(document.querySelector('[data-tool-id^="peer_"]')).toBeNull();
+    });
   });
 
   it('does not duplicate a synthetic node when a real MCP server owns its id', async () => {

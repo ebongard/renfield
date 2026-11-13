@@ -90,6 +90,25 @@ function healthColor(h: NodeHealth): string {
   if (h === 'off') return C.off; // disabled-by-config: muted, not the red of 'down'
   return C.unknown;
 }
+/** Where a peer's label goes: above the node, instance over person -- unless
+ *  that would leave the viewBox. A single peer sits at the very top of the arc
+ *  (y = CY - R_PEERS = 20), where a label above it is cut off by the screen
+ *  edge; there it stands beside the node instead, on the outer side. */
+function peerLabelAt(x: number, y: number, lines: 1 | 2): {
+  x: number; anchor: 'start' | 'middle' | 'end'; primaryY: number; secondaryY: number;
+} {
+  const secondaryY = y - 18;
+  const primaryY = lines === 2 ? secondaryY - 18 : secondaryY;
+  // 16 = the primary line's font size: its glyphs reach that far above the baseline.
+  if (primaryY - 16 >= 0) return { x, anchor: 'middle', primaryY, secondaryY };
+  const left = x < CX - 4;
+  return {
+    x: left ? x - 20 : x + 20,
+    anchor: left ? 'end' : 'start',
+    primaryY: lines === 2 ? y - 3 : y + 5,
+    secondaryY: y + 15,
+  };
+}
 function anchorFor(x: number): 'start' | 'middle' | 'end' {
   const dx = x - CX;
   if (dx > 4) return 'start';
@@ -401,10 +420,43 @@ export default function KioskConstellation({ kiosk }: Props) {
         {peers.map((peer, i) => {
           const deg = peerAngle(i, peers.length);
           const [x, y] = polar(R_PEERS, deg);
+          // A paired instance has this ONE node; it carries the name, the
+          // reachability and the activity. The state rides two channels (WCAG
+          // 1.4.1 — not colour alone): colour AND the ring's line -- solid =
+          // reachable, dashed = unreachable, dotted and muted = unknown, the
+          // same line language as the tools ring ('down' / 'unknown').
+          const reachable = peer.reachability === 'reachable';
+          const unknown = peer.reachability === 'unknown';
+          const col = reachable ? C.active : unknown ? C.unknown : C.down;
+          // A turn that asked this peer names `peer_<id>` in turn_activity:
+          // the node lights and an expanding ring runs, as on a tool node.
+          const pulse = pulseFor(peer.pulseId);
+          const active = pulse > 0;
+          const ringR = reduced ? 20 : 14 + (1 - pulse) * 16;
+          const label = peerLabelAt(x, y, peer.sublabel ? 2 : 1);
           return (
-            <g key={`peer-${peer.id}`}>
-              <circle cx={x} cy={y} r={9} fill="none" stroke={peer.online ? C.active : C.down} strokeWidth={2.5} strokeDasharray="2 4" filter={peer.online ? 'url(#k-glow)' : undefined} />
-              <text x={x} y={y - 18} textAnchor="middle" fontSize={15} fill={C.dim}>{peer.label}</text>
+            <g key={`peer-${peer.id}`} data-peer-id={peer.id} data-peer-reachability={peer.reachability}
+              data-peer-active={active ? '1' : undefined} data-peer-recent={peer.recentlyActive ? '1' : undefined}>
+              {peer.hint && <title>{peer.hint}</title>}
+              {active && (
+                <circle cx={x} cy={y} r={ringR} fill="none" stroke={C.active}
+                  strokeWidth={2} strokeOpacity={0.28 + 0.55 * pulse}
+                  className={reduced ? undefined : 'k-tool-pulse'} />
+              )}
+              <circle cx={x} cy={y} r={9} fill={active ? C.active : 'none'}
+                stroke={active ? C.active : col} strokeWidth={2.5}
+                strokeOpacity={unknown && !active ? 0.55 : 1}
+                strokeDasharray={reachable ? undefined : unknown ? '1 3' : '3 3'}
+                filter={reachable || active ? 'url(#k-glow)' : undefined} />
+              {/* Recently active (a real request went either way): a filled
+                  centre -- a second fact, independent of the ring around it. */}
+              {peer.recentlyActive && !active && <circle cx={x} cy={y} r={3.5} fill={C.cream} />}
+              <text x={label.x} y={label.primaryY} textAnchor={label.anchor} fontSize={16}
+                fill={active ? '#eafffb' : C.dim} fontWeight={active ? 600 : 400}>{peer.label}</text>
+              {peer.sublabel && (
+                <text x={label.x} y={label.secondaryY} textAnchor={label.anchor} fontSize={13}
+                  fill={C.dim} fillOpacity={0.75}>{peer.sublabel}</text>
+              )}
             </g>
           );
         })}
