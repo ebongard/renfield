@@ -174,11 +174,19 @@ must never be treated as the local owner.
 
 ## 3. Managing & revoking peers
 
-- **List:** `/settings/circles/peers` — shows granted tier + last-seen.
+- **List:** `/settings/circles/peers` — shows granted tier + the time of the
+  peer's last request to us (not a connectivity state). By default an account
+  sees only the pairings it owns, although every local account can USE every
+  active pairing. With `FEDERATION_PEERS_VISIBLE_TO_ALL=true` every account sees
+  all active pairings of the instance, who paired each one, and which reach
+  applies to itself (linked: asks as itself; unlinked: the far side's pairing
+  decides). The granted tier on a row is what THIS instance gives the far side,
+  not what the viewer receives over there.
 - **Re-tier:** change the tier from the peers page.
 - **Revoke:** `DELETE /api/federation/peers/{peer_id}` (or the peers-page
   control) — removes the peer; the other side still holds its record until it
-  revokes too (revocation is per-side).
+  revokes too (revocation is per-side). Owner only; with
+  `FEDERATION_PEERS_VISIBLE_TO_ALL=true` also an account holding `admin`.
 
 ---
 
