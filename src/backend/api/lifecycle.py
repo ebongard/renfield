@@ -314,16 +314,22 @@ def _schedule_kiosk_peer_status_refresh(app):
     ``last_seen_at`` has no push of its own, so a backend timer recomputes
     reachability and streams only actual changes to the wall displays. Diff-gated
     in ``refresh_and_push_peer_status``; skipped when no wall display is connected.
+
+    With ``federation_reachability_enabled`` the same tick first runs a probe
+    round (``services.federation_reachability.probe_due_peers``): a signed ping
+    to each pairing whose stored result is older than the probe interval. That
+    is NOT a free-running poll -- it is gated on a connected wall display like
+    everything else here, so with nobody watching no ping leaves the instance.
     """
     from api.websocket.kiosk_data import _PEER_STATUS_REFRESH_SECONDS
 
     async def _tick():
-        from api.websocket.kiosk_data import refresh_and_push_peer_status
+        from api.websocket.kiosk_data import probe_and_push_peer_status
         from api.websocket.kiosk_handler import _kiosk_clients
 
         if not _kiosk_clients:
             return
-        await refresh_and_push_peer_status()
+        await probe_and_push_peer_status()
 
     _spawn_periodic_task(
         name="Kiosk peer-status refresh",

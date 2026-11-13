@@ -52,10 +52,16 @@ each into the same reducer-held model. Every event is CONTENT-FREE.
     web-chat turn counter, so the core shows "processing" while Renfield handles
     a TYPED turn (voice already drives the core via satellite_state). Snapshot
     carries ``chat_active``.
-  * ``peer_status_changed`` — ``{type, peers:[…]}`` — pushed when federation-peer
-    reachability changes. A backend timer recomputes it (no discrete federation
-    event exists) and diff-pushes; the kiosk peer nodes go green/red live instead
-    of only on reconnect. See ``kiosk_data.refresh_and_push_peer_status``.
+  * ``peer_status_changed`` — ``{type, peers:[…]}`` — pushed when a federation
+    peer's status changes. A backend timer recomputes it (no discrete federation
+    event exists) and diff-pushes; the kiosk peer nodes change live instead of
+    only on reconnect. See ``kiosk_data.compute_peer_status`` for the keys.
+
+A paired instance is shown ONCE, on the peers arc: its ``peer_<id>`` MCP entry
+is left out of ``mcp.servers``, ``tool_health`` and ``mcp.total_tools``
+(``kiosk_data.kiosk_mcp_status``), and no ``tool_health_changed`` is sent for it.
+A turn that used it still names ``peer_<id>`` in ``turn_activity.subsystems`` —
+the frontend lights the arc node with it.
 """
 
 import asyncio
@@ -271,16 +277,23 @@ async def build_kiosk_snapshot(app) -> dict:
     mcp_manager = getattr(app.state, "mcp_manager", None)
     if mcp_manager is not None:
         try:
-            snapshot["mcp"] = mcp_manager.get_status()
+            # Without the paired-peer servers: a peer has one node, on the arc.
+            from api.websocket.kiosk_data import kiosk_mcp_status
+
+            snapshot["mcp"] = kiosk_mcp_status(mcp_manager)
         except Exception as e:
             logger.debug(f"kiosk snapshot: mcp status unavailable: {e}")
 
     # --- Tool-health classification (aggregated, user-id-free) -----------
     try:
+        from api.websocket.kiosk_data import is_peer_tool
         from services.tool_outcome_service import ToolOutcomeService
 
         async with AsyncSessionLocal() as db:
             stats = await ToolOutcomeService(db).list_stats(limit=500)
+        # A paired peer's `query_brain` is not a tool-ring node (see
+        # `kiosk_mcp_status`); its call statistics stay out with it.
+        stats = [st for st in stats if not is_peer_tool(mcp_manager, st.tool_name)]
         # Aggregate the per-(user, tool) rows into a per-tool view, tracking the
         # MOST RECENT activity across users (a tool is "recent" if ANY user
         # exercised it within the window).
@@ -477,10 +490,18 @@ async def kiosk_live(
     # Reset the internal-health diff-gate so the next refresher tick re-pushes the
     # current verdicts — the gate isn't advanced while no kiosk is connected, so
     # it can hold a stale pre-gap value that would otherwise suppress a real delta.
-    from api.websocket.kiosk_data import reset_internal_health_gate, reset_peer_status_gate
+    from api.websocket.kiosk_data import (
+        reset_internal_health_gate,
+        reset_peer_status_gate,
+        schedule_peer_probe_on_connect,
+    )
 
     reset_internal_health_gate()
     reset_peer_status_gate()
+    # Reachability (dark by default): the snapshot above carried the STORED
+    # results; a background probe round now brings a current one. Never awaited
+    # here -- a hanging peer must not delay this display.
+    schedule_peer_probe_on_connect()
     logger.info(f"🖥️ Kiosk display connected ({len(_kiosk_clients)} total)")
 
     try:
