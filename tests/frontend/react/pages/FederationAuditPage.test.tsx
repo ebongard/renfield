@@ -5,10 +5,10 @@
  * expansion, peer filter via query param, and the success/failed/unknown
  * status icons + localized copy.
  */
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import type { AxiosResponse } from 'axios';
-import FederationAuditPage, { basisHelpKey, basisBadgeClass } from '../../../../src/frontend/src/pages/FederationAuditPage';
+import FederationAuditPage, { basisHelpKey, basisBadgeClass, formatDateTime } from '../../../../src/frontend/src/pages/FederationAuditPage';
 import { renderWithRouter } from '../test-utils';
 import i18n from '../../../../src/frontend/src/i18n';
 import apiClient from '../../../../src/frontend/src/utils/axios';
@@ -411,5 +411,64 @@ describe('FederationAuditPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/Verlauf konnte nicht geladen werden/i)).toBeInTheDocument();
     });
+  });
+});
+
+// `initiated_at` arrives as naive UTC. The zone is pinned through
+// `process.env.TZ` (vitest `pool: 'forks'` = a real Node process per file,
+// which re-reads TZ on assignment).
+describe('FederationAuditPage — naive UTC timestamps', () => {
+  const originalTz = process.env.TZ;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    process.env.TZ = 'Europe/Berlin';
+    await i18n.changeLanguage('de');
+  });
+
+  afterEach(() => {
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  it('formats a zone-less timestamp as UTC, shown in local time', () => {
+    expect(new Date('2026-07-17T10:30:00Z').getHours()).toBe(12); // zone is pinned
+    expect(formatDateTime('2026-07-17T10:30:00.123456', 'de')).toBe('17.07.26, 12:30');
+    // Just before UTC midnight is already the next local day.
+    expect(formatDateTime('2026-07-17T23:30:00', 'de')).toBe('18.07.26, 01:30');
+  });
+
+  it('leaves a timestamp with a zone designator alone and keeps the fallbacks', () => {
+    expect(formatDateTime('2026-07-17T10:30:00Z', 'de')).toBe('17.07.26, 12:30');
+    expect(formatDateTime(undefined, 'de')).toBe('');
+    expect(formatDateTime('not-a-date', 'de')).toBe('not-a-date');
+  });
+
+  it('the row shows the access in local time', async () => {
+    mockAuditResponse({
+      entries: [
+        {
+          id: '1',
+          peer_pubkey: MOM_PUBKEY,
+          peer_display_name: 'Mom',
+          query_text: 'Wann ist Omas Geburtstag?',
+          initiated_at: '2026-07-17T10:30:00',
+          finalized_at: '2026-07-17T10:30:03',
+          final_status: 'success',
+          verified_signature: true,
+          answer_excerpt: 'Am 14. Juni.',
+        },
+      ],
+      limit: 50,
+      offset: 0,
+      peer_pubkey: null,
+    });
+
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+
+    await waitFor(() => {
+      expect(screen.getByText(/17\.07\.26, 12:30/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/10:30/)).not.toBeInTheDocument();
   });
 });

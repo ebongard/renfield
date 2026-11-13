@@ -17,6 +17,7 @@ import {
   type IdentityLink,
 } from '../api/resources/federation';
 import { extractApiError } from '../utils/axios';
+import { formatDate, toLocalDate } from '../utils/datetime';
 
 export default function CirclesPeersPage() {
   const { t } = useTranslation();
@@ -52,7 +53,8 @@ export default function CirclesPeersPage() {
   const formatRelative = (iso?: string | null): string => {
     if (!iso) return t('circles.peerNeverSeen');
     try {
-      const when = new Date(iso);
+      const when = toLocalDate(iso);
+      if (!when) return iso;
       const diff = Date.now() - when.getTime();
       const minutes = Math.floor(diff / 60000);
       if (minutes < 1) return t('circles.peerJustNow');
@@ -239,7 +241,7 @@ export default function CirclesPeersPage() {
                   </span>
                   <div className="text-xs text-gray-500 dark:text-gray-400">
                     {t('circles.linkCreatedAt', {
-                      date: link.created_at ? new Date(link.created_at).toLocaleDateString() : '—',
+                      date: formatDate(link.created_at) || '—',
                     })}
                   </div>
                 </div>
