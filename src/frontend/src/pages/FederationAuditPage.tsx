@@ -18,6 +18,7 @@ import {
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import { useFederationAuditQuery, type AuditStatus } from '../api/resources/federation';
+import { formatDateTime as formatUtcDateTime, toLocalDate } from '../utils/datetime';
 
 interface StatusIconProps {
   status: AuditStatus;
@@ -78,17 +79,17 @@ function StatusIcon({ status, verified }: StatusIconProps) {
   return <HelpCircle className="w-4 h-4 text-gray-400 dark:text-gray-500" aria-hidden="true" />;
 }
 
-function formatDateTime(iso: string | undefined, lang: string): string {
+// Exported for the test. The backend sends naive UTC (no zone designator);
+// `utils/datetime` reads it as UTC, where `new Date(iso)` would read it as
+// local time and show every access off by the viewer's UTC offset.
+export function formatDateTime(iso: string | undefined, lang: string): string {
   if (!iso) return '';
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString(lang === 'de' ? 'de-DE' : 'en-US', {
+  return (
+    formatUtcDateTime(iso, lang === 'de' ? 'de-DE' : 'en-US', {
       dateStyle: 'short',
       timeStyle: 'short',
-    });
-  } catch {
-    return iso;
-  }
+    }) || iso
+  );
 }
 
 function formatRelativeDuration(
@@ -97,17 +98,14 @@ function formatRelativeDuration(
   t: TFunction,
 ): string | null {
   if (!startIso || !endIso) return null;
-  try {
-    const start = new Date(startIso).getTime();
-    const end = new Date(endIso).getTime();
-    const deltaMs = end - start;
-    if (deltaMs < 0) return null;
-    if (deltaMs < 1000) return t('federationAudit.durationSubSecond');
-    if (deltaMs < 60000) return t('federationAudit.durationSeconds', { n: Math.round(deltaMs / 1000) });
-    return t('federationAudit.durationMinutes', { n: Math.round(deltaMs / 60000) });
-  } catch {
-    return null;
-  }
+  const start = toLocalDate(startIso);
+  const end = toLocalDate(endIso);
+  if (!start || !end) return null;
+  const deltaMs = end.getTime() - start.getTime();
+  if (deltaMs < 0) return null;
+  if (deltaMs < 1000) return t('federationAudit.durationSubSecond');
+  if (deltaMs < 60000) return t('federationAudit.durationSeconds', { n: Math.round(deltaMs / 1000) });
+  return t('federationAudit.durationMinutes', { n: Math.round(deltaMs / 60000) });
 }
 
 export default function FederationAuditPage() {

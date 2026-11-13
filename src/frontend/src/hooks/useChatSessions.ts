@@ -1,4 +1,5 @@
 import type { Conversation, GroupedConversations } from '../types/chat';
+import { toLocalDate } from '../utils/datetime';
 
 export { useChatSessions } from '../api/resources/chatSessions';
 export { useChatSessions as default } from '../api/resources/chatSessions';
@@ -22,9 +23,13 @@ export function groupConversationsByDate(conversations: Conversation[]): Grouped
   };
 
   conversations.forEach((conv) => {
-    const convDate = new Date(conv.updated_at || conv.created_at);
+    // Naive UTC from the backend: `new Date()` would read it as local time and
+    // put a chat from just after local midnight into the wrong group.
+    const convDate = toLocalDate(conv.updated_at || conv.created_at);
 
-    if (convDate >= today) {
+    if (!convDate) {
+      groups.older.push(conv);
+    } else if (convDate >= today) {
       groups.today.push(conv);
     } else if (convDate >= yesterday) {
       groups.yesterday.push(conv);

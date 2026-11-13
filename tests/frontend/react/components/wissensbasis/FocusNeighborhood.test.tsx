@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 
 import { FocusNeighborhood } from '../../../../../src/frontend/src/components/wissensbasis/FocusNeighborhood';
@@ -167,5 +167,33 @@ describe('FocusNeighborhood', () => {
       </WissensbasisProvider>,
     );
     expect(screen.getByText(/"name":"To Do"/)).toBeInTheDocument();
+  });
+});
+
+describe('FocusNeighborhood — observed value age from a zone-less timestamp', () => {
+  const originalTz = process.env.TZ;
+
+  afterEach(() => {
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  it('reads a naive timestamp as UTC, so 30 minutes ago stays 30 minutes', () => {
+    // Read as local time in Berlin, the same value would be 1-2 h older.
+    process.env.TZ = 'Europe/Berlin';
+    const naive = new Date(Date.now() - 30 * 60_000 - 5_000).toISOString().replace('Z', '');
+    renderWithRouter(
+      <WissensbasisProvider>
+        <FocusNeighborhood
+          data={{
+            ...baseData,
+            observed_fields: [
+              { field_path: 'status', value: 'OPEN', fetched_at: naive, source_type: 'release' },
+            ],
+          }}
+        />
+      </WissensbasisProvider>,
+    );
+    expect(screen.getByText(/vor 30 Min/)).toBeInTheDocument();
   });
 });

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FileText } from 'lucide-react';
+import { formatDate } from '../utils/datetime';
 import type {
   DocumentDuplicateProposal,
   DuplicateDocBrief,
@@ -28,9 +29,7 @@ export default function DocumentDuplicateCard({ proposal, onApprove, onReject, b
 
   const radioName = `dup-${proposal.id}-survivor`;
   const fmtDate = (iso: string | null) => {
-    if (!iso) return null;
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(i18n.language);
+    return formatDate(iso, i18n.language) || null;
   };
 
   const docCol = (doc: DuplicateDocBrief) => {
