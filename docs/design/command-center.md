@@ -358,3 +358,6 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
 - Consequence for the frontend: NO wall-clock decay of frozen snapshot values; a reconnect re-anchors from a fresh
   snapshot. Federation peers get the live `peer_status_changed` delta (#969, `kiosk_data.py` → `useKioskSocket.ts`);
   the wall-clock freshness backstop (`PEER_OFFLINE_MS` in `useKioskModel.ts`) is kept as a deliberate second guard.
+  A peer also appears on the TOOLS ring, because the backend registers its `query_brain` tool server as
+  `peer_<peer id>` (stable across a rename). The kiosk labels that node with the peer's display name
+  (`toolServerLabel`), not with the id; an unlisted peer falls back to the prettified server name.

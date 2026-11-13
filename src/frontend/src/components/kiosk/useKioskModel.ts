@@ -79,6 +79,27 @@ function prettifyServerName(name: string): string {
     .join(' ');
 }
 
+/** A federation peer's tool server is named `peer_<peer id>` by the backend
+ *  (`FEDERATION_SERVER_PREFIX` in services/peer_mcp_registry.py) so the name
+ *  survives a display-name change. That id means nothing on a wall display. */
+const PEER_SERVER_NAME = /^peer_(\d+)$/;
+
+/** Label for a node on the tools ring. A peer's tool server carries the peer's
+ *  display name; every other server (and a peer the snapshot does not list,
+ *  e.g. one revoked a moment ago) keeps the prettified server name. */
+export function toolServerLabel(
+  name: string,
+  peers: readonly { id: string | number; name: string }[],
+): string {
+  const match = PEER_SERVER_NAME.exec(name);
+  if (match) {
+    // The backend sends the id as a JSON number; `KioskPeer` types it as string.
+    const peerName = peers.find((peer) => String(peer.id) === match[1])?.name.trim();
+    if (peerName) return peerName;
+  }
+  return prettifyServerName(name);
+}
+
 /** The backend emits naive-UTC ISO strings (no zone suffix); anchor them so
  *  Date.parse doesn't read them as LOCAL time. */
 function parseNaiveUtcMs(iso: string): number {
@@ -195,7 +216,7 @@ function buildCommandCenterModel(
         : toolHint;
     return {
       id: server.name,
-      label: prettifyServerName(server.name),
+      label: toolServerLabel(server.name, live.peers),
       health,
       hint: !server.connected
         ? server.last_error || t('kiosk.legend.down')
