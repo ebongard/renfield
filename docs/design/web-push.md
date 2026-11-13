@@ -165,12 +165,9 @@ send fails softly.
 
 ## 8. Rollout (per instance — both run this code)
 
-0. **Before merging: the migration shares its parent with another open PR.** `pc20261111_push_subs`
-   and the tombstone PR's `pc20261111_tombstone_idx` both have `down_revision =
-   "pc20261110_routing_traces"`. Whichever merges SECOND must rebase its `down_revision` onto the
-   first one's revision (and the assertion in its migration test) — not add a merge revision —
-   otherwise Alembic has two heads, `upgrade head` fails and the deploy gate's image-head check
-   breaks. If one is already deployed, query the LIVE head first. The order is the owner's call.
+0. **The migration follows the tombstone index.** `pc20261111_push_subs` has `down_revision =
+   "pc20261111_tombstone_idx"`: both were written against `pc20261110_routing_traces`, the tombstone
+   PR merged first, and this one was re-pointed onto it so that Alembic keeps a single head.
 1. **Migration before the rollout** (`bin/deploy-production.sh … --migrate`). A new pod before the
    migration fails every query on `push_subscriptions`; with the flag off nothing queries it, but the
    deploy gate compares heads regardless.

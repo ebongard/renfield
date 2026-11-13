@@ -674,7 +674,11 @@ async def handle_job_event(
       it — retryable; the retry after the claim lapses delivers.
     - ``duplicate``: already delivered (or refused); the scanner is retrying a lost reply.
     - ``delivered``: appended to the requesting conversation and pushed live.
-    - ``refused``: the conversation belongs to another user — final, not retried.
+    - ``refused``: the conversation belongs to another user — final, not retried,
+      and silent.
+    - ``notified``: the conversation was deleted since the scan started (#1507) —
+      nothing is written and it is never recreated, but the requester gets the
+      content-free ``/ws/user`` event and (voice) the room announcement. Final.
 
     A BUTTON scan (``caller == "button"``) is never recorded: a button press has
     no turn. Only for it, and only when nothing is recorded, the fixed recipient
@@ -704,7 +708,8 @@ async def handle_job_event(
 
     The live side effects — the ``/ws/user`` event and the room announcement —
     are at-most-once: they follow a successful write only, and a delivery found
-    already written does not repeat them.
+    already written does not repeat them. For a DELETED conversation there is no
+    write; there they follow the ``…:reported`` marker, set with ``NX``.
     """
     job_id = event["job_id"]
     status = event["status"]
@@ -745,6 +750,15 @@ async def handle_job_event(
     # Bound once: the message and the log line describe the same outcome and
     # must not read from two sources.
     result = event.get("result") or {}
+    # Bound BEFORE the try: an `except` clause naming it must resolve even when
+    # the failure comes from the duplicate check, ahead of the write.
+    from services.conversation_service import (
+        ConversationDeletedError,
+        ConversationNotOwnedError,
+        ConversationService,
+    )
+
+    conversation_deleted = False
     try:
         # The title is the requester's own (recorded at request time), never the
         # event's — the event is only trusted for WHICH outcome happened.
@@ -758,8 +772,6 @@ async def handle_job_event(
                 await _mark_reported(redis, reported_key, "delivered")
                 logger.info(f"scanner: job {job_id} was already in its conversation")
                 return "duplicate"
-
-            from services.conversation_service import ConversationService
 
             meta = {
                 "scanner_job": {"job_id": job_id, "status": status},
@@ -801,18 +813,38 @@ async def handle_job_event(
             )
             if message is None:
                 raise RuntimeError("message was not saved")
-        except PermissionError:
-            # The conversation belongs to someone else, or was deleted since the
-            # scan started (#1485, `ConversationDeletedError`). Neither changes
-            # on a retry, so this is final: settle it and answer 2xx — a 5xx
-            # would make the scanner hammer a write that can never succeed.
+        except ConversationDeletedError:
+            # The conversation was deleted since the scan started (#1485). It is
+            # never recreated and no message is written, but the person still
+            # learns the outcome over the live channels below (#1507). This
+            # clause must stay ABOVE `ConversationNotOwnedError`, its base class.
+            #
+            # No message means layer 3 has nothing to find, so the marker is the
+            # ONLY record of this delivery: set with NX and NOT best-effort.
+            # Whoever sets it notifies; a delivery that finds it set is a
+            # duplicate. A Redis failure here propagates (5xx) and the scanner's
+            # retry notifies then — late, never twice. One loss remains: if
+            # Redis applied the SET but its reply was lost, the retry finds the
+            # marker and the notice is dropped.
+            if not await redis.set(reported_key, "notified", nx=True, ex=_TTL_SECONDS):
+                return "duplicate"
+            conversation_deleted = True
+        except ConversationNotOwnedError:
+            # NOT the bare `PermissionError`: that is a builtin `OSError`, and an
+            # OS-level permission failure inside the write would settle the job
+            # as a final refusal instead of being retried.
+            #
+            # The conversation belongs to someone else. That does not change on
+            # a retry, so this is final: settle it and answer 2xx — a 5xx would
+            # make the scanner hammer a write that can never succeed. Silent on
+            # purpose: the requester on record is not the conversation's owner.
             logger.warning(
-                f"scanner: job {job_id} refused — conversation owned by another "
-                f"user or deleted"
+                f"scanner: job {job_id} refused — conversation owned by another user"
             )
             await _mark_reported(redis, reported_key, "refused")
             return "refused"
-        await _mark_reported(redis, reported_key, "delivered")
+        else:
+            await _mark_reported(redis, reported_key, "delivered")
     finally:
         # Free OUR claim on every path, a failed write included, so the scanner's
         # next retry can deliver at once. If Redis is gone too, the TTL frees it.
@@ -821,10 +853,20 @@ async def handle_job_event(
     # In auth-off mode the household's sockets live in the broadcast bucket. The
     # session id lets only the tab driving that conversation show the notice.
     target = requester.get("user_id") if settings.auth_enabled else None
+    # `conversation_deleted` tells the consumer not to point at the chat and not
+    # to reload it (#1507); the key is absent on the normal path.
     await publish_user_event(
         redis, target, EVENT_SCAN_JOB_FINISHED, reason=status, session_id=session_id,
+        conversation_deleted=conversation_deleted,
     )
     await _announce_in_origin_room(requester, status, result)
+    if conversation_deleted:
+        logger.warning(
+            f"scanner: job {job_id} ({status})"
+            f"{describe_failure_for_log(status, result)} not written — its conversation "
+            f"was deleted; the requester was notified live only"
+        )
+        return "notified"
     via = " (unattended recipient)" if requester.get("unattended") else ""
     logger.info(
         f"scanner: job {job_id} ({status})"

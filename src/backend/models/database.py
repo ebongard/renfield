@@ -134,15 +134,20 @@ class DeletedConversationSession(Base):
     makes the chat boundary hand out a fresh id instead. Filled by a database
     trigger on ``conversations`` (``services/conversation_tombstones.py``), so
     every delete path counts, the FK cascade of an atom purge included. Holds
-    the random id and a timestamp only -- no owner, no content.
+    the id and a timestamp only -- no owner, no content. The id is random when
+    a browser minted it; a plugin transport may use an external identifier.
+    Rows older than ``CONVERSATION_TOMBSTONE_RETENTION_DAYS`` are pruned by a
+    built-in task; 0 (the default) keeps them forever (#1529).
     """
 
     __tablename__ = "deleted_conversation_sessions"
 
     session_id = Column(String, primary_key=True)
     # UTC without a zone, like `_utcnow`; the trigger writes it explicitly.
+    # Indexed for the retention prune (`pc20261111_tombstone_idx`).
     deleted_at = Column(
         DateTime, nullable=False, server_default=sa_text("timezone('utc', now())"),
+        index=True,
     )
 
 

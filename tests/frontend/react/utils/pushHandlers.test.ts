@@ -23,6 +23,7 @@ import {
 } from '../../../../src/frontend/src/sw/pushProtocol';
 import de from '../../../../src/frontend/src/i18n/locales/de.json';
 import en from '../../../../src/frontend/src/i18n/locales/en.json';
+import fr from '../../../../src/frontend/src/i18n/locales/fr.json';
 import it_ from '../../../../src/frontend/src/i18n/locales/it.json';
 
 const SERVER_PAYLOAD = '{"v":1,"kind":"notification","notification_id":42,"urgency":"critical"}';
@@ -57,9 +58,10 @@ describe('pickLanguage', () => {
   it.each([
     [['it-IT', 'en'], 'it'],
     [['en-GB'], 'en'],
-    [['fr-FR', 'en-US'], 'en'],
+    [['fr-FR', 'en-US'], 'fr'],
+    [['es-ES', 'en-US'], 'en'],
     [['DE'], 'de'],
-    [['fr', 'es'], 'de'],
+    [['pt', 'es'], 'de'],
     [[], 'de'],
     [undefined, 'de'],
   ] as const)('%j -> %s', (languages, expected) => {
@@ -83,8 +85,13 @@ describe('notificationFor', () => {
     expect(shown.options.requireInteraction).toBe(true);
   });
 
+  it('shows the French line to a French browser', () => {
+    const shown = notificationFor({ notificationId: 7, urgency: 'info' }, pickLanguage(['fr-CA']));
+    expect(shown.options.body).toBe(fr.push.generic.body);
+  });
+
   it('has the generic lines in every language', () => {
-    for (const locale of [de, en, it_]) {
+    for (const locale of [de, en, fr, it_]) {
       expect(locale.push.generic.title).toBeTruthy();
       expect(locale.push.generic.body).toBeTruthy();
       expect(locale.push.generic.bodyCritical).toBeTruthy();

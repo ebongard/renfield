@@ -6,14 +6,14 @@ Written by ``POST /api/push/subscribe`` while Web Push is active
 endpoint is the device). New table, no backfill.
 
 Revision ID: pc20261111_push_subs
-Revises: pc20261110_routing_traces
+Revises: pc20261111_tombstone_idx
 Create Date: 2026-11-11
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision: str = "pc20261111_push_subs"
-down_revision: str | None = "pc20261110_routing_traces"
+down_revision: str | None = "pc20261111_tombstone_idx"
 branch_labels: None = None
 depends_on: None = None
 

@@ -293,6 +293,21 @@ describe('KioskPage', () => {
     await waitFor(() => expect(coreState()).toBe('idle'));
   });
 
+  it('places the clock tile on the board, fed by the device clock alone', async () => {
+    renderWithProviders(<KioskPage />);
+    // Not while booting: the tile belongs to the constellation's composition.
+    expect(screen.queryByTestId('kiosk-clock')).toBeNull();
+    await pushSnapshot(snapshot('idle'));
+    const clock = await screen.findByTestId('kiosk-clock');
+    expect(clock.tagName).toBe('TIME');
+    // The snapshot is stamped 2026-07-04; the tile must show the DEVICE's time,
+    // not anything carried by the socket.
+    const shown = new Date(clock.getAttribute('dateTime') ?? '').getTime();
+    expect(Math.abs(shown - Date.now())).toBeLessThan(2 * 60_000);
+    // Exactly one clock — the tile replaced the former inline readout.
+    expect(screen.getAllByTestId('kiosk-clock')).toHaveLength(1);
+  });
+
   it('does not duplicate a synthetic node when a real MCP server owns its id', async () => {
     renderWithProviders(<KioskPage />);
     // an operator adds an output-provider MCP server literally named 'media'

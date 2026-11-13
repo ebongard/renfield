@@ -1678,6 +1678,12 @@
       "unrouted": "Scan abgeschlossen, Ziel noch offen – Details im Chat.",
       "failed": "Scan fehlgeschlagen – Details im Chat.",
       "interrupted": "Scan unterbrochen – Details im Chat."
+    },
+    "scanJobConversationDeleted": {
+      "done": "Scan abgeschlossen – die zugehörige Konversation wurde gelöscht.",
+      "unrouted": "Scan abgeschlossen, Ziel noch offen – die zugehörige Konversation wurde gelöscht.",
+      "failed": "Scan fehlgeschlagen – die zugehörige Konversation wurde gelöscht.",
+      "interrupted": "Scan unterbrochen – die zugehörige Konversation wurde gelöscht."
     }
   },
   "errors": {
@@ -2604,6 +2610,14 @@
     "voicePasswordLabel": "Passwort zur Bestätigung",
     "voicePasswordWhy": "Nur zum Abschalten: eine Sitzung, die älter ist als Ihre Einwilligung, soll sie nicht allein zurücknehmen können.",
     "voiceStateFailed": "Zustand des zweiten Faktors konnte nicht geladen werden",
+    "hapticsTitle": "Haptisches Feedback",
+    "hapticsExplain": "Kurze Vibrationen als Rückmeldung, etwa beim Senden einer Nachricht, beim Schalten eines Geräts oder bei einer eingehenden Benachrichtigung. Die Einstellung gilt nur für dieses Gerät und diesen Browser.",
+    "hapticsStateOn": "Ein — vibriert zur Rückmeldung, sofern das Gerät einen Vibrationsmotor hat",
+    "hapticsStatePaused": "Ein, aber pausiert — „Bewegung reduzieren“ ist aktiv",
+    "hapticsStateOff": "Aus",
+    "hapticsUnsupported": "Dieser Browser bietet keine Vibrationsfunktion (zum Beispiel Safari auf dem iPhone). Die Einstellung steht hier deshalb nicht zur Verfügung.",
+    "hapticsReducedMotion": "Auf diesem Gerät ist „Bewegung reduzieren“ aktiv. Solange das so ist, bleibt die Vibration aus — auch wenn diese Einstellung eingeschaltet ist.",
+    "hapticsNotSaved": "Die Einstellung konnte in diesem Browser nicht gespeichert werden (Speicher gesperrt, etwa im privaten Modus). Das haptische Feedback bleibt aus.",
     "voiceBlocker": {
       "voice_path_off": "Der Sprachweg ist auf dieser Instanz derzeit abgeschaltet. Sie können jetzt einwilligen — die Anforderung greift, sobald er eingeschaltet wird.",
       "recognition_off": "Die Sprecherkennung ist auf dieser Instanz abgeschaltet. Ohne sie könnte die Stimme nie geprüft werden.",

@@ -15,11 +15,12 @@
  */
 import { push as de } from '../i18n/locales/de.json';
 import { push as en } from '../i18n/locales/en.json';
+import { push as fr } from '../i18n/locales/fr.json';
 import { push as it } from '../i18n/locales/it.json';
 import { OPEN_NOTIFICATION_MESSAGE, OPEN_NOTIFICATION_PARAM } from './pushProtocol';
 
 export type PushUrgency = 'critical' | 'info' | 'low';
-export type PushLanguage = 'de' | 'en' | 'it';
+export type PushLanguage = 'de' | 'en' | 'fr' | 'it';
 
 export interface PushPayload {
   notificationId: number | null;
@@ -29,6 +30,7 @@ export interface PushPayload {
 const GENERIC: Record<PushLanguage, { title: string; body: string; bodyCritical: string }> = {
   de: de.generic,
   en: en.generic,
+  fr: fr.generic,
   it: it.generic,
 };
 
@@ -62,7 +64,7 @@ export function parsePushPayload(raw: string | null | undefined): PushPayload {
 export function pickLanguage(languages: readonly string[] | undefined): PushLanguage {
   for (const language of languages ?? []) {
     const base = language.toLowerCase().split('-')[0];
-    if (base === 'de' || base === 'en' || base === 'it') return base;
+    if (base === 'de' || base === 'en' || base === 'fr' || base === 'it') return base;
   }
   return 'de';
 }

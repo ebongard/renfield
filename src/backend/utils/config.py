@@ -188,7 +188,7 @@ class Settings(BaseSettings):
 
     # Language
     default_language: str = "de"
-    supported_languages: str = "de,en,it"  # Comma-separated list of supported languages
+    supported_languages: str = "de,en,it,fr"  # Comma-separated list of supported languages
     whisper_model: str = "base"
     # Recommended overrides via env: WHISPER_MODEL=medium for CPU production,
     # WHISPER_MODEL=large-v3 on GPU hosts (~3 GB VRAM in float16).
@@ -904,6 +904,13 @@ class Settings(BaseSettings):
     # after routing_traces_retention_days.
     routing_traces_enabled: bool = False
     routing_traces_retention_days: int = Field(default=14, ge=1, le=365)
+
+    # Conversation tombstones (#1485, #1529): days a deleted conversation's
+    # session id stays recorded in deleted_conversation_sessions. 0 = keep
+    # forever (no prune, no query). A record guards against a client that still
+    # holds the deleted id; one pruned before that client spoke again lets the
+    # id be reused, so pick a window longer than a tab/device sits unused.
+    conversation_tombstone_retention_days: int = Field(default=0, ge=0, le=3650)
 
     # Trajectory capture (self-learning Phase 2)
     # Captures full agent-turn traces as JSONL-exportable training data

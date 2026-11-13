@@ -36,6 +36,7 @@ from utils.llm_client import (
     use_openai_for_tier,
 )
 from utils.log_safety import error_text_without_content
+from utils.metrics import observe_duration, record_llm_call
 from utils.prompt_safety import neutralize_delimiters
 from utils.token_counter import token_counter
 
@@ -1486,15 +1487,16 @@ class AgentService:
             )
             if typed_format is not None:
                 classification_kwargs["format"] = typed_format
-            raw_response = await asyncio.wait_for(
-                agent_client.chat(
-                    model=agent_model,
-                    messages=[{"role": "user", "content": preselect_prompt}],
-                    options=preselect_options,
-                    **classification_kwargs,
-                ),
-                timeout=settings.agent_preselect_timeout,
-            )
+            with observe_duration(record_llm_call, agent_model, "agent_preselect"):
+                raw_response = await asyncio.wait_for(
+                    agent_client.chat(
+                        model=agent_model,
+                        messages=[{"role": "user", "content": preselect_prompt}],
+                        options=preselect_options,
+                        **classification_kwargs,
+                    ),
+                    timeout=settings.agent_preselect_timeout,
+                )
             response_text = extract_response_content(raw_response) or ""
 
             # Parse JSON array from response
@@ -2412,18 +2414,19 @@ class AgentService:
                 chat_kwargs: dict = dict(classification_kwargs)
                 if use_native_fc and native_fc_tools:
                     chat_kwargs["tools"] = native_fc_tools
-                raw_response = await asyncio.wait_for(
-                    agent_client.chat(
-                        model=agent_model,
-                        messages=[
-                            {"role": "system", "content": json_system_message},
-                            {"role": "user", "content": prompt},
-                        ],
-                        options=llm_options,
-                        **chat_kwargs,
-                    ),
-                    timeout=self.step_timeout,
-                )
+                with observe_duration(record_llm_call, agent_model, "agent_step"):
+                    raw_response = await asyncio.wait_for(
+                        agent_client.chat(
+                            model=agent_model,
+                            messages=[
+                                {"role": "system", "content": json_system_message},
+                                {"role": "user", "content": prompt},
+                            ],
+                            options=llm_options,
+                            **chat_kwargs,
+                        ),
+                        timeout=self.step_timeout,
+                    )
                 if use_native_fc:
                     # Response carries tool_calls or content; parse to the
                     # same {action, parameters, reason} shape the rest of
@@ -2512,18 +2515,19 @@ class AgentService:
                     retry_kwargs: dict = dict(classification_kwargs)
                     if use_native_fc and native_fc_tools:
                         retry_kwargs["tools"] = native_fc_tools
-                    retry_response = await asyncio.wait_for(
-                        agent_client.chat(
-                            model=agent_model,
-                            messages=[
-                                {"role": "system", "content": json_system_message},
-                                {"role": "user", "content": nudge},
-                            ],
-                            options=llm_options_retry,
-                            **retry_kwargs,
-                        ),
-                        timeout=self.step_timeout,
-                    )
+                    with observe_duration(record_llm_call, agent_model, "agent_retry"):
+                        retry_response = await asyncio.wait_for(
+                            agent_client.chat(
+                                model=agent_model,
+                                messages=[
+                                    {"role": "system", "content": json_system_message},
+                                    {"role": "user", "content": nudge},
+                                ],
+                                options=llm_options_retry,
+                                **retry_kwargs,
+                            ),
+                            timeout=self.step_timeout,
+                        )
                     _warn_if_truncated(retry_response, agent_model, "agent_retry", step_num)
                     if use_native_fc:
                         parsed, response_text = self._native_fc_parsed(retry_response)
@@ -3094,18 +3098,19 @@ class AgentService:
         client = agent_client or ollama.client
         try:
             classification_kwargs = get_classification_chat_kwargs(agent_model)
-            raw_response = await asyncio.wait_for(
-                client.chat(
-                    model=agent_model,
-                    messages=[
-                        {"role": "system", "content": summary_system},
-                        {"role": "user", "content": summary_prompt_text},
-                    ],
-                    options=llm_options_summary,
-                    **classification_kwargs,
-                ),
-                timeout=self.step_timeout,
-            )
+            with observe_duration(record_llm_call, agent_model, "agent_summary"):
+                raw_response = await asyncio.wait_for(
+                    client.chat(
+                        model=agent_model,
+                        messages=[
+                            {"role": "system", "content": summary_system},
+                            {"role": "user", "content": summary_prompt_text},
+                        ],
+                        options=llm_options_summary,
+                        **classification_kwargs,
+                    ),
+                    timeout=self.step_timeout,
+                )
             _warn_if_truncated(raw_response, agent_model, "agent_summary")
             summary = (extract_response_content(raw_response) or "").strip()
 

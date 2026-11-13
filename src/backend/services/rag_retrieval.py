@@ -56,6 +56,7 @@ from services.circle_sql import PeerScope, document_chunks_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
 from utils.llm_client import get_embed_client
+from utils.metrics import observe_duration, record_rag_search
 from utils.prompt_safety import neutralize_delimiters
 
 
@@ -130,6 +131,21 @@ class RAGRetrieval:
 
         Returns: list of {chunk, document, similarity}
         """
+        with observe_duration(record_rag_search):
+            return await self._search_pipeline(
+                query, top_k, knowledge_base_id, similarity_threshold, user_id, peer
+            )
+
+    async def _search_pipeline(
+        self,
+        query: str,
+        top_k: int | None,
+        knowledge_base_id: int | None,
+        similarity_threshold: float | None,
+        user_id: int | None,
+        peer: PeerScope | None,
+    ) -> list[dict[str, Any]]:
+        """The body of `search`, which wraps it for timing."""
         top_k = top_k or settings.rag_top_k
         threshold = similarity_threshold or settings.rag_similarity_threshold
 

@@ -186,7 +186,7 @@ Siehe [SATELLITE_CAMERA.md](SATELLITE_CAMERA.md) für Setup und Modellvergleich.
 DEFAULT_LANGUAGE=de
 
 # Unterstützte Sprachen (kommasepariert)
-SUPPORTED_LANGUAGES=de,en,it
+SUPPORTED_LANGUAGES=de,en,it,fr
 
 # Whisper STT Modell
 WHISPER_MODEL=base
@@ -200,7 +200,7 @@ PIPER_DEFAULT_VOICE=de_DE-thorsten-high
 
 **Defaults:**
 - `DEFAULT_LANGUAGE`: `de`
-- `SUPPORTED_LANGUAGES`: `de,en,it`
+- `SUPPORTED_LANGUAGES`: `de,en,it,fr`
 - `WHISPER_MODEL`: `base`
 - `PIPER_VOICES`: `de:de_DE-thorsten-high,en:en_US-amy-medium`
 - `PIPER_DEFAULT_VOICE`: `de_DE-thorsten-high` (Fallback, wenn die Sprache nicht in `PIPER_VOICES` ist)
@@ -242,8 +242,30 @@ Segmente zu `{id}` (Kardinalitätsschutz).
 - `/metrics` Endpoint im Prometheus-Format verfügbar
 - MCP-Health-Heartbeat: `renfield_mcp_health_ticks_total` + `renfield_mcp_health_problem_servers` (#1107)
 - HTTP Request Counter + Latency Histogram
-- WebSocket Connection Gauge
-- LLM Call Duration Histogram
+- `renfield_websocket_connections{type}`: offene WebSocket-Verbindungen je Art
+  (`chat`, `satellite`, `device`, `kiosk`, `user`, `knowledge_graph`,
+  `wakeword`, sonst `other`). Gezählt an EINER Stelle
+  (`utils/metrics.py::WebSocketGaugeMiddleware`): ab dem `accept`, bis der
+  Endpunkt zurückkehrt; ein abgelehnter Handshake zählt nie (#82)
+- `renfield_llm_call_duration_seconds{model,call_type,outcome}`: Dauer der
+  LLM-Aufrufe der Agentenschleife (`agent_preselect`, `agent_step`,
+  `agent_retry`, `agent_summary`; `outcome` = `ok`/`timeout`/`error`). Andere
+  LLM-Aufrufe (Router, Intent, Erinnerungs-Extraktion, RAG-Antwort) werden
+  NICHT gemessen (#82)
+- `renfield_mcp_tool_duration_seconds{server,outcome}`: Dauer der an einen
+  MCP-Server abgesetzten Werkzeugaufrufe. `outcome` folgt dem Gesundheitsurteil:
+  `ok`, `app_error` (der Server hat mit einem Fehlerergebnis geantwortet),
+  `timeout` (das Einzige, was `calls_failing` zählt), `error` (Ausnahme oder
+  tote Sitzung). Abweisungen VOR dem Absetzen (Berechtigung, Validierung,
+  Rate-Limit, nicht verbunden) werden nicht gezählt; die Funktionssonden des
+  Health-Monitors schon. Aufrufe an Föderations-Peers werden bewusst NICHT
+  gemessen (der Peer-Name ist personenbezogen). Bewusst kein `tool`-Label (#82)
+- Die drei Gauges ohne Label (`renfield_mcp_health_problem_servers`,
+  `renfield_memory_active_total`, `renfield_kg_conflation_candidates`) stehen
+  auf `NaN`, bis ihr Lauf im Prozess zum ersten Mal gemessen hat: „nie
+  gemessen" ist keine gemessene Null (#82)
+- `renfield_rag_search_duration_seconds{outcome}`: Dauer einer RAG-Suche
+  (Embedding, Abruf, Rerank, Kontexterweiterung; #82)
 - Agent Steps Histogram
 - `renfield_agent_outcome_total{outcome}`: wie ein Agent-Lauf endete, ein Wert je
   `AgentService.run()` (ein orchestrierter Zug zählt je Teil-Agent). Werte in
@@ -264,6 +286,11 @@ Segmente zu `{id}` (Kardinalitätsschutz).
 - Alle drei mit 0 vorbelegt, damit `increase()` auch das erste Ereignis sieht
 - Circuit Breaker State + Failures
 
+Die WebSocket-, LLM- und MCP-Metriken standen seit 2026-02 in dieser Liste,
+hatten aber bis #82 keinen Aufrufer und blieben leer. Kein Label trägt eine
+Nutzer-, Sitzungs- oder Gerätekennung. Nur der Backend-Prozess exportiert:
+die Worker (Dokumente, Meetings, PDF-Split) haben kein `/metrics`.
+
 **Prometheus Scrape Config:**
 ```yaml
 scrape_configs:
@@ -271,6 +298,11 @@ scrape_configs:
     static_configs:
       - targets: ['renfield-backend:8000']
 ```
+
+**Grafana-Dashboards:** drei Dashboards als JSON samt Provisioning-Datei unter
+`config/monitoring/grafana/`, Anleitung in `config/monitoring/README.md`. Ein
+Grafana oder Prometheus gehört NICHT zum Repository und wird nicht mit
+ausgerollt.
 
 ---
 
@@ -2016,6 +2048,53 @@ ROUTING_TRACES_RETENTION_DAYS=14
 
 ---
 
+### Vermerke gelöschter Konversationen (#1485, #1529)
+
+```bash
+# Wie viele Tage der Vermerk einer gelöschten Sitzungs-ID in
+# deleted_conversation_sessions bleibt (0–3650). 0 = unbegrenzt aufbewahren
+# (Vorgabe): nichts wird gelöscht, die Aufgabe sendet keine Abfrage.
+# N > 0: die Aufgabe „Gelöschte Sitzungskennungen aufräumen" (täglich, nicht
+# beim Start) löscht Vermerke, die ÄLTER als N Tage sind; genau N Tage alte
+# bleiben. Ein negativer Wert verhindert den Start.
+CONVERSATION_TOMBSTONE_RETENTION_DAYS=0
+```
+
+Der Vermerk verhindert, dass unter der ID einer gelöschten Konversation eine
+neue entsteht (#1485). Gelesen wird er unter anderem an zwei Stellen: an der Chat-Grenze, wenn
+ein Tab oder Gerät die anderswo gelöschte Konversation noch zeigt (es erhält
+eine frische ID), und beim Schreiben (`save_message`), wenn ein nachlaufender
+Schreiber die ID noch trägt — ein Scan-Ergebnis, eine Paperless-Rückmeldung.
+
+**Was nach Ablauf gilt:** die ID ist wieder eine unbekannte. Meldet sich ein
+Client erst nach N Tagen unter ihr, entsteht dort eine neue Konversation, die
+dem Absender gehört (Verhalten vor #1485) — bei einer geteilten Konversation
+kann das ein anderer Benutzer sein als der, der gelöscht hat. Das Fenster muss
+deshalb länger sein als die längste Zeit, die ein Tab oder Gerät ungenutzt
+liegt.
+
+**Was der Aufräumlauf schützt:** Zeilen, die das Löschen der Konversation
+überleben und über die Sitzungs-ID an deren Inhaber ausgegeben würden. Solange
+unter der ID noch ein Chat-Anhang (`chat_uploads`), eine offene
+Paperless-Rückfrage oder eine laufende Paperless-Ablage liegt, bleibt der
+Vermerk — auch weit über N Tage hinaus. Indexierte Anhänge räumt niemand ab;
+ihr Vermerk bleibt dauerhaft, die übrigen verschwinden, sobald
+`CHAT_UPLOAD_CLEANUP_ENABLED` die Anhänge entfernt hat. Ohne diesen Schutz kämen
+die Anhänge der gelöschten Konversation mit der ID zurück.
+
+**Was nicht geschützt ist:** Herkunftsangaben der gelöschten Konversation
+(Erinnerungen, Wissensgraph, Episoden, Erinnerungs-Termine) behalten die ID und
+teilen sie nach Ablauf mit der neuen Konversation. Keine Abfrage wählt sie über
+die Sitzungs-ID aus, es wird also nichts ausgegeben; die Zuordnung über die ID
+unterscheidet die beiden Konversationen aber nicht mehr.
+
+Ein Fenster begrenzt das Tabellenwachstum (eine Zeile je Löschung) und die
+Verweildauer von Sitzungs-IDs, die ein Plugin-Transport von außen übernimmt
+(etwa die Kennung eines Chat-Threads). Der Stichtag wird mit der Uhr der
+Datenbank berechnet.
+
+---
+
 ### Trajectory Capture (Self-Learning Phase 2)
 
 ```bash
@@ -3472,7 +3551,7 @@ OLLAMA_MODEL=qwen3:14b
 # Sprache & Voice
 # -----------------------------------------------------------------------------
 DEFAULT_LANGUAGE=de
-SUPPORTED_LANGUAGES=de,en,it
+SUPPORTED_LANGUAGES=de,en,it,fr
 WHISPER_MODEL=base
 PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium
 PIPER_DEFAULT_VOICE=de_DE-thorsten-high  # Fallback for languages not in PIPER_VOICES

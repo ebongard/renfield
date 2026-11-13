@@ -202,4 +202,4 @@ async def test_migration_and_model_describe_the_same_table(schema_conn):
 def test_revision_chain():
     mig = _load_migration()
     assert mig.revision == "pc20261111_push_subs"
-    assert mig.down_revision == "pc20261110_routing_traces"
+    assert mig.down_revision == "pc20261111_tombstone_idx"

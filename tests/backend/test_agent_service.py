@@ -3284,3 +3284,156 @@ class TestABackgroundJobStartsOncePerTurn:
         assert executor.execute.await_count == 2
         results = [s for s in steps if s.step_type == "tool_result"]
         assert [s.success for s in results] == [False, True]
+
+
+# ============================================================================
+# renfield_llm_call_duration_seconds (#82)
+# ============================================================================
+
+
+class TestLlmCallDurationMetric:
+    """The histogram was registered and documented, but nothing recorded it.
+
+    Every LLM call of the agent loop is timed where it is awaited, under the
+    role's model and one of `LLM_CALL_TYPES`.
+    """
+
+    _FAMILY = "renfield_llm_call_duration_seconds"
+    _ANSWER = '{"action": "final_answer", "answer": "Hallo!", "reason": "x"}'
+
+    @staticmethod
+    def _observed(registry) -> dict[tuple[str, str], float]:
+        """(call_type, outcome) -> number of observations."""
+        return {
+            (sample.labels["call_type"], sample.labels["outcome"]): sample.value
+            for metric in registry.collect()
+            if metric.name == TestLlmCallDurationMetric._FAMILY
+            for sample in metric.samples
+            if sample.name.endswith("_count")
+        }
+
+    async def _answer_directly(self):
+        helpers = TestAgentServiceRun()
+        agent = AgentService(helpers._make_registry(), max_steps=5)
+        return await collect_steps(
+            agent, message="Hallo", ollama=helpers._make_ollama_mock([self._ANSWER]),
+            executor=helpers._make_executor_mock(),
+        )
+
+    @pytest.mark.unit
+    async def test_agent_step_is_observed_under_the_role_model(self, monkeypatch):
+        import services.agent_service as agsvc
+        from tests.backend.metrics_registry import label_values, live_metrics
+
+        monkeypatch.setattr(agsvc, "default_agent_model", lambda: "test-agent-model")
+        with live_metrics() as registry:
+            steps = await self._answer_directly()
+
+            assert steps[-1].content == "Hallo!"
+            observed = self._observed(registry)
+            assert observed[("agent_step", "ok")] == 1
+            assert label_values(registry, self._FAMILY, "model") == {"test-agent-model"}
+            assert {call_type for call_type, _ in observed} <= {"agent_step", "agent_preselect"}
+
+    @pytest.mark.unit
+    async def test_step_timeout_is_observed_as_timeout(self):
+        from tests.backend.metrics_registry import live_metrics
+
+        helpers = TestAgentServiceRun()
+
+        async def slow_step(**kwargs):
+            if _is_preselect_call(kwargs):
+                return _preselect_response()
+            await asyncio.sleep(10)
+
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+        ollama.client.chat = slow_step
+        _shared_agent_client.chat = slow_step
+        agent = AgentService(helpers._make_registry(), max_steps=2, step_timeout=0.05)
+
+        with live_metrics() as registry:
+            await collect_steps(
+                agent, message="Timeout", ollama=ollama, executor=helpers._make_executor_mock(),
+            )
+            observed = self._observed(registry)
+
+        assert observed[("agent_step", "timeout")] >= 1
+        assert ("agent_step", "ok") not in observed
+
+    @pytest.mark.unit
+    async def test_a_failing_recorder_does_not_reach_the_turn(self, monkeypatch):
+        import services.agent_service as agsvc
+        from tests.backend.metrics_registry import live_metrics
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("metrics backend exploded")
+
+        monkeypatch.setattr(agsvc, "record_llm_call", boom)
+        with live_metrics():
+            steps = await self._answer_directly()
+
+        assert steps[-1].step_type == "final_answer"
+        assert steps[-1].content == "Hallo!"
+
+    @pytest.mark.unit
+    async def test_disabled_never_calls_the_recorder(self, monkeypatch):
+        import services.agent_service as agsvc
+        import utils.metrics as metrics_module
+
+        assert metrics_module._metrics_initialized is False
+        record = MagicMock()
+        monkeypatch.setattr(agsvc, "record_llm_call", record)
+
+        steps = await self._answer_directly()
+
+        assert steps[-1].content == "Hallo!"
+        record.assert_not_called()
+
+    @pytest.mark.unit
+    def test_every_chat_call_of_the_agent_loop_is_timed(self):
+        """Structure, on the syntax tree: each `.chat(...)` call in
+        agent_service.py sits inside `with observe_duration(record_llm_call,
+        agent_model, "<call type>")`, and the call types used are exactly
+        `LLM_CALL_TYPES`. A new, untimed LLM call fails here."""
+        import ast
+        from pathlib import Path
+
+        import utils.metrics as metrics_module
+
+        source = Path(__file__).resolve().parents[2] / "src/backend/services/agent_service.py"
+        tree = ast.parse(source.read_text())
+
+        def timer_call_type(with_node: ast.With) -> str | None:
+            for item in with_node.items:
+                call = item.context_expr
+                if (
+                    isinstance(call, ast.Call)
+                    and getattr(call.func, "id", None) == "observe_duration"
+                    and len(call.args) == 3
+                    and getattr(call.args[0], "id", None) == "record_llm_call"
+                    and getattr(call.args[1], "id", None) == "agent_model"
+                    and isinstance(call.args[2], ast.Constant)
+                ):
+                    return call.args[2].value
+            return None
+
+        def chat_calls(node: ast.AST) -> list[ast.Call]:
+            return [
+                n for n in ast.walk(node)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "chat"
+            ]
+
+        timed: dict[int, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.With) and (call_type := timer_call_type(node)):
+                for call in chat_calls(node):
+                    timed[id(call)] = call_type
+
+        every_chat = chat_calls(tree)
+        assert len(every_chat) >= 4, "the scan lost the agent loop's chat calls"
+        untimed = [call.lineno for call in every_chat if id(call) not in timed]
+        assert untimed == [], f"untimed LLM calls at lines {untimed}"
+        assert sorted(timed.values()) == sorted(metrics_module.LLM_CALL_TYPES)

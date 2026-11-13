@@ -1165,6 +1165,27 @@ class MCPServerState:
         return (failures / n) >= settings.mcp_health_call_fail_ratio
 
 
+def _observe_tool_call(server: str, started: float, outcome: str) -> None:
+    """Report one dispatched tool call to the metrics. Never raises.
+
+    Called on the same exits that do the health accounting, by `execute_tool`
+    and the streaming path alike. A cancelled call reports nothing, as it
+    records nothing: the caller gave up, the server did nothing wrong.
+    """
+    try:
+        from utils.metrics import record_mcp_tool_call
+
+        record_mcp_tool_call(server, time.monotonic() - started, outcome)
+    except Exception as e:
+        logger.warning(f"Could not record MCP tool call metric: {e!r}")
+
+
+def _result_outcome(final: dict) -> str:
+    """Metric outcome of a call the server ANSWERED: an error result is an
+    application outcome (`app_error`), not a failed call."""
+    return "ok" if final.get("success") else "app_error"
+
+
 def _substitute_env_vars(value: str) -> str:
     """
     Replace ${VAR} and ${VAR:-default} patterns with environment variable values.
@@ -2590,12 +2611,14 @@ class MCPManager:
         # session over a malformed argument.
         result = None
         last_exc: BaseException | None = None
+        call_started = time.monotonic()
         for attempt in range(2):
             try:
                 result = await _do_call()
                 last_exc = None
                 break
             except TimeoutError:
+                _observe_tool_call(tool_info.server_name, call_started, "timeout")
                 return self._call_timed_out(state, namespaced_name)
             except Exception as e:
                 last_exc = e
@@ -2627,13 +2650,16 @@ class MCPManager:
             # a session death that already flipped connected=False (→ "down" via
             # connectivity). Counting it would flag a healthy server whose tool just
             # errored. Only timeouts + genuine successes drive calls_failing.
+            _observe_tool_call(tool_info.server_name, call_started, "error")
             return {
                 "success": False,
                 "message": f"Tool-Aufruf fehlgeschlagen: {last_exc}",
                 "data": None,
             }
 
-        return self._call_result(state, tool_info, result, truncate=truncate)
+        final = self._call_result(state, tool_info, result, truncate=truncate)
+        _observe_tool_call(tool_info.server_name, call_started, _result_outcome(final))
+        return final
 
     async def execute_tool_streaming(
         self,
@@ -3020,6 +3046,7 @@ class MCPManager:
             with state.track_call(effective_timeout):
                 return await asyncio.wait_for(call_coro, timeout=effective_timeout)
 
+        call_started = time.monotonic()
         call_task = asyncio.create_task(_run())
 
         # === Drain progress chunks while task runs ===
@@ -3053,6 +3080,7 @@ class MCPManager:
             result = await call_task
         except TimeoutError:
             # Also after partial progress: the call never finished.
+            _observe_tool_call(tool_info.server_name, call_started, "timeout")
             yield self._call_timed_out(state, namespaced_name)
             return
         except Exception as e:
@@ -3064,6 +3092,7 @@ class MCPManager:
                 state.last_error = str(e)
             else:
                 self._call_app_error(state, tool_info, e)
+            _observe_tool_call(tool_info.server_name, call_started, "error")
             yield {
                 "success": False,
                 "message": f"Tool-Aufruf fehlgeschlagen: {e}",
@@ -3071,7 +3100,9 @@ class MCPManager:
             }
             return
 
-        yield self._call_result(state, tool_info, result)
+        final = self._call_result(state, tool_info, result)
+        _observe_tool_call(tool_info.server_name, call_started, _result_outcome(final))
+        yield final
 
     def get_all_tools(self) -> list[MCPToolInfo]:
         """Return all discovered MCP tools."""

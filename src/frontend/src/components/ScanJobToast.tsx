@@ -4,6 +4,7 @@ import { ScanLine, X } from 'lucide-react';
 
 import { SCAN_JOB_FINISHED_EVENT, type ScanJobFinishedDetail } from '../hooks/useUserEvents';
 import { isTabConversation } from '../utils/tabConversations';
+import { haptic } from '../utils/haptics';
 
 /**
  * Live notice that a background scan the user started has finished.
@@ -19,6 +20,9 @@ import { isTabConversation } from '../utils/tabConversations';
  * them reads as a scan nobody there asked for; the other tabs still refresh the
  * conversation list quietly. A voice request has no tab — it is answered in its
  * room. An event without a conversation (older backend) shows, as before.
+ *
+ * When the conversation was deleted while the scan ran, nothing was written
+ * into it: the notice then says so instead of pointing at a chat that is gone.
  *
  * Deliberately standalone, not NotificationToast: that one is the device-WS queue
  * with server acks, and it is presence-gated for personal notices, which would hide
@@ -39,12 +43,16 @@ function toOutcome(reason: unknown): Outcome | null {
 export default function ScanJobToast() {
   const { t } = useTranslation();
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [conversationDeleted, setConversationDeleted] = useState(false);
 
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<ScanJobFinishedDetail>).detail;
       if (detail?.sessionId && !isTabConversation(detail.sessionId)) return;
-      setOutcome(toOutcome(detail?.reason));
+      setConversationDeleted(detail?.conversationDeleted === true);
+      const next = toOutcome(detail?.reason);
+      if (next === 'failed') haptic('error');
+      setOutcome(next);
     };
     window.addEventListener(SCAN_JOB_FINISHED_EVENT, handler);
     return () => window.removeEventListener(SCAN_JOB_FINISHED_EVENT, handler);
@@ -67,7 +75,11 @@ export default function ScanJobToast() {
       <div className="flex items-center justify-between gap-4">
         <span className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-100">
           <ScanLine className="w-4 h-4 shrink-0 text-gray-500 dark:text-gray-400" aria-hidden="true" />
-          {t(`notifications.scanJob.${outcome}`)}
+          {t(
+            conversationDeleted
+              ? `notifications.scanJobConversationDeleted.${outcome}`
+              : `notifications.scanJob.${outcome}`,
+          )}
         </span>
         <button
           type="button"

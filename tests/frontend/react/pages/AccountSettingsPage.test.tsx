@@ -89,6 +89,14 @@ describe('AccountSettingsPage', () => {
     expect(await screen.findByText('Aus — Ihr Passwort genügt')).toBeInTheDocument();
   });
 
+  it('carries the per-device haptic feedback switch, off by default (#84)', async () => {
+    asUser(false);
+    renderWithProviders(<AccountSettingsPage />);
+    expect(
+      await screen.findByRole('switch', { name: 'Haptisches Feedback' }),
+    ).toHaveAttribute('aria-checked', 'false');
+  });
+
   it('the person can consent for themselves', async () => {
     asUser(false);
     const calls = captureToggle();

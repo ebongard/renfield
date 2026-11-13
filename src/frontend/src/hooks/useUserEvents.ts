@@ -31,12 +31,16 @@ const INVALIDATE_DEBOUNCE_MS = 1000; // collapse a burst of events into one refe
  * job status (done | unrouted | failed | interrupted) — never document identity.
  * `detail.sessionId` names the conversation the outcome was written into, so only
  * the tab driving it reacts visibly (absent from an older backend).
+ * `detail.conversationDeleted` is set when that conversation was deleted while
+ * the scan ran: nothing was written, so listeners must neither point at the chat
+ * nor reload it. Absent on every other event.
  */
 export const SCAN_JOB_FINISHED_EVENT = 'renfield-scan-job-finished';
 
 export interface ScanJobFinishedDetail {
   reason?: string;
   sessionId?: string;
+  conversationDeleted?: true;
 }
 
 interface UseUserEventsOptions {
@@ -79,10 +83,16 @@ export function useUserEvents({ enabled }: UseUserEventsOptions): void {
 
     const handleEvent = (payload: unknown) => {
       if (!payload || typeof payload !== 'object') return;
-      const { type, reason, session_id: sessionId } = payload as {
+      const {
+        type,
+        reason,
+        session_id: sessionId,
+        conversation_deleted: conversationDeleted,
+      } = payload as {
         type?: string;
         reason?: string;
         session_id?: unknown;
+        conversation_deleted?: unknown;
       };
       if (type === 'documents_changed') {
         invalidateDocumentsSoon();
@@ -90,6 +100,8 @@ export function useUserEvents({ enabled }: UseUserEventsOptions): void {
         const detail: ScanJobFinishedDetail = {
           reason,
           ...(typeof sessionId === 'string' && sessionId ? { sessionId } : {}),
+          // Strictly `true`: anything else from the wire reads as "not deleted".
+          ...(conversationDeleted === true ? { conversationDeleted: true as const } : {}),
         };
         window.dispatchEvent(new CustomEvent(SCAN_JOB_FINISHED_EVENT, { detail }));
         // The conversation list shows a preview + message count that just changed.
