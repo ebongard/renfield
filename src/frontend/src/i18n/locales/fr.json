@@ -1634,7 +1634,17 @@
       "needs": "il faut ≥ {{value}} dBm pour prendre le relais (il manque {{missing}} dB)",
       "marginMet": "seuil de {{value}} dBm atteint – prend le relais à la prochaine mesure",
       "noRooms": "Pas encore de valeurs lissées.",
-      "filterDisabled": "Le filtre RSSI est désactivé. Le choix de la pièce suit l'ancien décompte de mesures consécutives, il n'existe pas de valeurs lissées."
+      "filterDisabled": "Le filtre RSSI est désactivé. Le choix de la pièce suit l'ancien décompte de mesures consécutives, il n'existe pas de valeurs lissées.",
+      "statusDenied": "Accès refusé",
+      "deniedTitle": "Pas d'accès aux mesures",
+      "deniedText": "Le serveur a refusé la connexion. Les mesures sont réservées aux administrateurs et la session doit être valide. Veuillez vous reconnecter ou faire vérifier le rôle.",
+      "heldByVoice": "maintenu par la voix, encore {{seconds}} s",
+      "heldGuess": "supposition maintenue",
+      "voicePinned": "pièce issue d'une détection vocale",
+      "holdBlocks": "seuil de {{value}} dBm atteint, mais le maintien vocal bloque le changement pendant encore {{seconds}} s",
+      "pinnedNoReading": "{{room}} provient d'une détection par la voix ou par connexion, l'appareil n'y a pas été détecté. Une autre pièce ne prend donc le relais qu'à partir de {{value}} dBm (seuil plus marge de libération).",
+      "legendHold": "Après une détection par la voix ou par connexion, la pièce reste fixée pendant {{hold}} s, quoi que signale le Bluetooth.",
+      "legendRelease": "Si l'appareil n'a jamais été détecté dans cette pièce, une autre pièce doit ensuite atteindre au moins {{value}} dBm."
     },
     "heatmapTitle": "Carte de chaleur de l'activité par pièce",
     "heatmapDescription": "Fréquence d'entrée dans chaque pièce selon l'heure de la journée (heure locale). Plus foncé = plus fréquent.",

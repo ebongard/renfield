@@ -184,6 +184,29 @@ value with the threshold a challenger needs (`current + PRESENCE_SWITCH_ENTER_MA
 - **Gate:** ADMIN on both, fail-closed (a permission lookup error refuses the
   socket). The payload is every tracked person's movement trace; the device
   `key` stays a redacted hash, never the raw MAC or the IRK label.
+- **A refusal is readable:** the handler accepts the handshake and then closes
+  with 4001. Closing before `accept` answers the upgrade with HTTP 403, which a
+  browser reports as 1006 — the page could not tell "denied" from "network
+  down". The hook shows "no access", drops any snapshot it holds and stops
+  retrying (codes 4001–4004).
+- **Maximum socket lifetime** (`MAX_SESSION_SECONDS`, 15 min): the ADMIN check
+  runs at the handshake only, and this stream is personal data. The server
+  closes normally (1000); the hook reconnects at once, without a status change
+  or backoff growth, and the new handshake checks the role again. A normal
+  close from a socket that never delivered a snapshot counts as a drop
+  (ordinary backoff), so it cannot drive a reconnect loop.
+- **A dropped viewer is closed** (1011), not merely unregistered — otherwise the
+  tab would sit on an open, silent socket showing "Live" with frozen numbers.
+- **Voice hold / pin** (see "Voice hold" and "After the hold" below): per device
+  `voice_hold_remaining_s`, `voice_pinned`, `location_uncertain`
+  (`PresenceService.is_location_uncertain`, not a copy of its rule); in
+  `settings` `voice_hold_s` and `voice_release_margin_db`. The view shows "held
+  by voice for N s" (a challenger that has met the margin then reads "blocked by
+  the hold", never "takes over"), "held guess", and — for a pinned room the
+  device was never heard in — the threshold `floor + release margin` instead of
+  the enter margin, mirroring `_should_switch_filtered`.
+- **Screen readers:** only the connection status is a live region; the "as of"
+  time changes every second and stays outside it.
 - **Limits:** sightings live in the memory of the pod that holds the satellite
   sockets, so the view shows that pod's state (same as the REST route). A device
   that fell silent keeps its last readings until the next report for it prunes

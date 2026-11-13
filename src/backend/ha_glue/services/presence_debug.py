@@ -39,8 +39,14 @@ _SEND_TIMEOUT_SECONDS = 5.0
 # Connected diagnostic viewers (admin tabs). Empty in normal operation.
 _debug_clients: set[WebSocket] = set()
 
+# Close code for a viewer the hub drops (send failed or stalled). The client
+# reads any abnormal close as "reconnect and re-hydrate".
+_DROP_CLOSE_CODE = 1011
+
 _dirty = False
 _flush_task: "asyncio.Task | None" = None
+# Strong references to fire-and-forget close tasks (the loop keeps only weak ones).
+_close_tasks: "set[asyncio.Task]" = set()
 _last_push_monotonic = 0.0
 
 
@@ -60,6 +66,11 @@ def _decision_settings() -> dict[str, Any]:
         "rssi_floor_dbm": ha_glue_settings.presence_rssi_threshold,
         "switch_enter_margin_db": ha_glue_settings.presence_switch_enter_margin_db,
         "stale_timeout_s": ha_glue_settings.presence_stale_timeout,
+        # Voice hold: seconds a voice/auth sighting pins the room against BLE
+        # (0 = off). Release margin: dB above the floor a room needs to take a
+        # user out of a voice/auth room the phone was never heard in (0 = off).
+        "voice_hold_s": ha_glue_settings.presence_voice_hold_seconds,
+        "voice_release_margin_db": ha_glue_settings.presence_voice_release_margin_db,
         # False = legacy scan-count hysteresis: no filtered values, no margin.
         "rssi_filter_enabled": bool(ha_glue_settings.presence_rssi_filter_enabled),
     }
@@ -79,6 +90,28 @@ def _connected_satellites() -> list[dict[str, Any]]:
     except Exception as e:
         logger.debug(f"presence debug: satellite roster unavailable: {e}")
         return []
+
+
+def _voice_state(presence, cur, now: float) -> dict[str, Any]:
+    """How a voice/auth sighting currently shapes the placement — without it the
+    readings would seem to contradict the room the system reports.
+
+    ``voice_hold_remaining_s``: seconds BLE still cannot move the user (null
+    when no hold is running). ``voice_pinned``: the room rests on a voice/auth
+    sighting BLE has not replaced yet. ``location_uncertain``: that room is a
+    held guess (``PresenceService.is_location_uncertain``)."""
+    if cur is None or cur.room_id is None:
+        return {
+            "voice_hold_remaining_s": None,
+            "voice_pinned": False,
+            "location_uncertain": False,
+        }
+    remaining = cur.voice_hold_until - now
+    return {
+        "voice_hold_remaining_s": round(remaining, 1) if remaining > 0 else None,
+        "voice_pinned": bool(cur.voice_pinned),
+        "location_uncertain": presence.is_location_uncertain(cur.user_id, now),
+    }
 
 
 def build_sightings_payload(presence) -> dict[str, Any]:
@@ -113,6 +146,7 @@ def build_sightings_payload(presence) -> dict[str, Any]:
             "current_room_id": cur.room_id if cur else None,
             "current_room_name": cur.room_name if cur else None,
             "current_confidence": round(cur.confidence, 3) if cur else None,
+            **_voice_state(presence, cur, now),
             "filtered_by_room": {
                 (presence._room_names.get(rid, str(rid))): round(v, 2)
                 for rid, v in filtered.items()
@@ -185,6 +219,28 @@ def note_ble_report() -> None:
         logger.debug(f"presence debug: could not schedule push: {e}")
 
 
+async def _close_quietly(ws: WebSocket) -> None:
+    try:
+        await asyncio.wait_for(ws.close(code=_DROP_CLOSE_CODE), timeout=_SEND_TIMEOUT_SECONDS)
+    except Exception as e:
+        logger.debug(f"presence debug: closing a dropped viewer failed: {e}")
+
+
+def _drop_viewer(ws: WebSocket) -> None:
+    """Take a viewer whose send failed or stalled out of the registry AND close
+    its socket. Unregistering alone would leave the handler parked in
+    ``receive_text`` and the browser on an open, silent socket — "Live" forever
+    with frozen numbers. The close makes the client reconnect and re-hydrate.
+    Fire-and-forget: a stalled peer must not hold up the flush loop."""
+    _debug_clients.discard(ws)
+    try:
+        task = asyncio.get_running_loop().create_task(_close_quietly(ws))
+        _close_tasks.add(task)
+        task.add_done_callback(_close_tasks.discard)
+    except Exception as e:
+        logger.debug(f"presence debug: could not schedule viewer close: {e}")
+
+
 async def _send_one(ws: WebSocket, message: dict[str, Any]) -> None:
     await asyncio.wait_for(ws.send_json(message), timeout=_SEND_TIMEOUT_SECONDS)
 
@@ -211,7 +267,7 @@ async def _flush() -> None:
             )
             for ws, result in zip(clients, results, strict=True):
                 if isinstance(result, Exception):
-                    _debug_clients.discard(ws)
+                    _drop_viewer(ws)
         except Exception as e:
             logger.debug(f"presence debug: push failed: {e}")
         _last_push_monotonic = time.monotonic()

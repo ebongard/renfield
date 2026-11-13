@@ -27,6 +27,11 @@ export interface PresenceReadingSettings {
   stale_timeout_s: number;
   /** False = legacy scan-count hysteresis: no filtered values, no margin. */
   rssi_filter_enabled: boolean;
+  /** Seconds a voice/auth sighting pins the room against BLE (0 = off). */
+  voice_hold_s: number;
+  /** dB above the floor a room needs to take a user out of a voice/auth room
+   *  the phone was never heard in (0 = off). */
+  voice_release_margin_db: number;
 }
 
 export interface PresenceReadingSatellite {
@@ -60,6 +65,12 @@ export interface PresenceReadingDevice {
   current_room_id: number | null;
   current_room_name: string | null;
   current_confidence: number | null;
+  /** Seconds BLE still cannot move the user; null when no hold is running. */
+  voice_hold_remaining_s: number | null;
+  /** The room rests on a voice/auth sighting BLE has not replaced yet. */
+  voice_pinned: boolean;
+  /** The room is a held guess: nothing has placed the user there for a while. */
+  location_uncertain: boolean;
   filtered_rooms: PresenceFilteredRoom[];
   sightings: PresenceSighting[];
 }
@@ -90,12 +101,35 @@ function isSnapshot(msg: unknown): msg is SnapshotMessage {
   );
 }
 
+/** Wire → model, field by field. The voice-hold fields default to "none" so a
+ *  tab loaded during a deploy window reads an older backend without breaking. */
+function toSnapshot(msg: SnapshotMessage): PresenceReadingsSnapshot {
+  return {
+    now: msg.now,
+    enabled: msg.enabled,
+    settings: {
+      ...msg.settings,
+      voice_hold_s: msg.settings.voice_hold_s ?? 0,
+      voice_release_margin_db: msg.settings.voice_release_margin_db ?? 0,
+    },
+    satellites: msg.satellites,
+    devices: msg.devices.map((device) => ({
+      ...device,
+      voice_hold_remaining_s: device.voice_hold_remaining_s ?? null,
+      voice_pinned: device.voice_pinned ?? false,
+      location_uncertain: device.location_uncertain ?? false,
+    })),
+  };
+}
+
 // ---- connection lifecycle --------------------------------------------------
 
 /** `connecting` = first attempt, nothing received yet; `live` = socket open;
  *  `reconnecting` = the socket dropped (or never opened) and a retry is due —
- *  the last snapshot, if any, is kept but no longer current. */
-export type PresenceReadingsStatus = 'connecting' | 'live' | 'reconnecting';
+ *  the last snapshot, if any, is kept but no longer current; `denied` = the
+ *  server refused the socket (not logged in, or no admin role) — final, no
+ *  retry, and no snapshot is kept. */
+export type PresenceReadingsStatus = 'connecting' | 'live' | 'reconnecting' | 'denied';
 
 export interface PresenceReadingsState {
   snapshot: PresenceReadingsSnapshot | null;
@@ -104,6 +138,17 @@ export interface PresenceReadingsState {
 
 const INITIAL_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30_000;
+
+/** The server's refusal codes (backend `WSAuthError`: unauthorized, token
+ *  expired, token invalid, auth required). It accepts the handshake before
+ *  closing with one of them, so the browser sees the code instead of a bare
+ *  1006. */
+const AUTH_CLOSE_CODES: ReadonlySet<number> = new Set([4001, 4002, 4003, 4004]);
+
+/** Normal closure. The server ends every socket after a maximum lifetime so
+ *  the next handshake re-checks the admin role; that close is planned and gets
+ *  an immediate, silent reconnect. */
+const PLANNED_CLOSE_CODE = 1000;
 
 async function readingsWsUrl(): Promise<string> {
   // getWebSocketUrl() returns `.../ws`; strip it and append our own path.
@@ -153,6 +198,10 @@ export function usePresenceReadings(): PresenceReadingsState {
         return;
       }
       wsRef.current = ws;
+      // Whether THIS socket delivered data — a planned close only earns the
+      // immediate reconnect from a socket that worked, so a server that closes
+      // normally right after the handshake cannot drive a tight loop.
+      let hydrated = false;
 
       ws.onopen = () => {
         attemptRef.current = 0;
@@ -167,18 +216,29 @@ export function usePresenceReadings(): PresenceReadingsState {
           return; // a malformed frame must not crash the tab
         }
         if (isSnapshot(msg)) {
-          setSnapshot({
-            now: msg.now,
-            enabled: msg.enabled,
-            settings: msg.settings,
-            satellites: msg.satellites,
-            devices: msg.devices,
-          });
+          hydrated = true;
+          setSnapshot(toSnapshot(msg));
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event: CloseEvent) => {
         if (closedRef.current || wsRef.current !== ws) return;
+        if (AUTH_CLOSE_CODES.has(event.code)) {
+          // Refused: retrying cannot help, and readings received under a role
+          // that is gone must not stay on screen.
+          debug.log('Presence readings WS refused:', event.code);
+          closedRef.current = true;
+          wsRef.current = null;
+          setSnapshot(null);
+          setStatus('denied');
+          return;
+        }
+        if (event.code === PLANNED_CLOSE_CODE && hydrated) {
+          // Session renewal: reconnect now, keep "live" and the last snapshot.
+          // A failing renewal falls into the ordinary backoff via its own close.
+          void connect();
+          return;
+        }
         debug.log('Presence readings WS closed — scheduling reconnect');
         scheduleReconnect();
       };

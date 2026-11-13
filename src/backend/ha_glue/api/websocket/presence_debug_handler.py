@@ -11,7 +11,23 @@ payload is every tracked person's movement trace. Fails closed: no user, a
 missing permission or a failed lookup all refuse the socket. With auth disabled
 (single-user mode) there is no permission model and the socket opens, exactly
 like the REST route.
+
+Two things differ from ``/ws/kiosk`` because this stream is personal data, not
+a content-free projection:
+
+  * A refusal is sent as an application close code AFTER accepting the
+    handshake. Closing before ``accept`` answers the upgrade with HTTP 403,
+    which a browser reports as close code 1006 — indistinguishable from a
+    network failure, so the page would "reconnect" forever instead of saying
+    "access denied". Nothing is sent on a refused socket before the close.
+  * The socket has a maximum lifetime. The ADMIN check runs at the handshake
+    only, so a revoked role or an ended session would otherwise keep reading
+    for as long as the tab stays open. After ``MAX_SESSION_SECONDS`` the server
+    closes normally (1000); the client reconnects at once and the handshake
+    checks again.
 """
+
+import asyncio
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
@@ -23,6 +39,23 @@ from services.database import AsyncSessionLocal
 from services.websocket_auth import WSAuthError, authenticate_websocket
 
 router = APIRouter()
+
+# Upper bound on one socket's life: the longest a revoked ADMIN role or an
+# ended login can keep receiving movement traces. Short enough to bound that,
+# long enough that the re-handshake (one token fetch + one snapshot) is noise.
+MAX_SESSION_SECONDS = 15 * 60
+
+# Normal closure — tells the client "planned, reconnect right away".
+SESSION_RENEWAL_CLOSE_CODE = 1000
+
+
+async def _refuse(websocket: WebSocket, reason: str) -> None:
+    """Refuse with a close code the browser can read (see module docstring)."""
+    try:
+        await websocket.accept()
+        await websocket.close(code=WSAuthError.UNAUTHORIZED, reason=reason)
+    except Exception as e:
+        logger.debug(f"presence-debug refusal could not be delivered: {e}")
 
 
 async def _is_admin(user_id: int | None) -> bool:
@@ -45,17 +78,13 @@ async def presence_debug_live(
 ):
     auth_result = await authenticate_websocket(websocket, token)
     if not auth_result:
-        await websocket.close(
-            code=WSAuthError.UNAUTHORIZED, reason="Authentication required"
-        )
+        await _refuse(websocket, "Authentication required")
         return
 
     if not auth_result.get("auth_skipped") and not await _is_admin(
         auth_result.get("user_id")
     ):
-        await websocket.close(
-            code=WSAuthError.UNAUTHORIZED, reason="admin permission required"
-        )
+        await _refuse(websocket, "admin permission required")
         return
 
     await websocket.accept()
@@ -76,8 +105,19 @@ async def presence_debug_live(
     logger.info(f"Presence diagnostics viewer connected ({presence_debug.viewer_count()} total)")
     try:
         # Push-only: idle on receive; a disconnect ends the loop.
-        while True:
-            await websocket.receive_text()
+        async with asyncio.timeout(MAX_SESSION_SECONDS):
+            while True:
+                await websocket.receive_text()
+    except TimeoutError:
+        # Lifetime reached: leave the registry FIRST (so the flush task cannot
+        # send into the closing socket), then close normally.
+        presence_debug.unregister_viewer(websocket)
+        try:
+            await websocket.close(
+                code=SESSION_RENEWAL_CLOSE_CODE, reason="session renewal"
+            )
+        except Exception as e:
+            logger.debug(f"presence-debug renewal close failed: {e}")
     except WebSocketDisconnect:
         pass
     except Exception as e:

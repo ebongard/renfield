@@ -1628,7 +1628,17 @@
       "needs": "needs ≥ {{value}} dBm to take over ({{missing}} dB short)",
       "marginMet": "threshold of {{value}} dBm reached – takes over with the next reading",
       "noRooms": "No smoothed values yet.",
-      "filterDisabled": "The RSSI filter is switched off. Room selection follows the older count of consecutive readings; there are no smoothed values."
+      "filterDisabled": "The RSSI filter is switched off. Room selection follows the older count of consecutive readings; there are no smoothed values.",
+      "statusDenied": "No access",
+      "deniedTitle": "No access to the readings",
+      "deniedText": "The server refused the connection. The readings are reserved for administrators, and the login must be valid. Please sign in again or have the role checked.",
+      "heldByVoice": "held by voice for {{seconds}} s",
+      "heldGuess": "held guess",
+      "voicePinned": "room from a voice sighting",
+      "holdBlocks": "threshold of {{value}} dBm reached, but the voice hold blocks the switch for another {{seconds}} s",
+      "pinnedNoReading": "{{room}} comes from a voice or login sighting; the device was not heard there. Another room therefore takes over only from {{value}} dBm (floor plus release margin).",
+      "legendHold": "After a voice or login sighting the room stays fixed for {{hold}} s, whatever Bluetooth reports.",
+      "legendRelease": "If the device was never heard in that room, another room then needs at least {{value}} dBm."
     },
     "heatmapTitle": "Room Activity Heatmap",
     "heatmapDescription": "How often each room was entered, by time of day (local time). Darker = more often.",

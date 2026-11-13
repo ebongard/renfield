@@ -33,6 +33,9 @@ def _reset_hub():
     def reset():
         if hub._flush_task is not None and not hub._flush_task.done():
             hub._flush_task.cancel()
+        for task in list(hub._close_tasks):
+            task.cancel()
+        hub._close_tasks.clear()
         hub._debug_clients.clear()
         hub._dirty = False
         hub._flush_task = None
@@ -69,14 +72,30 @@ def service():
 class _FakeWS:
     def __init__(self):
         self.sent: list[dict] = []
+        self.closed_with: dict | None = None
 
     async def send_json(self, msg):
         self.sent.append(msg)
 
+    async def close(self, **kwargs):
+        self.closed_with = kwargs
 
-class _BrokenWS:
+
+class _BrokenWS(_FakeWS):
     async def send_json(self, msg):
         raise RuntimeError("socket gone")
+
+
+class _StalledWS(_FakeWS):
+    """A tab that stopped reading: the send never completes."""
+
+    async def send_json(self, msg):
+        await asyncio.Event().wait()
+
+
+async def _settle_closes():
+    while hub._close_tasks:
+        await asyncio.gather(*list(hub._close_tasks), return_exceptions=True)
 
 
 # --------------------------------------------------------------------------
@@ -108,6 +127,8 @@ class TestPayloadBuilder:
             "switch_enter_margin_db": 6.5,
             "stale_timeout_s": 90,
             "rssi_filter_enabled": True,
+            "voice_hold_s": hub.ha_glue_settings.presence_voice_hold_seconds,
+            "voice_release_margin_db": hub.ha_glue_settings.presence_voice_release_margin_db,
         }
         assert payload["enabled"] is True
 
@@ -137,6 +158,95 @@ class TestPayloadBuilder:
         assert dev["user_name"] == "bob"
         assert dev["current_room_id"] is None
         assert dev["filtered_rooms"] == []
+
+    def test_carries_the_voice_hold_settings(self, service, monkeypatch):
+        monkeypatch.setattr(hub, "_connected_satellites", lambda: [])
+        monkeypatch.setattr(hub.ha_glue_settings, "presence_voice_hold_seconds", 45.0)
+        monkeypatch.setattr(hub.ha_glue_settings, "presence_voice_release_margin_db", 12.0)
+        settings = hub.build_sightings_payload(service)["settings"]
+        assert settings["voice_hold_s"] == 45.0
+        assert settings["voice_release_margin_db"] == 12.0
+
+    def _voice(self, service, monkeypatch, *, now, **presence_fields):
+        monkeypatch.setattr(hub, "_connected_satellites", lambda: [])
+        monkeypatch.setattr(hub.time, "time", lambda: now)
+        for name, value in presence_fields.items():
+            setattr(service._presence[1], name, value)
+        payload = hub.build_sightings_payload(service)
+        dev = next(d for d in payload["devices"] if d["key"].startswith("mac:"))
+        return {
+            k: dev[k]
+            for k in ("voice_hold_remaining_s", "voice_pinned", "location_uncertain")
+        }
+
+    def test_a_ble_placed_user_has_no_voice_state(self, service, monkeypatch):
+        assert self._voice(service, monkeypatch, now=2000.0) == {
+            "voice_hold_remaining_s": None,
+            "voice_pinned": False,
+            "location_uncertain": False,
+        }
+
+    def test_a_running_hold_reports_its_remaining_seconds(self, service, monkeypatch):
+        state = self._voice(
+            service, monkeypatch, now=2000.0,
+            voice_hold_until=2042.34, voice_pinned=True, room_evidence_at=1982.0,
+        )
+        assert state == {
+            "voice_hold_remaining_s": 42.3,
+            "voice_pinned": True,
+            "location_uncertain": False,
+        }
+
+    def test_an_ended_hold_leaves_the_pin(self, service, monkeypatch):
+        state = self._voice(
+            service, monkeypatch, now=2000.0,
+            voice_hold_until=1990.0, voice_pinned=True, room_evidence_at=1995.0,
+        )
+        assert state == {
+            "voice_hold_remaining_s": None,
+            "voice_pinned": True,
+            "location_uncertain": False,
+        }
+
+    def test_an_old_pin_is_a_held_guess(self, service, monkeypatch):
+        """Uncertainty comes from the service's own rule, not a copy of it:
+        evidence older than max(hold, BLE freshness window)."""
+        window = max(service._voice_hold_seconds, service._filter_fresh_seconds)
+        state = self._voice(
+            service, monkeypatch, now=5000.0,
+            voice_hold_until=0.0, voice_pinned=True,
+            room_evidence_at=5000.0 - window - 1,
+        )
+        assert state["location_uncertain"] is True
+        assert state["voice_hold_remaining_s"] is None
+        # ... and one second inside the window it is not.
+        state = self._voice(
+            service, monkeypatch, now=5000.0, room_evidence_at=5000.0 - window + 1,
+        )
+        assert state["location_uncertain"] is False
+
+    def test_a_device_without_a_placement_has_no_voice_state(self, service, monkeypatch):
+        monkeypatch.setattr(hub, "_connected_satellites", lambda: [])
+        payload = hub.build_sightings_payload(service)
+        dev = next(d for d in payload["devices"] if d["key"].startswith("irk:"))
+        assert dev["voice_hold_remaining_s"] is None
+        assert dev["voice_pinned"] is False
+        assert dev["location_uncertain"] is False
+
+    @pytest.mark.asyncio
+    async def test_voice_state_follows_the_service_end_to_end(self, monkeypatch):
+        """No hand-set fields: a real voice sighting, then the payload."""
+        svc = PresenceService()
+        svc._mac_to_user = {RAW_MAC: 1}
+        svc._voice_hold_seconds = 60.0
+        monkeypatch.setattr(hub, "_connected_satellites", lambda: [])
+        await svc.register_voice_presence(1, 10, room_name="Kitchen")
+        svc._sightings = {RAW_MAC: [DeviceSighting("sat-hall", 0, -60, 1.0)]}
+        dev = hub.build_sightings_payload(svc)["devices"][0]
+        assert dev["current_room_id"] == 10
+        assert dev["voice_pinned"] is True
+        assert 59.0 < dev["voice_hold_remaining_s"] <= 60.0
+        assert dev["location_uncertain"] is False
 
     def test_roster_lists_connected_satellites(self, service, monkeypatch):
         import ha_glue.services.satellite_manager as sm
@@ -202,6 +312,7 @@ class _GateWS:
         self.closed_with: dict | None = None
         self.accepted = False
         self.registered_during_receive: bool | None = None
+        self.receive_calls = 0
 
     async def accept(self):
         self.accepted = True
@@ -212,6 +323,7 @@ class _GateWS:
     async def receive_text(self):
         from fastapi import WebSocketDisconnect
 
+        self.receive_calls += 1
         self.registered_during_receive = self in hub._debug_clients
         raise WebSocketDisconnect()
 
@@ -227,6 +339,16 @@ def _user_with(permissions: list[str]):
     usr = User(username="viewer", password_hash="x", role_id=1)
     usr.role = Role(name="role", permissions=permissions, is_system=False)
     return usr
+
+
+def _assert_refused(ws) -> None:
+    """Refused = closed with the auth code the BROWSER can read (which takes an
+    accepted handshake), nothing sent, never registered, never served."""
+    assert ws.closed_with is not None
+    assert ws.closed_with["code"] == 4001
+    assert ws.sent == []
+    assert ws.receive_calls == 0
+    assert ws not in hub._debug_clients
 
 
 async def _run_gate(monkeypatch, *, auth_result, user):
@@ -266,9 +388,7 @@ class TestSocketGate:
             auth_result={"authenticated": True, "user_id": 2},
             user=_user_with(list(family)),
         )
-        assert ws.accepted is False
-        assert ws.sent == []
-        assert ws.closed_with is not None
+        _assert_refused(ws)
 
     async def test_rooms_manage_alone_is_not_enough(self, monkeypatch):
         ws = await _run_gate(
@@ -276,24 +396,23 @@ class TestSocketGate:
             auth_result={"authenticated": True, "user_id": 2},
             user=_user_with(["rooms.manage", "kiosk.view"]),
         )
-        assert ws.accepted is False
+        _assert_refused(ws)
 
     async def test_unauthenticated_is_refused(self, monkeypatch):
         ws = await _run_gate(monkeypatch, auth_result=None, user=None)
-        assert ws.accepted is False
-        assert ws.sent == []
+        _assert_refused(ws)
 
     async def test_a_token_without_a_user_is_refused(self, monkeypatch):
         ws = await _run_gate(
             monkeypatch, auth_result={"authenticated": True}, user=_user_with(["admin"])
         )
-        assert ws.accepted is False
+        _assert_refused(ws)
 
     async def test_an_unknown_user_is_refused(self, monkeypatch):
         ws = await _run_gate(
             monkeypatch, auth_result={"authenticated": True, "user_id": 9}, user=None
         )
-        assert ws.accepted is False
+        _assert_refused(ws)
 
     async def test_a_lookup_failure_denies(self, monkeypatch):
         monkeypatch.setattr(
@@ -305,8 +424,15 @@ class TestSocketGate:
         )
         ws = _GateWS()
         await handler.presence_debug_live(ws, token="t")
-        assert ws.accepted is False
-        assert ws.sent == []
+        _assert_refused(ws)
+
+    async def test_a_refusal_is_readable_by_a_browser(self, monkeypatch):
+        """Closing before accept answers the upgrade with HTTP 403, which a
+        browser reports as 1006 — the page could not tell "denied" from "network
+        down". So the refusal accepts first and closes with 4001."""
+        ws = await _run_gate(monkeypatch, auth_result=None, user=None)
+        assert ws.accepted is True
+        assert ws.closed_with == {"code": 4001, "reason": "Authentication required"}
 
     async def test_auth_off_opens_like_the_rest_route(self, monkeypatch):
         ws = await _run_gate(
@@ -408,9 +534,41 @@ class TestPush:
         hub.register_viewer(bad)
         hub.note_ble_report()
         await hub._flush_task
+        await _settle_closes()
         assert len(good.sent) == 1
         assert bad not in hub._debug_clients
         assert good in hub._debug_clients
+        # Dropped means CLOSED, so the browser notices and reconnects.
+        assert bad.closed_with == {"code": 1011}
+        assert good.closed_with is None
+
+    async def test_a_stalled_viewer_is_closed_not_left_frozen(self, monkeypatch):
+        """Unregistering alone would leave the tab on an open, silent socket:
+        "Live" forever with frozen numbers."""
+        monkeypatch.setattr(hub, "_SEND_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(hub, "build_current_payload", lambda: {})
+        good, stalled = _FakeWS(), _StalledWS()
+        hub.register_viewer(good)
+        hub.register_viewer(stalled)
+        hub.note_ble_report()
+        await hub._flush_task
+        await _settle_closes()
+        assert stalled not in hub._debug_clients
+        assert stalled.closed_with == {"code": 1011}
+        assert len(good.sent) == 1 and good.closed_with is None
+
+    async def test_a_close_that_fails_is_swallowed(self, monkeypatch):
+        class _DeadWS(_BrokenWS):
+            async def close(self, **kwargs):
+                raise RuntimeError("already gone")
+
+        monkeypatch.setattr(hub, "build_current_payload", lambda: {})
+        dead = _DeadWS()
+        hub.register_viewer(dead)
+        hub.note_ble_report()
+        await hub._flush_task
+        await _settle_closes()
+        assert dead not in hub._debug_clients
 
     async def test_a_failing_builder_does_not_kill_the_hub(self, monkeypatch):
         monkeypatch.setattr(
@@ -439,3 +597,85 @@ class TestPush:
         hub.unregister_viewer(ws)      # ... and the viewer leaves meanwhile
         await hub._flush_task
         assert build.call_count == 1
+
+
+# --------------------------------------------------------------------------
+# Session lifetime: the ADMIN check is re-run by forcing a re-handshake
+# --------------------------------------------------------------------------
+
+
+class _IdleWS(_GateWS):
+    """A viewer that stays connected and never sends."""
+
+    async def receive_text(self):
+        self.receive_calls += 1
+        self.registered_during_receive = self in hub._debug_clients
+        await asyncio.Event().wait()
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+class TestSessionLifetime:
+    async def test_the_socket_is_closed_normally_after_the_lifetime(self, monkeypatch):
+        monkeypatch.setattr(handler, "MAX_SESSION_SECONDS", 0.05)
+        monkeypatch.setattr(
+            handler, "authenticate_websocket",
+            AsyncMock(return_value={"authenticated": True, "user_id": 1}),
+        )
+        monkeypatch.setattr(
+            handler, "get_user_by_id", AsyncMock(return_value=_user_with(["admin"]))
+        )
+        monkeypatch.setattr(hub, "build_current_payload", lambda: {})
+        ws = _IdleWS()
+        await asyncio.wait_for(handler.presence_debug_live(ws, token="t"), timeout=2)
+        assert ws.registered_during_receive is True
+        assert ws.closed_with == {"code": 1000, "reason": "session renewal"}
+        assert ws not in hub._debug_clients
+
+    async def test_the_lifetime_is_a_quarter_of_an_hour(self):
+        assert handler.MAX_SESSION_SECONDS == 15 * 60
+
+    async def test_a_reconnect_runs_the_permission_check_again(self, monkeypatch):
+        """The point of the lifetime: a role revoked meanwhile ends the stream
+        at the next handshake."""
+        monkeypatch.setattr(handler, "MAX_SESSION_SECONDS", 0.05)
+        monkeypatch.setattr(
+            handler, "authenticate_websocket",
+            AsyncMock(return_value={"authenticated": True, "user_id": 1}),
+        )
+        lookup = AsyncMock(side_effect=[_user_with(["admin"]), _user_with(["rooms.read"])])
+        monkeypatch.setattr(handler, "get_user_by_id", lookup)
+        monkeypatch.setattr(hub, "build_current_payload", lambda: {})
+
+        first = _IdleWS()
+        await asyncio.wait_for(handler.presence_debug_live(first, token="t"), timeout=2)
+        assert first.sent == [{"type": "snapshot"}]
+
+        second = _IdleWS()
+        await asyncio.wait_for(handler.presence_debug_live(second, token="t"), timeout=2)
+        _assert_refused(second)
+        assert lookup.await_count == 2
+
+
+# --------------------------------------------------------------------------
+# Mount: the bootstrap guards each router with a try/except that only warns
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_the_socket_is_mounted_by_the_ha_glue_bootstrap():
+    """A broken import would otherwise leave the feature silently missing
+    behind one WARNING line. Run the real registrar against a bare app."""
+    from fastapi import FastAPI
+    from starlette.routing import WebSocketRoute
+
+    from ha_glue.bootstrap import ha_glue_register_routes
+
+    app = FastAPI()
+    await ha_glue_register_routes(app=app)
+    sockets = {r.path: r for r in app.routes if isinstance(r, WebSocketRoute)}
+    assert "/ws/presence-debug" in sockets
+    assert sockets["/ws/presence-debug"].endpoint is handler.presence_debug_live
+    # The REST twin is mounted by the same registrar.
+    assert "/api/presence/debug/sightings" in {getattr(r, "path", None) for r in app.routes}

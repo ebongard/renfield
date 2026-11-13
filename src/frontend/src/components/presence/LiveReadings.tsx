@@ -11,7 +11,7 @@
  * distort them.
  */
 import { useTranslation } from 'react-i18next';
-import { Radio, RefreshCw, Wifi } from 'lucide-react';
+import { Lock, Radio, RefreshCw, Wifi } from 'lucide-react';
 
 import Badge from '../Badge';
 import { formatTime } from '../../utils/datetime';
@@ -48,8 +48,12 @@ export interface RoomDecisionRow {
   filtered: number;
   isCurrent: boolean;
   /** Filtered value this room must reach to take over; null for the current
-   *  room or when there is no current room to beat. */
+   *  room or when nothing has to be beaten. */
   needs: number | null;
+  /** Which rule `needs` comes from: `enter` = current room's filtered value +
+   *  enter margin; `release` = RSSI floor + voice release margin (the user is
+   *  pinned by a voice/auth sighting to a room the device was never heard in). */
+  basis: 'enter' | 'release' | null;
   /** dB still missing to `needs` (≤ 0 = the margin is met). */
   missing: number | null;
 }
@@ -117,26 +121,48 @@ export function summarizeSatellites(
   return [...heard, ...notHeard];
 }
 
+/** True when the user sits in a voice/auth room the device was never heard in
+ *  and the backend therefore applies the release margin instead of the enter
+ *  margin (mirrors `PresenceService._should_switch_filtered`). */
+export function isPinnedWithoutReading(
+  device: PresenceReadingDevice,
+  settings: PresenceReadingSettings,
+): boolean {
+  return (
+    device.current_room_id !== null &&
+    device.voice_pinned &&
+    settings.voice_release_margin_db > 0 &&
+    !device.filtered_rooms.some((r) => r.room_id === device.current_room_id)
+  );
+}
+
 /** Rooms by filtered value, strongest first, with the take-over threshold. */
 export function summarizeRooms(
   device: PresenceReadingDevice,
   settings: PresenceReadingSettings,
 ): RoomDecisionRow[] {
   const current = device.filtered_rooms.find((r) => r.room_id === device.current_room_id);
+  const release = isPinnedWithoutReading(device, settings);
   return [...device.filtered_rooms]
     .sort((a, b) => b.rssi - a.rssi)
     .map((room) => {
       const isCurrent = current !== undefined && room.room_id === current.room_id;
-      const needs =
-        current !== undefined && !isCurrent
-          ? current.rssi + settings.switch_enter_margin_db
-          : null;
+      let needs: number | null = null;
+      let basis: RoomDecisionRow['basis'] = null;
+      if (current !== undefined && !isCurrent) {
+        needs = current.rssi + settings.switch_enter_margin_db;
+        basis = 'enter';
+      } else if (release) {
+        needs = settings.rssi_floor_dbm + settings.voice_release_margin_db;
+        basis = 'release';
+      }
       return {
         roomId: room.room_id,
         roomName: room.room_name,
         filtered: room.rssi,
         isCurrent,
         needs,
+        basis,
         missing: needs === null ? null : needs - room.rssi,
       };
     });
@@ -212,6 +238,9 @@ function StatusPill({ status }: { status: PresenceReadingsStatus }) {
   if (status === 'live') {
     return <Badge color="accent" icon={Radio}>{t('presence.readings.statusLive')}</Badge>;
   }
+  if (status === 'denied') {
+    return <Badge color="gray" icon={Lock}>{t('presence.readings.statusDenied')}</Badge>;
+  }
   return (
     <Badge color={status === 'reconnecting' ? 'amber' : 'gray'} icon={RefreshCw}>
       {status === 'reconnecting'
@@ -238,6 +267,9 @@ function DeviceCard({ device, snapshot, formatDbm }: DeviceCardProps) {
   const rooms = summarizeRooms(device, settings);
   const userName = device.user_name ?? t('presence.readings.unknownUser');
   const placed = device.current_room_id !== null;
+  const holdRemaining = device.voice_hold_remaining_s ?? 0;
+  const held = placed && holdRemaining > 0;
+  const pinnedWithoutReading = isPinnedWithoutReading(device, settings);
   const roomLabel = (name: string | null) => name ?? t('presence.readings.unknownRoom');
 
   return (
@@ -247,14 +279,27 @@ function DeviceCard({ device, snapshot, formatDbm }: DeviceCardProps) {
           <h3 className="text-base font-medium text-gray-900 dark:text-white">{userName}</h3>
           <p className={`text-xs font-mono ${MUTED}`}>{device.key}</p>
         </div>
-        <p className="text-sm text-gray-900 dark:text-white" data-testid="placement">
-          {placed
-            ? t('presence.readings.placedIn', {
-                room: roomLabel(device.current_room_name),
-                confidence: Math.round((device.current_confidence ?? 0) * 100),
-              })
-            : t('presence.readings.notPlaced')}
-        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm text-gray-900 dark:text-white" data-testid="placement">
+            {placed
+              ? t('presence.readings.placedIn', {
+                  room: roomLabel(device.current_room_name),
+                  confidence: Math.round((device.current_confidence ?? 0) * 100),
+                })
+              : t('presence.readings.notPlaced')}
+          </p>
+          {held && (
+            <Badge color="accent">
+              {t('presence.readings.heldByVoice', { seconds: Math.ceil(holdRemaining) })}
+            </Badge>
+          )}
+          {placed && device.location_uncertain && (
+            <Badge color="amber">{t('presence.readings.heldGuess')}</Badge>
+          )}
+          {placed && device.voice_pinned && !held && !device.location_uncertain && (
+            <Badge color="gray">{t('presence.readings.voicePinned')}</Badge>
+          )}
+        </div>
       </header>
 
       <div className="overflow-x-auto">
@@ -330,6 +375,14 @@ function DeviceCard({ device, snapshot, formatDbm }: DeviceCardProps) {
       <h4 className="mt-6 mb-2 text-sm font-medium text-gray-900 dark:text-white">
         {t('presence.readings.roomsTitle')}
       </h4>
+      {settings.rssi_filter_enabled && pinnedWithoutReading && (
+        <p className={`mb-2 text-sm ${MUTED}`} data-testid="pinned-note">
+          {t('presence.readings.pinnedNoReading', {
+            room: roomLabel(device.current_room_name),
+            value: formatDbm(settings.rssi_floor_dbm + settings.voice_release_margin_db),
+          })}
+        </p>
+      )}
       {!settings.rssi_filter_enabled ? (
         <p className={`text-sm ${MUTED}`}>{t('presence.readings.filterDisabled')}</p>
       ) : rooms.length === 0 ? (
@@ -356,7 +409,12 @@ function DeviceCard({ device, snapshot, formatDbm }: DeviceCardProps) {
                         value: formatDbm(room.needs),
                         missing: formatDbm(room.missing),
                       })
-                    : t('presence.readings.marginMet', { value: formatDbm(room.needs) })}
+                    : held
+                      ? t('presence.readings.holdBlocks', {
+                          value: formatDbm(room.needs),
+                          seconds: Math.ceil(holdRemaining),
+                        })
+                      : t('presence.readings.marginMet', { value: formatDbm(room.needs) })}
                 </span>
               )}
             </li>
@@ -386,8 +444,14 @@ export default function LiveReadings() {
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-4" aria-live="polite">
-        <StatusPill status={status} />
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-4">
+        {/* The live region is the connection status ONLY: it changes on
+            connect / disconnect. The timestamp next to it changes every
+            second and must stay outside, or a screen reader reads it out
+            continuously (DESIGN.md, Accessibility). */}
+        <span role="status" aria-live="polite">
+          <StatusPill status={status} />
+        </span>
         {snapshot && (
           <span className={`text-sm tabular-nums ${MUTED}`}>
             {t('presence.readings.lastUpdate', {
@@ -403,7 +467,12 @@ export default function LiveReadings() {
         </p>
       )}
 
-      {snapshot === null ? (
+      {status === 'denied' ? (
+        <EmptyState
+          title={t('presence.readings.deniedTitle')}
+          text={t('presence.readings.deniedText')}
+        />
+      ) : snapshot === null ? (
         <EmptyState
           title={
             status === 'reconnecting'
@@ -426,6 +495,25 @@ export default function LiveReadings() {
               margin: formatDbm(snapshot.settings.switch_enter_margin_db),
               window: snapshot.settings.stale_timeout_s,
             })}
+            {snapshot.settings.voice_hold_s > 0 && (
+              <>
+                {' '}
+                {t('presence.readings.legendHold', {
+                  hold: formatDbm(snapshot.settings.voice_hold_s),
+                })}
+              </>
+            )}
+            {snapshot.settings.rssi_filter_enabled
+              && snapshot.settings.voice_release_margin_db > 0 && (
+              <>
+                {' '}
+                {t('presence.readings.legendRelease', {
+                  value: formatDbm(
+                    snapshot.settings.rssi_floor_dbm + snapshot.settings.voice_release_margin_db,
+                  ),
+                })}
+              </>
+            )}
           </p>
           {snapshot.devices.length === 0 ? (
             <EmptyState

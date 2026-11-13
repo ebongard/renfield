@@ -1628,7 +1628,17 @@
       "needs": "braucht ≥ {{value}} dBm für die Übernahme (es fehlen {{missing}} dB)",
       "marginMet": "Schwelle von {{value}} dBm erreicht – übernimmt mit der nächsten Messung",
       "noRooms": "Noch keine geglätteten Werte.",
-      "filterDisabled": "Der RSSI-Filter ist abgeschaltet. Die Raumwahl folgt der älteren Zählung aufeinanderfolgender Messungen, geglättete Werte gibt es nicht."
+      "filterDisabled": "Der RSSI-Filter ist abgeschaltet. Die Raumwahl folgt der älteren Zählung aufeinanderfolgender Messungen, geglättete Werte gibt es nicht.",
+      "statusDenied": "Kein Zugriff",
+      "deniedTitle": "Kein Zugriff auf die Messwerte",
+      "deniedText": "Der Server hat die Verbindung abgelehnt. Die Messwerte sind Administratoren vorbehalten, und die Anmeldung muss gültig sein. Bitte neu anmelden oder die Rolle prüfen lassen.",
+      "heldByVoice": "per Stimme gehalten, noch {{seconds}} s",
+      "heldGuess": "gehaltene Vermutung",
+      "voicePinned": "Raum aus Sprachsichtung",
+      "holdBlocks": "Schwelle von {{value}} dBm erreicht, doch der Sprach-Halt sperrt den Wechsel noch {{seconds}} s",
+      "pinnedNoReading": "{{room}} stammt aus einer Sprach- oder Anmeldesichtung, das Gerät wurde dort nicht gehört. Ein anderer Raum übernimmt daher erst ab {{value}} dBm (Schwelle plus Lösemarge).",
+      "legendHold": "Nach einer Sprach- oder Anmeldesichtung bleibt der Raum {{hold}} s lang fest, gleich was Bluetooth meldet.",
+      "legendRelease": "Wurde das Gerät in diesem Raum nie gehört, braucht ein anderer Raum danach mindestens {{value}} dBm."
     },
     "heatmapTitle": "Raum-Aktivitäts-Heatmap",
     "heatmapDescription": "Wie oft ein Raum zu welcher Tageszeit betreten wurde (lokale Zeit). Dunkler = häufiger.",

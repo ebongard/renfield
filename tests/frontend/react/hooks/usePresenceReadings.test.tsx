@@ -42,8 +42,10 @@ class MockWebSocket {
   fireRaw(data: string): void {
     this.onmessage?.({ data } as MessageEvent);
   }
-  fireClose(): void {
-    this.onclose?.(new Event('close') as unknown as CloseEvent);
+  /** Default 1006 = abnormal closure, what a browser reports for a dropped
+   *  connection or a refused upgrade. */
+  fireClose(code = 1006): void {
+    this.onclose?.({ code } as CloseEvent);
   }
   close(): void {
     this.closeCalls += 1;
@@ -64,6 +66,8 @@ function snapshot(rssi: number) {
       switch_enter_margin_db: 8,
       stale_timeout_s: 120,
       rssi_filter_enabled: true,
+      voice_hold_s: 60,
+      voice_release_margin_db: 10,
     },
     satellites: [{ satellite_id: 'sat-kitchen', room_id: 10, room_name: 'Kitchen' }],
     devices: [
@@ -74,6 +78,9 @@ function snapshot(rssi: number) {
         current_room_id: 10,
         current_room_name: 'Kitchen',
         current_confidence: 0.7,
+        voice_hold_remaining_s: 41.5,
+        voice_pinned: true,
+        location_uncertain: false,
         filtered_by_room: { Kitchen: rssi },
         filtered_rooms: [{ room_id: 10, room_name: 'Kitchen', rssi }],
         sightings: [
@@ -205,6 +212,172 @@ describe('usePresenceReadings', () => {
     ws.fireClose();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
+  it('carries the voice-hold state of a device and its settings', async () => {
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(snapshot(-55));
+    });
+    expect(result.current.snapshot?.settings.voice_hold_s).toBe(60);
+    expect(result.current.snapshot?.settings.voice_release_margin_db).toBe(10);
+    expect(result.current.snapshot?.devices[0]).toMatchObject({
+      voice_hold_remaining_s: 41.5, voice_pinned: true, location_uncertain: false,
+    });
+  });
+
+  it('reads a backend that does not send the voice-hold fields yet', async () => {
+    const old = snapshot(-55);
+    const { voice_hold_s: _h, voice_release_margin_db: _r, ...oldSettings } = old.settings;
+    const {
+      voice_hold_remaining_s: _a, voice_pinned: _b, location_uncertain: _c, ...oldDevice
+    } = old.devices[0];
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage({ ...old, settings: oldSettings, devices: [oldDevice] });
+    });
+    expect(result.current.snapshot?.settings).toMatchObject({
+      voice_hold_s: 0, voice_release_margin_db: 0,
+    });
+    expect(result.current.snapshot?.devices[0]).toMatchObject({
+      voice_hold_remaining_s: null, voice_pinned: false, location_uncertain: false,
+    });
+  });
+
+  it.each([4001, 4002, 4003, 4004])(
+    'shows access denied on close code %i, drops the readings and stops retrying',
+    async (code) => {
+      vi.useFakeTimers();
+      const { result } = renderHook(() => usePresenceReadings());
+      await flushConnect();
+      act(() => {
+        latest().fireOpen();
+        latest().fireMessage(snapshot(-55));
+      });
+      act(() => latest().fireClose(code));
+      expect(result.current.status).toBe('denied');
+      // Readings received under a role that is gone do not stay on screen.
+      expect(result.current.snapshot).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(result.current.status).toBe('denied');
+    },
+  );
+
+  it('shows access denied when the very first handshake is refused', async () => {
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    act(() => {
+      latest().fireOpen();
+      latest().fireClose(4001);
+    });
+    expect(result.current.status).toBe('denied');
+  });
+
+  it('reconnects at once and silently after a planned close (session renewal)', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(snapshot(-55));
+    });
+
+    await act(async () => {
+      latest().fireClose(1000);
+      await flushConnect();
+    });
+    // New socket without any timer having run; no "reconnecting" in between.
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(result.current.status).toBe('live');
+    expect(result.current.snapshot?.devices[0].sightings[0].rssi).toBe(-55);
+
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(snapshot(-47));
+    });
+    expect(result.current.status).toBe('live');
+    expect(result.current.snapshot?.devices[0].sightings[0].rssi).toBe(-47);
+  });
+
+  it('does not grow the backoff from planned closes', async () => {
+    vi.useFakeTimers();
+    renderHook(() => usePresenceReadings());
+    await flushConnect();
+    for (let i = 0; i < 4; i += 1) {
+      await act(async () => {
+        latest().fireOpen();
+        latest().fireMessage(snapshot(-55));
+        latest().fireClose(1000);
+        await flushConnect();
+      });
+    }
+    expect(MockWebSocket.instances).toHaveLength(5);
+    // A real drop afterwards still starts at the first backoff step (1 s).
+    act(() => {
+      latest().fireOpen();
+      latest().fireClose();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await flushConnect();
+    });
+    expect(MockWebSocket.instances).toHaveLength(6);
+  });
+
+  it('falls back to the backoff when the renewal itself fails', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    await act(async () => {
+      latest().fireOpen();
+      latest().fireMessage(snapshot(-55));
+      latest().fireClose(1000);
+      await flushConnect();
+    });
+    act(() => latest().fireClose());
+    expect(result.current.status).toBe('reconnecting');
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('a renewal that is refused ends in access denied', async () => {
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    await act(async () => {
+      latest().fireOpen();
+      latest().fireMessage(snapshot(-55));
+      latest().fireClose(1000);
+      await flushConnect();
+    });
+    act(() => {
+      latest().fireOpen();
+      latest().fireClose(4001);
+    });
+    expect(result.current.status).toBe('denied');
+    expect(result.current.snapshot).toBeNull();
+  });
+
+  it('treats a normal close from a socket that never delivered as a drop', async () => {
+    // Otherwise a server closing normally right after the handshake would
+    // drive an unthrottled reconnect loop.
+    vi.useFakeTimers();
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    await act(async () => {
+      latest().fireOpen();
+      latest().fireClose(1000);
+      await flushConnect();
+    });
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(result.current.status).toBe('reconnecting');
   });
 
   it('receives data without any timer of its own', async () => {

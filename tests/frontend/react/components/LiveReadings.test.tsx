@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, within } from '@testing-library/react';
 
 import LiveReadings, {
+  isPinnedWithoutReading,
   summarizeRooms,
   summarizeSatellites,
 } from '../../../../src/frontend/src/components/presence/LiveReadings';
@@ -45,6 +46,9 @@ function device(overrides: Partial<PresenceReadingDevice> = {}): PresenceReading
     current_room_id: 10,
     current_room_name: 'Küche',
     current_confidence: 0.714,
+    voice_hold_remaining_s: null,
+    voice_pinned: false,
+    location_uncertain: false,
     filtered_rooms: [
       { room_id: 20, room_name: 'Flur', rssi: -66.5 },
       { room_id: 10, room_name: 'Küche', rssi: -58 },
@@ -68,6 +72,8 @@ function snapshot(overrides: Partial<PresenceReadingsSnapshot> = {}): PresenceRe
       switch_enter_margin_db: 8,
       stale_timeout_s: 120,
       rssi_filter_enabled: true,
+      voice_hold_s: 60,
+      voice_release_margin_db: 10,
     },
     satellites: [
       { satellite_id: 'sat-kueche', room_id: 10, room_name: 'Küche' },
@@ -105,9 +111,41 @@ describe('summarizeRooms', () => {
   it('marks the current room and computes what a challenger needs', () => {
     const rooms = summarizeRooms(device(), snapshot().settings);
     expect(rooms.map((r) => r.roomId)).toEqual([10, 20]);
-    expect(rooms[0]).toMatchObject({ isCurrent: true, needs: null, missing: null });
+    expect(rooms[0]).toMatchObject({ isCurrent: true, needs: null, missing: null, basis: null });
     // current -58 + margin 8 = -50; the hall sits at -66.5 → 16.5 dB short.
-    expect(rooms[1]).toMatchObject({ isCurrent: false, needs: -50, missing: 16.5 });
+    expect(rooms[1]).toMatchObject({
+      isCurrent: false, needs: -50, missing: 16.5, basis: 'enter',
+    });
+  });
+
+  it('uses floor + release margin for a pinned room the device was never heard in', () => {
+    const pinned = device({
+      current_room_id: 99, current_room_name: 'Büro', voice_pinned: true,
+    });
+    expect(isPinnedWithoutReading(pinned, snapshot().settings)).toBe(true);
+    const rooms = summarizeRooms(pinned, snapshot().settings);
+    // floor -80 + release margin 10 = -70, for every challenger.
+    expect(rooms.map((r) => [r.roomId, r.needs, r.basis, r.missing])).toEqual([
+      [10, -70, 'release', -12],
+      [20, -70, 'release', -3.5],
+    ]);
+  });
+
+  it('keeps the enter margin when the pinned room does have a filtered value', () => {
+    const pinned = device({ voice_pinned: true });
+    expect(isPinnedWithoutReading(pinned, snapshot().settings)).toBe(false);
+    expect(summarizeRooms(pinned, snapshot().settings)[1]).toMatchObject({
+      needs: -50, basis: 'enter',
+    });
+  });
+
+  it('has no release threshold when the release margin is switched off', () => {
+    const base = snapshot().settings;
+    const rooms = summarizeRooms(
+      device({ current_room_id: 99, voice_pinned: true }),
+      { ...base, voice_release_margin_db: 0 },
+    );
+    expect(rooms.every((r) => r.needs === null)).toBe(true);
   });
 
   it('has no threshold when the current room has no filtered value', () => {
@@ -176,6 +214,154 @@ describe('LiveReadings', () => {
     expect(screen.getByText(/unter -80 dBm zählen nicht/)).toHaveTextContent(
       /um 8 dB übertrifft.*letzten 120 s/,
     );
+  });
+
+  it('announces only the connection status, never the ticking timestamp', () => {
+    renderWithProviders(<LiveReadings />);
+    const live = document.querySelectorAll('[aria-live]');
+    expect(live).toHaveLength(1);
+    expect(live[0]).toHaveTextContent(/^Live$/);
+    expect(live[0]).toBe(screen.getByRole('status'));
+    const stamp = screen.getByText(`Stand ${formatTime(NOW * 1000, 'de')}`);
+    expect(stamp.closest('[aria-live]')).toBeNull();
+  });
+
+  it('shows no voice badge for a user Bluetooth placed', () => {
+    renderWithProviders(<LiveReadings />);
+    expect(screen.queryByText(/per Stimme gehalten/)).not.toBeInTheDocument();
+    expect(screen.queryByText('gehaltene Vermutung')).not.toBeInTheDocument();
+    expect(screen.queryByText('Raum aus Sprachsichtung')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pinned-note')).not.toBeInTheDocument();
+  });
+
+  it('shows the running voice hold and does not promise a switch', () => {
+    hookState.current = {
+      status: 'live',
+      snapshot: snapshot({
+        devices: [device({
+          voice_hold_remaining_s: 41.2,
+          voice_pinned: true,
+          // The hall has met the margin: -58 + 8 = -50 ≤ -45.
+          filtered_rooms: [
+            { room_id: 20, room_name: 'Flur', rssi: -45 },
+            { room_id: 10, room_name: 'Küche', rssi: -58 },
+          ],
+        })],
+      }),
+    };
+    renderWithProviders(<LiveReadings />);
+    expect(screen.getByText('per Stimme gehalten, noch 42 s')).toBeInTheDocument();
+    const challenger = within(screen.getByTestId('room-20'));
+    expect(
+      challenger.getByText(
+        'Schwelle von -50 dBm erreicht, doch der Sprach-Halt sperrt den Wechsel noch 42 s',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/übernimmt mit der nächsten Messung/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Raum aus Sprachsichtung')).not.toBeInTheDocument();
+  });
+
+  it('says "margin met" once no hold is running', () => {
+    hookState.current = {
+      status: 'live',
+      snapshot: snapshot({
+        devices: [device({
+          filtered_rooms: [
+            { room_id: 20, room_name: 'Flur', rssi: -45 },
+            { room_id: 10, room_name: 'Küche', rssi: -58 },
+          ],
+        })],
+      }),
+    };
+    renderWithProviders(<LiveReadings />);
+    expect(
+      within(screen.getByTestId('room-20')).getByText(
+        'Schwelle von -50 dBm erreicht – übernimmt mit der nächsten Messung',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('marks a held guess', () => {
+    hookState.current = {
+      status: 'live',
+      snapshot: snapshot({
+        devices: [device({ voice_pinned: true, location_uncertain: true })],
+      }),
+    };
+    renderWithProviders(<LiveReadings />);
+    expect(screen.getByText('gehaltene Vermutung')).toBeInTheDocument();
+    expect(screen.queryByText(/per Stimme gehalten/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Raum aus Sprachsichtung')).not.toBeInTheDocument();
+  });
+
+  it('marks a room that still rests on a voice sighting after the hold', () => {
+    hookState.current = {
+      status: 'live',
+      snapshot: snapshot({ devices: [device({ voice_pinned: true })] }),
+    };
+    renderWithProviders(<LiveReadings />);
+    expect(screen.getByText('Raum aus Sprachsichtung')).toBeInTheDocument();
+  });
+
+  it('computes the threshold from the release margin for a pinned, unheard room', () => {
+    hookState.current = {
+      status: 'live',
+      snapshot: snapshot({
+        devices: [device({
+          current_room_id: 99, current_room_name: 'Büro', voice_pinned: true,
+          filtered_rooms: [
+            { room_id: 20, room_name: 'Flur', rssi: -76.5 },
+            { room_id: 10, room_name: 'Küche', rssi: -58 },
+          ],
+        })],
+      }),
+    };
+    renderWithProviders(<LiveReadings />);
+    expect(screen.getByTestId('pinned-note')).toHaveTextContent(
+      /Büro stammt aus einer Sprach- oder Anmeldesichtung.*erst ab -70 dBm/,
+    );
+    expect(
+      within(screen.getByTestId('room-20')).getByText(
+        'braucht ≥ -70 dBm für die Übernahme (es fehlen 6,5 dB)',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('room-10')).getByText(
+        'Schwelle von -70 dBm erreicht – übernimmt mit der nächsten Messung',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('aktueller Raum')).not.toBeInTheDocument();
+  });
+
+  it('explains the voice hold and the release threshold in the legend', () => {
+    renderWithProviders(<LiveReadings />);
+    const legend = screen.getByText(/unter -80 dBm zählen nicht/);
+    expect(legend).toHaveTextContent(/bleibt der Raum 60 s lang fest/);
+    expect(legend).toHaveTextContent(/mindestens -70 dBm/);
+  });
+
+  it('leaves the voice sentences out of the legend when both are switched off', () => {
+    const base = snapshot();
+    hookState.current = {
+      status: 'live',
+      snapshot: {
+        ...base,
+        settings: { ...base.settings, voice_hold_s: 0, voice_release_margin_db: 0 },
+      },
+    };
+    renderWithProviders(<LiveReadings />);
+    const legend = screen.getByText(/unter -80 dBm zählen nicht/);
+    expect(legend).not.toHaveTextContent(/Sprach/);
+  });
+
+  it('shows access denied instead of reconnecting', () => {
+    hookState.current = { status: 'denied', snapshot: null };
+    renderWithProviders(<LiveReadings />);
+    expect(screen.getByRole('status')).toHaveTextContent('Kein Zugriff');
+    expect(screen.getByText('Kein Zugriff auf die Messwerte')).toBeInTheDocument();
+    expect(screen.getByText(/Administratoren vorbehalten/)).toBeInTheDocument();
+    expect(screen.queryByText(/Verbindung wird/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('says so when a device is not placed in any room', () => {
