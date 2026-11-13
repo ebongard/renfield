@@ -625,9 +625,11 @@ class PresenceService:
         current.last_seen = now
         current.consecutive_room_count = 1
         current.voice_hold_until = now + self._voice_hold_seconds
-        # A BLE candidate that was counting towards a switch is void now.
-        current.pending_room_id = None
-        current.pending_room_count = 0
+        if self._voice_hold_seconds > 0:
+            # A BLE candidate that was counting towards a switch is void now.
+            # Only with the hold on, so that 0 leaves the old path untouched.
+            current.pending_room_id = None
+            current.pending_room_count = 0
 
         # Fire enter event for new room
         self._pending_events.append(("presence_enter_room", {

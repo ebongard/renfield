@@ -1034,6 +1034,27 @@ class TestVoiceHold:
         assert svc.get_user_presence(1).room_id == 20
 
     @pytest.mark.asyncio
+    async def test_hold_of_zero_keeps_a_pending_ble_candidate(self, service_with_devices):
+        """Legacy path, hold off: a candidate that had one scan before the
+        voice move still needs only one more — exactly as before the hold."""
+        svc = self._svc(service_with_devices, filtered=False, hold=0.0)
+        await self._ble(svc, "sat-a", 10, -50, "A")
+        await self._ble(svc, "sat-far", 20, -40, "Far")  # candidate, 1 of 2
+        assert svc.get_user_presence(1).pending_room_count == 1
+        await self._voice(svc, 30, "Living Room")
+        assert svc.get_user_presence(1).pending_room_count == 1
+        await self._ble(svc, "sat-far", 20, -40, "Far")
+        assert svc.get_user_presence(1).room_id == 20
+
+    @pytest.mark.asyncio
+    async def test_hold_voids_a_pending_ble_candidate(self, service_with_devices):
+        svc = self._svc(service_with_devices, filtered=False)
+        await self._ble(svc, "sat-a", 10, -50, "A")
+        await self._ble(svc, "sat-far", 20, -40, "Far")
+        await self._voice(svc, 30, "Living Room")
+        assert svc.get_user_presence(1).pending_room_count == 0
+
+    @pytest.mark.asyncio
     async def test_hold_does_not_block_another_user(self, service_with_devices):
         svc = self._svc(service_with_devices, filtered=True)
         await self._voice(svc, 10, "Kitchen")

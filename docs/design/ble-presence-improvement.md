@@ -192,4 +192,10 @@ filter state keep updating during the hold, so the user is not marked absent and
 the hold rests on current readings. `PRESENCE_VOICE_HOLD_SECONDS` (default 60, 0 = off) sets the length; the
 value is a choice, not a measurement. A second voice sighting moves the user at once and restarts the hold.
 
-Not addressed here: a lone satellite at the RSSI floor can still place a user in its room.
+The hold covers every caller of `register_voice_presence`, so a typed chat message from a room-bound device
+pins the room for the same time. With the setting at 0 the old path is unchanged.
+
+Not addressed here, and the reason the hold is a bound rather than a cure: once it ends, the switch rule is the
+old one. A room the phone was never heard in still has no filtered value, so the first reading from elsewhere —
+even one at the RSSI floor — takes the user back. What should count after the hold (the phone, or the last
+certain sighting) is an open decision; a lone satellite at the floor can also still place a user in its room.
