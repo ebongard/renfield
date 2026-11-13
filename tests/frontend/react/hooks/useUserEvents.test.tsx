@@ -147,12 +147,26 @@ describe('useUserEvents', () => {
     ws.fireMessage({ type: 'scan_job_finished', reason: 'done', session_id: 'session-1' });
     ws.fireMessage({ type: 'scan_job_finished', reason: 'failed' }); // older backend
     ws.fireMessage({ type: 'scan_job_finished', reason: 'done', session_id: 42 }); // malformed
+    // The conversation was deleted while the scan ran (#1507).
+    ws.fireMessage({
+      type: 'scan_job_finished', reason: 'failed', session_id: 'gone', conversation_deleted: true,
+    });
+    // Only a strict `true` counts: anything else from the wire is "not deleted".
+    ws.fireMessage({
+      type: 'scan_job_finished', reason: 'done', session_id: 's', conversation_deleted: 'true',
+    });
+    ws.fireMessage({
+      type: 'scan_job_finished', reason: 'done', session_id: 's', conversation_deleted: false,
+    });
 
     window.removeEventListener(SCAN_JOB_FINISHED_EVENT, listener);
     expect(seen).toEqual([
       { reason: 'done', sessionId: 'session-1' },
       { reason: 'failed' },
       { reason: 'done' },
+      { reason: 'failed', sessionId: 'gone', conversationDeleted: true },
+      { reason: 'done', sessionId: 's' },
+      { reason: 'done', sessionId: 's' },
     ]);
     expect(spy).toHaveBeenCalledWith({ queryKey: ['chatSessions', 'list'] });
     // Not a document change: the knowledge list is left alone.

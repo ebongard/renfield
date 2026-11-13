@@ -186,6 +186,40 @@ describe('LanguageSwitcher', () => {
       });
     });
 
+    it('switches the visible interface to French when Français is selected', async () => {
+      const user = userEvent.setup();
+      renderWithI18n(<LanguageSwitcher />, { language: 'de' });
+
+      // German first: the code on the button and its accessible name.
+      expect(screen.getByText('DE')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Sprache' })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button'));
+      await user.click(screen.getByRole('option', { name: /français/i }));
+
+      await waitFor(() => {
+        expect(i18n.language).toBe('fr');
+      });
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+      expect(screen.getByText('FR')).toBeInTheDocument();
+      expect(screen.queryByText('DE')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Langue' })).toBeInTheDocument();
+      expect(window.localStorage.getItem('renfield_language')).toBe('fr');
+    });
+
+    it('marks French as the selected option and shows its flag in compact mode', async () => {
+      const user = userEvent.setup();
+      renderWithI18n(<LanguageSwitcher compact />, { language: 'fr' });
+
+      expect(screen.getByText('🇫🇷')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Langue' }));
+
+      expect(screen.getByRole('listbox', { name: 'Langue' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /français/i })).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByRole('option', { name: /deutsch/i })).toHaveAttribute('aria-selected', 'false');
+    });
+
     it('stores language preference in localStorage', async () => {
       const user = userEvent.setup();
       renderWithI18n(<LanguageSwitcher />, { language: 'de' });
@@ -247,7 +281,8 @@ describe('LanguageSwitcher', () => {
       expect(screen.getByRole('option', { name: /deutsch/i })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: /english/i })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: /italiano/i })).toBeInTheDocument();
-      expect(options.length).toBeGreaterThanOrEqual(3);
+      expect(screen.getByRole('option', { name: /français/i })).toBeInTheDocument();
+      expect(options.length).toBeGreaterThanOrEqual(4);
     });
 
     it('current language has aria-selected', async () => {
@@ -371,6 +406,101 @@ describe('LanguageSwitcher', () => {
           { language: 'en' },
         );
       });
+    });
+
+    it('sends the French code to the backend when authenticated', async () => {
+      // State the authenticated session explicitly rather than rely on test order.
+      const { useAuth } = await import('../../../../src/frontend/src/context/AuthContext');
+      vi.mocked(useAuth).mockReturnValue({
+        ...vi.mocked(useAuth)(),
+        authEnabled: true,
+        isAuthenticated: true,
+      });
+
+      const apiClient = await import('../../../../src/frontend/src/utils/axios');
+      const mockedPut = vi.mocked(apiClient.default.put);
+      const user = userEvent.setup();
+
+      renderWithI18n(<LanguageSwitcher />);
+
+      await user.click(screen.getByRole('button'));
+      await user.click(screen.getByRole('option', { name: /français/i }));
+
+      await waitFor(() => {
+        expect(mockedPut).toHaveBeenCalledWith(
+          '/api/preferences/language',
+          { language: 'fr' },
+        );
+      });
+    });
+  });
+
+  describe('Stored preference on page load', () => {
+    // A page load is: i18next starts from the browser's own choice
+    // (localStorage), then the switcher fetches the preference stored on the
+    // account and applies it. Both tests start signed in with the browser at
+    // French and differ only in what the account holds.
+    async function loadPageWithStoredPreference(stored: string) {
+      const { useAuth } = await import('../../../../src/frontend/src/context/AuthContext');
+      vi.mocked(useAuth).mockReturnValue({
+        ...vi.mocked(useAuth)(),
+        authEnabled: true,
+        isAuthenticated: true,
+      });
+      const apiClient = await import('../../../../src/frontend/src/utils/axios');
+      vi.mocked(apiClient.default.get).mockResolvedValue({ data: { language: stored } });
+
+      await i18n.changeLanguage('fr');
+      const queryClient = createTestQueryClient();
+      render(
+        <I18nextProvider i18n={i18n}>
+          <QueryClientProvider client={queryClient}>
+            <LanguageSwitcher />
+          </QueryClientProvider>
+        </I18nextProvider>,
+      );
+      // Wait until the fetched preference has reached the component; only then
+      // has the effect that applies it had its chance to run.
+      await waitFor(() => {
+        expect(queryClient.getQueryData(['preferences', 'language'])).toEqual({ language: stored });
+      });
+    }
+
+    afterEach(async () => {
+      const { useAuth } = await import('../../../../src/frontend/src/context/AuthContext');
+      vi.mocked(useAuth).mockReturnValue({
+        ...vi.mocked(useAuth)(),
+        authEnabled: false,
+        isAuthenticated: false,
+      });
+      const apiClient = await import('../../../../src/frontend/src/utils/axios');
+      vi.mocked(apiClient.default.get).mockResolvedValue({ data: { language: 'de' } });
+    });
+
+    it('stays French when the account holds French', async () => {
+      await loadPageWithStoredPreference('fr');
+
+      expect(i18n.language).toBe('fr');
+      expect(screen.getByText('FR')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Langue' })).toBeInTheDocument();
+      expect(window.localStorage.getItem('renfield_language')).toBe('fr');
+    });
+
+    it('lets the account preference override the browser choice, by design', async () => {
+      // The account preference is what follows a person from device to device,
+      // so on load it wins over whatever this browser remembered -- and it
+      // replaces the remembered value. The consequence: a language the backend
+      // refuses to store (the state after a rejected PUT) does not survive a
+      // reload. That is why every language the switcher offers must be in the
+      // backend's SUPPORTED_LANGUAGES.
+      await loadPageWithStoredPreference('de');
+
+      await waitFor(() => {
+        expect(i18n.language).toBe('de');
+      });
+      expect(screen.getByText('DE')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Sprache' })).toBeInTheDocument();
+      expect(window.localStorage.getItem('renfield_language')).toBe('de');
     });
   });
 });

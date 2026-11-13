@@ -130,8 +130,38 @@ browser that still held it; everything that outlives a delete and keys on the id
   atom purge removes conversations through an `ON DELETE CASCADE` no Python code
   sees. DDL once in `services/conversation_tombstones.py`, used by the migration
   `pc20261106_conv_tombstones` and the test harness. No backfill: ids deleted
-  before the migration are recorded nowhere. The table only grows (one short row
-  per deleted conversation); no retention yet.
+  before the migration are recorded nowhere.
+- **Retention (#1529):** `CONVERSATION_TOMBSTONE_RETENTION_DAYS`, default 0 = keep
+  forever (no prune, no query; the table then only grows, one short row per
+  delete). With N > 0 the daily built-in task `conversation_tombstone_cleanup`
+  (`prune_expired_tombstones`) deletes records whose `deleted_at` is MORE than N
+  days past — strict `<`, a record exactly N days old stays; a non-positive value
+  never prunes; the cut-off uses the database clock that wrote `deleted_at`. Index
+  `ix_deleted_conversation_sessions_deleted_at` (`pc20261111_tombstone_idx`, also
+  declared on the model).
+  **Guard:** a record is never pruned while rows of the deleted conversation
+  survive that a reader hands to the holder of the id (`_prune_guards`):
+  `chat_uploads` (no FK to `conversations`; `_get_owned_upload`,
+  `_caller_owns_upload`, the session fallback of the forward tools and
+  `_fetch_document_context` all resolve by session id — an expired record would
+  hand the attachments, with owner rights, to whoever recreates the id, in a
+  shared conversation possibly another user), `paperless_pending_confirms`, and
+  an unfinalised `paperless_pending_finalize`. Indexed uploads are never cleaned
+  up, so their record stays for good. **Not guarded**, each with its reason in
+  `SESSION_KEYS_WITHOUT_SESSION_READER`: `conversation_memories` /
+  `kg_relations.source_session_id`, `episodic_memories`, `reminders`,
+  `memory_v2_shadow_log` — no reader selects by session id, so nothing is handed
+  out, but after the prune old and new rows share the id. A new session-keyed
+  table must be cascaded, guarded or exempted with a reason
+  (`test_conversation_tombstone_session_keys.py`).
+  **What a pruned id permits:** it is an unknown id again; a client silent for
+  longer than N days (or a deferred `save_message` writer) creates a new
+  conversation under it, owned by the sender — the pre-#1485 behaviour minus the
+  guarded rows. Reasons to bound it: growth is tied to deletes (a job that creates
+  and purges sessions adds rows forever), and a plugin transport may use an
+  external identifier as the session id, which would otherwise outlive the delete
+  indefinitely. A satellite room id ages from its LAST delete (the trigger
+  refreshes `deleted_at`).
 - **Boundary:** an id with NO conversation row that is recorded is refused for
   every caller — auth on or off, JWT or device token — at the WS `register` frame
   and first message (`session_replaced` with a fresh id) and in `POST /api/chat/send`
@@ -144,7 +174,8 @@ browser that still held it; everything that outlives a delete and keys on the id
   `ConversationService.save_message` refuses to CREATE a row under a recorded id
   (`ConversationDeletedError`, a subclass of `ConversationNotOwnedError`): the WS
   turn falls into its replacement path (under auth-off too, where the turn has no
-  identity), the scanner settles `refused`, the Paperless announcement is skipped.
+  identity), the scanner writes nothing and notifies the requester live only
+  (`notified`, #1507), the Paperless announcement is skipped.
   Only the satellite opts in (`allow_deleted_session=True`): its room id is fixed
   per day. The Paperless announcement writes in its own session after the filing
   committed — a refused `save_message` rolls its session back, and a shared one

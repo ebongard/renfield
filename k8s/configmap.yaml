@@ -409,8 +409,10 @@ data:
   # Feature flags
   DEFAULT_LANGUAGE: "de"
   # UI languages selectable + persistable (backend validates the language
-  # preference against this list). 'it' added with the Italian locale (#628).
-  SUPPORTED_LANGUAGES: "de,en,it"
+  # preference against this list). 'it' added with the Italian locale (#628),
+  # 'fr' with the French one (#124). The frontend applies the STORED preference
+  # on every page load, so a language missing here reverts on reload.
+  SUPPORTED_LANGUAGES: "de,en,it,fr"
   AGENT_ENABLED: "true"
   AGENT_ORCHESTRATOR_ENABLED: "true"
   # Schreibt den VOLLSTAENDIGEN Vorauswahl-Prompt ins Protokoll (#1414).

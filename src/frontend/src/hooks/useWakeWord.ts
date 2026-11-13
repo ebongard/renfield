@@ -16,6 +16,7 @@ import {
   type WakeWordEngine,
 } from './wakewordEngineLoader';
 import { debug } from '../utils/debug';
+import { haptic } from '../utils/haptics';
 
 // Detection result
 interface WakeWordDetection {
@@ -387,6 +388,7 @@ export function useWakeWord({
 
   // Toggle wake word
   const toggle = useCallback(async () => {
+    haptic('tap');
     if (isEnabled) {
       await disable();
     } else {

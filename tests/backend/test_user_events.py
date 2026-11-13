@@ -225,6 +225,57 @@ async def test_build_event_carries_the_session_id_only_when_given():
     assert "session_id" not in ue.build_event("scan_job_finished", "done")
 
 
+async def test_build_event_states_a_deleted_conversation_only_when_true():
+    """#1507: the key is present for a deleted conversation and ABSENT otherwise
+    (never `false`), so every other event stays byte-identical."""
+    assert ue.build_event("scan_job_finished", "done", "s1", conversation_deleted=True) == {
+        "type": "scan_job_finished", "reason": "done", "session_id": "s1",
+        "conversation_deleted": True,
+    }
+    assert ue.build_event("scan_job_finished", "done", "s1", conversation_deleted=False) == {
+        "type": "scan_job_finished", "reason": "done", "session_id": "s1",
+    }
+
+
+async def test_publish_carries_the_deleted_flag_and_leaves_other_events_unchanged():
+    redis = _PublishRecorder()
+    await ue.publish_user_event(redis, 7, "scan_job_finished", "done", session_id="s1")
+    await ue.publish_user_event(
+        redis, 7, "scan_job_finished", "failed", session_id="s1", conversation_deleted=True,
+    )
+    assert redis.payloads == [
+        '{"target": 7, "type": "scan_job_finished", "reason": "done", "session_id": "s1"}',
+        '{"target": 7, "type": "scan_job_finished", "reason": "failed", "session_id": "s1", '
+        '"conversation_deleted": true}',
+    ]
+
+
+class _PublishRecorder:
+    def __init__(self):
+        self.payloads: list[str] = []
+
+    async def publish(self, _channel, payload):
+        self.payloads.append(payload)
+
+
+async def test_coalescer_keeps_a_deleted_notice_apart_from_a_reload_for_the_same_session():
+    """"Reload this thread" and "this thread is gone" for one session id are
+    opposite instructions; last-wins would drop one of them."""
+    flushed: list[dict] = []
+
+    async def flush(_target, event):
+        flushed.append(event)
+
+    c = ue.EventCoalescer(0.05, flush)
+    plain = {"type": "scan_job_finished", "reason": "done", "session_id": "a"}
+    gone = {**plain, "reason": "failed", "conversation_deleted": True}
+    c.submit(None, plain)
+    c.submit(None, gone)
+    await asyncio.sleep(0.12)
+
+    assert flushed == [plain, gone]
+
+
 async def test_coalescer_zero_window_flushes_each():
     flushed: list = []
 

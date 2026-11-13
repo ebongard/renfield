@@ -1294,6 +1294,12 @@
       "unrouted": "Scansione completata, destinazione ancora aperta – dettagli nella chat.",
       "failed": "Scansione non riuscita – dettagli nella chat.",
       "interrupted": "Scansione interrotta – dettagli nella chat."
+    },
+    "scanJobConversationDeleted": {
+      "done": "Scansione completata – la conversazione è stata eliminata.",
+      "unrouted": "Scansione completata, destinazione ancora aperta – la conversazione è stata eliminata.",
+      "failed": "Scansione non riuscita – la conversazione è stata eliminata.",
+      "interrupted": "Scansione interrotta – la conversazione è stata eliminata."
     }
   },
   "errors": {
@@ -2301,6 +2307,14 @@
     "voicePasswordLabel": "Password per confermare",
     "voicePasswordWhy": "Solo per disattivare: una sessione più vecchia del tuo consenso non deve poterlo ritirare da sola.",
     "voiceStateFailed": "Impossibile caricare lo stato del secondo fattore",
+    "hapticsTitle": "Feedback aptico",
+    "hapticsExplain": "Brevi vibrazioni come riscontro, ad esempio quando invii un messaggio, azioni un dispositivo o ricevi una notifica. L'impostazione vale solo per questo dispositivo e questo browser.",
+    "hapticsStateOn": "Attivo — vibra come riscontro se il dispositivo ha un motore di vibrazione",
+    "hapticsStatePaused": "Attivo, ma in pausa — «Riduci movimento» è attivo",
+    "hapticsStateOff": "Disattivato",
+    "hapticsUnsupported": "Questo browser non offre alcuna funzione di vibrazione (ad esempio Safari su iPhone). L'impostazione quindi non è disponibile qui.",
+    "hapticsReducedMotion": "Su questo dispositivo è attiva l'opzione «Riduci movimento». Finché lo è, la vibrazione resta disattivata, anche con questa impostazione attiva.",
+    "hapticsNotSaved": "Non è stato possibile salvare l'impostazione in questo browser (archiviazione bloccata, ad esempio in modalità privata). Il feedback aptico resta disattivato.",
     "voiceBlocker": {
       "voice_path_off": "Il percorso vocale è attualmente disattivato su questa istanza. Può acconsentire ora: il requisito avrà effetto non appena verrà attivato.",
       "recognition_off": "Il riconoscimento del parlante è disattivato su questa istanza. Senza di esso la sua voce non potrebbe mai essere verificata.",
