@@ -22,11 +22,28 @@ import apiClient from './axios';
  * accepts a non-"ws" scope). Both are short-lived and REST-rejected.
  */
 export async function fetchWsToken(purpose: 'ws' | 'voice' = 'ws'): Promise<string | null> {
+  const result = await requestWsToken(purpose);
+  return result.ok ? result.token : null;
+}
+
+/**
+ * The faucet's answer with the failure kept apart from "no token needed".
+ *
+ * `{ ok: true, token: null }` is the server SAYING no token is required (auth
+ * off). `{ ok: false }` is a request that failed (backend restarting, access
+ * token being refreshed, network). `fetchWsToken` folds both into `null`; a
+ * caller for which a token-less socket would be REFUSED on an auth-on instance
+ * must not treat a failed request as "open without a token" — it should retry.
+ */
+export type WsTokenResult = { ok: true; token: string | null } | { ok: false };
+
+export async function requestWsToken(purpose: 'ws' | 'voice' = 'ws'): Promise<WsTokenResult> {
   try {
     const res = await apiClient.post('/api/ws/token', null, { params: { purpose } });
-    return res.data?.token ?? null;
+    const token: unknown = res.data?.token;
+    return { ok: true, token: typeof token === 'string' && token ? token : null };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 

@@ -13,6 +13,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ha_glue.services.presence_debug import note_ble_report
 from ha_glue.utils.config import ha_glue_settings
 from utils.config import settings
 
@@ -279,6 +280,9 @@ class PresenceService:
 
         # Clean up stale presence
         self._cleanup_stale(now)
+
+        # Live readings view (admin diagnostic): no-op unless a viewer is connected.
+        note_ble_report()
 
         # Fire collected presence events
         await self._fire_pending_events()

@@ -159,6 +159,67 @@ continuous scan + smoothing (and later IRK). Metrics: presence-detection
 latency, room-arbitration flip rate, % time known devices resolved after MAC
 rotation.
 
+## Live readings view (admin diagnostic)
+
+The numbers behind a room decision used to be reachable only as JSON
+(`GET /api/presence/debug/sightings`). The **Readings** tab on `/admin/presence`
+(`components/presence/LiveReadings.tsx`) shows them live: per tracked device the
+person, the room the system places them in and its confidence; one row per
+satellite with latest / mean / min–max RSSI, reading count, age and a trend
+line over the sighting window; connected satellites that did NOT hear the
+device ("not heard" — as telling as a weak reading); and per room the filtered
+value with the threshold a challenger needs (`current + PRESENCE_SWITCH_ENTER_MARGIN_DB`).
+
+- **One payload builder** (`ha_glue/services/presence_debug.py::build_sightings_payload`)
+  serves the REST route and the socket. It adds `enabled`, `settings`
+  (`rssi_floor_dbm`, `switch_enter_margin_db`, `stale_timeout_s`,
+  `rssi_filter_enabled`), `satellites` (connected roster, in-memory) and per
+  device `filtered_rooms` (id-keyed) to the earlier response; nothing was removed.
+- **Push, not poll:** ADMIN-gated `/ws/presence-debug`
+  (`ha_glue/api/websocket/presence_debug_handler.py`) sends one `snapshot` on
+  connect and a fresh one after BLE reports, coalesced to at most one per second.
+  `process_ble_report` calls `note_ble_report()`, which returns at once while no
+  viewer is connected — the diagnostic costs nothing unwatched. Frontend:
+  `hooks/usePresenceReadings.ts` (the only timer is the reconnect backoff).
+- **Gate:** ADMIN on both, fail-closed (a permission lookup error refuses the
+  socket). The payload is every tracked person's movement trace; the device
+  `key` stays a redacted hash, never the raw MAC or the IRK label.
+- **A refusal is readable, and only a confirmed one is final:** the handler
+  accepts the handshake and then closes with an application code. Closing
+  before `accept` answers the upgrade with HTTP 403, which a browser reports as
+  1006 — the page could not tell "denied" from "network down". Two codes, both
+  denying, nothing sent on either: `WSAuthError.FORBIDDEN` (4403) = the user was
+  loaded and is not an admin → the hook shows "no access", drops any snapshot
+  and stops; `WSAuthError.UNAUTHORIZED` (4001) = the server could not establish
+  who is asking (no/expired token, no user, lookup error) → possibly temporary,
+  the hook retries with backoff ("reconnecting"). The hook also never opens a
+  token-less socket after a FAILED token request (`requestWsToken` keeps a
+  failure apart from the faucet's "no token needed"); "live" and the backoff
+  reset wait for the first snapshot, since an accepted handshake proves nothing.
+- **Maximum socket lifetime** (`MAX_SESSION_SECONDS`, 15 min): the ADMIN check
+  runs at the handshake only, and this stream is personal data. The server
+  closes normally (1000); the hook reconnects at once, without a status change
+  or backoff growth, and the new handshake checks the role again. A normal
+  close from a socket that never delivered a snapshot counts as a drop
+  (ordinary backoff), so it cannot drive a reconnect loop.
+- **A dropped viewer is closed** (1011), not merely unregistered — otherwise the
+  tab would sit on an open, silent socket showing "Live" with frozen numbers.
+- **Voice hold / pin** (see "Voice hold" and "After the hold" below): per device
+  `voice_hold_remaining_s`, `voice_pinned`, `location_uncertain`
+  (`PresenceService.is_location_uncertain`, not a copy of its rule); in
+  `settings` `voice_hold_s` and `voice_release_margin_db`. The view shows "held
+  by voice for N s" (a challenger that has met the margin then reads "blocked by
+  the hold", never "takes over"), "held guess", and — for a pinned room the
+  device was never heard in — the threshold `floor + release margin` instead of
+  the enter margin, mirroring `_should_switch_filtered`.
+- **Screen readers:** only the connection status is a live region; the "as of"
+  time changes every second and stays outside it.
+- **Limits:** sightings live in the memory of the pod that holds the satellite
+  sockets, so the view shows that pod's state (same as the REST route). A device
+  that fell silent keeps its last readings until the next report for it prunes
+  them; the age column makes that visible. No new flag — like the REST route it
+  follows `PRESENCE_ENABLED` only.
+
 ## Open questions
 - Bond per-satellite vs central IRK distribution?
 - Audit: which household devices use stable vs randomized addresses today?

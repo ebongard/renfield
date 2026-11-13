@@ -661,6 +661,16 @@ async def ha_glue_register_routes(*, app: Any) -> None:
             "ha_glue.bootstrap: presence router mount failed"
         )
 
+    # --- Presence diagnostics WebSocket (/ws/presence-debug, ADMIN) ---
+    try:
+        from ha_glue.api.websocket.presence_debug_handler import router as presence_debug_router
+        app.include_router(presence_debug_router, tags=["WebSocket Presence Debug"])
+        logger.info("✅ ha_glue: mounted /ws/presence-debug")
+    except Exception:
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: presence_debug_router mount failed"
+        )
+
     # --- Paperless audit REST router ---
     # Mounted from platform core (api/lifecycle.py::_init_paperless_audit), NOT here —
     # the audit needs no Home Assistant, so it must reach HA-less deploys too. This

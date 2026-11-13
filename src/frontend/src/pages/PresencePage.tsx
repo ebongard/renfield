@@ -13,13 +13,14 @@ import Modal from '../components/Modal';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
   MapPin, Users, Wifi, Smartphone, Plus, Trash2, RefreshCw,
-  Clock, Watch, Radio, BarChart3, Bluetooth, Info,
+  Clock, Watch, Radio, BarChart3, Bluetooth, Info, Activity,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import AnalyticsTab from '../components/presence/AnalyticsTab';
 import IrkPairing from '../components/presence/IrkPairing';
+import LiveReadings from '../components/presence/LiveReadings';
 import {
   usePresenceRoomsQuery,
   usePresenceDevicesQuery,
@@ -298,7 +299,7 @@ export default function PresencePage() {
   const formatAgo = useFormatAgo(t);
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [activeTab, setActiveTab] = useState<'live' | 'analytics'>('live');
+  const [activeTab, setActiveTab] = useState<'live' | 'readings' | 'analytics'>('live');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -404,6 +405,19 @@ export default function PresencePage() {
           </span>
         </button>
         <button
+          onClick={() => setActiveTab('readings')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'readings'
+              ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <Activity className="w-4 h-4" />
+            {t('presence.tabReadings')}
+          </span>
+        </button>
+        <button
           onClick={() => setActiveTab('analytics')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'analytics'
@@ -420,6 +434,8 @@ export default function PresencePage() {
 
       {activeTab === 'analytics' ? (
         <AnalyticsTab users={users} />
+      ) : activeTab === 'readings' ? (
+        <LiveReadings />
       ) : (
       <>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
