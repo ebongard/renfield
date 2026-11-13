@@ -1252,6 +1252,25 @@ class TestVoiceRelease:
         assert svc.is_location_uncertain(1) is True
 
     @pytest.mark.asyncio
+    async def test_a_room_winning_on_old_readings_is_not_fresh_evidence(self, service_with_devices):
+        """The phone was heard strongly in the voice room and then only weakly
+        elsewhere. The room still wins on its slowly decaying filter value, but
+        that is not a new reading: the evidence time must stay where the last
+        reading in the room was."""
+        svc = self._svc(service_with_devices)
+        await self._register(svc, 10, "Kitchen")
+        await self._ble(svc, "sat-kitchen", 10, -50, "Kitchen", times=3)
+        # The last kitchen reading is 70 s old; the sighting itself too.
+        for s_ in svc._sightings[self.MAC]:
+            s_.timestamp -= 70
+        presence = svc.get_user_presence(1)
+        presence.room_evidence_at -= 70
+        presence.voice_hold_until = time.time() - 10
+        await self._ble(svc, "sat-far", 20, -78, "Far")
+        assert svc.get_user_presence(1).room_id == 10  # still wins on the old value
+        assert svc.is_location_uncertain(1) is True
+
+    @pytest.mark.asyncio
     async def test_a_second_device_elsewhere_does_not_make_the_verdict_flicker(self, service_with_devices):
         """Phone heard in the voice room, a second device heard elsewhere: the
         verdict must not depend on which device reported last."""

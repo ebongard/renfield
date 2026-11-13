@@ -449,7 +449,10 @@ class PresenceService:
 
         # --- Same room? reinforce and stop -----------------------------------
         if best_room_id == current.room_id:
-            current.room_evidence_at = time.time()
+            # The time of the freshest READING in this room, not of this pass:
+            # a room keeps winning on its decaying filter value for a while
+            # after the phone was last heard there.
+            current.room_evidence_at = max(current.room_evidence_at, best_timestamp)
             current.consecutive_room_count += 1
             current.pending_room_id = None
             current.pending_room_count = 0
