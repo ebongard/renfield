@@ -222,20 +222,42 @@ name. A pairing now also carries the far **instance's** own name, shown first:
   emits the same JSON it always did. Existing pairings learn the name with the
   next query or ping — no re-pairing.
 - **Accepted only** after the envelope verified against a paired, non-revoked
-  key; then capped at 64 characters and stripped of control and format
-  characters. An attachment that does not verify is dropped and the request
-  stands.
+  key. An attachment that does not verify is dropped and the request stands.
+- **Cleaned before it is stored:** NFKC; control and format characters, blank
+  fillers (U+3164, U+115F, U+1160, U+FFA0, U+2800, U+034F) and variation
+  selectors dropped; at most two combining marks per base character and none
+  without one; whitespace collapsed; 64 characters. A name with no **visible**
+  character left counts as not sent.
+- **Renamed at most once per pairing per 10 minutes**
+  (`FEDERATION_INSTANCE_RENAME_MIN_INTERVAL_SECONDS`, default 600 — a choice,
+  not a measurement). The far side picks the text and sends it with every
+  request; a change inside the interval is ignored, an unchanged name costs
+  no statement and no registry resync. Each accepted change is logged at INFO
+  with the pairing id and the two lengths, never the name.
 - 🛑 **Display text only.** Never an identifier, never a lookup key, never part
   of a server or tool name — `peer_<id>` and the pubkey remain the only keys.
 - **Shown as** instance name → host of the stored endpoint → the person alone,
-  on the kiosk, the peers page, the audit view and the chat status line. The
-  audit view shows the name the **row recorded** when it was written
+  on the peers page, the audit view and the chat status line. **The kiosk never
+  shows a host:** the verified instance name, else the person alone — its
+  payload is content-free and a host name is an address. The audit view shows
+  the name the **row recorded** when it was written
   (`federation_query_log.peer_instance_name_snapshot`); rows from before carry
   none and show the person alone.
-- 🛑 The tool description the model reads names the instance once a **verified**
-  name is stored (never the endpoint-host fallback). That wording is pinned in
-  `test_peer_tool_description.py` but **not measured** — run
-  `bin/measure-preselect.py` after a name goes live.
+- 🛑 **The name is NOT in the agent's prompt unless this instance says so.** A
+  paired peer chooses its name and can change it without local consent, and a
+  tool description is part of the local agent's prompt. The named variant of
+  the description is therefore behind its own flag,
+  `FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED`, **default off**: without
+  it the description is byte for byte the measured text, whatever name is
+  stored. With it, only an allow-list form goes in (NFKC; letters, digits,
+  `_`, space, `.`, `-`; 32 characters; never the display string, never the
+  endpoint-host fallback; nothing usable left → the unnamed variant). The
+  named wording is pinned in `test_peer_tool_description.py` but
+  **unmeasured; measure with `bin/measure-preselect.py` before enabling.**
+- **Migrate before the rollout:** revision `pc20261113_peer_instance_name` adds
+  `peer_users.remote_instance_name` and
+  `federation_query_log.peer_instance_name_snapshot`
+  (`bin/deploy-production.sh … --migrate`, each instance).
 
 ### Reachability (`FEDERATION_REACHABILITY_ENABLED`, default off)
 
@@ -256,17 +278,33 @@ whatever is posted. The answer `{version, status: "ok", nonce, answered_at,
 responder_pubkey, responder_signature}` is checked like a query's — paired key,
 signature, **our** nonce — so a recorded answer cannot be replayed.
 
+The route is reachable without a pairing (a signature can only be checked once
+the body is there), so an outsider must not be able to make it hold or write
+anything:
+
+- **Body cap, 4096 bytes, both directions.** A declared `Content-Length` above
+  it is refused unread; a body without one is read only up to the cap. The
+  asking side reads the answer under the same cap.
+- **Order of the checks: signature → timestamp → pairing → rate bucket →
+  nonce.** Everything that writes comes after the pairing lookup: an unpaired
+  key leaves no nonce (the nonce store is capped — written earlier, a stream
+  of unpaired pings could push real nonces out of it), no bucket and no row.
+
 A ping is not a request: it does not move `last_seen_at`, writes no audit row
 and spends no query budget.
 
-**Who probes, and when** — never a free-running poll:
+**Who probes, and when:**
 
-- the kiosk refresher, while a wall display is connected: each pairing at most
-  every 5 minutes, plus one round when a display connects (in the background;
-  the snapshot never waits for another instance);
+- **a consumer-gated periodic check, every 5 minutes per pairing while at
+  least one kiosk is connected; owner decision pending.** Mechanically: the
+  kiosk refresher's 60 s timer probes a pairing once its reading is older than
+  300 s, plus one round when a display connects (in the background; the
+  snapshot never waits for another instance). With no display connected,
+  nothing runs;
 - a person: "check now" on the peers page (`POST /peers/{id}/check` — the owner,
   an `admin` holder, or with `FEDERATION_PEERS_VISIBLE_TO_ALL` every account),
-  and once when the page shows a row that has no reading.
+  and once when the page shows a row that has no reading. The request's
+  database session is released before the round trip goes out.
 
 Readings live in Redis under a 15-minute TTL, not in the database: an
 observation nobody refreshed ceases to exist and the pairing reads `unknown`

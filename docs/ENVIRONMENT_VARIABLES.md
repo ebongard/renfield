@@ -3043,17 +3043,65 @@ diesem Personennamen. Der Instanzname steht jetzt davor: „Instance B · alex�
   Gegenstelle auf älterem Stand ignoriert den Anhang.
 - **Was die Gegenseite damit tut:** sie speichert ihn nur von einem
   authentifizierten, nicht widerrufenen Peer und nur bei gültiger Signatur
-  (`peer_users.remote_instance_name`), auf 64 Zeichen gekürzt und von
-  Steuer- und Formatzeichen befreit. Er ist **Anzeigetext**: nie Kennung, nie
+  (`peer_users.remote_instance_name`). Er ist **Anzeigetext**: nie Kennung, nie
   Suchschlüssel, nie Teil des Servernamens (`peer_<id>` bleibt).
-- **Anzeige** (Kiosk, `/settings/circles/peers`, Audit-Ansicht, Chat-Statuszeile):
-  Instanzname → Host des gespeicherten Endpunkts → Personenname allein.
+- **Bereinigung vor dem Speichern:** NFKC-Normalform; Steuer- und
+  Formatzeichen, leere Füllzeichen (U+3164, U+115F, U+1160, U+FFA0, U+2800,
+  U+034F) und Variantenselektoren fallen weg; höchstens zwei kombinierende
+  Zeichen je Grundzeichen, keines ohne Grundzeichen; Leerraum zu einem
+  Leerzeichen; 64 Zeichen. Bleibt kein **sichtbares** Zeichen übrig, gilt der
+  Name als nicht gesendet.
+- **Anzeige:** auf `/settings/circles/peers`, in der Audit-Ansicht und in der
+  Chat-Statuszeile Instanzname → Host des gespeicherten Endpunkts →
+  Personenname allein. **Der Kiosk zeigt nie einen Host:** dort nur der
+  verifizierte Instanzname, sonst der Personenname allein (die Kiosk-Nutzlast
+  trägt keine Adresse).
+- **Migration vor dem Rollout:** `pc20261113_peer_instance_name` legt die
+  Spalten `peer_users.remote_instance_name` und
+  `federation_query_log.peer_instance_name_snapshot` an. Das ORM liest jede
+  Spalte mit — ein neuer Pod vor der Migration scheitert an jeder Abfrage
+  dieser Tabellen. Also `bin/deploy-production.sh … --migrate`, je Instanz,
+  wie bei `pc20261111_push_subs`.
 
-🛑 Der Name steht auch in der Werkzeugbeschreibung, die das Modell liest
-(`services/peer_mcp_registry.py`), sobald die Gegenseite einen **verifizierten**
-Namen gesendet hat — der Host-Rückfall der Anzeige zählt dort nicht. Diese
-Fassung der Beschreibung ist festgenagelt, aber **nicht gemessen**: nach dem
-Setzen eines Namens mit `bin/measure-preselect.py` nachmessen.
+```bash
+# Wie oft eine Gegenstelle ihren Namen ändern darf: höchstens einmal je
+# Kopplung in diesem Abstand (Sekunden, 0-86400; 0 = ohne Grenze)
+# Default: 600
+FEDERATION_INSTANCE_RENAME_MIN_INTERVAL_SECONDS=600
+```
+
+Der Name ist Text, den die **Gegenseite** wählt und mit jeder Anfrage und
+jeder Prüfung mitschickt. Eine Änderung innerhalb des Abstands wird verworfen
+(die Gegenseite schickt ihn mit der nächsten Anfrage erneut); ein unveränderter
+Name kostet weder eine Anweisung an die Datenbank noch einen Neuabgleich der
+Werkzeugliste. Jede übernommene Änderung steht mit Kopplungs-ID und
+Zeichenzahl im Protokoll (INFO), nie mit dem Namen selbst. Zehn Minuten sind
+eine **Festlegung**, kein Messwert.
+
+```bash
+# Den Instanznamen der Gegenstelle in die Werkzeugbeschreibung schreiben,
+# die das Modell liest
+# Default: false -- UNGEMESSEN; vor dem Einschalten mit
+# bin/measure-preselect.py messen
+FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED=false
+```
+
+🛑 **Ein gekoppelter Peer bestimmt seinen Namen selbst und kann ihn ohne
+Zustimmung dieser Instanz ändern.** Eine Werkzeugbeschreibung ist Teil des
+Prompts des hiesigen Agenten. Deshalb ist die benannte Fassung
+(„Ask the Renfield instance „<Name>“ (paired by <Person>) …“) ein eigener
+Schalter und **standardmäßig aus**: ohne ihn ist die Beschreibung Zeichen für
+Zeichen der gemessene Text, was immer als Name gespeichert ist.
+
+Mit dem Schalter geht nur eine **Positivlisten-Form** des Namens in den Prompt
+(`prompt_safe_instance_name`): NFKC, ausschließlich Buchstaben, Ziffern,
+Unterstrich, Leerzeichen, Punkt und Bindestrich, höchstens 32 Zeichen —
+Anführungszeichen, Doppelpunkte, Klammern und Zeilenumbrüche fallen weg, sie
+werden nicht maskiert. Bleibt nichts Benennbares, gilt die unbenannte
+Fassung; der Host-Rückfall der Anzeige zählt hier nie. Die Anzeige behält
+überall den volleren, bereinigten Namen. Die benannte Fassung ist
+festgenagelt, aber **ungemessen** — vor dem Einschalten mit
+`bin/measure-preselect.py` messen.
 
 ### Föderation: Erreichbarkeitsprüfung
 
@@ -3077,12 +3125,25 @@ signierten Rundlauf (`POST /api/federation/peer/ping`).
 - **Aus (Standard):** kein Ping verlässt die Instanz; die Route antwortet 404
   wie eine Version, die sie nicht kennt; die Kiosk-Nutzlast und
   `GET /api/federation/peers` sind byte-identisch zum Stand davor.
-- **An:** der Kiosk-Auffrischer prüft jede Kopplung höchstens alle fünf
-  Minuten — nur solange ein Wanddisplay verbunden ist, und einmal, wenn eines
-  sich verbindet. Die Peer-Seite bekommt „Jetzt prüfen“
-  (`POST /api/federation/peers/{id}/check`: Eigentümer, Konto mit `admin`,
-  mit `FEDERATION_PEERS_VISIBLE_TO_ALL` jedes Konto) und prüft eine Zeile ohne
-  Messwert einmal beim Öffnen. Kein frei laufender Abruf.
+- **An:** eine **verbrauchergebundene, periodische Prüfung** — alle fünf
+  Minuten je Kopplung, solange mindestens ein Kiosk verbunden ist (der
+  60-Sekunden-Takt des Kiosk-Auffrischers prüft, sobald der Messwert älter
+  als 300 Sekunden ist), und einmal, wenn sich einer verbindet. Ohne
+  verbundenen Kiosk läuft nichts. **Ob es bei diesem Takt bleibt, ist eine
+  offene Entscheidung des Eigentümers.** Die Peer-Seite bekommt „Jetzt
+  prüfen“ (`POST /api/federation/peers/{id}/check`: Eigentümer, Konto mit
+  `admin`, mit `FEDERATION_PEERS_VISIBLE_TO_ALL` jedes Konto) und prüft eine
+  Zeile ohne Messwert einmal beim Öffnen.
+- **Was der Kiosk davon erfährt:** eine `peer_status_changed`-Nachricht nur,
+  wenn sich etwas Sichtbares ändert — der Zeitpunkt der Prüfung allein zählt
+  nicht. Läuft ein Messwert ab (15 Minuten), ist das eine Zustandsänderung
+  („unbekannt“) und wird gesendet. Eine unveränderte Liste wird alle zehn
+  Minuten bestätigt (eine Festlegung), damit das Display eine verstummte
+  Verbindung von „nichts hat sich geändert“ unterscheiden kann: hört es
+  zwanzig Minuten nichts, zeigt es „unbekannt — geprüft, aber das Ergebnis
+  ist alt“. Dieses Alter misst das Display auf der Uhr des **Servers**
+  (Zeitstempel `at` der Nachricht) plus der seit dem Empfang vergangenen
+  Zeit, nie gegen die eigene Wanduhr.
 
 | Ergebnis | Anzeige | Bedeutung |
 |---|---|---|
@@ -3097,6 +3158,15 @@ signierten Rundlauf (`POST /api/federation/peer/ping`).
 
 🛑 **Beide Seiten brauchen das Flag.** Ist es nur auf einer Seite an, liest
 diese `unsupported` → „unbekannt“, nie „nicht erreichbar“.
+
+Die Route `POST /api/federation/peer/ping` ist ohne Kopplung erreichbar (die
+Signatur lässt sich erst prüfen, wenn der Rumpf da ist). Deshalb: Rumpf
+höchstens 4096 Byte — eine größere `Content-Length` wird ungelesen
+abgewiesen, ein Rumpf ohne Längenangabe nur bis zur Grenze gelesen; geprüft
+wird in der Reihenfolge Signatur → Zeitfenster → Kopplung → Kontingent →
+Nonce, sodass ein ungekoppelter Schlüssel **nichts** hinterlässt (keine Nonce,
+kein Kontingent, keine Zeile). Jede Ablehnung ist dieselbe einheitliche 400.
+Die anfragende Seite liest auch die Antwort nur bis 4096 Byte.
 
 Eine Prüfung ist keine Anfrage: sie verschiebt `last_seen_at` nicht („Letzte
 Anfrage …“ behält seine Bedeutung), schreibt keine Audit-Zeile und verbraucht

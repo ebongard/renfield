@@ -62,11 +62,21 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   Teil von `peer_<id>`. Er reist als Anhang AUSSERHALB der signierten Nutzlast (mit eigener
   Signatur über Name + Schlüssel + Umschlag-Signatur) — ein Feld IN der Nutzlast bräche jede
   Gegenstelle auf älterem Stand. Übernommen erst NACH Umschlag-Signatur und Peer-Nachschlag;
-  ungültiger Anhang = verwerfen, Anfrage gilt. Einziger Schreiber: `federation_instance_name.py`.
-- 🛑 **Ein Ping ist keine Anfrage** (`FEDERATION_REACHABILITY_ENABLED`, dunkel): `last_seen_at`
+  ungültiger Anhang = verwerfen, Anfrage gilt. Einziger Schreiber: `federation_instance_name.py`
+  (NFKC, mindestens ein sichtbares Zeichen, höchstens eine Änderung je Kopplung in 10 Minuten;
+  im Protokoll nur ID + Längen).
+- 🛑 **Der Name ist Text der GEGENSEITE — in den Prompt nur mit eigenem Schalter.**
+  `FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED` (aus, ungemessen): ohne ihn ist die
+  Werkzeugbeschreibung der gemessene Text, was immer gespeichert ist; mit ihm nur die
+  Positivlisten-Form (`prompt_safe_instance_name`, 32 Zeichen), nie der Anzeigetext, nie der Host.
+- 🛑 **Ein Ping ist keine Anfrage** (`FEDERATION_REACHABILITY_ENABLED`): `last_seen_at`
   bleibt „letzte ANFRAGE", keine Prüfprotokoll-Zeile, eigenes Kontingent, Fremden dasselbe
   einheitliche 400. `unsupported` (Gegenseite antwortet 404) ist UNBEKANNT, nie „nicht erreichbar".
-  Messwerte liegen in Redis mit Ablaufzeit, nie in `peer_users`. Kein frei laufender Abruf.
+  Messwerte liegen in Redis mit Ablaufzeit, nie in `peer_users`. Geprüft wird periodisch, aber
+  verbrauchergebunden: alle 5 Minuten je Kopplung, solange ein Kiosk verbunden ist.
+- 🛑 **Die Ping-Route ist ohne Kopplung erreichbar:** Rumpf höchstens 4096 Byte (vor und beim
+  Lesen), Reihenfolge Signatur → Zeitfenster → Kopplung → Kontingent → Nonce — alles, was
+  SCHREIBT, steht hinter dem Kopplungs-Nachschlag. `handle_initiate` hält das noch nicht ein.
 
 ## Writing source rows
 - Tables: `atoms` (polymorphic registry), `circles` (per-user dimension config), `circle_memberships`,

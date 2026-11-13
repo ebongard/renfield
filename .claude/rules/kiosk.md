@@ -37,12 +37,22 @@ roles at startup. The gate fails closed: a lookup error denies.
   entry has `connected=True` with no session behind it; shown as a tool it was a permanent false "healthy".
   Filtered in ONE place, `kiosk_data.kiosk_mcp_status` (by transport, not name prefix) plus the suppressed
   `tool_health_changed` in `MCPManager._broadcast_tool_health`, so snapshot, deltas and counts agree. A turn that
-  asked the peer still names `peer_<id>` in `turn_activity`; the ARC node pulses on it (`PeerNode.pulseId`).
+  asked the peer still names `peer_<id>` in `turn_activity`; the ARC node pulses on it. Rows on one remote key
+  are ONE node (`ORDER BY id`; id + person of the lowest id, most recently checked reading, `pulse_ids` = every
+  row's `peer_<id>`, `PeerNode.pulseIds`).
+- 🛑 **The peer label is the VERIFIED instance name or the person — never the endpoint host** (a host name is an
+  address; the host fallback lives on the logged-in peers page only). Peer-chosen text is clipped in the view
+  (`peerArc.ts`, 22 chars); the full label only as `<title>` text.
 - **Peer state follows the payload.** `reachability` present (`FEDERATION_REACHABILITY_ENABLED`): the signed
-  round trip decides, three-valued; `last_seen_at` plays no part (a ping does not move it) and a stale
-  `checked_at` degrades to `unknown`, never to unreachable. Absent: the old two-valued rule on `reachable` +
-  `PEER_OFFLINE_MS`, payload byte-identical. Probes run only while a display is connected, and the connect
-  snapshot never waits for another instance.
+  round trip decides, three-valued; `last_seen_at` plays no part (a ping does not move it). Absent: the old
+  two-valued rule on `reachable` + `PEER_OFFLINE_MS`, payload byte-identical.
+- 🛑 **Age of a reading = server clock.** `at` (server time of the push) − `checked_at`, plus device time elapsed
+  since receipt; never device wall clock vs. server timestamp. Stale (20 min) → `unknown` / reason `stale`,
+  never unreachable. The diff gate ignores `checked_at`; with the check on an unchanged list is re-affirmed
+  every 10 min, so the backstop fires only on a silent socket.
+- **The reachability check IS periodic:** a consumer-gated periodic check, every 5 minutes per pairing while at
+  least one kiosk is connected (60 s refresher tick, probe when the reading is older than 300 s); owner decision
+  pending. The connect snapshot never waits for another instance.
 
 ## Health verdicts
 - Primary = `get_status()`, which folds connectivity AND functionality: **degraded** = connected but a bound startup

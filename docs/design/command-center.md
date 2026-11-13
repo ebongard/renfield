@@ -365,19 +365,47 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
   `mcp.servers`, `tool_health[]` and `total_tools` (recognised by transport, not by the name prefix), and
   `MCPManager._broadcast_tool_health` sends no `tool_health_changed` for them — one filter layer, so snapshot and
   deltas agree. Not gated: it removes a duplicate and a false "healthy". The label helper `toolServerLabel`
-  from #1544 went with it.
-- **The arc node carries everything.** Label = the far instance's name with the person who paired beneath it (the
-  person alone when the instance has no label). A turn that asked the peer still names `peer_<id>` in
-  `turn_activity.subsystems`; the arc node (`PeerNode.pulseId`) lights and runs the same expanding ring a tool
-  node does. A single peer sits at the very top of the arc (y = 20 of 1080), where a label above it is cut off
-  by the screen edge — there the label stands beside the node.
+  from #1544 went with it. **Mixed versions:** a new bundle against an OLD backend briefly shows the peer twice
+  and labels the tool node generically (the old backend still lists `peer_<id>` among the servers); it ends with
+  the backend rollout.
+- **The arc node carries everything.** Label = the far instance's **verified** name with the person who paired
+  beneath it; the person alone when no verified name is stored. 🛑 **Never the endpoint host** — the peers page
+  falls back to it behind a login, the wall does not: the kiosk payload is content-free and a host name is an
+  address. A turn that asked the peer still names `peer_<id>` in `turn_activity.subsystems`; the arc node
+  lights and runs the same expanding ring a tool node does.
+- **One node per far INSTANCE, not per pairing row.** Two local accounts paired with the same instance are two
+  rows on one remote key. `compute_peer_status` reads the rows `ORDER BY id` and groups them by key; the node
+  takes its `id` and person from the **lowest-id** row, the first verified instance name in the group, the
+  latest `last_seen_at`, the **most recently checked** reading (tie: lowest id) and `recently_active` if any row
+  is. A group additionally sends `pulse_ids` (every row's `peer_<id>`), and the node (`PeerNode.pulseIds`)
+  pulses on any of them — a turn through the other account's row lights the same node. Single rows send no
+  `pulse_ids`; the frontend derives the one id.
+- **Arc layout (`components/kiosk/peerArc.ts`).** Labels are peer-chosen text of up to 64 characters: the view
+  clips them to 22 characters plus an ellipsis; the full label appears only as text in the node's `<title>`,
+  never in an attribute. Up to three peers are spread evenly; from four on the inner one or two keep the top
+  (0° or ±12°) and the rest spread over 34°–50° on each side, so no beside-label reaches a neighbour's centred
+  label. Placement is tested for one to six peers with the longest labels; a single peer sits at the very top
+  (y = 20 of 1080), where a label above it would be cut off by the screen edge — there it stands beside the node.
 - **Peer state, two rules, chosen by the payload.** With `FEDERATION_REACHABILITY_ENABLED` the payload carries
   `reachability` (reachable / unreachable / unknown), `reachability_reason`, `checked_at` and `recently_active`
-  from a signed round trip; the ring is solid / dashed / dotted-and-muted, a filled centre marks "recently
-  active", and the localized state + reason is the `<title>`. `last_seen_at` plays no part then (a ping does not
-  move it); the backstop is on `checked_at` (`PEER_CHECK_STALE_MS`, 20 min) and degrades to **unknown**, never to
-  unreachable. Without the flag the payload is byte-identical to before and the wall keeps its old two-valued
-  rule: "queried us within 5 minutes" plus the `PEER_OFFLINE_MS` backstop on `last_seen_at`.
-- **Probing is consumer-gated, not a poll.** The peer refresher tick (`api/lifecycle.py`) runs a probe round
-  first, only while a display is connected; a connecting display triggers one round in the background and its
-  snapshot goes out with the stored readings — it never waits for another instance.
+  from a signed round trip; the ring is solid / dashed (`8 5`) / dotted with round caps and muted (`1 6`) —
+  two channels, told apart from across the room — a filled centre marks "recently active", and the localized
+  state + reason is the `<title>`. The legend lists the peer states (the "unknown" row only while the check is
+  on). `last_seen_at` plays no part then (a ping does not move it). Without the flag the payload is
+  byte-identical to before and the wall keeps its old two-valued rule: "queried us within 5 minutes" plus the
+  `PEER_OFFLINE_MS` backstop on `last_seen_at`.
+- **The age of a reading is measured on the SERVER's clock.** Snapshot and `peer_status_changed` carry `at`, the
+  server's time at the push. The display takes `at − checked_at` and adds its own elapsed time since receipt —
+  never its wall clock against a server timestamp, which a tablet running 20 minutes fast turned into "every
+  peer unknown". Older than `PEER_CHECK_STALE_MS` (20 min) degrades to **unknown** with a reason of its own,
+  `stale` ("checked, but the result is old"), never to unreachable and never to "not checked yet".
+- **What is pushed.** The diff gate leaves `checked_at` out: a check that found the same thing changes nothing a
+  person can see and pushes nothing. A reading that expires (15 min TTL) reads `unknown / not_checked` and IS a
+  state change. With the check on, an unchanged list is re-affirmed every 10 minutes
+  (`_PEER_STATUS_REAFFIRM_SECONDS`, a choice) with its current `checked_at` values — so the frontend's
+  20-minute backstop fires only when the socket went silent without closing, not on a quiet evening.
+- **Probing is a consumer-gated periodic check, every 5 minutes per pairing while at least one kiosk is
+  connected; owner decision pending.** The peer refresher tick (`api/lifecycle.py`, 60 s) runs a probe round
+  first, which pings a pairing whose reading is older than 300 s; a connecting display triggers one round in the
+  background and its snapshot goes out with the stored readings — it never waits for another instance. With no
+  display connected nothing runs.
