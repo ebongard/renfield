@@ -730,6 +730,34 @@ class TestCheckNow:
         row = _by_id(await async_client.get(PEERS), world["named"])
         assert row["reachability"] == body
 
+    async def test_the_database_session_is_given_back_before_the_round_trip(
+        self, async_client: AsyncClient, db_session, world, as_user, feature_on, owner_only,
+        monkeypatch,
+    ):
+        """🛑 The round trip waits on ANOTHER instance, for seconds. A request
+        session held open across it keeps a pooled connection idle in a
+        transaction for that long -- once per person pressing the button. So
+        while the ping is out: no transaction, the row detached, and everything
+        the round trip reads still on it."""
+        from sqlalchemy import inspect as sa_inspect
+
+        named = world["named"]
+        expected = (named.id, named.remote_pubkey, dict(named.transport_config))
+        seen: dict = {}
+
+        async def _ping(peer, client=None):
+            seen["in_transaction"] = db_session.in_transaction()
+            seen["detached"] = sa_inspect(peer).detached
+            seen["row"] = (peer.id, peer.remote_pubkey, dict(peer.transport_config))
+            return PING_REACHABLE
+
+        monkeypatch.setattr(reach, "ping_peer", _ping)
+        as_user(world["owner"])
+        resp = await async_client.post(self._url(named))
+        assert resp.status_code == 200
+        assert resp.json()["state"] == "reachable"
+        assert seen == {"in_transaction": False, "detached": True, "row": expected}
+
     async def test_the_reason_reaches_the_caller(
         self, async_client: AsyncClient, world, as_user, feature_on, owner_only, ping,
     ):

@@ -549,24 +549,56 @@ async def ping_peer(peer: PeerUser, client: httpx.AsyncClient | None = None) -> 
         return await _ping_roundtrip(owned, peer, endpoint, req)
 
 
+#: Most a pong may weigh. A real one is about 450 bytes with a full-length
+#: name; the far side decides what it sends, so the read stops here.
+PING_RESPONSE_MAX_BYTES = 4096
+
+
+async def _post_capped(
+    client: httpx.AsyncClient, url: str, payload: dict[str, Any], cap: int,
+) -> tuple[int, bytes | None]:
+    """POST `payload`; return the status and at most `cap` bytes of the answer.
+
+    The body is `None` when the answer is, or declares itself, larger than
+    `cap` -- it is then not read to the end. `client.post` would buffer
+    whatever the far side chooses to send.
+    """
+    response = await client.send(client.build_request("POST", url, json=payload), stream=True)
+    try:
+        declared = response.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > cap:
+            return response.status_code, None
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            body += chunk
+            if len(body) > cap:
+                return response.status_code, None
+        return response.status_code, bytes(body)
+    finally:
+        await response.aclose()
+
+
 async def _ping_roundtrip(
-    client: httpx.AsyncClient | Any,
+    client: httpx.AsyncClient,
     peer: PeerUser,
     endpoint: str,
     req: PeerPingRequest,
 ) -> str:
     try:
-        # A hard ceiling over the whole exchange: httpx's timeouts are per
-        # phase, and a peer trickling bytes could otherwise hold a probe open.
-        r = await asyncio.wait_for(
-            client.post(_join(endpoint, "/api/federation/peer/ping"), json=wire_body(req)),
+        # A hard ceiling over the whole exchange, the read of the answer
+        # included: httpx's timeouts are per phase, and a peer trickling bytes
+        # could otherwise hold a probe open.
+        status, raw = await asyncio.wait_for(
+            _post_capped(
+                client, _join(endpoint, "/api/federation/peer/ping"), wire_body(req),
+                PING_RESPONSE_MAX_BYTES,
+            ),
             timeout=PING_TOTAL_TIMEOUT_SECONDS,
         )
     except (TimeoutError, httpx.HTTPError, OSError) as e:
         logger.debug(f"Federation ping to {endpoint} failed in transport: {e!r}")
         return PING_UNREACHABLE
 
-    status = r.status_code
     if status in (404, 405, 501):
         # The route does not exist there: an older version, or one with
         # reachability switched off. We learn nothing about the pairing.
@@ -579,8 +611,14 @@ async def _ping_roundtrip(
     if status != 200:
         return PING_UNREACHABLE
 
+    if raw is None:
+        logger.warning(
+            f"Federation ping: answer from {endpoint} exceeds "
+            f"{PING_RESPONSE_MAX_BYTES} bytes -- not read"
+        )
+        return PING_INVALID_RESPONSE
     try:
-        resp = PeerPingResponse.model_validate(r.json())
+        resp = PeerPingResponse.model_validate_json(raw)
     except Exception:
         return PING_INVALID_RESPONSE
 
@@ -632,8 +670,9 @@ async def _learn_responder_name(
         signer_pubkey_hex=peer.remote_pubkey,
         envelope_signature_hex=envelope_signature_hex,
     )
-    if verified is not None and verified != stored_instance_name(peer):
-        await remember_remote_instance_name(peer.id, verified)
+    current = stored_instance_name(peer)
+    if verified is not None and verified != current:
+        await remember_remote_instance_name(peer.id, verified, current=current)
 
 
 # =============================================================================

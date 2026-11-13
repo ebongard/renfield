@@ -34,17 +34,39 @@ COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _has_table(table: str) -> bool:
+    """Is the table in THIS schema? Qualified with current_schema(), as in
+    ``pc20261110_routing_traces`` and ``pc20261111_push_subs``.
+
+    🛑 Not ``sa.inspect(bind).get_table_names()``: the inspector answers for
+    the dialect's default schema, fixed when the engine first connected, while
+    the unqualified DDL below follows the search path of the moment. Where the
+    two differ, the check looks at one table and the ALTER changes another.
+    """
+    return bool(op.get_bind().execute(sa.text(
+        "SELECT to_regclass(quote_ident(current_schema()) || '.' || :t) IS NOT NULL"
+    ), {"t": table}).scalar())
+
+
 def _has_column(table: str, column: str) -> bool:
     """A fresh install already has both: the baseline builds the tables from
     the current models, and this migration then runs on top of that."""
-    inspector = sa.inspect(op.get_bind())
-    if table not in inspector.get_table_names():
-        return False
-    return column in {c["name"] for c in inspector.get_columns(table)}
+    return bool(op.get_bind().execute(sa.text(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns"
+        " WHERE table_schema = current_schema() AND table_name = :t AND column_name = :c)"
+    ), {"t": table, "c": column}).scalar())
 
 
 def upgrade() -> None:
     for table, column in COLUMNS:
+        if not _has_table(table):
+            # Both tables exist on every database at `down_revision`. Without
+            # one in this schema, an unqualified ALTER could only reach a table
+            # of the same name further down the search path -- not ours.
+            raise RuntimeError(
+                f"{revision}: table {table!r} is missing in the current schema; "
+                "refusing to alter a table of that name elsewhere on the search path"
+            )
         if not _has_column(table, column):
             op.add_column(table, sa.Column(column, sa.String(64), nullable=True))
 
@@ -54,5 +76,6 @@ def downgrade() -> None:
     # The far side sends its name again with the next query or ping after a
     # later upgrade, but the log snapshots of the meantime do not come back.
     for table, column in reversed(COLUMNS):
-        if _has_column(table, column):
+        # No table or no column in this schema: nothing of ours to take back.
+        if _has_table(table) and _has_column(table, column):
             op.drop_column(table, column)

@@ -552,6 +552,14 @@ async def check_peer_reachability(
     if peer is None:
         raise HTTPException(status_code=404, detail="Peer not found")
 
+    # 🛑 Give the connection back BEFORE the outbound round trip. The probe
+    # waits on another instance for up to several seconds; a session held open
+    # across it keeps a pooled connection (and its transaction) idle for that
+    # long, once per person pressing "check now". The row is read, so it is
+    # detached with its values and the probe needs nothing more from here.
+    db.expunge(peer)
+    await db.close()
+
     from services.federation_reachability import probe_peer
 
     reading = await probe_peer(peer, force=True)

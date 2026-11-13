@@ -34,6 +34,7 @@ What we DON'T do here:
 """
 from __future__ import annotations
 
+import unicodedata
 import weakref
 
 from loguru import logger
@@ -49,6 +50,7 @@ from services.mcp_client import (
     MCPToolInfo,
     MCPTransportType,
 )
+from utils.config import settings
 
 # Namespace prefix for federation server entries. Using `peer_{id}` keeps
 # the name stable across display-name changes — the agent loop references
@@ -94,11 +96,21 @@ def _build_query_brain_tool(peer: PeerUser) -> MCPToolInfo:
 
 
 def _description_for(peer: PeerUser) -> str:
-    """The tool description -- with the INSTANCE named once it is known.
+    """The tool description -- optionally with the INSTANCE named.
 
-    Two variants; which one ships depends on one thing only: whether the far
-    side has told us its name in a VERIFIED attachment
-    (`peer_users.remote_instance_name`).
+    Two variants. The named one ships only when BOTH hold: the operator of
+    THIS instance switched it on
+    (`FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED`, default off), and the
+    far side has told us a name in a VERIFIED attachment
+    (`peer_users.remote_instance_name`) of which something usable remains
+    after `prompt_safe_instance_name`.
+
+    🛑 Why a switch of its own: the name is text the FAR side chooses, and it
+    can change it with any query or ping. A tool description is part of the
+    agent's prompt. Without the switch a paired peer could rewrite a sentence
+    of this household's prompt whenever it liked, with nobody here agreeing to
+    it. With the switch off the description is the measured text, byte for
+    byte, whatever name is stored.
 
       no name   the text measured on 2026-10-29, byte for byte.
       a name    the same text with only the OPENING changed, from "Ask
@@ -138,12 +150,18 @@ def _description_for(peer: PeerUser) -> str:
     says it in a question. Keeping it out also keeps the measured text in place
     until a real name arrives.
 
-    The name is text from the FAR SIDE inside a prompt: capped like the
-    person's name, and stripped of quotation marks so it cannot close the
-    quotes it is set in.
+    The name is text from the FAR SIDE inside a prompt, so the description
+    never takes the display string: it takes an ALLOW-LIST form of it (letters,
+    digits, underscore, space, dot, hyphen; at most 32 characters). Nothing
+    that could close the quotes it is set in, start a new sentence with
+    punctuation of its own, or carry an instruction of any length survives.
     """
     person = _short_name(peer.remote_display_name)
-    instance = _quotable(stored_instance_name(peer))
+    instance = (
+        prompt_safe_instance_name(stored_instance_name(peer))
+        if settings.federation_peer_name_in_tool_description_enabled
+        else ""
+    )
     opening = (
         f"Ask the Renfield instance „{instance}“ (paired by {person})"
         if instance
@@ -160,17 +178,40 @@ def _description_for(peer: PeerUser) -> str:
     )
 
 
-#: Quotation marks of every kind the description itself uses or that could
-#: imitate them. Removed from an instance name before it is set in quotes.
-_QUOTE_CHARS = "\"'„“”‚‘’«»‹›`"
+#: Longest instance name the description takes. Shorter than the 64 the
+#: display allows: enough for a name, too little for a sentence.
+PROMPT_NAME_MAX_CHARS = 32
+
+#: Besides letters, digits and the underscore (`str.isalnum()` / "_"), the only
+#: characters an instance name may bring into the prompt.
+_PROMPT_NAME_EXTRA = frozenset(" .-_")
 
 
-def _quotable(name: str | None) -> str:
-    """An instance name fit to stand between quotes in the description."""
-    if not name:
+def prompt_safe_instance_name(name: str | None) -> str:
+    """The allow-list form of an instance name, for the tool description.
+
+    NFKC first, so a look-alike (fullwidth, ligature, compatibility form) is
+    judged as the character it stands for. Then ONLY letters, digits,
+    underscore, space, dot and hyphen are kept -- every quotation mark, colon,
+    bracket, newline and symbol is dropped, not escaped. Runs of spaces
+    collapse; the result is cut to `PROMPT_NAME_MAX_CHARS`.
+
+    Returns "" when nothing nameable remains (no letter or digit at all): the
+    caller then uses the unnamed description.
+    """
+    if not isinstance(name, str) or not name:
         return ""
-    cleaned = "".join(ch for ch in name if ch not in _QUOTE_CHARS).strip()
-    return _short_name(cleaned)
+    folded = unicodedata.normalize("NFKC", name)
+    # Whitespace of any kind (a newline included) becomes ONE plain space.
+    kept = "".join(
+        " " if ch.isspace() else ch
+        for ch in folded
+        if ch.isspace() or ch.isalnum() or ch in _PROMPT_NAME_EXTRA
+    )
+    cleaned = " ".join(kept.split())[:PROMPT_NAME_MAX_CHARS].strip(" .-_")
+    if not any(ch.isalnum() for ch in cleaned):
+        return ""
+    return cleaned
 
 
 #: How much of the display name may go into the description.

@@ -274,12 +274,10 @@ async def test_without_the_tables_nothing_is_created_and_public_is_untouched(sch
     every later test of the run that writes a pairing failed on a missing
     column. It was green on its own and in most orders.
     """
-    from sqlalchemy.exc import ProgrammingError
-
     conn, schema = schema_conn
     public_before = await _public_columns(conn)
 
-    with pytest.raises(ProgrammingError, match="peer_users"):
+    with pytest.raises(RuntimeError, match=r"peer_users.*missing in the current schema"):
         await _run(conn, "upgrade")
     await conn.rollback()
     await _run(conn, "downgrade")
@@ -288,6 +286,46 @@ async def test_without_the_tables_nothing_is_created_and_public_is_untouched(sch
         "SELECT count(*) FROM information_schema.tables WHERE table_schema = :s"
     ), {"s": schema})).scalar() == 0
     assert await _public_columns(conn) == public_before
+
+
+async def test_a_table_of_the_same_name_down_the_search_path_is_not_touched(db_session, pg_url):
+    """🛑 The guard itself, with the trap armed: an empty schema FIRST on the
+    search path and the real `public` -- which holds both tables with both
+    columns -- right behind it. That is how a schema-per-tenant setup, or a
+    test with a throwaway schema, looks to this migration.
+
+    Deciding by `sa.inspect().get_table_names()` (the dialect's default schema,
+    fixed at the first connect) the downgrade found the columns in `public` and
+    dropped them there. Deciding by `current_schema()` it sees that the tables
+    are not ours: the upgrade refuses, the downgrade does nothing.
+    """
+    both = [("federation_query_log", "peer_instance_name_snapshot"),
+            ("peer_users", "remote_instance_name")]
+    engine = create_async_engine(pg_url, poolclass=NullPool, future=True)
+    schema = f"pcin_{uuid.uuid4().hex[:12]}"
+    conn = await engine.connect()
+    try:
+        await conn.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+        await conn.exec_driver_sql(f'SET search_path TO "{schema}", public')
+        await conn.commit()
+        # `db_session` built `public` from the models: the columns are there.
+        assert await _public_columns(conn) == both
+
+        await _run(conn, "downgrade")
+        assert await _public_columns(conn) == both, "the downgrade reached into public"
+
+        with pytest.raises(RuntimeError, match="missing in the current schema"):
+            await _run(conn, "upgrade")
+        await conn.rollback()
+        assert await _public_columns(conn) == both
+    finally:
+        try:
+            await conn.rollback()
+            await conn.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            await conn.commit()
+        finally:
+            await conn.close()
+            await engine.dispose()
 
 
 async def test_migration_and_model_describe_the_same_columns(schema_conn):

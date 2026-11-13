@@ -78,6 +78,26 @@ async def peer_query_brain_retrieve(
     return JSONResponse(content=wire_body(resp))
 
 
+async def _read_capped(request: Request, cap: int) -> bytes | None:
+    """The request body -- or `None` when it is, or claims to be, larger than `cap`.
+
+    🛑 This route is reachable WITHOUT a pairing: the signature can only be
+    checked once the body is here. `request.body()` buffers whatever is sent,
+    so an unpaired caller could have this process hold megabytes per request.
+    A declared `Content-Length` above the cap is refused before a byte is
+    read; a body without one (chunked) is read only up to the cap.
+    """
+    declared = request.headers.get("content-length")
+    if declared is not None and (not declared.isdigit() or int(declared) > cap):
+        return None
+    received = bytearray()
+    async for chunk in request.stream():
+        received += chunk
+        if len(received) > cap:
+            return None
+    return bytes(received)
+
+
 @router.post("/peer/ping", response_model=PeerPingResponse)
 async def peer_ping(request: Request, db: AsyncSession = Depends(get_db)):
     """Reachability round trip -- a signed acknowledgement, nothing else.
@@ -95,9 +115,9 @@ async def peer_ping(request: Request, db: AsyncSession = Depends(get_db)):
     if not settings.federation_reachability_enabled:
         raise HTTPException(status_code=404, detail="Not Found")
 
-    raw = await request.body()
+    raw = await _read_capped(request, _PING_BODY_MAX_BYTES)
     try:
-        if len(raw) > _PING_BODY_MAX_BYTES:
+        if raw is None:
             raise ValueError("ping body too large")
         body = PeerPingRequest.model_validate_json(raw)
     except (ValidationError, ValueError) as e:

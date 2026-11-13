@@ -31,11 +31,14 @@ now" -- send ONE ping and both read its result. Without Redis the store falls
 back to this process's memory; that is correct for one process and merely
 redundant (never wrong) for several.
 
-No free-running timer lives here. A probe happens because a wall display is
-connected (`api.lifecycle._schedule_kiosk_peer_status_refresh`, the connect
-hook in `kiosk_handler`) or because a person asked for one (`POST
-/api/federation/peers/{id}/check`). Everything is behind
-`settings.federation_reachability_enabled`.
+No timer lives here. The check is nevertheless PERIODIC while somebody is
+looking: a consumer-gated periodic check, every 5 minutes per pairing while at
+least one kiosk is connected (`api.lifecycle._schedule_kiosk_peer_status_refresh`
+ticks every 60 s and probes a pairing whose reading is older than
+`PROBE_INTERVAL_SECONDS`; the connect hook in `kiosk_handler` adds one round).
+With no display connected nothing runs. Beyond that a probe happens because a
+person asked for one (`POST /api/federation/peers/{id}/check`). Everything is
+behind `settings.federation_reachability_enabled`.
 """
 from __future__ import annotations
 

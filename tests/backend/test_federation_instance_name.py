@@ -171,6 +171,63 @@ class TestSanitising:
         assert sanitize_instance_name(raw) == expected
 
     @pytest.mark.unit
+    @pytest.mark.parametrize(("raw", "expected"), [
+        ("\uff58\uff0d\uff49\uff44\uff52\uff41", "x-idra"),   # fullwidth letters and hyphen
+        ("\ufb01le", "file"),                                   # the "fi" ligature
+        ("Ku\u0308che", "K\u00fcche"),                          # decomposed umlaut -> composed
+        ("\u2460 Haus", "1 Haus"),                              # circled digit
+    ])
+    def test_a_compatibility_form_is_stored_as_what_it_stands_for(self, raw, expected):
+        """NFKC: two names that look the same are stored the same."""
+        assert sanitize_instance_name(raw) == expected
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("raw", [
+        "\u3164",                 # Hangul filler -- category Lo, a "letter"
+        "\u115f\u1160",           # Hangul choseong / jungseong fillers
+        "\uffa0",                 # halfwidth Hangul filler
+        "\u2800\u2800\u2800",     # blank braille patterns -- category So, a "symbol"
+        "\ufe0f",                 # variation selector
+        "\u034f",                 # combining grapheme joiner
+        "\u0301",                 # a lone combining acute
+        "\u0301\u0308\u0327",     # nothing but combining marks
+        "\u3164 \u2800 \ufe0f",   # fillers with spaces between them
+        "\U000e0100",             # variation selector supplement
+    ])
+    def test_a_name_nobody_can_see_is_no_name(self, raw):
+        """🛑 Each of these passes a test on control and format characters and
+        renders as an EMPTY label -- a row, a node and an audit entry without
+        a name on them."""
+        assert sanitize_instance_name(raw) is None
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(("raw", "expected"), [
+        ("a\u3164b", "ab"),
+        ("\u2800Instance\u2800B\u2800", "InstanceB"),
+        ("\u0301abc", "abc"),            # a mark with nothing to sit on
+        ("x \u0301y", "x y"),            # a space is no base either
+        ("\u2764\ufe0f Haus", "\u2764 Haus"),
+    ])
+    def test_blank_characters_and_stray_marks_are_dropped_from_a_real_name(self, raw, expected):
+        assert sanitize_instance_name(raw) == expected
+
+    @pytest.mark.unit
+    def test_combining_marks_are_capped_per_base_character(self):
+        """Hundreds of marks on one letter paint over the rows around it."""
+        import unicodedata
+
+        from services.federation_instance_name import MAX_COMBINING_MARKS_PER_BASE
+
+        assert MAX_COMBINING_MARKS_PER_BASE == 2
+        cleaned = sanitize_instance_name("Z" + "\u0338" * 300 + "al" + "\u0489" * 300 + "go")
+        marks = [ch for ch in cleaned if unicodedata.category(ch).startswith("M")]
+        assert "".join(ch for ch in cleaned if ch not in marks) == "Zalgo"
+        assert len(marks) == 2 * MAX_COMBINING_MARKS_PER_BASE
+        # A stacked diacritic of a real script keeps both of its marks.
+        assert sanitize_instance_name("Vie\u0323\u0302t") == unicodedata.normalize(
+            "NFKC", "Vie\u0323\u0302t")
+
+    @pytest.mark.unit
     def test_the_length_is_capped(self):
         assert sanitize_instance_name("x" * 500) == "x" * INSTANCE_NAME_MAX_CHARS
         assert len(sanitize_instance_name("Ü" * 500)) == INSTANCE_NAME_MAX_CHARS
@@ -637,7 +694,7 @@ class TestResponderLearnsTheName:
         responder = FederationQueryResponder(db=_db_returning([_paired_row(far_identity)]))
         responder._run_query = AsyncMock()
         resp = await responder.handle_initiate(_with_name(far_identity, "Instance B"))
-        remembered.assert_awaited_once_with(77, "Instance B")
+        remembered.assert_awaited_once_with(77, "Instance B", current=None)
         # ... and the audit snapshot of THIS access already carries it.
         pending = await get_pending_store().get(resp.request_id)
         assert pending.peer_instance_name == "Instance B"
@@ -840,7 +897,7 @@ class TestAskerSendsAndLearns:
         final.update(_attachment(far_identity, "Instance B", final["responder_signature"]))
         result = await _ask(_client_for(final), asked_peer)
         assert result["success"] is True
-        asker_remembered.assert_awaited_once_with(3, "Instance B")
+        asker_remembered.assert_awaited_once_with(3, "Instance B", current=None)
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -966,14 +1023,93 @@ class TestRememberOnPostgres:
         return peer.remote_instance_name
 
     async def test_stores_then_reports_no_change_then_stores_the_rename(
-        self, db_session, pairing_rows,
+        self, db_session, pairing_rows, monkeypatch,
     ):
+        # The rename floor is a subject of its own (below); here it is off.
+        monkeypatch.setattr(settings, "federation_instance_rename_min_interval_seconds", 0)
         active = pairing_rows["active"]
         assert await remember_remote_instance_name(active.id, "Instance B") is True
         assert await self._name(db_session, active) == "Instance B"
         assert await remember_remote_instance_name(active.id, "Instance B") is False
         assert await remember_remote_instance_name(active.id, "x-idra") is True
         assert await self._name(db_session, active) == "x-idra"
+
+    async def test_a_second_rename_inside_ten_minutes_is_ignored(
+        self, db_session, pairing_rows, monkeypatch,
+    ):
+        """🛑 The name shows on this instance's pages and wall and each change
+        resyncs the tool registry. A peer may change it once per interval."""
+        import services.federation_instance_name as fin
+        import services.peer_mcp_registry as registry
+
+        assert settings.federation_instance_rename_min_interval_seconds == 600
+        resync = AsyncMock(return_value=True)
+        monkeypatch.setattr(registry, "resync_bound_manager", resync)
+        active = pairing_rows["active"]
+
+        assert await remember_remote_instance_name(active.id, "Instance B", current=None) is True
+        for flicker in ("Instance C", "Instance D", "Instance B2"):
+            assert await remember_remote_instance_name(
+                active.id, flicker, current="Instance B") is False
+        assert await self._name(db_session, active) == "Instance B"
+        assert resync.await_count == 1
+
+        # The interval has passed (a fresh record stands for that): the next
+        # name the far side sends is taken.
+        fin.set_rename_claims_for_tests(fin.MemoryRenameClaims())
+        assert await remember_remote_instance_name(
+            active.id, "Instance C", current="Instance B") is True
+        assert await self._name(db_session, active) == "Instance C"
+        assert resync.await_count == 2
+
+    async def test_the_floor_is_per_pairing(self):
+        import services.federation_instance_name as fin
+
+        claims = fin.MemoryRenameClaims()
+        assert await claims.claim(1, 600) is True
+        assert await claims.claim(1, 600) is False
+        assert await claims.claim(2, 600) is True
+
+    async def test_an_unchanged_name_costs_nothing_at_all(self, pairing_rows, monkeypatch):
+        """The name rides on EVERY query and ping. Known to be unchanged it
+        opens no session, takes no claim and resyncs nothing."""
+        import services.database as database
+        import services.federation_instance_name as fin
+        import services.peer_mcp_registry as registry
+
+        def _no_session():
+            raise AssertionError("an unchanged name opened a database session")
+
+        claims = MagicMock()
+        claims.claim = AsyncMock(return_value=True)
+        fin.set_rename_claims_for_tests(claims)
+        resync = AsyncMock(return_value=True)
+        monkeypatch.setattr(registry, "resync_bound_manager", resync)
+        monkeypatch.setattr(database, "AsyncSessionLocal", _no_session)
+
+        assert await remember_remote_instance_name(
+            pairing_rows["active"].id, "Instance B", current="Instance B") is False
+        claims.claim.assert_not_awaited()
+        resync.assert_not_awaited()
+
+    async def test_the_log_line_names_the_pairing_and_lengths_never_the_name(
+        self, db_session, pairing_rows,
+    ):
+        from loguru import logger
+
+        lines: list[str] = []
+        sink = logger.add(lambda message: lines.append(str(message)), level="DEBUG")
+        try:
+            active = pairing_rows["active"]
+            assert await remember_remote_instance_name(
+                active.id, "Sehr geheimer Name", current=None) is True
+        finally:
+            logger.remove(sink)
+        changed = [line for line in lines if "instance name changed" in line]
+        assert len(changed) == 1
+        assert f"Peer {active.id}:" in changed[0]
+        assert "(0 -> 18 characters)" in changed[0]
+        assert not any("geheimer" in line for line in lines)
 
     async def test_a_revoked_pairing_is_never_touched(self, db_session, pairing_rows):
         revoked = pairing_rows["revoked"]

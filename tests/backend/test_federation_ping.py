@@ -348,6 +348,100 @@ class TestAPingIsNotARequest:
         assert federation_rate_limits._ping_inbound == {}
 
 
+class TestAStrangerLeavesNothingBehind:
+    """🛑 The route is open to the internet and a signature costs a stranger
+    nothing: it signs with a key of its own. So everything that WRITES comes
+    after the pairing lookup -- signature, timestamp, pairing, rate bucket,
+    nonce. The nonce store is capped; written before the lookup, a stream of
+    unpaired pings pushed the nonces of real requests out of it, and a
+    recorded query could then be replayed inside its minute."""
+
+    @pytest.fixture
+    def nonce_writes(self, monkeypatch):
+        spy = AsyncMock(side_effect=responder_module._record_nonce)
+        monkeypatch.setattr(responder_module, "_record_nonce", spy)
+        return spy
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_an_unpaired_ping_writes_no_nonce_and_no_state(
+        self, local_identity, monkeypatch, nonce_writes,
+    ):
+        audit = AsyncMock()
+        monkeypatch.setattr(responder_module, "_write_responder_audit", audit)
+        responder = FederationQueryResponder(db=_db_returning([]))
+        strangers = [_fresh_identity() for _ in range(5)]
+        for stranger in strangers:
+            with pytest.raises(FederationQueryError, match="Unknown or revoked"):
+                await responder.handle_ping(_signed_ping(stranger))
+
+        nonce_writes.assert_not_awaited()
+        assert federation_rate_limits._ping_inbound == {}
+        assert federation_rate_limits._responder_inbound == {}
+        for stranger in strangers:
+            assert await get_pending_store().list_for_pubkey(stranger.public_key_hex()) == []
+        audit.assert_not_awaited()
+        responder.db.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_stranger_cannot_burn_a_nonce(self, local_identity, far_identity):
+        """The same statement without looking inside: a nonce a stranger sent
+        is still fresh for the paired peer."""
+        nonce = secrets.token_hex(16)
+        with pytest.raises(FederationQueryError, match="Unknown or revoked"):
+            await FederationQueryResponder(db=_db_returning([])).handle_ping(
+                _signed_ping(_fresh_identity(), nonce=nonce))
+        resp = await FederationQueryResponder(
+            db=_db_returning([_paired_row(far_identity)])).handle_ping(
+                _signed_ping(far_identity, nonce=nonce))
+        assert resp.status == "ok"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_revoked_or_stale_or_forged_ping_writes_no_nonce_either(
+        self, local_identity, far_identity, nonce_writes,
+    ):
+        paired = FederationQueryResponder(db=_db_returning([_paired_row(far_identity)]))
+        with pytest.raises(FederationQueryError, match="window"):
+            await paired.handle_ping(_signed_ping(far_identity, timestamp=int(time.time()) - 600))
+        forged = _signed_ping(_fresh_identity()).model_copy(
+            update={"asker_pubkey": far_identity.public_key_hex()})
+        with pytest.raises(FederationQueryError, match="Signature"):
+            await paired.handle_ping(forged)
+        nonce_writes.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_paired_peer_over_its_budget_writes_no_nonce(
+        self, local_identity, far_identity, monkeypatch, nonce_writes,
+    ):
+        """The bucket stands before the store as well: a paired peer gone
+        wild fills its bucket, not the nonce store."""
+        monkeypatch.setattr(settings, "federation_ping_rate_per_minute", 1)
+        federation_rate_limits.reset_for_tests()
+        responder = FederationQueryResponder(db=_db_returning([_paired_row(far_identity)]))
+        await responder.handle_ping(_signed_ping(far_identity))
+        for _ in range(4):
+            with pytest.raises(FederationQueryError, match="rate limit"):
+                await responder.handle_ping(_signed_ping(far_identity))
+        assert nonce_writes.await_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_the_paired_peers_own_replay_is_still_refused(
+        self, local_identity, far_identity, nonce_writes,
+    ):
+        """Control for the spy: for a paired key the nonce IS written, and the
+        second use of it is a replay."""
+        responder = FederationQueryResponder(db=_db_returning([_paired_row(far_identity)]))
+        req = _signed_ping(far_identity)
+        await responder.handle_ping(req)
+        with pytest.raises(FederationQueryError, match="replay"):
+            await responder.handle_ping(req)
+        assert nonce_writes.await_count == 2
+
+
 class TestThePingTeachesTheName:
     @pytest.fixture
     def remembered(self, monkeypatch):
@@ -362,7 +456,7 @@ class TestThePingTeachesTheName:
         req = req.model_copy(update=_attachment(far_identity, "Instance B", req.signature))
         await FederationQueryResponder(
             db=_db_returning([_paired_row(far_identity)])).handle_ping(req)
-        remembered.assert_awaited_once_with(77, "Instance B")
+        remembered.assert_awaited_once_with(77, "Instance B", current=None)
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -529,6 +623,28 @@ class TestRouteFeatureOn:
         assert query.status_code == 400
         assert query.json() == UNIFORM_REFUSAL
 
+    async def test_a_body_far_above_the_cap_gets_the_uniform_refusal(
+        self, async_client: AsyncClient, local_identity, far_identity, paired, feature_on,
+    ):
+        """A megabyte with a declared length, a megabyte chunked without one,
+        and a VALID ping padded past the cap: all the uniform 400."""
+        async def _chunks():
+            for _ in range(1024):
+                yield b"a" * 1024
+
+        padded = {**_json(_signed_ping(far_identity)), "padding": "a" * 8192}
+        answers = {
+            "declared": await async_client.post(
+                PING, content=b"a" * (1024 * 1024),
+                headers={"content-type": "application/json"}),
+            "chunked": await async_client.post(
+                PING, content=_chunks(), headers={"content-type": "application/json"}),
+            "valid_but_padded": await async_client.post(PING, json=padded),
+        }
+        for case, resp in answers.items():
+            assert resp.status_code == 400, case
+            assert resp.json() == UNIFORM_REFUSAL, case
+
     async def test_a_revoked_pairing_is_not_answered(
         self, async_client: AsyncClient, local_identity, paired, feature_on,
     ):
@@ -537,6 +653,76 @@ class TestRouteFeatureOn:
             PING, json=_json(_signed_ping(paired["revoked_identity"])))
         assert resp.status_code == 400
         assert "responder_signature" not in resp.text
+
+
+class _Upload:
+    """What `_read_capped` reads off a request: the headers and the stream."""
+
+    def __init__(self, chunks, content_length: str | None = None):
+        self.headers = {} if content_length is None else {"content-length": content_length}
+        self._chunks = chunks
+        self.read = 0
+
+    async def stream(self):
+        for chunk in self._chunks:
+            self.read += 1
+            yield chunk
+
+
+class TestTheRequestBodyIsCapped:
+    """🛑 The ping route is reachable WITHOUT a pairing -- the signature can
+    only be checked once the body is here. So the body is bounded before the
+    first byte and at every chunk, not after `request.body()` buffered it."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_declared_length_above_the_cap_is_refused_UNREAD(self):
+        from api.routes.federation_query import _PING_BODY_MAX_BYTES, _read_capped
+
+        assert _PING_BODY_MAX_BYTES == 4096
+        upload = _Upload([b"a" * 1024] * 1024, content_length=str(1024 * 1024))
+        assert await _read_capped(upload, _PING_BODY_MAX_BYTES) is None
+        assert upload.read == 0, "the body was read although it declared its size"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    @pytest.mark.parametrize("declared", ["-1", "abc", "1e3", "", " 12"])
+    async def test_a_length_that_is_no_number_is_refused_unread(self, declared):
+        from api.routes.federation_query import _read_capped
+
+        upload = _Upload([b"{}"], content_length=declared)
+        assert await _read_capped(upload, 4096) is None
+        assert upload.read == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_chunked_body_is_read_up_to_the_cap_and_no_further(self):
+        """No declared length (chunked): the read stops at the first chunk
+        that crosses the cap, with a megabyte still to come."""
+        from api.routes.federation_query import _read_capped
+
+        upload = _Upload([b"a" * 1024] * 1024)
+        assert await _read_capped(upload, 4096) is None
+        assert upload.read == 5, "4 KiB fit, the fifth chunk crosses the cap"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_length_that_lies_is_capped_by_the_read(self):
+        from api.routes.federation_query import _read_capped
+
+        upload = _Upload([b"a" * 1024] * 1024, content_length="10")
+        assert await _read_capped(upload, 4096) is None
+        assert upload.read == 5
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    @pytest.mark.parametrize("declared", [None, "10"])
+    async def test_a_body_within_the_cap_comes_back_whole(self, declared):
+        from api.routes.federation_query import _read_capped
+
+        upload = _Upload([b"01234", b"56789"], content_length=declared)
+        assert await _read_capped(upload, 4096) == b"0123456789"
+        assert await _read_capped(_Upload([b"a" * 4096]), 4096) == b"a" * 4096
 
 
 # =============================================================================
@@ -558,19 +744,26 @@ class _Peer:
         )
 
 
-class _Client:
-    """httpx stand-in: every POST goes to `handler(url, body) -> httpx.Response`."""
+class _Client(httpx.AsyncClient):
+    """A REAL httpx client over a mock transport: every request goes to
+    `handler(url, body) -> httpx.Response`.
+
+    Real on purpose. The asker reads the answer as a stream and stops at a
+    cap; a stand-in with a `post` method of its own would test the stand-in.
+    """
 
     def __init__(self, handler):
-        self._handler = handler
         self.posted: list[tuple[str, dict]] = []
 
-    async def post(self, url: str, json: dict | None = None) -> httpx.Response:
-        self.posted.append((url, json or {}))
-        result = self._handler(url, json or {})
-        if asyncio.iscoroutine(result):
-            result = await result
-        return result
+        async def _dispatch(request: httpx.Request) -> httpx.Response:
+            url, body = str(request.url), json.loads(request.content or b"{}")
+            self.posted.append((url, body))
+            result = handler(url, body)
+            if asyncio.iscoroutine(result):
+                result = await result
+            return result
+
+        super().__init__(transport=httpx.MockTransport(_dispatch))
 
 
 def _pong(far: FederationIdentity, body: dict, **overrides) -> dict:
@@ -740,6 +933,74 @@ class TestAskerChecksTheAnswer:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_a_valid_answer_padded_past_the_cap_is_not_read(
+        self, local_identity, far_identity, asker_remembered,
+    ):
+        """🛑 The far side decides what it sends back. The signature of this
+        answer is GENUINE -- only its size is wrong -- so without the cap it
+        reads as "reachable" after the whole body was buffered."""
+        assert asker_module.PING_RESPONSE_MAX_BYTES == 4096
+
+        def _padded(url, body):
+            return httpx.Response(200, json={**_pong(far_identity, body), "padding": "a" * 8192})
+
+        assert await ping_peer(
+            _Peer(far_identity), client=_Client(_padded)) == PING_INVALID_RESPONSE
+        asker_remembered.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_an_answer_without_a_declared_length_is_read_only_up_to_the_cap(
+        self, local_identity, far_identity,
+    ):
+        """Chunked, and endless: the read stops just past the cap."""
+        sent = {"chunks": 0}
+
+        async def _endless():
+            while sent["chunks"] < 10_000:
+                sent["chunks"] += 1
+                yield b"a" * 1024
+
+        client = _Client(lambda url, body: httpx.Response(200, content=_endless()))
+        assert await ping_peer(_Peer(far_identity), client=client) == PING_INVALID_RESPONSE
+        assert sent["chunks"] <= 6, "the answer was read past the cap"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_an_answer_that_declares_itself_too_large_is_not_read_at_all(
+        self, local_identity, far_identity,
+    ):
+        sent = {"chunks": 0}
+
+        async def _body():
+            for _ in range(1024):
+                sent["chunks"] += 1
+                yield b"a" * 1024
+
+        client = _Client(lambda url, body: httpx.Response(
+            200, headers={"content-length": str(1024 * 1024)}, content=_body()))
+        assert await ping_peer(_Peer(far_identity), client=client) == PING_INVALID_RESPONSE
+        assert sent["chunks"] == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_valid_answer_sent_in_chunks_is_still_reachable(
+        self, local_identity, far_identity, asker_remembered,
+    ):
+        """Control: chunked as such is fine -- a small, genuine answer."""
+        def _chunked(url, body):
+            raw = json.dumps(_pong(far_identity, body)).encode()
+
+            async def _parts():
+                yield raw[:40]
+                yield raw[40:]
+
+            return httpx.Response(200, content=_parts())
+
+        assert await ping_peer(_Peer(far_identity), client=_Client(_chunked)) == PING_REACHABLE
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_a_verified_answer_teaches_the_name(
         self, local_identity, far_identity, asker_remembered,
     ):
@@ -749,7 +1010,7 @@ class TestAskerChecksTheAnswer:
             return httpx.Response(200, json=pong)
 
         assert await ping_peer(_Peer(far_identity), client=_Client(_handler)) == PING_REACHABLE
-        asker_remembered.assert_awaited_once_with(3, "Instance B")
+        asker_remembered.assert_awaited_once_with(3, "Instance B", current=None)
 
     @pytest.mark.asyncio
     @pytest.mark.unit

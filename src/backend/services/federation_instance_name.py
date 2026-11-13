@@ -44,6 +44,8 @@ their value from `verify_name_attachment`.
 """
 from __future__ import annotations
 
+import asyncio
+import time
 import unicodedata
 from typing import Any
 from urllib.parse import urlparse
@@ -69,24 +71,68 @@ ATTACHMENT_FIELDS = ("instance_name", "instance_name_signature")
 #: private-use and unassigned code points.
 _FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
 
+#: Characters that are assigned, are neither control nor format characters --
+#: and still draw NOTHING: Hangul fillers (category Lo, "letters"), the blank
+#: braille pattern (So) and the combining grapheme joiner (Mn). A name made of
+#: them passes every category test and shows as an empty label.
+_BLANK_CHARS = frozenset("\u115f\u1160\u3164\uffa0\u2800\u034f")
+
+#: Combining marks (Mn, Mc, Me) a single base character may carry. Two covers
+#: every stacked diacritic of a living script after NFKC composition; without
+#: a cap a "name" can pile hundreds of marks onto one letter and paint over
+#: the rows around it.
+MAX_COMBINING_MARKS_PER_BASE = 2
+
+_MARK_CATEGORIES = frozenset({"Mn", "Mc", "Me"})
+
+
+def _is_variation_selector(ch: str) -> bool:
+    code = ord(ch)
+    return 0xFE00 <= code <= 0xFE0F or 0xE0100 <= code <= 0xE01EF or 0x180B <= code <= 0x180D
+
 
 def sanitize_instance_name(raw: Any) -> str | None:
     """Reduce a name from the far side (or from our own setting) to display text.
 
-    Drops control and format characters, collapses every whitespace run to one
-    space, trims, and caps the length. Letters, digits, punctuation and symbols
-    of any script pass unchanged -- "x-idra" and "Küche" come out as they went
-    in. Returns `None` for anything that is not a string or is empty afterwards.
+    NFKC first, so a compatibility form is stored as the character it stands
+    for. Then: control and format characters, blank fillers and variation
+    selectors are dropped; a combining mark is kept only on a base character,
+    and at most `MAX_COMBINING_MARKS_PER_BASE` of them; every whitespace run
+    collapses to one space; the result is trimmed and capped.
+
+    Letters, digits, punctuation and symbols of any script pass unchanged --
+    "x-idra" and "Küche" come out as they went in.
+
+    Returns `None` for anything that is not a string, and for a name without a
+    single VISIBLE character (a letter, digit, punctuation mark or symbol):
+    a label nobody can see is no name.
     """
     if not isinstance(raw, str):
         return None
-    kept = "".join(
-        " " if ch.isspace() else ch
-        for ch in raw
-        if ch.isspace() or unicodedata.category(ch) not in _FORBIDDEN_CATEGORIES
-    )
-    name = " ".join(kept.split())[:INSTANCE_NAME_MAX_CHARS].strip()
-    return name or None
+    kept: list[str] = []
+    marks_on_base = 0
+    has_base = False
+    for ch in unicodedata.normalize("NFKC", raw):
+        if ch.isspace():
+            kept.append(" ")
+            has_base = False
+            continue
+        category = unicodedata.category(ch)
+        if category in _FORBIDDEN_CATEGORIES or ch in _BLANK_CHARS or _is_variation_selector(ch):
+            continue
+        if category in _MARK_CATEGORIES:
+            # A mark with nothing to sit on, or one too many on the same base.
+            if not has_base or marks_on_base >= MAX_COMBINING_MARKS_PER_BASE:
+                continue
+            marks_on_base += 1
+        else:
+            has_base = True
+            marks_on_base = 0
+        kept.append(ch)
+    name = " ".join("".join(kept).split())[:INSTANCE_NAME_MAX_CHARS].strip()
+    if not any(unicodedata.category(ch)[0] in "LNPS" for ch in name):
+        return None
+    return name
 
 
 def host_of_url(url: Any) -> str | None:
@@ -231,16 +277,94 @@ def peer_instance_label(peer: Any) -> str | None:
     return stored_instance_name(peer) or endpoint_host(peer)
 
 
-async def remember_remote_instance_name(peer_id: int, name: str | None) -> bool:
+#: "The caller did not say what the row holds."
+_NOT_GIVEN: Any = object()
+
+_RENAME_CLAIM_KEY = "federation:instance_name:renamed:{peer_id}"
+_REDIS_OP_TIMEOUT_SECONDS = 1.0
+
+
+class MemoryRenameClaims:
+    """Per-process record of when each pairing last changed its name."""
+
+    def __init__(self) -> None:
+        self._until: dict[int, float] = {}
+
+    async def claim(self, peer_id: int, seconds: int) -> bool:
+        now = time.monotonic()
+        if self._until.get(peer_id, 0.0) > now:
+            return False
+        self._until[peer_id] = now + seconds
+        return True
+
+
+class RedisRenameClaims:
+    """The same record shared by every worker; per-process memory when Redis
+    does not answer (a name change is rare, a lost claim costs one extra)."""
+
+    def __init__(self) -> None:
+        self._fallback = MemoryRenameClaims()
+
+    async def claim(self, peer_id: int, seconds: int) -> bool:
+        try:
+            from services.redis_client import get_redis
+
+            taken = await asyncio.wait_for(
+                get_redis().set(
+                    _RENAME_CLAIM_KEY.format(peer_id=peer_id), "1", nx=True, ex=seconds,
+                ),
+                timeout=_REDIS_OP_TIMEOUT_SECONDS,
+            )
+            return bool(taken)
+        except Exception as e:
+            logger.debug(f"Federation: rename claim falls back to memory: {e!r}")
+            return await self._fallback.claim(peer_id, seconds)
+
+
+_rename_claims: Any = None
+
+
+def set_rename_claims_for_tests(claims: Any) -> None:
+    global _rename_claims
+    _rename_claims = claims
+
+
+def _claims() -> Any:
+    global _rename_claims
+    if _rename_claims is None:
+        _rename_claims = RedisRenameClaims()
+    return _rename_claims
+
+
+async def remember_remote_instance_name(
+    peer_id: int, name: str | None, *, current: Any = _NOT_GIVEN,
+) -> bool:
     """Store a VERIFIED name on the pairing. Returns whether the row changed.
 
-    Its own short session and a conditional UPDATE: the callers sit on the
-    request path of a query or a ping, and the name changes about once in an
-    instance's life -- so the common case writes nothing at all. A revoked
-    pairing is never touched. Failures are swallowed: a name that did not get
-    stored must not fail the request that carried it.
+    `current` is what the caller's freshly loaded row holds. Equal to `name`,
+    nothing happens at all: no statement, no claim, no resync -- the common
+    case, since the name rides on every query and every ping and changes about
+    once in an instance's life.
+
+    🛑 A pairing may change its name at most once per
+    `federation_instance_rename_min_interval_seconds` (default 600 -- ten
+    minutes; a choice, not a measurement). The name is text the far side picks,
+    it shows on this instance's pages and wall, and each change resyncs the
+    tool registry: without a floor a peer could make it flicker, or keep the
+    registry busy, with every ping. A change inside the interval is ignored;
+    the far side sends its name again with the next request after it.
+
+    Its own short session and a conditional UPDATE. A revoked pairing is never
+    touched. Failures are swallowed: a name that did not get stored must not
+    fail the request that carried it.
     """
     if not name:
+        return False
+    if current is not _NOT_GIVEN and current == name:
+        return False
+    interval = settings.federation_instance_rename_min_interval_seconds
+    if interval > 0 and not await _claims().claim(peer_id, interval):
+        logger.debug(f"Federation: name change of peer {peer_id} ignored (inside the interval)")
         return False
     from sqlalchemy import or_, update
 
@@ -267,13 +391,19 @@ async def remember_remote_instance_name(peer_id: int, name: str | None) -> bool:
         logger.warning(f"Federation: instance name for peer {peer_id} not stored: {e}")
         return False
     if changed:
-        logger.info(f"🔗 Peer {peer_id} is now known as instance {name!r}")
+        # Pairing id and lengths only: the line is written on text the far
+        # side chose.
+        before = len(current) if isinstance(current, str) else 0
+        logger.info(
+            f"🔗 Peer {peer_id}: instance name changed ({before} -> {len(name)} characters)"
+        )
         await _refresh_tool_description()
     return changed
 
 
 async def _refresh_tool_description() -> None:
-    """The tool description names the instance, so it follows a name change."""
+    """The tool description may name the instance (its own flag, default
+    off), so the registry follows a name change."""
     try:
         from services.peer_mcp_registry import resync_bound_manager
 

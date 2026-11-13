@@ -1394,6 +1394,17 @@ class Settings(BaseSettings):
     # Never falls back to a person's name. Display text only on the far side
     # -- never an identifier (`services/federation_instance_name.py`).
     federation_instance_name: str = ""
+    # Whether a paired peer's instance name may appear in the TOOL DESCRIPTION
+    # the agent model reads. Default off: the name is text the far side
+    # chooses and can change with any query or ping, and a tool description is
+    # part of this instance's prompt. Off = the description is the measured
+    # text byte for byte, whatever name is stored. On = an allow-list form of
+    # the name (letters, digits, "_", space, ".", "-"; 32 characters) is set
+    # into it. 🛑 UNMEASURED: run `bin/measure-preselect.py` before enabling.
+    federation_peer_name_in_tool_description_enabled: bool = False
+    # A peer may change the name we store for it at most once per this many
+    # seconds; an earlier change is ignored until the interval has passed.
+    federation_instance_rename_min_interval_seconds: int = Field(default=600, ge=0, le=86400)
 
     # Federation — a real, signed round-trip per pairing ("reachable").
     # Default off (DARK): no ping is sent, `POST /api/federation/peer/ping`

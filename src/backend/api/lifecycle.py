@@ -318,7 +318,8 @@ def _schedule_kiosk_peer_status_refresh(app):
     With ``federation_reachability_enabled`` the same tick first runs a probe
     round (``services.federation_reachability.probe_due_peers``): a signed ping
     to each pairing whose stored result is older than the probe interval. That
-    is NOT a free-running poll -- it is gated on a connected wall display like
+    IS a periodic check -- every 5 minutes per pairing -- and it is
+    consumer-gated: it runs only while a wall display is connected, like
     everything else here, so with nobody watching no ping leaves the instance.
     """
     from api.websocket.kiosk_data import _PEER_STATUS_REFRESH_SECONDS

@@ -830,11 +830,17 @@ class FederationQueryResponder:
     async def handle_ping(self, req: PeerPingRequest) -> PeerPingResponse:
         """Answer a paired peer's "are you there, and do you still know me?".
 
-        Verified like an initiate -- signature, ±60s window, nonce replay,
-        non-revoked pairing, rate limit -- and refused with the same
+        Checked in this order: signature, ±60s window, non-revoked pairing,
+        rate limit, nonce replay -- and refused at any of them with the same
         `FederationQueryError`, which the route turns into the same uniform
         400. An unpaired or revoked caller therefore learns nothing here that
         a refused query would not tell it.
+
+        🛑 The nonce is recorded LAST, after the pairing and the bucket. The
+        nonce store is capped; a key nobody paired with, signing its own pings,
+        could otherwise fill it and push the nonces of real peers out of it
+        (and with them the replay protection). An unpaired ping leaves no state
+        behind at all: no nonce, no bucket, no name, no row.
 
         🛑 What a ping does NOT do, each on purpose:
           - It does not move `last_seen_at`. That column means "the far side
@@ -862,9 +868,6 @@ class FederationQueryResponder:
         if abs(now - req.timestamp) > NONCE_WINDOW_SECONDS:
             raise FederationQueryError("Ping timestamp outside ±60s window")
 
-        if not await _record_nonce(req.nonce, now=now):
-            raise FederationQueryError("Ping nonce already seen (replay detected)")
-
         peer = await self._lookup_peer(req.asker_pubkey, touch_last_seen=False)
 
         # The bucket comes AFTER the pairing lookup: only a paired key gets
@@ -873,6 +876,10 @@ class FederationQueryResponder:
         from services.federation_rate_limits import acquire_ping_responder_token
         if not await acquire_ping_responder_token(req.asker_pubkey):
             raise FederationQueryError("Ping rate limit exceeded for this asker")
+
+        # Last of the checks, and only for a paired key within its budget.
+        if not await _record_nonce(req.nonce, now=now):
+            raise FederationQueryError("Ping nonce already seen (replay detected)")
 
         await self._learn_instance_name(
             peer,
@@ -918,8 +925,9 @@ class FederationQueryResponder:
         )
         if verified is None:
             return None
-        if verified != stored_instance_name(peer):
-            await remember_remote_instance_name(peer.id, verified)
+        current = stored_instance_name(peer)
+        if verified != current:
+            await remember_remote_instance_name(peer.id, verified, current=current)
         return verified
 
     # -------------------------------------------------------------------------
