@@ -52,6 +52,12 @@ def _is_finite(value: object) -> bool:
         return False
 
 
+def _at_least(value: object, bound: float) -> bool:
+    """``value >= bound``, proven: False for anything that is not a finite
+    number. The gates reject on False, so the unknown never places."""
+    return _is_finite(value) and value >= bound
+
+
 class VerdictKind(str, Enum):
     """The four answers of the placement decision."""
 
@@ -247,11 +253,25 @@ class PlacementVerdict:
 # ---------------------------------------------------------------------------
 
 
+# The levels a reading may carry at all. A choice, and a wide one: the range
+# the Bluetooth HCI defines for an RSSI value (-127..+20 dBm). It is not a
+# statement about any room — only about what cannot be a measurement.
+RSSI_MIN_DBM = -127.0
+RSSI_MAX_DBM = 20.0
+
+
 def _usable(reading: Reading) -> bool:
     """A reading the decision may use at all. The satellite's device entries
-    reach the presence service unvalidated and JSON carries NaN and Infinity;
-    such a reading is no reading — it neither places nor counts as heard."""
-    return _is_finite(reading.at) and _is_finite(reading.rssi)
+    reach the presence service unvalidated: JSON carries NaN and Infinity, and
+    a finite absurdity does the same damage (a single +35 dBm would place a
+    device; two readings of 1e308 sum to infinity). A reading that is not a
+    finite level inside the plausible range is no reading — it neither places
+    nor counts as heard."""
+    return (
+        _is_finite(reading.at)
+        and _is_finite(reading.rssi)
+        and RSSI_MIN_DBM <= reading.rssi <= RSSI_MAX_DBM
+    )
 
 
 def smooth(readings: Sequence[Reading], now: float, time_constant_s: float) -> float | None:
@@ -263,8 +283,9 @@ def smooth(readings: Sequence[Reading], now: float, time_constant_s: float) -> f
     many reports delivered them, in which order, or what other receivers sent
     meanwhile. Two readings with the same timestamp are one reading (the later
     one in the sequence wins), so a repeated delivery changes nothing.
-    Readings after ``now`` are ignored, and so is a reading whose level or
-    timestamp is not a finite number: one NaN would turn the whole mean into
+    Readings after ``now`` are ignored, and so is a reading whose timestamp is
+    not a finite number or whose level is not a finite number inside
+    ``RSSI_MIN_DBM..RSSI_MAX_DBM``: one NaN would turn the whole mean into
     NaN. None when nothing is left.
     """
     by_time: dict[float, float] = {}
@@ -382,12 +403,14 @@ class _ZoneCandidate:
         """None when the zone may be claimed, else the reason it may not.
 
         Both gates are written as "unless proven inside": a value that is not
-        a number (NaN compares False either way) rejects, it never places.
+        a finite number rejects, it never places. NaN compares False either
+        way; an infinite distance or margin is no measurement either (it can
+        only come from a level that is none), however large it looks.
         """
-        if not (self.most_inside.bound_distance_db >= -relax_db):
+        if not _at_least(self.most_inside.bound_distance_db, -relax_db):
             return Reason.OUTSIDE_BOUND
         margin = self.margin
-        if margin is not None and not (margin >= config.margin_db - relax_db):
+        if margin is not None and not _at_least(margin, config.margin_db - relax_db):
             return Reason.MARGIN_TOO_SMALL
         return None
 

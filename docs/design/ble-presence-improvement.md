@@ -345,8 +345,11 @@ Two readings with the same timestamp are one reading (the later one counts). Nei
 reports nor what other receivers send moves a receiver's value. A reading whose level or timestamp
 is not a finite number is no reading: device entries reach the presence service unvalidated and
 JSON carries `NaN`, which would turn the mean into NaN — and every comparison against NaN is false.
-For the same reason both gates of the rule are written "unless proven inside": a value that cannot
-be compared rejects, it never places.
+Nor is a finite level outside −127…+20 dBm a reading (a choice: the range the Bluetooth HCI defines
+for an RSSI value; it says nothing about any room): a single +35 dBm would place a device, and two
+readings of 1e308 add up to infinity. For the same reason both gates of the rule are written
+"unless proven inside": a value that is not a finite number — NaN, and +∞ just as much — rejects,
+it never places.
 
 **Receiver states.** `heard` = a reading no older than `fresh_s`. `censored` = alive (heartbeat or
 a recent reading) but silent: all that is known is "at or below its cutoff, or deaf". It is never
@@ -463,7 +466,20 @@ This is thin, and the recording itself says where:
 
   Log lines carry the user id (as the existing presence lines do), room names and numbers —
   no device key, no satellite id, no user name. A failure inside the shadow is logged once per
-  entry point with the exception TYPE only: its message may carry a device key.
+  entry point with the exception TYPE only: its message may carry a device key. The same holds
+  for the satellite roster: when it cannot be read, that is one WARNING, and the receivers are
+  judged by their readings alone.
+
+  START and STOP carry `cause=<code>` so the expected kind can be filtered out:
+  - `decisions_differ` — the ordinary case: the two decisions say different things about devices
+    that are heard;
+  - `voice_without_device` — the legacy room rests on a voice/auth sighting while NO device of the
+    person is heard (the phone is away; its key stays in the window as `absent`). The two
+    decisions do not contradict each other over any reading: the legacy one has a source v2 does
+    not look at in stage 1. Such a case opens at EVERY voice sighting of that person and ends when
+    the legacy sweep drops them. The rule is kept on purpose — the lines say how often a room is
+    booked on voice alone — and the code marks them. A case that later turns into the ordinary
+    kind (the phone comes back and is heard elsewhere) is closed as `decisions_differ`.
 
   Several devices of one person: every device has its own verdict (the payload shows them one by
   one), and the disagreement log joins them per person, because the legacy decision keeps one room
@@ -471,8 +487,22 @@ This is thin, and the recording itself says where:
   EVERY device is gone. That is a logging rule so that a second phone left elsewhere is not a
   standing disagreement — the real rule for several devices is stage 2.
 
-  If the wall clock steps back, the shadow holds its verdicts and logs nothing but one WARNING
-  until the clock has passed the earlier time again.
+  The wall clock. `decide` ignores readings newer than its clock, so a clock that steps back
+  would make every device look unheard. Two cases, told apart by how far the clock is behind the
+  last decided report:
+  - up to the absence deadline: a HOLD. No decision, no START, no STOP and one WARNING until the
+    clock has passed the earlier time again. A read in that stretch is not decided either: the
+    payload field shows the verdict of the last decided report with `"held": true` (no verdict
+    yet: `{"held": true, "kind": null}`), and a voice line says `v2=held(clock)` — a ground-truth
+    line must not carry a verdict about another moment. Durations are differences of clock values,
+    so the held stretch is not counted into a case.
+  - more than the deadline (typically a jump forward that was then corrected): a RESET. Holding
+    would freeze the shadow for the length of the jump. One WARNING, every open case closed with
+    `after ? s … clock reset` (the clock cannot say how long it lasted), the verdicts dropped —
+    and with them every incumbent — and the report decided at the new clock. The limit is a
+    choice: past the deadline no reading a held verdict rests on would count any more.
+
+  What this does not catch: a jump FORWARD looks like a long silence, to both decisions.
 - **Stage 2 — the state follows v2:** expiry by deadline (a timer per device, not a sweep inside a
   report; `unavailable` must not fire leave events); `UserPresence` may be "home, room unknown";
   `is_location_uncertain` true for every source whose verdict is not `placed`; voice/auth sightings

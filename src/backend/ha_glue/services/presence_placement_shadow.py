@@ -20,6 +20,11 @@ Only constructed when ``PRESENCE_PLACEMENT_V2_SHADOW_ENABLED`` is on; with the
 flag off the presence service never imports this module. A failure in here is
 logged once per entry point and never reaches presence tracking.
 
+The clock: ``decide`` must not be asked at a time earlier than the readings
+it holds. When the wall clock steps back a little, the shadow holds (no
+decision, reads are marked ``held``); when it is behind by more than the
+absence deadline, that is a clock reset and the shadow starts over.
+
 Several devices of one person: each device gets its own verdict (the payload
 shows them one by one), and the disagreement log joins them per person — the
 legacy decision keeps ONE room per person, so a second phone left elsewhere
@@ -61,24 +66,30 @@ LOG_PREFIX = "Presence v2 shadow:"
 # back does not close a case and open the next.
 DISAGREEMENT_SETTLE_S = 30.0
 
+# Why a disagreement exists (``cause=`` in the START/STOP lines), so that the
+# expected kind can be filtered out.
+# The ordinary one: both decisions look at devices and say different things.
+CAUSE_DECISIONS_DIFFER = "decisions_differ"
+# The legacy room rests on a voice/auth sighting while NO device of the person
+# is heard at all (the phone is away, its key still in the window as absent).
+# The two decisions do not contradict each other over any reading here: one has
+# a source the other does not look at. Opens at every such voice sighting.
+CAUSE_VOICE_WITHOUT_DEVICE = "voice_without_device"
+
 # satellite id → (room id, time of the last heartbeat)
 Roster = Mapping[str, tuple[int | None, float | None]]
 
 
 def _connected_roster() -> Roster:
     """Connected satellites with their room and last heartbeat. In-memory, no
-    I/O. Best-effort: without a manager the roster is empty and every receiver
-    is judged by its readings alone."""
-    try:
-        from ha_glue.services.satellite_manager import get_satellite_manager
+    I/O. May raise: the shadow treats that as "no roster" (every receiver is
+    then judged by its readings alone) and says so once."""
+    from ha_glue.services.satellite_manager import get_satellite_manager
 
-        return {
-            satellite_id: (sat.room_id, sat.last_heartbeat)
-            for satellite_id, sat in get_satellite_manager().satellites.items()
-        }
-    except Exception as e:
-        logger.debug(f"{LOG_PREFIX} satellite roster unavailable ({type(e).__name__})")
-        return {}
+    return {
+        satellite_id: (sat.room_id, sat.last_heartbeat)
+        for satellite_id, sat in get_satellite_manager().satellites.items()
+    }
 
 
 @dataclass
@@ -86,6 +97,9 @@ class _Disagreement:
     """An open disagreement between the two decisions about one person."""
 
     since: float
+    # One of the CAUSE_* codes. ``voice_without_device`` only as long as every
+    # disagreeing report of the case was of that kind.
+    cause: str = CAUSE_DECISIONS_DIFFER
     pairs: set[tuple[str, str]] = field(default_factory=set)
     # Start of the current unbroken run of agreement; None while they disagree.
     agreeing_since: float | None = None
@@ -144,7 +158,7 @@ class PlacementShadow:
         # Latest clock value a report was decided at. The wall clock can step
         # back (time sync); the decision must not follow it.
         self._clock_high_water: float | None = None
-        self._clock_behind_logged = False
+        self._clock_behind_logged = False  # one WARNING per hold, not per report
 
     @classmethod
     def from_settings(cls) -> PlacementShadow | None:
@@ -193,7 +207,7 @@ class PlacementShadow:
         tracked device again and log where the two decisions start or stop
         disagreeing about a person."""
         try:
-            if not self._clock_moved_on(now):
+            if not self._clock_allows_a_decision(now):
                 return
             receivers = self._receivers(presence)
             decided: dict[str, PlacementVerdict] = {}
@@ -223,7 +237,6 @@ class PlacementShadow:
         decision believed BEFORE it. Must be called before the legacy state is
         touched."""
         try:
-            now = self._not_before_high_water(now)
             room = self._room_label(presence, room_id)
             current = presence._presence.get(user_id)
             legacy_room_id = current.room_id if current else None
@@ -233,18 +246,24 @@ class PlacementShadow:
                 hit = "match" if legacy_room_id == room_id else "miss"
                 legacy = f"{self._room_label(presence, legacy_room_id)}[{hit}]"
 
-            receivers = self._receivers(presence)
-            beliefs = []
-            for key in presence._sightings:
-                if presence._user_for_key(key) != user_id:
-                    continue
-                verdict = self._decide(presence, key, receivers, now)
-                if verdict.is_placed:
-                    hit = "match" if verdict.covers(room_id) else "miss"
-                    beliefs.append(f"[{hit}] {self._describe(presence, verdict)}")
-                else:
-                    beliefs.append(self._describe(presence, verdict))
-            v2 = " | ".join(beliefs) if beliefs else "no tracked device"
+            if self._clock_is_behind(now):
+                # No verdict can be had at this clock value, and one decided at
+                # the high water would be about another moment: a ground-truth
+                # line must not carry it.
+                v2 = "held(clock)"
+            else:
+                receivers = self._receivers(presence)
+                beliefs = []
+                for key in presence._sightings:
+                    if presence._user_for_key(key) != user_id:
+                        continue
+                    verdict = self._decide(presence, key, receivers, now)
+                    if verdict.is_placed:
+                        hit = "match" if verdict.covers(room_id) else "miss"
+                        beliefs.append(f"[{hit}] {self._describe(presence, verdict)}")
+                    else:
+                        beliefs.append(self._describe(presence, verdict))
+                v2 = " | ".join(beliefs) if beliefs else "no tracked device"
             logger.info(
                 f"{LOG_PREFIX} voice sighting user {user_id} in {room}: legacy={legacy} v2={v2}"
             )
@@ -254,10 +273,19 @@ class PlacementShadow:
     def payload_for(self, presence: PresenceService, key: str, now: float) -> dict[str, Any] | None:
         """The ``placement_v2`` field of the live-readings payload for one
         device: the verdict as of ``now`` and its components. A read: the
-        shadow's own state is not advanced by somebody watching."""
+        shadow's own state is not advanced by somebody watching.
+
+        ``held`` is true while the clock is behind the last decided report:
+        the fields then show the verdict OF that report (none decided yet:
+        ``kind`` is null), not one decided now."""
         try:
-            now = self._not_before_high_water(now)
-            verdict = self._decide(presence, key, self._receivers(presence), now)
+            held = self._clock_is_behind(now)
+            if held:
+                verdict = self._verdicts.get(key)
+                if verdict is None:
+                    return {"held": True, "kind": None}
+            else:
+                verdict = self._decide(presence, key, self._receivers(presence), now)
             user_id = presence._user_for_key(key)
             current = presence._presence.get(user_id) if user_id is not None else None
             c = verdict.components
@@ -278,6 +306,7 @@ class PlacementShadow:
             if runner_up is not None:
                 runner_up["censored"] = c.runner_up_censored
             return {
+                "held": held,
                 "kind": verdict.kind.value,
                 "reason": c.reason.value,
                 "room_id": verdict.room,
@@ -307,38 +336,69 @@ class PlacementShadow:
     # Internals
     # ------------------------------------------------------------------
 
-    def _clock_moved_on(self, now: float) -> bool:
-        """Whether a report at ``now`` may be decided. ``decide`` ignores
-        readings newer than its clock, so after a backward step of the wall
-        clock every device would look unheard, lose its incumbent zone and
-        open a disagreement — produced by the clock, not by the house. Until
-        the clock has passed the earlier time again the shadow holds what it
-        has: no verdict changes, no START, no STOP. One WARNING per episode."""
+    def _clock_allows_a_decision(self, now: float) -> bool:
+        """Whether a report at ``now`` may be decided.
+
+        ``decide`` ignores readings newer than its clock, so at a clock value
+        earlier than the last decided report every device would look unheard,
+        lose its incumbent zone and open a disagreement — produced by the
+        clock, not by the house.
+
+          * A little behind (a time sync stepping back): HOLD. No decision, no
+            START, no STOP, until the clock has passed the earlier time again;
+            one WARNING per hold. Case durations are differences of clock
+            values, so the held stretch is not counted into them.
+          * Behind by more than the absence deadline: a clock RESET (typically
+            a jump forward that was then corrected). Holding would mean hours
+            of nothing, with every verdict resting on readings from a time
+            that never was. Start over: close the open cases with that reason
+            and no duration, forget the verdicts, take ``now`` as the clock.
+            The limit is a choice — past the deadline no reading a held
+            verdict rests on would count any more.
+        """
         high = self._clock_high_water
         if high is None or now >= high:
+            self._clock_high_water = now
+            self._clock_behind_logged = False
+            return True
+        behind = high - now
+        if behind > self._config.absent_after_s:
+            logger.warning(
+                f"{LOG_PREFIX} the clock is {behind:.1f} s behind the last decided report, "
+                f"more than the deadline ({self._config.absent_after_s:g} s): taken as a clock "
+                f"reset — {len(self._disagreements)} open case(s) closed, verdicts cleared"
+            )
+            for user_id in list(self._disagreements):
+                self._close(user_id, None, "clock reset")
+            self._verdicts = {}
             self._clock_high_water = now
             self._clock_behind_logged = False
             return True
         if not self._clock_behind_logged:
             self._clock_behind_logged = True
             logger.warning(
-                f"{LOG_PREFIX} the clock stepped back by {high - now:.1f} s; verdicts are "
+                f"{LOG_PREFIX} the clock stepped back by {behind:.1f} s; verdicts are "
                 "held until it has passed the earlier time again"
             )
         return False
 
-    def _not_before_high_water(self, now: float) -> float:
-        """The clock for a read (voice line, payload): never earlier than the
-        last decided report. Does not advance anything."""
+    def _clock_is_behind(self, now: float) -> bool:
+        """For a read (voice line, payload): no decision can be had at ``now``.
+        Changes nothing — the reset, if it is one, happens at the next report."""
         high = self._clock_high_water
-        return now if high is None else max(now, high)
+        return high is not None and now < high
 
     def _receivers(self, presence: PresenceService) -> dict[str, Receiver]:
         """Every receiver the decision should know: the connected roster (with
         its heartbeat as the sign of life) plus any satellite that still has a
         reading in the window."""
         receivers: dict[str, Receiver] = {}
-        for satellite_id, (room_id, heartbeat_at) in self._roster().items():
+        try:
+            roster = self._roster()
+        except Exception as e:
+            self._log_failure("satellite roster", e)
+            roster = {}
+        for satellite_id, (room_id, heartbeat_at) in roster.items():
             receivers[satellite_id] = Receiver(
                 room=room_id, params=self._params.get(satellite_id), alive_at=heartbeat_at
             )
@@ -392,24 +452,34 @@ class PlacementShadow:
             self._room_label(presence, legacy_room_id) if legacy_room_id is not None else "none",
             " | ".join(self._short(presence, v) for v in verdicts),
         )
+        voice_only = (
+            legacy_room_id is not None
+            and bool(getattr(current, "voice_pinned", False))
+            and all(v.kind in _GONE for v in verdicts)
+        )
+        cause = CAUSE_VOICE_WITHOUT_DEVICE if voice_only else CAUSE_DECISIONS_DIFFER
         if open_case is not None:
             open_case.agreeing_since = None  # the agreement did not hold
             open_case.pairs.add(pair)
+            if cause != open_case.cause:
+                open_case.cause = CAUSE_DECISIONS_DIFFER
             return
-        self._disagreements[user_id] = _Disagreement(since=now, pairs={pair})
+        self._disagreements[user_id] = _Disagreement(since=now, cause=cause, pairs={pair})
         logger.info(
-            f"{LOG_PREFIX} disagreement START user {user_id}: "
+            f"{LOG_PREFIX} disagreement START user {user_id} cause={cause}: "
             f"legacy={self._describe_legacy(presence, user_id, now)} "
             f"v2={self._describe_all(presence, verdicts)}"
         )
 
-    def _close(self, user_id: int, ended_at: float, state: str) -> None:
+    def _close(self, user_id: int, ended_at: float | None, state: str) -> None:
         """Close an open disagreement with its STOP line. ``ended_at`` is when
-        the disagreement itself ended, not when the line is written."""
+        the disagreement itself ended, not when the line is written; None =
+        the clock cannot say (a reset), and the line says ``?``."""
         case = self._disagreements.pop(user_id)
+        lasted = "?" if ended_at is None else f"{ended_at - case.since:.0f}"
         logger.info(
-            f"{LOG_PREFIX} disagreement STOP user {user_id} after "
-            f"{ended_at - case.since:.0f} s ({len(case.pairs)} distinct pair(s)): {state}"
+            f"{LOG_PREFIX} disagreement STOP user {user_id} cause={case.cause} after "
+            f"{lasted} s ({len(case.pairs)} distinct pair(s)): {state}"
         )
 
     def _describe_all(self, presence: PresenceService, verdicts: list[PlacementVerdict]) -> str:
@@ -488,11 +558,12 @@ class PlacementShadow:
         }
 
     def _log_failure(self, where: str, error: Exception) -> None:
-        """Once per entry point, at WARNING: a broken diagnostic must be
-        visible, and must not write a line per report. The exception TYPE and
-        the entry point only — never its message, never a traceback: a
-        ``KeyError`` on a device key carries a MAC or an ``irk:<label>``, and
-        the label is chosen by the user and may be a name."""
+        """Once per entry point (or source, such as the satellite roster), at
+        WARNING: a broken diagnostic must be visible, and must not write a
+        line per report. The exception TYPE and the entry point only — never
+        its message, never a traceback: a ``KeyError`` on a device key carries
+        a MAC or an ``irk:<label>``, and the label is chosen by the user and
+        may be a name."""
         if where in self._failures_logged:
             return
         self._failures_logged.add(where)

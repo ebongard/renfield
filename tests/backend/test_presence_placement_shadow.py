@@ -7,6 +7,8 @@
   * it logs when the two decisions START and STOP disagreeing about a person,
     never per report — STOP only once the agreement has settled — and one
     line per voice/auth sighting;
+  * a clock that steps back holds the shadow (reads are marked ``held``), and
+    one that is behind by more than the deadline resets it;
   * unusable settings, and anything else that keeps the shadow from being
     built, switch it off with an ERROR; a failing shadow never reaches
     presence tracking and never prints a device key.
@@ -33,6 +35,8 @@ import ha_glue.services.presence_placement_shadow as shadow_module
 from ha_glue.services import presence_service as presence_service_module
 from ha_glue.services.presence_placement import Reason, VerdictKind
 from ha_glue.services.presence_placement_shadow import (
+    CAUSE_DECISIONS_DIFFER,
+    CAUSE_VOICE_WITHOUT_DEVICE,
     DISAGREEMENT_SETTLE_S,
     LOG_PREFIX,
     PlacementShadow,
@@ -196,7 +200,9 @@ class TestFlagOff:
     ])
     def test_the_new_modules_are_not_imported(self, flag, built, loaded):
         """In a fresh interpreter — this file imports both modules at its top,
-        so its own ``sys.modules`` proves nothing."""
+        so its own ``sys.modules`` proves nothing. The probe loads BOTH
+        modules that reach for the shadow (the presence service and the
+        live-readings builder) and runs the builder once."""
         backend = Path(presence_service_module.__file__).resolve().parents[2]
         env = {k: v for k, v in os.environ.items()
                if not k.upper().startswith("PRESENCE_PLACEMENT_V2_")}
@@ -205,9 +211,12 @@ class TestFlagOff:
             env["PRESENCE_PLACEMENT_V2_SHADOW_ENABLED"] = flag
         code = (
             "import json, sys\n"
+            "import ha_glue.services.presence_debug as presence_debug\n"
             "from ha_glue.services.presence_service import PresenceService\n"
             "svc = PresenceService()\n"
+            "payload = presence_debug.build_sightings_payload(svc)\n"
             "print('PROBE ' + json.dumps({\n"
+            "    'enabled': payload['enabled'],\n"
             "    'built': svc._placement_shadow is not None,\n"
             "    'loaded': sorted(m for m in sys.modules if 'presence_placement' in m),\n"
             "}))\n"
@@ -218,7 +227,9 @@ class TestFlagOff:
         assert proc.returncode == 0, proc.stderr[-2000:]
         probe = [line for line in proc.stdout.splitlines() if line.startswith("PROBE ")]
         assert len(probe) == 1, proc.stdout[-2000:]
-        assert json.loads(probe[0][len("PROBE "):]) == {"built": built, "loaded": loaded}
+        assert json.loads(probe[0][len("PROBE "):]) == {
+            "enabled": True, "built": built, "loaded": loaded,
+        }
 
     async def test_a_service_built_without_the_attribute_still_works(self, clock):
         """Older test doubles build the service with ``__new__`` and never set
@@ -296,8 +307,7 @@ class TestDisagreementLog:
         assert len(shadow_lines(log_lines)) == 1
         start = shadow_lines(log_lines)[0]
         assert start.startswith("INFO|")
-        assert "disagreement START user 1" in start
-        assert "legacy=Kitchen(" in start
+        assert "disagreement START user 1 cause=decisions_differ: legacy=Kitchen(" in start
         assert "v2=home_unknown reason=outside_bound best=Kitchen:-72.0" in start
         assert "bound_distance=-12.0" in start
         assert "runner_up=Bath:-80.0(censored)" in start
@@ -322,7 +332,7 @@ class TestDisagreementLog:
         assert len(lines) == 2
         stop = lines[1]
         # The duration is that of the disagreement, not "until this line".
-        assert "disagreement STOP user 1 after 21 s" in stop
+        assert "disagreement STOP user 1 cause=decisions_differ after 21 s" in stop
         assert "(1 distinct pair(s))" in stop
         assert "v2=placed:Kitchen reason=in_bound_and_margin" in stop
 
@@ -357,7 +367,7 @@ class TestDisagreementLog:
         await report(svc, clock, "sat-bath", -66, mac=OTHER_MAC, step=DISAGREEMENT_SETTLE_S)
         stops = [line for line in shadow_lines(log_lines) if "STOP user 1" in line]
         assert len(stops) == 1
-        assert "STOP user 1 after 303 s" in stops[0]
+        assert "STOP user 1 cause=decisions_differ after 303 s" in stops[0]
         assert "legacy=none v2=absent reason=not_heard" in stops[0]
 
     async def test_with_no_receiver_alive_the_shadow_says_unavailable(
@@ -424,50 +434,318 @@ class TestDisagreementLog:
         await report(svc, clock, "sat-kitchen", -45, step=10.0)
         lines = shadow_lines(log_lines)
         assert len(lines) == 2
-        assert "disagreement STOP user 1 after 110 s (1 distinct pair(s))" in lines[1]
+        assert ("disagreement STOP user 1 cause=decisions_differ after 110 s "
+                "(1 distinct pair(s))") in lines[1]
         assert DISAGREEMENT_SETTLE_S == 30.0
 
     async def test_a_backward_step_of_the_clock_is_not_a_disagreement(
         self, monkeypatch, clock, log_lines
     ):
-        """The wall clock is set back by ten minutes (time sync). Every stored
+        """The wall clock is set back by a minute (time sync). Every stored
         reading is then "in the future" and the decision would see nothing:
         absent, a START, the incumbent gone. The shadow holds instead."""
+        monkeypatch.setattr(presence_debug, "_connected_satellites", lambda: [])
         svc, _fired = build_service(monkeypatch, clock, enabled=True)
         for _ in range(6):
             await report(svc, clock, "sat-kitchen", -50)
         for _ in range(8):
             await report(svc, clock, "sat-kitchen", -62)
-        held = svc._placement_shadow._verdicts[MAC]
+        shadow = svc._placement_shadow
+        held = shadow._verdicts[MAC]
         # 2 dB below the bound: only the incumbent holds this.
         assert held.kind is VerdictKind.PLACED
         assert held.components.reason is Reason.INCUMBENT_HELD
+        assert shadow.payload_for(svc, MAC, clock.now)["held"] is False
         before_step = clock.now
         log_lines.clear()
 
-        clock.now -= 600.0
+        clock.now -= 60.0
         for _ in range(3):
             await report(svc, clock, "sat-bath", -79, mac=OTHER_MAC)
         assert svc.get_user_presence(1).room_id == KITCHEN
-        assert svc._placement_shadow._verdicts[MAC] is held
+        assert shadow._verdicts[MAC] is held
         lines = shadow_lines(log_lines)
         assert [line for line in lines if "START" in line or "STOP" in line] == []
-        assert len(lines) == 1   # once per episode, not once per report
+        assert len(lines) == 1   # once per hold, not once per report
         assert lines[0].startswith("WARNING|")
-        assert "the clock stepped back by 597.0 s" in lines[0]
+        assert "the clock stepped back by 57.0 s" in lines[0]
+        assert "held" in lines[0] and "reset" not in lines[0]
 
-        # A read during the episode is answered as of the last decided report.
-        assert svc._placement_shadow.payload_for(svc, MAC, clock.now)["kind"] == "placed"
+        # A read during the hold is not decided: it shows the verdict of the
+        # last decided report and says so.
+        decide_calls = []
+        real_decide = shadow_module.decide
+        monkeypatch.setattr(shadow_module, "decide", lambda *a, **k: (
+            decide_calls.append(1), real_decide(*a, **k))[1])
+        payload = shadow.payload_for(svc, MAC, clock.now)
+        assert payload["held"] is True
+        assert (payload["kind"], payload["reason"]) == ("placed", "incumbent_held")
+        assert payload["age_s"] == round(held.components.age_s, 2)
+        # A device that has no decided verdict yet has nothing to show.
+        assert shadow.payload_for(svc, OTHER_MAC, clock.now) == {"held": True, "kind": None}
+        by_key = {
+            device["user_id"]: device["placement_v2"]
+            for device in presence_debug.build_sightings_payload(svc)["devices"]
+        }
+        assert by_key[1]["held"] is True and by_key[2] == {"held": True, "kind": None}
+
+        # The ground-truth line carries no verdict it could not have.
+        log_lines.clear()
+        await svc.register_voice_presence(user_id=1, room_id=KITCHEN, room_name="Kitchen")
+        voice = shadow_lines(log_lines)
+        assert len(voice) == 1
+        assert voice[0].endswith("voice sighting user 1 in Kitchen: legacy=Kitchen[match] v2=held(clock)")
+        assert decide_calls == []
+        monkeypatch.setattr(shadow_module, "decide", real_decide)
 
         # The clock has passed the earlier time: decisions resume, and the
         # incumbent is still the incumbent.
         clock.now = before_step
         await report(svc, clock, "sat-kitchen", -62)
-        resumed = svc._placement_shadow._verdicts[MAC]
+        resumed = shadow._verdicts[MAC]
         assert resumed is not held
         assert resumed.kind is VerdictKind.PLACED
         assert resumed.components.reason is Reason.INCUMBENT_HELD
-        assert not [line for line in shadow_lines(log_lines) if "user 1" in line]
+        assert shadow.payload_for(svc, MAC, clock.now)["held"] is False
+        assert not [line for line in shadow_lines(log_lines)
+                    if "START user 1" in line or "STOP user 1" in line]
+
+    async def test_a_hold_is_not_counted_into_the_duration_of_a_case(
+        self, monkeypatch, clock, log_lines
+    ):
+        """A case is open when the clock steps back by a minute. The reports
+        of that minute are held; the duration in the STOP line is the time
+        the two decisions were SEEN to disagree, one minute less than what
+        passed in the house."""
+        svc, _fired = build_service(monkeypatch, clock, enabled=True)
+        shadow = svc._placement_shadow
+        log_lines.clear()
+        await report(svc, clock, "sat-kitchen", -72)       # START
+        since = clock.now
+        await report(svc, clock, "sat-kitchen", -72)
+        high = clock.now
+        passed = 3.0                                       # seconds in the house since START
+
+        clock.now -= 60.0
+        while clock.now + 3.0 < high:
+            await report(svc, clock, "sat-kitchen", -72)
+            passed += 3.0
+        lines = shadow_lines(log_lines)
+        assert len(lines) == 2 and "START user 1" in lines[0]
+        assert lines[1].startswith("WARNING|") and "stepped back by 57.0 s" in lines[1]
+        assert shadow._disagreements[1].since == since
+
+        passed_at_agreement = None
+        for _ in range(30):
+            await report(svc, clock, "sat-kitchen", -45)
+            passed += 3.0
+            case = shadow._disagreements.get(1)
+            if case is None:
+                break
+            if passed_at_agreement is None and case.agreeing_since is not None:
+                passed_at_agreement = passed
+                assert case.agreeing_since == clock.now
+                assert clock.now - since == passed - 60.0
+        stops = [line for line in shadow_lines(log_lines) if "STOP user 1" in line]
+        assert len(stops) == 1 and passed_at_agreement is not None
+        assert f"after {passed_at_agreement - 60.0:.0f} s (1 distinct pair(s))" in stops[0]
+
+    async def test_a_clock_far_behind_is_a_reset_not_a_hold(
+        self, monkeypatch, clock, log_lines
+    ):
+        """The clock jumps three hours ahead, a report is decided there, and
+        the clock is corrected. Holding until it has caught up would freeze
+        the shadow for three hours. It starts over instead: one WARNING, open
+        cases closed with that reason and no invented duration, the verdicts
+        (and with them every incumbent) dropped, decisions at the new clock."""
+        monkeypatch.setattr(presence_debug, "_connected_satellites", lambda: [])
+        svc, _fired = build_service(monkeypatch, clock, enabled=True)
+        shadow = svc._placement_shadow
+        for _ in range(6):
+            await report(svc, clock, "sat-kitchen", -50)
+        for _ in range(8):
+            await report(svc, clock, "sat-kitchen", -62)
+        await report(svc, clock, "sat-bath", -72, mac=OTHER_MAC)   # a case for user 2 opens
+        assert list(shadow._disagreements) == [2]
+        before_jump = clock.now
+
+        clock.now += 3 * 3600.0
+        await report(svc, clock, "sat-kitchen", -62)
+        in_the_future = shadow._verdicts[MAC]
+        assert in_the_future.components.reason is Reason.INCUMBENT_HELD
+        assert list(shadow._disagreements) == [2]
+        log_lines.clear()
+
+        clock.now = before_jump + 30.0
+        await report(svc, clock, "sat-kitchen", -62)
+        lines = shadow_lines(log_lines)
+        warnings = [line for line in lines if line.startswith("WARNING|")]
+        assert len(warnings) == 1
+        assert "the clock is 10770.0 s behind the last decided report" in warnings[0]
+        assert "taken as a clock reset — 1 open case(s) closed, verdicts cleared" in warnings[0]
+        stops = [line for line in lines if "STOP user 2" in line]
+        assert len(stops) == 1
+        assert stops[0].endswith(
+            "disagreement STOP user 2 cause=decisions_differ after ? s (1 distinct pair(s)): clock reset"
+        )
+        assert lines.index(warnings[0]) < lines.index(stops[0])
+
+        # Decided at the new clock, in the same report, without the incumbent:
+        # -62 dBm is 2 dB outside the bound.
+        assert shadow._clock_high_water == clock.now
+        fresh = shadow._verdicts[MAC]
+        assert fresh is not in_the_future
+        assert fresh.kind is VerdictKind.HOME_UNKNOWN
+        assert fresh.components.reason is Reason.OUTSIDE_BOUND
+        assert fresh.components.age_s == 0.0
+        payload = shadow.payload_for(svc, MAC, clock.now)
+        assert (payload["held"], payload["kind"]) == (False, "home_unknown")
+
+        # And it goes on deciding, without another warning.
+        log_lines.clear()
+        for _ in range(6):
+            await report(svc, clock, "sat-kitchen", -50)
+        assert shadow._verdicts[MAC].kind is VerdictKind.PLACED
+        assert not [line for line in shadow_lines(log_lines) if line.startswith("WARNING|")]
+
+    @pytest.mark.parametrize(("behind", "reset"), [(120.0, False), (120.5, True)])
+    async def test_the_deadline_separates_a_hold_from_a_reset(
+        self, monkeypatch, clock, log_lines, behind, reset
+    ):
+        """The limit is a choice: the absence deadline. Behind by exactly the
+        deadline is still a hold."""
+        monkeypatch.setattr(ha_glue_settings, "presence_stale_timeout", 120)
+        svc, _fired = build_service(monkeypatch, clock, enabled=True)
+        shadow = svc._placement_shadow
+        assert shadow._config.absent_after_s == 120.0
+        for _ in range(6):
+            await report(svc, clock, "sat-kitchen", -50)
+        decided = shadow._verdicts[MAC]
+        log_lines.clear()
+
+        clock.now -= behind + 3.0          # the report below steps 3 s forward
+        await report(svc, clock, "sat-kitchen", -50)
+        warnings = [line for line in shadow_lines(log_lines) if line.startswith("WARNING|")]
+        assert len(warnings) == 1
+        assert ("taken as a clock reset" in warnings[0]) is reset
+        assert ("verdicts are held" in warnings[0]) is (not reset)
+        assert (shadow._verdicts[MAC] is decided) is (not reset)
+        assert shadow._clock_is_behind(clock.now) is (not reset)
+
+
+class TestCause:
+    """``cause=`` in the START/STOP lines tells the expected kind of
+    disagreement from the kind that says something about the decisions."""
+
+    async def _voice_room_with_the_phone_away(self, svc, clock):
+        """User 1's phone was heard, then left the house; the person is then
+        placed by a voice turn in the bath."""
+        for _ in range(6):
+            await report(svc, clock, "sat-kitchen", -50)
+        clock.now += 300.0
+        await report(svc, clock, "sat-bath", -66, mac=OTHER_MAC)   # the legacy sweep runs
+        assert svc.get_user_presence(1) is None
+        assert svc._placement_shadow._verdicts[MAC].kind is VerdictKind.ABSENT
+        assert MAC in svc._sightings   # the stale key stays, as absent
+
+    async def test_a_voice_room_with_no_device_heard_has_its_own_cause(
+        self, monkeypatch, clock, log_lines
+    ):
+        """Every voice sighting of a person whose phone is away opens a case:
+        the legacy decision books the voice room, v2 says "absent" about the
+        phone. Both are right. The case is kept — and marked."""
+        svc, _fired = build_service(monkeypatch, clock, enabled=True)
+        await self._voice_room_with_the_phone_away(svc, clock)
+        # The control: the other person's case (heard outside the bound, and
+        # open through the whole run) is the ordinary kind.
+        others = [line for line in shadow_lines(log_lines) if "START user 2" in line]
+        assert len(others) == 1 and "START user 2 cause=decisions_differ:" in others[0]
+        log_lines.clear()
+
+        for _ in range(2):
+            await svc.register_voice_presence(user_id=1, room_id=BATH, room_name="Bath")
+            await report(svc, clock, "sat-bath", -66, mac=OTHER_MAC)
+            assert svc._placement_shadow._disagreements[1].cause == CAUSE_VOICE_WITHOUT_DEVICE
+            clock.now += 300.0
+            await report(svc, clock, "sat-bath", -66, mac=OTHER_MAC)   # the sweep drops user 1
+            assert svc.get_user_presence(1) is None
+            await report(svc, clock, "sat-bath", -66, mac=OTHER_MAC, step=DISAGREEMENT_SETTLE_S)
+            assert 1 not in svc._placement_shadow._disagreements
+
+        lines = [line for line in shadow_lines(log_lines) if "user 1" in line]
+        assert [line.split(f"{LOG_PREFIX} ")[1].split(" user 1")[0] for line in lines] == [
+            "voice sighting", "disagreement START", "disagreement STOP",
+        ] * 2
+        for start in lines[1::3]:
+            assert "START user 1 cause=voice_without_device: legacy=Bath(" in start
+            assert "pinned=True" in start and "v2=absent reason=not_heard" in start
+        for stop in lines[2::3]:
+            assert "STOP user 1 cause=voice_without_device after 303 s (1 distinct pair(s))" in stop
+        assert not [line for line in shadow_lines(log_lines) if "START user 2" in line]
+        assert CAUSE_VOICE_WITHOUT_DEVICE == "voice_without_device"
+        assert CAUSE_DECISIONS_DIFFER == "decisions_differ"
+
+    async def test_a_voice_room_while_the_phone_is_heard_elsewhere_is_the_ordinary_cause(
+        self, monkeypatch, clock, log_lines
+    ):
+        svc, _fired = build_service(monkeypatch, clock, enabled=True)
+        svc._voice_hold_seconds = 90.0
+        for _ in range(6):
+            await report(svc, clock, "sat-kitchen", -50)
+        log_lines.clear()
+        await svc.register_voice_presence(user_id=1, room_id=BATH, room_name="Bath")
+        await report(svc, clock, "sat-kitchen", -50)
+        assert svc.get_user_presence(1).room_id == BATH
+        starts = [line for line in shadow_lines(log_lines) if "START user 1" in line]
+        assert len(starts) == 1
+        assert "START user 1 cause=decisions_differ: legacy=Bath(" in starts[0]
+        assert "pinned=True" in starts[0] and "v2=placed:Kitchen" in starts[0]
+
+    async def test_a_room_booked_on_a_reading_v2_refuses_is_the_ordinary_cause(
+        self, monkeypatch, clock, log_lines
+    ):
+        """"No device heard" alone does not make the marked kind: the legacy
+        room must rest on a voice sighting. Here it rests on a level v2 does
+        not accept as a reading (+35 dBm) — the two decisions differ over a
+        reading, which is exactly what must not be filtered away."""
+        svc, _fired = build_service(monkeypatch, clock, enabled=True)
+        log_lines.clear()
+        await report(svc, clock, "sat-kitchen", 35)
+        current = svc.get_user_presence(1)
+        assert current.room_id == KITCHEN and current.voice_pinned is False
+        assert svc._placement_shadow._verdicts[MAC].kind is VerdictKind.ABSENT
+        starts = [line for line in shadow_lines(log_lines) if "START user 1" in line]
+        assert len(starts) == 1
+        assert "START user 1 cause=decisions_differ: legacy=Kitchen(" in starts[0]
+
+    async def test_a_case_that_turns_into_the_ordinary_kind_is_closed_as_that(
+        self, monkeypatch, clock, log_lines
+    ):
+        """The marked case is open when the phone comes back and is heard
+        outside every bound: from then on the two decisions do differ over
+        readings, and a filter on the cause must not hide the case."""
+        svc, _fired = build_service(monkeypatch, clock, enabled=True)
+        svc._voice_hold_seconds = 90.0
+        await self._voice_room_with_the_phone_away(svc, clock)
+        log_lines.clear()
+        await svc.register_voice_presence(user_id=1, room_id=BATH, room_name="Bath")
+        await report(svc, clock, "sat-bath", -66, mac=OTHER_MAC)
+        shadow = svc._placement_shadow
+        assert shadow._disagreements[1].cause == CAUSE_VOICE_WITHOUT_DEVICE
+
+        await report(svc, clock, "sat-kitchen", -72)
+        assert shadow._verdicts[MAC].kind is VerdictKind.HOME_UNKNOWN
+        assert shadow._disagreements[1].cause == CAUSE_DECISIONS_DIFFER
+
+        # It ends in the kitchen: a voice turn there, the phone inside the bound.
+        await svc.register_voice_presence(user_id=1, room_id=KITCHEN, room_name="Kitchen")
+        for _ in range(16):
+            await report(svc, clock, "sat-kitchen", -45)
+        lines = [line for line in shadow_lines(log_lines) if "disagreement" in line and "user 1" in line]
+        assert len(lines) == 2
+        assert "START user 1 cause=voice_without_device" in lines[0]
+        assert "STOP user 1 cause=decisions_differ after" in lines[1]
+        assert "(2 distinct pair(s))" in lines[1]
 
 
 class TestSeveralDevicesOfOnePerson:
@@ -698,6 +976,7 @@ class TestPayload:
         payload = presence_debug.build_sightings_payload(svc)
         device = payload["devices"][0]
         v2 = device["placement_v2"]
+        assert v2["held"] is False
         assert v2["kind"] == "placed"
         assert v2["reason"] == "in_bound_and_margin"
         assert (v2["room_id"], v2["room_name"]) == (KITCHEN, "Kitchen")
@@ -979,8 +1258,41 @@ class TestFailureIsolation:
         monkeypatch.setattr(satellite_manager, "get_satellite_manager", lambda: manager)
         assert shadow_module._connected_roster() == {"sat-kitchen": (KITCHEN, 123.0)}
 
+    async def test_a_failing_roster_is_reported_once_and_the_readings_still_decide(
+        self, monkeypatch, clock, log_lines
+    ):
+        """The roster is asked on every report, every voice sighting and every
+        payload. When the satellite manager fails, that is one WARNING — not a
+        line per report, and not a silent DEBUG — and the receivers are judged
+        by their readings alone."""
+        import ha_glue.services.satellite_manager as satellite_manager
+
+        monkeypatch.setattr(presence_debug, "_connected_satellites", lambda: [])
+        svc, _fired = build_service(monkeypatch, clock, enabled=True)
+        shadow = svc._placement_shadow
+
         def unavailable():
-            raise RuntimeError("no manager")
+            raise RuntimeError(f"no manager for {MAC}")
 
         monkeypatch.setattr(satellite_manager, "get_satellite_manager", unavailable)
-        assert shadow_module._connected_roster() == {}
+        shadow._roster = shadow_module._connected_roster   # the production roster
+        with pytest.raises(RuntimeError):
+            shadow_module._connected_roster()
+        log_lines.clear()
+
+        for _ in range(6):
+            await report(svc, clock, "sat-kitchen", -50)
+        await svc.register_voice_presence(user_id=1, room_id=KITCHEN, room_name="Kitchen")
+        payload = presence_debug.build_sightings_payload(svc)["devices"][0]["placement_v2"]
+
+        about_the_roster = [line for line in log_lines if "roster" in line]
+        assert len(about_the_roster) == 1
+        assert about_the_roster[0].startswith("WARNING|")
+        assert "satellite roster failed (RuntimeError)" in about_the_roster[0]
+        assert MAC not in about_the_roster[0] and "no manager" not in about_the_roster[0]
+        # No entry point failed: the decision ran on what the readings say.
+        assert shadow._failures_logged == {"satellite roster"}
+        verdict = shadow._verdicts[MAC]
+        assert verdict.kind is VerdictKind.PLACED
+        assert [e.receiver_id for e in verdict.components.receivers] == ["sat-kitchen"]
+        assert payload["kind"] == "placed"

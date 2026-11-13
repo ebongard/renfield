@@ -123,6 +123,8 @@ def build_sightings_payload(presence) -> dict[str, Any]:
     compares, and every sighting still in the service's window. With the
     placement v2 shadow on, additionally ``placement_v2``: the shadow verdict
     as of this snapshot and its components (the key is absent with it off).
+    While the clock is behind the shadow's last decided report the field
+    carries ``held: true`` and the verdict of that report instead.
     """
     now = time.time()
     payload: dict[str, Any] = {

@@ -8,7 +8,8 @@ No I/O anywhere: every test builds readings, receivers and a clock by hand.
   * censoring — a silent receiver stands at its cutoff, it is not "far";
   * calibration — an uncalibrated receiver keeps a device home, never places it;
   * values that are not finite numbers never place — dropped as readings,
-    rejected by the gates, refused as parameters;
+    rejected by the gates, refused as parameters; nor does a finite level
+    outside the range a reading can have;
   * margin and hysteresis; zones; deadlines; the injected clock;
   * the settings parsers.
 """
@@ -19,6 +20,8 @@ import math
 import pytest
 
 from ha_glue.services.presence_placement import (
+    RSSI_MAX_DBM,
+    RSSI_MIN_DBM,
     PlacementComponents,
     PlacementConfig,
     PlacementConfigError,
@@ -407,20 +410,22 @@ class TestNotFinite:
         assert smooth([Reading(NOW, bad)], NOW, 6.0) is None
         assert smooth([Reading(bad, -50.0)], NOW, 6.0) is None  # a timestamp that is none
 
-    @pytest.mark.parametrize("bound_distance", [math.nan, -0.1])
+    @pytest.mark.parametrize("bound_distance", [*NOT_FINITE, -0.1])
     def test_the_bound_gate_rejects_what_it_cannot_compare(self, bound_distance):
         """The gate itself, with the value handed to it directly: whatever
-        reaches it in the future, "not proven inside" must reject."""
+        reaches it in the future, "not proven inside" must reject. That
+        includes +inf: "infinitely far inside the bound" is no measurement."""
         member = _heard("kitchen", KITCHEN, -50.0, bound_distance)
         candidate = _ZoneCandidate(
             rooms=frozenset({KITCHEN}), name=None, best=member, most_inside=member, runner_up=None
         )
         assert candidate.claims(CONFIG, 0.0) is Reason.OUTSIDE_BOUND
         assert candidate.claims(CONFIG, CONFIG.hysteresis_db) is (
-            Reason.OUTSIDE_BOUND if math.isnan(bound_distance) else None
+            None if bound_distance == -0.1 else Reason.OUTSIDE_BOUND
         )
 
-    @pytest.mark.parametrize("runner_up_dbm", [math.nan, -45.0])
+    # -inf as the runner-up's value makes the margin +inf.
+    @pytest.mark.parametrize("runner_up_dbm", [*NOT_FINITE, -45.0])
     def test_the_margin_gate_rejects_what_it_cannot_compare(self, runner_up_dbm):
         member = _heard("kitchen", KITCHEN, -50.0, 10.0)
         candidate = _ZoneCandidate(
@@ -430,12 +435,88 @@ class TestNotFinite:
         assert candidate.claims(CONFIG, 0.0) is Reason.MARGIN_TOO_SMALL
         assert candidate.claims(CONFIG, CONFIG.hysteresis_db) is Reason.MARGIN_TOO_SMALL
 
+    def test_the_gates_do_let_a_proven_value_through(self):
+        """The control for the two tests above: the same candidate with
+        finite values inside both gates is claimed."""
+        member = _heard("kitchen", KITCHEN, -50.0, 10.0)
+        candidate = _ZoneCandidate(
+            rooms=frozenset({KITCHEN}), name=None, best=member, most_inside=member,
+            runner_up=_heard("bath", BATH, -75.0, -20.0),
+        )
+        assert candidate.claims(CONFIG, 0.0) is None
+
     @pytest.mark.parametrize("field", ["offset_db", "in_room_dbm", "cutoff_dbm"])
     @pytest.mark.parametrize("bad", [*NOT_FINITE, True, "-60", None, 10 ** 400])
     def test_receiver_parameters_must_be_finite_numbers(self, field, bad):
         values = {"offset_db": 0.0, "in_room_dbm": -60.0, "cutoff_dbm": -80.0, field: bad}
         with pytest.raises(ValueError, match=field):
             ReceiverParams(**values)
+
+
+class TestImplausibleLevels:
+    """A level can be a finite number and still be no measurement. The range
+    is a choice (what the Bluetooth HCI defines for an RSSI value), and it is
+    pinned here so that changing it is a decision."""
+
+    RECEIVERS = TestNotFinite.RECEIVERS
+
+    def test_the_range(self):
+        assert (RSSI_MIN_DBM, RSSI_MAX_DBM) == (-127.0, 20.0)
+
+    def test_a_single_reading_above_the_range_places_nobody(self):
+        """+35 dBm from the kitchen, once. Taken at face value it is 95 dB
+        inside the bound and leads everything."""
+        verdict = run({"kitchen": [Reading(NOW, 35.0)], "bath": steady(-40.0)}, self.RECEIVERS)
+        assert verdict.kind is VerdictKind.HOME_UNKNOWN
+        assert verdict.components.best_receiver == "bath"
+        kitchen = evidence_of(verdict, "kitchen")
+        assert kitchen.state is ReceiverState.CENSORED
+        assert kitchen.samples == 0 and kitchen.smoothed_dbm is None
+
+    def test_two_huge_readings_do_not_add_up_to_a_placement(self):
+        """Each is finite; their weighted sum is not."""
+        huge = [Reading(NOW - 3.0, 1e308), Reading(NOW, 1e308)]
+        assert smooth(huge, NOW, 6.0) is None
+        verdict = run({"kitchen": huge, "bath": steady(-40.0)}, self.RECEIVERS)
+        assert verdict.kind is VerdictKind.HOME_UNKNOWN
+        assert verdict.components.best_receiver == "bath"
+        for value in (verdict.components.best_dbm, verdict.components.margin_db):
+            assert math.isfinite(value)
+
+    @pytest.mark.parametrize("level", [35.0, 1e308, -1e308, -200.0])
+    def test_such_a_reading_is_no_sign_of_life(self, level):
+        receivers = {"kitchen": calibrated(KITCHEN, alive_at=None)}
+        assert run({"kitchen": steady(level)}, receivers).kind is VerdictKind.UNAVAILABLE
+
+    def test_among_real_readings_it_changes_nothing(self):
+        clean = {"kitchen": steady(-55.0), "bath": steady(-75.0)}
+        dirty = {
+            "kitchen": [*steady(-55.0), Reading(NOW - 1.0, 35.0)],
+            "bath": [Reading(NOW - 2.0, -500.0), *steady(-75.0)],
+        }
+        expected, verdict = run(clean, self.RECEIVERS), run(dirty, self.RECEIVERS)
+        assert expected.kind is VerdictKind.PLACED
+        assert (verdict.kind, verdict.room) == (expected.kind, expected.room)
+        assert verdict.components.best_dbm == pytest.approx(expected.components.best_dbm)
+        assert verdict.components.margin_db == pytest.approx(expected.components.margin_db)
+
+    @pytest.mark.parametrize(("level", "counts"), [
+        (-127.0, True), (20.0, True), (0.0, True),
+        (-127.5, False), (-128, False), (20.5, False), (21, False),
+    ])
+    def test_the_ends_of_the_range_belong_to_it(self, level, counts):
+        value = smooth([Reading(NOW, level)], NOW, 6.0)
+        if counts:
+            assert value == level
+        else:
+            assert value is None
+
+    def test_a_loud_reading_inside_the_range_still_places(self):
+        """The control: the range does not cut off a phone lying on the
+        receiver."""
+        receivers = {"kitchen": calibrated(KITCHEN, in_room=-60.0)}
+        verdict = run({"kitchen": steady(-5.0)}, receivers)
+        assert verdict.kind is VerdictKind.PLACED
 
 
 # ---------------------------------------------------------------------------

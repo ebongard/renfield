@@ -50,7 +50,7 @@ Loaded only when the daypart / LED-dimming / presence services are read. BLE/IRK
 - `presence_placement.decide` stays PURE (no I/O, no module state, clock passed in): the labelled walk in
   `tests/backend/fixtures/` replays through it. In a `placed` verdict a gate uses `rooms` (the whole zone); `room` is a hint.
 - A silent receiver is CENSORED (at or below its cutoff, or deaf), never "far"; an uncalibrated one keeps a user home
-  and never places, nor does NaN (gates read `if not (x >= bound): reject`). Per-receiver numbers have NO defaults.
+  and never places, nor does NaN/±inf or a level outside −127…+20 dBm (gates use `_at_least`). Receiver numbers: NO defaults.
 - Nothing may READ a verdict from the shadow: it logs (START/STOP of a disagreement, one line per voice sighting)
   and adds `placement_v2` to the live-readings payload. Flag off = module not imported. Stages 2/3: the design doc.
 
