@@ -600,7 +600,32 @@ def test_ocr_engine_tesseract_fails_safe_to_easyocr_when_runtime_absent():
 def test_ocr_engine_easyocr_legacy():
     label, kwargs = _build_ocr_opts("easyocr")
     assert label == "easyocr"
-    assert kwargs == {"lang": ["de", "en"], "force_full_page_ocr": True, "bitmap_area_threshold": 0.0}
+    assert kwargs == {"lang": ["de", "en"], "force_full_page_ocr": True}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("engine", ["easyocr", "tesseract"])
+def test_ocr_options_construct_against_the_installed_docling(engine, monkeypatch):
+    """The tests above replace the options classes with recorders, so they cannot
+    see a keyword the installed docling refuses. This one builds the REAL class:
+    docling's options models forbid unknown keys, and a removed field once made
+    the EasyOcr fallback raise in production while every mocked test stayed green."""
+    pytest.importorskip("docling.datamodel.pipeline_options")
+    from services import document_processor as dp
+
+    monkeypatch.setattr(dp.settings, "rag_ocr_engine", engine)
+    processor = dp.DocumentProcessor()
+    if engine == "easyocr":
+        options = processor._build_full_page_ocr_options()
+        assert type(options).__name__ == "EasyOcrOptions"
+        assert list(options.lang) == ["de", "en"]
+    else:
+        # Whatever the runtime offers here, each Tesseract variant must construct.
+        from docling.datamodel.pipeline_options import TesseractCliOcrOptions, TesseractOcrOptions
+
+        for cls in (TesseractCliOcrOptions, TesseractOcrOptions):
+            assert list(cls(lang=["deu", "eng"], force_full_page_ocr=True).lang) == ["deu", "eng"]
+        assert processor._build_full_page_ocr_options() is not None
 
 
 # ── VLM re-OCR fallback (rotated/poor scans that Tesseract garbles) ──────────

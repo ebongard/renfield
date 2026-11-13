@@ -84,7 +84,11 @@ class DocumentProcessor:
             )
 
         logger.info("Initialising force_full_page_ocr converter (engine: EasyOcr de+en)")
-        return EasyOcrOptions(lang=["de", "en"], force_full_page_ocr=True, bitmap_area_threshold=0.0)
+        # No ``bitmap_area_threshold``: docling dropped the field (gone by 2.147)
+        # and its options models forbid unknown keys, so passing it made this
+        # fallback raise. Full-page OCR reads the whole page whatever the bitmap
+        # coverage, so the threshold never applied here.
+        return EasyOcrOptions(lang=["de", "en"], force_full_page_ocr=True)
 
     def _build_tesseract_ocr_options(self):
         """Tesseract OCR options, or ``None`` if the runtime can't actually OCR deu+eng.
