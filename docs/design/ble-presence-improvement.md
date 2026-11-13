@@ -285,4 +285,209 @@ filtered value sat between −75 and −78 dBm over one minute, while entries wi
 −60 and better. `0` restores the old rule. Legacy (non-filter) path: unchanged apart from the hold.
 
 Still open: a lone satellite near the floor can place a user in its room when no voice sighting is involved,
-and RSSI is compared across satellites without any per-receiver calibration.
+and RSSI is compared across satellites without any per-receiver calibration. Both are what "Placement v2"
+below addresses — in shadow mode so far, so the legacy behaviour described here is still what acts.
+
+## Placement v2 (stage 1: shadow mode, 2026-11-13)
+
+A second room decision, built beside the legacy one and — in this stage — only logged.
+Code: `ha_glue/services/presence_placement.py` (the pure decision),
+`ha_glue/services/presence_placement_shadow.py` (the shadow wiring). Flag:
+`PRESENCE_PLACEMENT_V2_SHADOW_ENABLED`, default off.
+
+### Why (measured on a live instance, 2026-11-13)
+
+Rooms carry neutral names here and in the recording: room-a … room-e have a receiver (sat-a …
+sat-e), room-f … room-h have none, and room-a and room-e are one open-plan space.
+
+The legacy decision picks the best of whatever receivers report at or above −80 dBm. It has no
+answer "none of these":
+
+- A room without a live receiver is booked to whichever neighbour hears the phone at −71…−77 dBm
+  (room-f → room-e, room-g → room-b, room-h → room-b).
+- Once the incumbent room is silent, any reading takes over without a margin; conversely the
+  incumbent keeps a room on a decaying filter value with no fresh reading behind it.
+- `confidence` measures level, not ambiguity (one receiver per room caps the second term at 0.1).
+- `_cleanup_stale` runs only inside `process_ble_report`: with no report, presence freezes.
+- The filter advances one step per REPORT from any satellite, not per unit of time, so more
+  reporting receivers mean a faster attack and decay.
+- `is_location_uncertain` is true only for voice-pinned users, so the privacy gates trust a
+  0.3-confidence BLE verdict.
+- Receivers are compared on one scale although they differ: at about 1 m the readings were −50
+  (room-a), −58 (room-e) and −66 dBm (room-d), and position or orientation of the phone
+  moves a reading by 10–20 dB.
+- Two kinds of receiver exist since the stage-0 experiment: room-d and room-a report everything
+  they hear (satellite cutoff −100), the other three still cut at −80 and send nothing below it.
+- In the middle of the open-plan space (room-a + room-e) the phone reads 12–14 dB stronger on the
+  room-e receiver.
+
+### The verdict
+
+`decide(readings, receivers, zones, previous, now, config)` answers for ONE device at ONE moment.
+It has no I/O and no module state, and the clock is an argument.
+
+| kind | meaning |
+|---|---|
+| `placed` | a receiver vouches for the device. `rooms` = every room of the zone (what a gate must use), `room` = the nearer room inside it (a hint for a display), `zone` = the zone's name or none |
+| `home_unknown` | heard within the deadline, but no receiver places it |
+| `absent` | not heard for longer than the deadline while at least one receiver is alive |
+| `unavailable` | not heard and no receiver alive — nothing can be said, least of all "absent" |
+
+Every verdict carries its components: best and runner-up comparable values, the margin between
+them, the distance from the in-room bound, the sample count, the age of the newest reading, which
+receivers were censored or offline, a machine-readable `reason`, and one evidence row per receiver.
+
+**Smoothing** is per receiver and time-based — a function of the (timestamp, value) pairs alone:
+
+    value(now) = Σ rssi_i · w_i / Σ w_i,    w_i = exp(−(now − t_i) / τ)
+
+Two readings with the same timestamp are one reading (the later one counts). Neither the number of
+reports nor what other receivers send moves a receiver's value. A reading whose level or timestamp
+is not a finite number is no reading: device entries reach the presence service unvalidated and
+JSON carries `NaN`, which would turn the mean into NaN — and every comparison against NaN is false.
+For the same reason both gates of the rule are written "unless proven inside": a value that cannot
+be compared rejects, it never places.
+
+**Receiver states.** `heard` = a reading no older than `fresh_s`. `censored` = alive (heartbeat or
+a recent reading) but silent: all that is known is "at or below its cutoff, or deaf". It is never
+turned into a reading; for the margin it stands at `cutoff + offset`, the strongest value it could
+be hiding. `offline` = no sign of life: it says nothing either way.
+
+**The rule.** A zone is claimed only when (1) one of its calibrated receivers hears the device
+inside that receiver's own in-room bound (`smoothed ≥ in_room_dbm`) AND (2) the zone's strongest
+comparable value (`smoothed + offset_db`) leads every receiver outside the zone — heard ones at
+their value, censored ones at their cutoff — by `margin_db`. The incumbent zone gets both tests
+relaxed by `hysteresis_db`; it does not survive a reading that has gone stale. If no zone can be
+claimed the verdict is `home_unknown`. An open-plan zone is decided as one unit: one member inside
+its bound is enough, and members are never each other's runner-up. An uncalibrated receiver inside
+a zone neither helps nor hinders that zone — it cannot vouch and it does not compete against its
+own zone — so the hint then names the strongest CALIBRATED member's room even if the uncalibrated
+one hears the device louder.
+
+The clock belongs to the caller and must not run backwards for one device: readings newer than
+`now` are ignored, so an earlier `now` sees an emptier window and drops the incumbent.
+
+**Parameters** are per receiver and have no defaults — a bound measured for one receiver in one
+room holds for no other. JSON settings for now (a later stage moves them into a table):
+
+    PRESENCE_PLACEMENT_V2_RECEIVERS='{"<satellite_id>": {"offset_db": 0, "in_room_dbm": -60, "cutoff_dbm": -80}}'
+    PRESENCE_PLACEMENT_V2_ZONES='{"<zone name>": [<room_id>, <room_id>]}'
+
+`in_room_dbm` is on the receiver's own (raw) scale, so the offset never moves it. A receiver that
+is not listed is uncalibrated: it keeps a device "home" and can stand in the way of a placement
+elsewhere (compared at face value), but it can never place. The decision's own numbers
+(`…_TIME_CONSTANT_SECONDS` 6, `…_FRESH_SECONDS` 20, `…_MARGIN_DB` 10, `…_HYSTERESIS_DB` 3) are
+choices, not measurements; the deadline is `PRESENCE_STALE_TIMEOUT`, the sign-of-life window
+`DEVICE_HEARTBEAT_TIMEOUT`.
+
+What switches the shadow off with one ERROR line while the backend starts regardless: unusable
+content of the two JSON strings, a broken rule between the numbers (hysteresis above the margin,
+freshness above the deadline, a value that is not positive or not finite), and any failure to
+build the shadow at all, a failing import included. What it does not cover: the four numbers are
+ordinary float settings, so a value that is not a number stops the backend at start like any other
+float setting.
+
+### What the labelled walk shows — and how little that is
+
+`tests/backend/fixtures/presence_walk_2026-11-13.json`: one phone, one evening, five receivers,
+7020 readings over 124 minutes, twelve labelled segments of about 50 s. The replay
+(`tests/backend/test_presence_placement_replay.py`) derives provisional parameters from the
+recording by a fixed rule (cutoff = weakest reading the receiver ever sent; bound = 10th percentile
+of its readings during the station in its own room; offset = 0) and runs the walk through both
+decisions.
+
+| true room | receiver in room | legacy | v2 |
+|---|---|---|---|
+| room-f | no | room-e | `home_unknown` |
+| room-g | no | room-b | `home_unknown` |
+| room-h | no | room-b | `home_unknown` |
+| room-a (middle of the open space) | yes | room-e | placed, zone room-a+room-e |
+| room-e | yes | room-e | placed, zone room-a+room-e |
+| room-d | yes | room-d | placed room-d |
+| room-c | yes | room-c | placed room-c |
+| room-b | yes | room-b | placed room-b |
+| 1 m from the room-a receiver | yes | room-a | placed, zone |
+| 1 m from the room-e receiver | yes | room-e | placed, zone |
+| 1 m from the room-d receiver | yes | room-d | `home_unknown` — the price |
+
+No wrong room at any evaluated instant of a scored segment. One correct placement is given up.
+
+That price is counted on the labelled segments only, about 10 of the 124 minutes. Over the whole
+walk v2 says `home_unknown` for 41 % of the time (the legacy decision always names a room) and
+changes its verdict 34 times against the legacy decision's 25. How much of the 41 % is a room
+without a receiver and how much a placement given up cannot be told from this recording.
+
+This is thin, and the recording itself says where:
+
+- **A bound taken at one position does not describe the room.** The room-d receiver reads −46 dBm
+  at the room station and −66 dBm at "1 m in front of it". The bound from the first (−47) rejects
+  the second. The bound from the second (−68) leaves a 7 dB lead over the room-e receiver.
+- **The separation that carries the reject option is as large as the stated orientation spread.**
+  In room-h the room-b receiver reads up to −65 dBm; in room-b itself its
+  10th percentile is −53. Twelve dB, one position each.
+- **The three receivers that cut at −80 mostly repeat themselves and fall silent with the phone in
+  the room.** 44–66 % of their readings sit in runs of five or more identical values (the satellite
+  re-sends its own smoothed value for 20 s after the last advert), and gaps of up to 63 s occur
+  between two readings at −65 dBm or better. "17 readings per station" are a handful of
+  measurements there, the backend's reading age understates the true one by up to 20 s, and
+  "silent" on such a receiver quite often means "deaf for a moment", not "≤ −80".
+- **Inside the open-plan zone the hint is weak**: in the middle of the space it names
+  room-e while the label says room-a. That is why zone membership, not the hint, is the
+  verdict.
+- **A room nobody hears stays a hole.** In room-b no other receiver hears the phone at
+  all; without its own receiver the verdict would be `absent` after the deadline.
+- **The censoring rule is not carried by this recording.** Treating a silent receiver as "far"
+  instead changes 25 of 7007 evaluated instants and no station; only the unit tests hold it. The
+  in-room bound, by contrast, decides 14 % of the instants and two of the three stations in a room
+  without a receiver (the third, room-f, is also rejected by the margin alone).
+- Held-out checks (bounds from the 1 m segments scored on the room stations and the reverse; first
+  half of each station scored on the second) also show no wrong room, at the price of every room
+  whose receiver has no segment of the deriving kind.
+
+### Staged plan
+
+- **Stage 0 (running):** two receivers report everything (satellite cutoff −100) to see what lies
+  below −80.
+- **Stage 1 (this):** the decision runs in shadow mode. With the flag on it reads the same
+  sightings as the legacy decision and
+  - logs one line when the two decisions START to disagree about a person and one when they STOP
+    (with the duration and the number of distinct verdict pairs in between) — never per report.
+    STOP is written only after the agreement has held for 30 s without interruption
+    (`DISAGREEMENT_SETTLE_S`, a choice: longer than the default freshness window), so a device on
+    the edge of a bound yields one pair, not one per report;
+  - logs one line at every voice/auth sighting stating what each decision believed just before it
+    (`[match]`/`[miss]` against the sighting — free ground truth);
+  - adds `placement_v2` per device to the live-readings payload
+    (`presence_debug.build_sightings_payload`), evaluated at the snapshot's clock and without
+    advancing the shadow's own state.
+
+  Log lines carry the user id (as the existing presence lines do), room names and numbers —
+  no device key, no satellite id, no user name. A failure inside the shadow is logged once per
+  entry point with the exception TYPE only: its message may carry a device key.
+
+  Several devices of one person: every device has its own verdict (the payload shows them one by
+  one), and the disagreement log joins them per person, because the legacy decision keeps one room
+  per person. "In room R" agrees when ANY device is placed there; "not tracked" agrees only when
+  EVERY device is gone. That is a logging rule so that a second phone left elsewhere is not a
+  standing disagreement — the real rule for several devices is stage 2.
+
+  If the wall clock steps back, the shadow holds its verdicts and logs nothing but one WARNING
+  until the clock has passed the earlier time again.
+- **Stage 2 — the state follows v2:** expiry by deadline (a timer per device, not a sweep inside a
+  report; `unavailable` must not fire leave events); `UserPresence` may be "home, room unknown";
+  `is_location_uncertain` true for every source whose verdict is not `placed`; voice/auth sightings
+  and the hold expressed in v2 terms; one rule for several devices of one person; parameters and
+  zones from a table with a calibration flow; the satellite reports its own cutoff, the age of the
+  last advert and a BLE sign of life (a heartbeat proves the process, not the scanner).
+- **Stage 3 — the consumers follow:** privacy gates count by zone (`verdict.rooms`) and treat
+  `home_unknown` as a possible listener everywhere; `confidence` is computed from the components;
+  the kiosk payload gains "home, room unknown"; history and the agent's "where is X" can answer it;
+  the legacy path and its settings are removed.
+
+### What stage 1 does NOT do
+
+It changes no presence state, fires no event or hook, reaches no kiosk and no privacy gate. The
+legacy decision, `_cleanup_stale`, `is_location_uncertain`, the gates and `confidence` are
+untouched. There is no timer: the shadow decides when a report arrives and when a snapshot is
+built. It places nobody until receivers are configured, and no receiver numbers ship. With the flag
+off the new modules are not imported.
