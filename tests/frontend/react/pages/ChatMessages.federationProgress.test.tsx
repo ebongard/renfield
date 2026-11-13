@@ -89,6 +89,48 @@ describe('ChatMessages — federation progress', () => {
     expect(live!.textContent).toMatch(/Moms Renfield sucht Wissen/i);
   });
 
+  it('calls a peer with an instance label by that label, person second', () => {
+    // The person wording ("Moms Renfield") is built around a person's name; an
+    // instance name in its place would read "Instance Bs Renfield".
+    driveContext([
+      {
+        role: 'assistant',
+        content: '',
+        streaming: true,
+        federationProgress: {
+          [MOM_PUBKEY]: {
+            peer_display_name: 'Mom', peer_instance_name: 'Instance B',
+            label: 'retrieving', sequence: 2,
+          },
+          [DAD_PUBKEY]: { peer_display_name: 'Dad', label: 'retrieving', sequence: 2 },
+        },
+      },
+    ]);
+    renderWithRouter(<ChatMessages />);
+    expect(screen.getByText('Instance B · Mom sucht Wissen...')).toBeInTheDocument();
+    // A peer without an instance label keeps the wording it always had.
+    expect(screen.getByText(/Dads Renfield sucht Wissen/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Instance Bs Renfield/)).not.toBeInTheDocument();
+  });
+
+  it('falls back to a generic label for a named peer too', () => {
+    driveContext([
+      {
+        role: 'assistant',
+        content: '',
+        streaming: true,
+        federationProgress: {
+          [MOM_PUBKEY]: {
+            peer_display_name: 'Mom', peer_instance_name: 'Instance B',
+            label: 'future_unknown_label', sequence: 1,
+          },
+        },
+      },
+    ]);
+    renderWithRouter(<ChatMessages />);
+    expect(screen.getByText('Frage Instance B · Mom...')).toBeInTheDocument();
+  });
+
   it('falls back to a generic label for unknown progress labels', () => {
     driveContext([
       {

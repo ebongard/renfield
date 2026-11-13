@@ -104,6 +104,7 @@ async def write_federation_audit(
     final_item: dict[str, Any] | None,
     direction: str = "asked",
     identity_basis: str | None = None,
+    peer_instance_name_snapshot: str | None = None,
 ) -> None:
     """
     Write one audit row for a completed federated query.
@@ -137,6 +138,9 @@ async def write_federation_audit(
                 peer_user_id=peer_user_id,
                 peer_pubkey_snapshot=peer_pubkey_snapshot,
                 peer_display_name_snapshot=peer_display_name_snapshot,
+                # The instance part of the label as it stood at query time; a
+                # snapshot like the two above, never looked up later.
+                peer_instance_name_snapshot=peer_instance_name_snapshot or None,
                 query_text=_truncate(query_text, MAX_QUERY_TEXT_LEN),
                 initiated_at=initiated_at,
                 finalized_at=datetime.now(UTC).replace(tzinfo=None),

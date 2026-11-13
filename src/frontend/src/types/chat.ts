@@ -147,6 +147,8 @@ export interface ChatFederationProgressMessage {
   type: 'agent_federation_progress';
   peer_pubkey: string;
   peer_display_name: string;
+  /** The far instance's label; the key is absent when the peer has none. */
+  peer_instance_name?: string;
   label: 'waking_up' | 'retrieving' | 'synthesizing' | 'complete' | 'failed' | string;
   detail: Record<string, unknown>;
   sequence: number;

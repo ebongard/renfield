@@ -419,6 +419,14 @@
       "failed": "Le {{appName}} de {{name}} n'a pas pu répondre.",
       "fallback": "Interrogation du {{appName}} de {{name}}..."
     },
+    "federationProgressInstance": {
+      "waking_up": "Connexion à {{peer}}...",
+      "retrieving": "{{peer}} effectue la recherche...",
+      "synthesizing": "{{peer}} rédige une réponse...",
+      "complete": "{{peer}} a terminé.",
+      "failed": "{{peer}} n'a pas pu répondre.",
+      "fallback": "Interrogation de {{peer}}..."
+    },
     "exampleWeather": "Quel temps fait-il\u00a0?",
     "exampleLight": "Allume la lumière du salon",
     "exampleMusic": "Mets un peu de jazz",
@@ -2150,6 +2158,28 @@
     "revokePeerConfirmOther": "Voulez-vous vraiment mettre fin à l'appairage avec {{name}}\u00a0? Il a été établi par {{pairedBy}}\u00a0; ensuite, plus aucun compte de cette instance ne pourra l'utiliser.",
     "peerRevoked": "Appairage avec {{name}} révoqué.",
     "peerRevokeFailed": "Impossible de révoquer l'appairage.",
+    "peerReachState": {
+      "reachable": "Joignable",
+      "unreachable": "Injoignable",
+      "unknown": "Joignabilité inconnue"
+    },
+    "peerReachReason": {
+      "unreachable": "L'instance ne répond pas (pas de connexion ou délai dépassé).",
+      "pin_mismatch": "Le certificat de l'instance n'est plus celui mémorisé lors de l'appairage.",
+      "refused": "L'instance rejette la vérification signée (appairage révoqué de son côté, horloges décalées ou limite de requêtes).",
+      "unsupported": "L'instance ne répond pas aux vérifications de joignabilité (version plus ancienne ou fonction désactivée de son côté).",
+      "invalid_response": "La réponse n'a pas pu être rattachée à la clé appairée.",
+      "no_endpoint": "Aucune adresse n'est enregistrée pour cet appairage.",
+      "not_checked": "Pas encore vérifié."
+    },
+    "peerReachCheckedAt": "vérifié {{when}}",
+    "peerReachCheckNow": "Vérifier maintenant",
+    "peerReachChecking": "Vérification…",
+    "peerReachCheckFailed": "Impossible de vérifier la joignabilité.",
+    "peerRecentlyActive": "Actif récemment",
+    "peerRecentlyActiveHelp": "Une vraie requête a circulé dans un sens ou dans l'autre au cours des cinq dernières minutes.",
+    "peerLastAsked": "Dernière requête envoyée d'ici {{when}}",
+    "peerLastAskedHelp": "Moment de la dernière requête que cette instance a adressée à l'autre.",
     "pairingTitle": "Appairage {{appName}}",
     "pairingSubtitle": "Appairez votre {{appName}} avec celui d'un autre membre du foyer pour les requêtes fédérées.",
     "pairingManageLinkText": "Gérer les pairs appairés →",
@@ -2576,6 +2606,14 @@
     "toolHint_many": "{{count}} d'outils",
     "toolHint_other": "{{count}} outils",
     "exit": "Quitter le kiosque",
+    "peer": {
+      "state": {
+        "reachable": "joignable",
+        "unreachable": "injoignable",
+        "unknown": "joignabilité inconnue"
+      },
+      "recentlyActive": "actif récemment"
+    },
     "subsystem": {
       "knowledge": "Connaissances",
       "presence": "Présence",

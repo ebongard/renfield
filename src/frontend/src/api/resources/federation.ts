@@ -24,6 +24,41 @@ export interface FederationPeer {
   /** The CALLER asks this peer as a linked person. */
   linked?: boolean;
   can_revoke?: boolean;
+  /**
+   * The INSTANCE part of the peer's label: the name the far instance sent in
+   * a verified attachment, else the host of its stored endpoint. Absent when
+   * there is neither -- the row then shows `remote_display_name` alone.
+   * Display text, never a key.
+   */
+  instance_name?: string | null;
+  /**
+   * The three fields below exist only while the instance runs the signed
+   * reachability check (`FEDERATION_REACHABILITY_ENABLED`). Absent = no
+   * statement about reachability at all, which is not the same as "unknown".
+   */
+  reachability?: PeerReachability | null;
+  /** When THIS instance last sent the peer a real query. */
+  last_asked_at?: string | null;
+  /** A real request went either way within the last five minutes. */
+  recently_active?: boolean | null;
+}
+
+/** The last signed round trip to a paired instance, as the server folds it. */
+export interface PeerReachability {
+  /**
+   * 🛑 `(string & {})` as on `identity_basis` below: the server sends free
+   * text. A state this build does not know must fall into the UNKNOWN branch,
+   * not silently into "unreachable".
+   */
+  state: 'reachable' | 'unreachable' | 'unknown' | (string & {});
+  /**
+   * Machine code the UI localises: `unreachable`, `pin_mismatch`, `refused`,
+   * `unsupported`, `invalid_response`, `no_endpoint`, `not_checked`; `null`
+   * when reachable.
+   */
+  reason: string | null;
+  /** Naive-UTC time of that round trip; `null` = never checked or expired. */
+  checked_at: string | null;
 }
 
 export type AuditStatus = 'success' | 'failed' | 'in_progress' | string;
@@ -32,6 +67,13 @@ export interface AuditEntry {
   id: string;
   peer_pubkey: string;
   peer_display_name: string;
+  /**
+   * The instance part of the peer's label AS IT STOOD when the row was
+   * written -- a snapshot like `peer_display_name`, never today's name.
+   * `null`/absent on rows from before the instance name existed and wherever
+   * no label existed at the time: the view shows the person alone then.
+   */
+  peer_instance_name?: string | null;
   query_text: string;
   answer_excerpt?: string;
   error_message?: string;
@@ -108,6 +150,35 @@ export function useDeleteFederationPeer() {
   );
 }
 
+async function checkPeerRequest(peerId: string): Promise<PeerReachability> {
+  const response = await apiClient.post<PeerReachability>(`/api/federation/peers/${peerId}/check`);
+  return response.data;
+}
+
+/**
+ * "Check now": one signed round trip to a paired instance, on demand.
+ *
+ * The result is written straight into the cached peer list -- the server
+ * stored the same reading, so the row is current without a second request,
+ * and `last_seen_at` & co. stay exactly what the list last said.
+ */
+export function useCheckFederationPeer() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: checkPeerRequest,
+      onSuccess: (reachability, peerId) => {
+        queryClient.setQueryData<FederationPeer[]>(keys.federation.peers(), (peers) =>
+          peers?.map((peer) =>
+            String(peer.id) === String(peerId) ? { ...peer, reachability } : peer,
+          ),
+        );
+      },
+    },
+    'circles.peerReachCheckFailed',
+  );
+}
+
 /**
  * A person link as the person themselves sees it.
  *
@@ -119,6 +190,8 @@ export interface IdentityLink {
   id: number;
   peer_id: number;
   peer_display_name: string;
+  /** The instance part of the peer's label; absent when there is none. */
+  peer_instance_name?: string | null;
   created_at: string;
 }
 

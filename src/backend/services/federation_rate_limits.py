@@ -46,10 +46,17 @@ _asker_outbound: dict[str, TokenBucketRateLimiter] = {}
 # Keyed by `asker_pubkey` (hex string from the incoming envelope).
 _responder_inbound: dict[str, TokenBucketRateLimiter] = {}
 
+# Reachability pings -- buckets of their OWN, same keys as above. A ping must
+# not spend a query token (a wall display would otherwise eat into the agent
+# loop's budget) and a burst of queries must not make a peer look unreachable.
+_ping_outbound: dict[str, TokenBucketRateLimiter] = {}
+_ping_inbound: dict[str, TokenBucketRateLimiter] = {}
+
 # Guards registry mutation on first-acquire (two concurrent initiates
 # for a new peer could race and create two limiters, losing one).
 _asker_lock = asyncio.Lock()
 _responder_lock = asyncio.Lock()
+_ping_lock = asyncio.Lock()
 
 
 async def acquire_asker_token(peer_pubkey: str) -> bool:
@@ -87,7 +94,32 @@ async def acquire_responder_token(asker_pubkey: str) -> bool:
     return await bucket.acquire()
 
 
+async def _acquire_ping(registry: dict[str, TokenBucketRateLimiter], key: str) -> bool:
+    bucket = registry.get(key)
+    if bucket is None:
+        async with _ping_lock:
+            bucket = registry.get(key)
+            if bucket is None:
+                bucket = TokenBucketRateLimiter(
+                    rate_per_minute=settings.federation_ping_rate_per_minute,
+                )
+                registry[key] = bucket
+    return await bucket.acquire()
+
+
+async def acquire_ping_asker_token(peer_pubkey: str) -> bool:
+    """One outbound reachability ping to `peer_pubkey`, if the budget allows."""
+    return await _acquire_ping(_ping_outbound, peer_pubkey)
+
+
+async def acquire_ping_responder_token(asker_pubkey: str) -> bool:
+    """One inbound reachability ping from `asker_pubkey`, if the budget allows."""
+    return await _acquire_ping(_ping_inbound, asker_pubkey)
+
+
 def reset_for_tests() -> None:
     """Test-only reset — every test starts with a clean view."""
     _asker_outbound.clear()
     _responder_inbound.clear()
+    _ping_outbound.clear()
+    _ping_inbound.clear()

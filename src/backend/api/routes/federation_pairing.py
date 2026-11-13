@@ -32,6 +32,7 @@ from models.database import FederationUserLink, PeerUser, User
 from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.federation_identity import get_federation_identity
+from services.federation_instance_name import peer_instance_label
 from services.pairing_service import (
     AlreadyPairedElsewhere,
     PairingError,
@@ -148,6 +149,18 @@ class PeerUserResponse(BaseModel):
     paired_at: str
 
 
+class PeerReachability(BaseModel):
+    """The last probe of a pairing, as `services.federation_reachability` folds it."""
+    #: "reachable" | "unreachable" | "unknown"
+    state: str
+    #: Machine code the UI localises: a ping outcome (`unreachable`,
+    #: `pin_mismatch`, `refused`, `unsupported`, `invalid_response`,
+    #: `no_endpoint`), `not_checked`, or `null` when reachable.
+    reason: str | None
+    #: Naive-UTC ISO time of that probe; `null` = never probed or expired.
+    checked_at: str | None
+
+
 class PeerDetailResponse(BaseModel):
     """Richer shape for the /settings/circles/peers page — includes tier
     granted + last-seen timestamp so the UI can render relative-time
@@ -172,6 +185,22 @@ class PeerDetailResponse(BaseModel):
     #: The caller may revoke: the owner, or an account holding `admin`.
     can_revoke: bool | None = None
 
+    # Additive, set ONLY when there is something to say -- so a row without an
+    # instance label keeps the exact key set it had before.
+    #: The INSTANCE part of the peer's label: the name the far instance sent in
+    #: a verified attachment, else the host of its stored endpoint. Absent when
+    #: neither exists; the UI then shows `remote_display_name` alone, as before.
+    #: Display text, never a key.
+    instance_name: str | None = None
+
+    # Additive, set ONLY while `federation_reachability_enabled` is on.
+    #: Result of the last signed round trip: `{state, reason, checked_at}`.
+    reachability: PeerReachability | None = None
+    #: When THIS instance last sent the peer a real query (naive-UTC ISO).
+    last_asked_at: str | None = None
+    #: A real request in either direction within the last five minutes.
+    recently_active: bool | None = None
+
 
 class PeerListResponse(BaseModel):
     peers: list[PeerDetailResponse]
@@ -190,7 +219,13 @@ async def get_identity(
     return IdentityResponse(pubkey_hex=get_federation_identity().public_key_hex())
 
 
-@router.post("/pair/offer", response_model=PairingOffer)
+@router.post(
+    "/pair/offer",
+    response_model=PairingOffer,
+    # An instance without a name emits the offer without the two attachment
+    # keys, i.e. exactly the JSON (and the QR code) it emitted before.
+    response_model_exclude_none=True,
+)
 async def create_pair_offer(
     body: CreateOfferRequest,
     db: AsyncSession = Depends(get_db),
@@ -229,7 +264,11 @@ async def _resync_peer_registry(request: Request, db: AsyncSession, reason: str)
         logger.warning(f"Peer registry resync after {reason} failed (non-fatal): {e}")
 
 
-@router.post("/pair/accept", response_model=PairingResponse)
+@router.post(
+    "/pair/accept",
+    response_model=PairingResponse,
+    response_model_exclude_none=True,  # see `/pair/offer`
+)
 async def accept_pair_offer(
     body: AcceptOfferRequest,
     request: Request,
@@ -336,7 +375,7 @@ def _account_label(user: User) -> str:
 
 
 def _peer_detail(peer: PeerUser) -> PeerDetailResponse:
-    return PeerDetailResponse(
+    detail = PeerDetailResponse(
         id=peer.id,
         remote_pubkey=peer.remote_pubkey,
         remote_display_name=peer.remote_display_name,
@@ -345,6 +384,38 @@ def _peer_detail(peer: PeerUser) -> PeerDetailResponse:
         last_seen_at=peer.last_seen_at.isoformat() if peer.last_seen_at else None,
         circle_tier=_tier_for_peer(peer),
     )
+    # Assigned (not passed) and only when present: the list serialises with
+    # `response_model_exclude_unset`, so a pairing without a label emits no key.
+    label = peer_instance_label(peer)
+    if label:
+        detail.instance_name = label
+    return detail
+
+
+async def _with_reachability(
+    db: AsyncSession, pairs: list[tuple[PeerUser, PeerDetailResponse]],
+) -> None:
+    """Add the reachability fields to each row -- only while the feature is on.
+
+    Reads stored results only. Listing peers never sends a ping: a GET that
+    made the backend talk to another instance would be a poll with extra steps.
+    """
+    if not settings.federation_reachability_enabled or not pairs:
+        return
+    from services.federation_reachability import (
+        last_asked_at,
+        read_reachability,
+        recently_active,
+    )
+
+    peer_ids = [peer.id for peer, _ in pairs]
+    readings = await read_reachability(peer_ids)
+    asked = await last_asked_at(db, peer_ids)
+    for peer, detail in pairs:
+        asked_at = asked.get(peer.id)
+        detail.reachability = PeerReachability(**readings[peer.id].as_payload())
+        detail.last_asked_at = asked_at.isoformat() if asked_at else None
+        detail.recently_active = recently_active(peer.last_seen_at, asked_at)
 
 
 async def _list_all_active_peers(db: AsyncSession, current_user: User) -> PeerListResponse:
@@ -389,7 +460,7 @@ async def _list_all_active_peers(db: AsyncSession, current_user: User) -> PeerLi
         )).scalars().all())
 
     is_admin = _holds_admin(current_user)
-    peers = []
+    pairs: list[tuple[PeerUser, PeerDetailResponse]] = []
     for peer, owner in rows:
         owned = peer.circle_owner_id == current_user.id
         detail = _peer_detail(peer)
@@ -399,8 +470,9 @@ async def _list_all_active_peers(db: AsyncSession, current_user: User) -> PeerLi
         detail.paired_by = _account_label(owner)
         detail.linked = peer.id in linked_peer_ids
         detail.can_revoke = owned or is_admin
-        peers.append(detail)
-    return PeerListResponse(peers=peers)
+        pairs.append((peer, detail))
+    await _with_reachability(db, pairs)
+    return PeerListResponse(peers=[detail for _, detail in pairs])
 
 
 @router.get(
@@ -433,7 +505,57 @@ async def list_peers(
         ).order_by(PeerUser.paired_at.desc())
     )).scalars().all()
 
-    return PeerListResponse(peers=[_peer_detail(peer) for peer in rows])
+    pairs = [(peer, _peer_detail(peer)) for peer in rows]
+    await _with_reachability(db, pairs)
+    return PeerListResponse(peers=[detail for _, detail in pairs])
+
+
+@router.post("/peers/{peer_id}/check", response_model=PeerReachability)
+async def check_peer_reachability(
+    peer_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_user_or_default),
+):
+    """Probe one pairing now and return the result ("check now").
+
+    Dark with the feature: 404, like a route that does not exist.
+
+    Who may trigger it -- everyone who can SEE the pairing in `GET /peers`,
+    plus an `admin` holder:
+      - the owner, always;
+      - an account holding `admin`, for any ACTIVE pairing;
+      - with `federation_peers_visible_to_all`, every account, for any ACTIVE
+        pairing -- such an account may already USE the pairing, and a query
+        costs the far side a retrieval and an LLM call where a ping costs it a
+        signature.
+    Anyone else gets the same uniform 404 as for a missing id.
+
+    A probe reveals nothing but a status and costs one request, and it cannot
+    be turned into a flood: a pairing is probed at most once per
+    `CLAIM_TTL_SECONDS` instance-wide, whoever asks, and the ping budget caps
+    it per minute. Inside that window the STORED result comes back, with its
+    own `checked_at`, so an old reading is never passed off as fresh.
+    """
+    if not settings.federation_reachability_enabled:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    visible = PeerUser.circle_owner_id == current_user.id
+    if settings.federation_peers_visible_to_all or _holds_admin(current_user):
+        visible = or_(visible, PeerUser.revoked_at.is_(None))
+    peer = (await db.execute(
+        select(PeerUser).where(
+            PeerUser.id == peer_id,
+            PeerUser.revoked_at.is_(None),
+            visible,
+        )
+    )).scalar_one_or_none()
+    if peer is None:
+        raise HTTPException(status_code=404, detail="Peer not found")
+
+    from services.federation_reachability import probe_peer
+
+    reading = await probe_peer(peer, force=True)
+    return PeerReachability(**reading.as_payload())
 
 
 @router.delete("/peers/{peer_id}", status_code=204)

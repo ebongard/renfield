@@ -636,6 +636,7 @@ class TestTheRouteCarriesTheIdentityBasis:
             peer_user_id=3,
             peer_pubkey_snapshot="aa" * 32,
             peer_display_name_snapshot="evdb",
+            peer_instance_name_snapshot=None,
             query_text="was liegt in x-idra?",
             initiated_at=datetime(2026, 10, 29, 14, 43, tzinfo=UTC),
             finalized_at=datetime(2026, 10, 29, 14, 43, 5, tzinfo=UTC),
@@ -688,3 +689,21 @@ class TestTheRouteCarriesTheIdentityBasis:
         e = await self._call(
             self._row(direction="asked", identity_basis=None), monkeypatch)
         assert e.identity_basis is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_the_instance_snapshot_is_passed_through_not_looked_up(
+        self, monkeypatch,
+    ):
+        """The instance part of the label comes from the ROW's own snapshot
+        column. A row from before the column existed carries `None` and must
+        stay `None`: filling it in from today's pairing would put a name on an
+        old access that nobody saw when it happened."""
+        named = await self._call(
+            self._row(peer_instance_name_snapshot="Instance B"), monkeypatch)
+        assert named.peer_instance_name == "Instance B"
+        assert named.peer_display_name == "evdb"
+
+        legacy = await self._call(self._row(), monkeypatch)
+        assert legacy.peer_instance_name is None
+        assert legacy.peer_display_name == "evdb"

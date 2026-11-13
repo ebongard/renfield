@@ -55,16 +55,28 @@ from services.federation_identity import (
     FederationIdentity,
     get_federation_identity,
 )
+from services.federation_instance_name import (
+    remember_remote_instance_name,
+    sign_name_attachment,
+    stored_instance_name,
+    verify_name_attachment,
+    wire_body,
+)
 from services.federation_query_schemas import (
+    PING_STATUS_OK,
     STATUS_COMPLETE,
     STATUS_EXPIRED,
     STATUS_FAILED,
     STATUS_PROCESSING,
+    PeerPingRequest,
+    PeerPingResponse,
     QueryBrainInitiateRequest,
     QueryBrainInitiateResponse,
     QueryBrainRetrieveRequest,
     QueryBrainRetrieveResponse,
     complete_canonical_payload,
+    ping_canonical_payload,
+    pong_canonical_payload,
 )
 from services.mcp_streaming import (
     PROGRESS_LABEL_TOOL_RUNNING,
@@ -78,6 +90,29 @@ from utils.config import settings
 POLL_INTERVAL_SECONDS = 0.5
 MAX_POLL_DURATION_SECONDS = 60
 HTTP_TIMEOUT_SECONDS = 10
+
+# Reachability ping -- deliberately much shorter than a query. The answer is a
+# signature, not a retrieval; a peer that needs longer than this to produce it
+# is, for the purpose of a status light, not reachable. Short also because a
+# probe round runs while a wall display waits for its delta.
+PING_CONNECT_TIMEOUT_SECONDS = 3.0
+PING_TOTAL_TIMEOUT_SECONDS = 5.0
+
+# What a ping can come back with. Kept apart because each needs a different
+# fix -- and because "the far side is too old to answer" must never read as
+# "the far side is down".
+PING_REACHABLE = "reachable"                # signed round trip verified
+PING_UNREACHABLE = "unreachable"            # connect failure, timeout, 5xx
+PING_PIN_MISMATCH = "pin_mismatch"          # the TLS certificate changed (ACME renewal)
+PING_REFUSED = "refused"                    # the far side rejected our signed request
+PING_UNSUPPORTED = "unsupported"            # the far side does not answer pings -> UNKNOWN
+PING_INVALID_RESPONSE = "invalid_response"  # answered, but not verifiably by the paired key
+PING_NO_ENDPOINT = "no_endpoint"            # the pairing holds no address to ask
+
+PING_OUTCOMES = frozenset({
+    PING_REACHABLE, PING_UNREACHABLE, PING_PIN_MISMATCH, PING_REFUSED,
+    PING_UNSUPPORTED, PING_INVALID_RESPONSE, PING_NO_ENDPOINT,
+})
 
 
 class FederationQueryError(Exception):
@@ -244,7 +279,17 @@ class FederationQueryAsker:
                 continue
 
             # Terminal — verify signature AND bind to paired pubkey.
-            yield self._finalize(poll_resp, peer)
+            final = self._finalize(poll_resp, peer)
+            if final.get("success"):
+                # Only an answer that just verified against the PAIRED key may
+                # teach us the far instance's name.
+                await _learn_responder_name(
+                    peer,
+                    name=poll_resp.instance_name,
+                    signature_hex=poll_resp.instance_name_signature,
+                    envelope_signature_hex=poll_resp.responder_signature,
+                )
+            yield final
             return
 
         # Ran out of polls without a terminal status.
@@ -292,12 +337,18 @@ class FederationQueryAsker:
         if querier_ref is not None:
             unsigned["querier_ref"] = querier_ref
         signature = self.identity.sign(_canonical_bytes(unsigned)).hex()
-        req = QueryBrainInitiateRequest(**unsigned, signature=signature)
+        # Our instance name rides along as a separately signed attachment,
+        # OUTSIDE the bytes signed above: a responder one release behind drops
+        # the two fields and verifies the envelope unchanged.
+        req = QueryBrainInitiateRequest(
+            **unsigned, signature=signature,
+            **sign_name_attachment(self.identity, signature),
+        )
 
         try:
             r = await client.post(
                 _join(endpoint, "/api/federation/peer/query_brain/initiate"),
-                json=req.model_dump(),
+                json=wire_body(req),
             )
         except httpx.HTTPError as e:
             logger.warning(f"Federation initiate transport error for {endpoint}: {e}")
@@ -427,6 +478,162 @@ class FederationQueryAsker:
                 "responder_pubkey": resp.responder_pubkey,
             },
         }
+
+
+# =============================================================================
+# Ping -- the reachability round trip
+# =============================================================================
+
+
+async def ping_peer(peer: PeerUser, client: httpx.AsyncClient | None = None) -> str:
+    """One signed round trip to `peer`. Returns one of `PING_OUTCOMES`.
+
+    Signed like a query and answered only to a paired, non-revoked key; the
+    answer is checked like a query's: paired pubkey (pair-anchor binding),
+    Ed25519 signature, and the nonce WE sent, so a recorded acknowledgement
+    cannot be replayed at us. Nothing else comes back, and nothing is asked.
+
+    Never raises for a transport or protocol failure -- every one of them is an
+    outcome. A verified answer may also teach us the far instance's name.
+
+    `client` is injectable for tests; production opens a short-lived one with
+    the same pinning policy as a query.
+    """
+    endpoint = _select_endpoint(peer)
+    if endpoint is None:
+        return PING_NO_ENDPOINT
+
+    config = peer.transport_config or {}
+    pinned = config.get("tls_fingerprint")
+    if pinned:
+        from services.federation_cert_pin import verify_peer_cert_fingerprint
+
+        matched, actual = await verify_peer_cert_fingerprint(
+            endpoint, pinned, timeout=PING_CONNECT_TIMEOUT_SECONDS,
+        )
+        if not matched:
+            # `actual is None` = could not even fetch a certificate: that is a
+            # connectivity finding. A DIFFERENT certificate is its own outcome
+            # -- the far side is up and the pin is stale (certificate renewal),
+            # which no amount of waiting repairs.
+            return PING_PIN_MISMATCH if actual else PING_UNREACHABLE
+
+    identity = get_federation_identity()
+    unsigned: dict[str, Any] = {
+        "version": 1,
+        "asker_pubkey": identity.public_key_hex(),
+        "nonce": secrets.token_hex(16),
+        "timestamp": int(time.time()),
+    }
+    signature = identity.sign(
+        _canonical_bytes(ping_canonical_payload(
+            PeerPingRequest(**unsigned, signature="0" * 128)
+        ))
+    ).hex()
+    req = PeerPingRequest(
+        **unsigned, signature=signature, **sign_name_attachment(identity, signature),
+    )
+
+    if client is not None:
+        return await _ping_roundtrip(client, peer, endpoint, req)
+
+    client_kwargs: dict[str, Any] = {
+        "timeout": httpx.Timeout(
+            PING_TOTAL_TIMEOUT_SECONDS, connect=PING_CONNECT_TIMEOUT_SECONDS,
+        ),
+    }
+    verify = _tls_verify_for_peer(peer)
+    if verify is not None:
+        client_kwargs["verify"] = verify
+    async with httpx.AsyncClient(**client_kwargs) as owned:
+        return await _ping_roundtrip(owned, peer, endpoint, req)
+
+
+async def _ping_roundtrip(
+    client: httpx.AsyncClient | Any,
+    peer: PeerUser,
+    endpoint: str,
+    req: PeerPingRequest,
+) -> str:
+    try:
+        # A hard ceiling over the whole exchange: httpx's timeouts are per
+        # phase, and a peer trickling bytes could otherwise hold a probe open.
+        r = await asyncio.wait_for(
+            client.post(_join(endpoint, "/api/federation/peer/ping"), json=wire_body(req)),
+            timeout=PING_TOTAL_TIMEOUT_SECONDS,
+        )
+    except (TimeoutError, httpx.HTTPError, OSError) as e:
+        logger.debug(f"Federation ping to {endpoint} failed in transport: {e!r}")
+        return PING_UNREACHABLE
+
+    status = r.status_code
+    if status in (404, 405, 501):
+        # The route does not exist there: an older version, or one with
+        # reachability switched off. We learn nothing about the pairing.
+        return PING_UNSUPPORTED
+    if status in (400, 401, 403):
+        # The uniform refusal: unknown or revoked key over there, a clock more
+        # than a minute apart, or its rate limit. Deliberately not told apart
+        # by the far side (no oracle), so not guessed at here either.
+        return PING_REFUSED
+    if status != 200:
+        return PING_UNREACHABLE
+
+    try:
+        resp = PeerPingResponse.model_validate(r.json())
+    except Exception:
+        return PING_INVALID_RESPONSE
+
+    # PAIR-ANCHOR BINDING, as in `_finalize`: the answer must be signed by the
+    # key we paired with, not merely by the key it names.
+    if resp.responder_pubkey != peer.remote_pubkey:
+        logger.warning(
+            f"Federation ping: {endpoint} answered with key "
+            f"{resp.responder_pubkey[:12]}…, paired is {peer.remote_pubkey[:12]}… "
+            "-- was the far side's identity regenerated?"
+        )
+        return PING_INVALID_RESPONSE
+    if resp.status != PING_STATUS_OK or resp.nonce != req.nonce:
+        return PING_INVALID_RESPONSE
+    try:
+        pubkey = bytes.fromhex(resp.responder_pubkey)
+        signature = bytes.fromhex(resp.responder_signature)
+    except ValueError:
+        return PING_INVALID_RESPONSE
+    if not FederationIdentity.verify(
+        pubkey, signature, _canonical_bytes(pong_canonical_payload(resp)),
+    ):
+        return PING_INVALID_RESPONSE
+
+    await _learn_responder_name(
+        peer,
+        name=resp.instance_name,
+        signature_hex=resp.instance_name_signature,
+        envelope_signature_hex=resp.responder_signature,
+    )
+    return PING_REACHABLE
+
+
+async def _learn_responder_name(
+    peer: PeerUser,
+    *,
+    name: str | None,
+    signature_hex: str | None,
+    envelope_signature_hex: str | None,
+) -> None:
+    """Store the far instance's name from an answer that ALREADY verified.
+
+    🛑 Call only after the pair-anchor binding and the envelope signature
+    passed -- both callers do. Never fails the query or the ping it rode on.
+    """
+    verified = verify_name_attachment(
+        name=name,
+        signature_hex=signature_hex,
+        signer_pubkey_hex=peer.remote_pubkey,
+        envelope_signature_hex=envelope_signature_hex,
+    )
+    if verified is not None and verified != stored_instance_name(peer):
+        await remember_remote_instance_name(peer.id, verified)
 
 
 # =============================================================================

@@ -71,23 +71,35 @@ from services.federation_identity import (
     FederationIdentity,
     get_federation_identity,
 )
+from services.federation_instance_name import (
+    peer_instance_label,
+    remember_remote_instance_name,
+    sign_name_attachment,
+    stored_instance_name,
+    verify_name_attachment,
+)
 from services.federation_pending_store import (
     NONCE_WINDOW_SECONDS,
     _PendingRequest,
     get_pending_store,
 )
 from services.federation_query_schemas import (
+    PING_STATUS_OK,
     STATUS_COMPLETE,
     STATUS_EXPIRED,
     STATUS_FAILED,
     STATUS_PROCESSING,
     FederationProvenance,
+    PeerPingRequest,
+    PeerPingResponse,
     QueryBrainInitiateRequest,
     QueryBrainInitiateResponse,
     QueryBrainRetrieveRequest,
     QueryBrainRetrieveResponse,
     complete_canonical_payload,
     initiate_canonical_payload,
+    ping_canonical_payload,
+    pong_canonical_payload,
     retrieve_canonical_payload,
 )
 from services.mcp_streaming import (
@@ -212,6 +224,7 @@ async def _write_responder_audit(
         peer_user_id=pending.peer_user_id,
         peer_pubkey_snapshot=pending.asker_pubkey,
         peer_display_name_snapshot=pending.peer_display_name,
+        peer_instance_name_snapshot=pending.peer_instance_name or None,
         query_text=pending.query,
         initiated_at=datetime.fromtimestamp(pending.initiated_at, tz=UTC).replace(tzinfo=None),
         # 🛑 The SHAPE matters, not just the content: `_classify_final` reads
@@ -409,6 +422,14 @@ class FederationQueryResponder:
             raise FederationQueryError("Malformed path: asker_pubkey missing")
 
         peer = await self._lookup_peer(req.asker_pubkey)
+        # The envelope verified and the key belongs to a non-revoked pairing:
+        # only now may the name it carries be believed.
+        learned_name = await self._learn_instance_name(
+            peer,
+            name=req.instance_name,
+            signature_hex=req.instance_name_signature,
+            envelope_signature_hex=req.signature,
+        )
 
         # F-ID-1 (person-scoped federation): if the envelope names a person
         # (`querier_ref`) AND we have a link mapping it to a LOCAL user, serve
@@ -470,6 +491,7 @@ class FederationQueryResponder:
             peer_owner_id=peer_owner_id,
             mapped=mapped,
             peer_display_name=peer.remote_display_name or "",
+            peer_instance_name=learned_name or peer_instance_label(peer) or "",
         ))
 
         # Schedule the background work. The task is fire-and-forget —
@@ -757,6 +779,7 @@ class FederationQueryResponder:
                 responder_pubkey=self.identity.public_key_hex(),
             )
             resp.responder_signature = self._sign_response(resp)
+            self._attach_instance_name(resp)
             return resp
 
         if pending.status == STATUS_EXPIRED:
@@ -779,11 +802,125 @@ class FederationQueryResponder:
             responder_pubkey=self.identity.public_key_hex(),
         )
         resp.responder_signature = self._sign_response(resp)
+        self._attach_instance_name(resp)
         return resp
 
     def _sign_response(self, resp: QueryBrainRetrieveResponse) -> str:
         payload = complete_canonical_payload(resp)
         return self.identity.sign(_canonical_bytes(payload)).hex()
+
+    def _attach_instance_name(
+        self, resp: QueryBrainRetrieveResponse | PeerPingResponse,
+    ) -> None:
+        """Add OUR instance name to a response we just signed.
+
+        An attachment bound to `responder_signature`, outside the signed
+        payload -- an asker one release behind drops both fields and verifies
+        the answer as before (see services/federation_instance_name.py).
+        """
+        attachment = sign_name_attachment(self.identity, resp.responder_signature or "")
+        if attachment:
+            resp.instance_name = attachment["instance_name"]
+            resp.instance_name_signature = attachment["instance_name_signature"]
+
+    # -------------------------------------------------------------------------
+    # Ping -- the reachability round trip
+    # -------------------------------------------------------------------------
+
+    async def handle_ping(self, req: PeerPingRequest) -> PeerPingResponse:
+        """Answer a paired peer's "are you there, and do you still know me?".
+
+        Verified like an initiate -- signature, ±60s window, nonce replay,
+        non-revoked pairing, rate limit -- and refused with the same
+        `FederationQueryError`, which the route turns into the same uniform
+        400. An unpaired or revoked caller therefore learns nothing here that
+        a refused query would not tell it.
+
+        🛑 What a ping does NOT do, each on purpose:
+          - It does not move `last_seen_at`. That column means "the far side
+            last sent us a real REQUEST"; a wall display that pings every few
+            minutes would turn it into "the far side's kiosk is switched on".
+          - It writes no audit row and no pending record. The audit view lists
+            accesses to this instance's data, and a ping reads none.
+          - It spends no query token: pings have a bucket of their own, so a
+            pinging peer cannot starve its own queries (or the reverse).
+        """
+        try:
+            return await self._handle_ping(req)
+        except RedisError as e:
+            logger.error(f"Federation pending-store unavailable on ping: {e}")
+            raise FederationQueryError("Federation store unavailable") from e
+
+    async def _handle_ping(self, req: PeerPingRequest) -> PeerPingResponse:
+        self._verify_signature(
+            pubkey_hex=req.asker_pubkey,
+            signature_hex=req.signature,
+            payload=ping_canonical_payload(req),
+        )
+
+        now = time.time()
+        if abs(now - req.timestamp) > NONCE_WINDOW_SECONDS:
+            raise FederationQueryError("Ping timestamp outside ±60s window")
+
+        if not await _record_nonce(req.nonce, now=now):
+            raise FederationQueryError("Ping nonce already seen (replay detected)")
+
+        peer = await self._lookup_peer(req.asker_pubkey, touch_last_seen=False)
+
+        # The bucket comes AFTER the pairing lookup: only a paired key gets
+        # one. A stranger with a fresh key per request therefore cannot grow
+        # the bucket registry, and is refused above with the same error anyway.
+        from services.federation_rate_limits import acquire_ping_responder_token
+        if not await acquire_ping_responder_token(req.asker_pubkey):
+            raise FederationQueryError("Ping rate limit exceeded for this asker")
+
+        await self._learn_instance_name(
+            peer,
+            name=req.instance_name,
+            signature_hex=req.instance_name_signature,
+            envelope_signature_hex=req.signature,
+        )
+
+        resp = PeerPingResponse(
+            status=PING_STATUS_OK,
+            nonce=req.nonce,
+            answered_at=int(now),
+            responder_pubkey=self.identity.public_key_hex(),
+        )
+        resp.responder_signature = self.identity.sign(
+            _canonical_bytes(pong_canonical_payload(resp))
+        ).hex()
+        self._attach_instance_name(resp)
+        return resp
+
+    async def _learn_instance_name(
+        self,
+        peer: PeerUser,
+        *,
+        name: str | None,
+        signature_hex: str | None,
+        envelope_signature_hex: str,
+    ) -> str | None:
+        """Verify the name attachment of an authenticated envelope and store it.
+
+        🛑 Callers pass a `peer` that `_lookup_peer` returned for the envelope's
+        key -- i.e. the envelope signature verified AND the key is paired and
+        not revoked. That order is the whole security property: the name of an
+        unknown or revoked key is never looked at, let alone stored.
+
+        Returns the verified name (stored or already known), else `None`.
+        """
+        verified = verify_name_attachment(
+            name=name,
+            signature_hex=signature_hex,
+            signer_pubkey_hex=peer.remote_pubkey,
+            envelope_signature_hex=envelope_signature_hex,
+        )
+        if verified is None:
+            return None
+        if verified != stored_instance_name(peer):
+            await remember_remote_instance_name(peer.id, verified)
+        return verified
 
     # -------------------------------------------------------------------------
     # Helpers
@@ -806,9 +943,14 @@ class FederationQueryResponder:
         if not FederationIdentity.verify(pubkey, signature, _canonical_bytes(payload)):
             raise FederationQueryError("Signature verification failed")
 
-    async def _lookup_peer(self, asker_pubkey: str) -> PeerUser:
+    async def _lookup_peer(
+        self, asker_pubkey: str, *, touch_last_seen: bool = True,
+    ) -> PeerUser:
         """Find the PeerUser row that matches this remote pubkey. Must be
         not-revoked; pairing must have succeeded in F2 first.
+
+        `touch_last_seen=False` is for the ping: `last_seen_at` records the
+        far side's last real REQUEST, and a ping is not one.
 
         last_seen_at is updated as a side effect of a successful auth,
         but its commit failure is NON-FATAL — a transient DB hiccup here
@@ -847,6 +989,8 @@ class FederationQueryResponder:
             )
             raise FederationQueryError("Unknown or revoked peer")
         peer = candidates[0]
+        if not touch_last_seen:
+            return peer
         try:
             peer.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
             await self.db.commit()

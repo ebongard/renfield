@@ -58,6 +58,15 @@ STATUS_EXPIRED = "expired"
 
 STATUS_VALUES = frozenset({STATUS_PROCESSING, STATUS_COMPLETE, STATUS_FAILED, STATUS_EXPIRED})
 
+#: Longest `instance_name` / `instance_name_signature` accepted on the wire.
+#: Deliberately wider than what gets STORED
+#: (`federation_instance_name.INSTANCE_NAME_MAX_CHARS`, 64) and than a valid
+#: signature (128 hex): an over-long name is cut down by the sanitiser and a
+#: malformed signature just fails to verify -- neither is answered with a 422
+#: that would fail the query the attachment rode on. The bound only keeps a
+#: megabyte of junk out of the verifier.
+INSTANCE_NAME_WIRE_MAX = 512
+
 
 # =============================================================================
 # Initiate
@@ -125,6 +134,12 @@ class QueryBrainInitiateRequest(BaseModel):
     # docs/design/federation-identity-mapping.md.
     querier_ref: str | None = Field(default=None, max_length=128)
     signature: str = Field(..., min_length=128, max_length=128)  # hex
+    # The asker instance's name, as a separately signed ATTACHMENT. Neither
+    # field is part of `initiate_canonical_payload`: a responder one release
+    # behind drops them while parsing and verifies the envelope as before.
+    # See services/federation_instance_name.py.
+    instance_name: str | None = Field(default=None, max_length=INSTANCE_NAME_WIRE_MAX)
+    instance_name_signature: str | None = Field(default=None, max_length=INSTANCE_NAME_WIRE_MAX)
 
 
 class QueryBrainInitiateResponse(BaseModel):
@@ -180,6 +195,53 @@ class QueryBrainRetrieveResponse(BaseModel):
     answered_at: int | None = None
     responder_pubkey: str | None = None
     responder_signature: str | None = None  # terminal statuses only
+    # The responder instance's name -- same attachment as on the initiate
+    # request, bound to `responder_signature`, outside
+    # `complete_canonical_payload`.
+    instance_name: str | None = Field(default=None, max_length=INSTANCE_NAME_WIRE_MAX)
+    instance_name_signature: str | None = Field(default=None, max_length=INSTANCE_NAME_WIRE_MAX)
+
+
+# =============================================================================
+# Ping -- the reachability round trip
+# =============================================================================
+
+#: Folded into the signed bytes so a ping can never be replayed as, or
+#: mistaken for, any other envelope this key signs.
+PING_KIND = "ping"
+PONG_KIND = "pong"
+PING_STATUS_OK = "ok"
+
+
+class PeerPingRequest(BaseModel):
+    """Asker-signed "are you there, and do you still know me?".
+
+    Signed like an initiate, verified like an initiate (signature, ±60s
+    window, nonce replay, rate limit, non-revoked pairing) -- but it carries no
+    question, starts no work and writes no audit row.
+    """
+    version: int = 1
+    asker_pubkey: str = Field(..., min_length=64, max_length=64)  # hex
+    nonce: str = Field(..., min_length=16, max_length=128)
+    timestamp: int
+    signature: str = Field(..., min_length=128, max_length=128)  # hex
+    instance_name: str | None = Field(default=None, max_length=INSTANCE_NAME_WIRE_MAX)
+    instance_name_signature: str | None = Field(default=None, max_length=INSTANCE_NAME_WIRE_MAX)
+
+
+class PeerPingResponse(BaseModel):
+    """Responder-signed acknowledgement. No content: the echoed nonce proves
+    the answer belongs to THIS ping, the signature that the paired key gave it."""
+    version: int = 1
+    status: str = PING_STATUS_OK
+    nonce: str
+    answered_at: int
+    responder_pubkey: str = Field(..., min_length=64, max_length=64)
+    # Empty only between construction and signing on the responder; the asker
+    # verifies it cryptographically, so no length rule is needed here.
+    responder_signature: str = Field(default="", max_length=INSTANCE_NAME_WIRE_MAX)
+    instance_name: str | None = Field(default=None, max_length=INSTANCE_NAME_WIRE_MAX)
+    instance_name_signature: str | None = Field(default=None, max_length=INSTANCE_NAME_WIRE_MAX)
 
 
 # =============================================================================
@@ -223,6 +285,29 @@ def retrieve_canonical_payload(req: QueryBrainRetrieveRequest) -> dict[str, Any]
         "request_id": req.request_id,
         "asker_pubkey": req.asker_pubkey,
         "timestamp": req.timestamp,
+    }
+
+
+def ping_canonical_payload(req: PeerPingRequest) -> dict[str, Any]:
+    """Dict over which the asker signs a ping."""
+    return {
+        "kind": PING_KIND,
+        "version": req.version,
+        "asker_pubkey": req.asker_pubkey,
+        "nonce": req.nonce,
+        "timestamp": req.timestamp,
+    }
+
+
+def pong_canonical_payload(resp: PeerPingResponse) -> dict[str, Any]:
+    """Dict over which the responder signs its acknowledgement."""
+    return {
+        "kind": PONG_KIND,
+        "version": resp.version,
+        "status": resp.status,
+        "nonce": resp.nonce,
+        "answered_at": resp.answered_at,
+        "responder_pubkey": resp.responder_pubkey,
     }
 
 

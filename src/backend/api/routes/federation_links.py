@@ -25,6 +25,7 @@ from models.database import FederationUserLink, PeerUser, User
 from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.federation_identity_link import delete_link
+from services.federation_instance_name import peer_instance_label
 from services.link_handshake_service import (
     LinkConfirmation,
     LinkHandshakeError,
@@ -58,6 +59,9 @@ class LinkResponse(BaseModel):
     peer_id: int
     peer_display_name: str
     created_at: str
+    #: The INSTANCE part of the peer's label (verified name, else endpoint
+    #: host). Omitted from the response when there is none.
+    peer_instance_name: str | None = None
 
 
 def _reject(e: LinkHandshakeError, user_id: int) -> HTTPException:
@@ -117,7 +121,7 @@ async def accept_link_offer(
     return confirmation
 
 
-@router.post("/links/complete", response_model=LinkResponse)
+@router.post("/links/complete", response_model=LinkResponse, response_model_exclude_none=True)
 async def complete_link(
     body: CompleteLinkRequest,
     db: AsyncSession = Depends(get_db),
@@ -140,7 +144,7 @@ async def complete_link(
     return await _to_response(db, link)
 
 
-@router.get("/links/mine", response_model=list[LinkResponse])
+@router.get("/links/mine", response_model=list[LinkResponse], response_model_exclude_none=True)
 async def list_my_links(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
@@ -164,6 +168,7 @@ async def list_my_links(
             peer_id=link.peer_id,
             peer_display_name=peer.remote_display_name,
             created_at=link.created_at.isoformat() if link.created_at else "",
+            peer_instance_name=peer_instance_label(peer),
         )
         for link, peer in rows
     ]
@@ -214,4 +219,5 @@ async def _to_response(db: AsyncSession, link: FederationUserLink) -> LinkRespon
         peer_id=link.peer_id,
         peer_display_name=peer.remote_display_name,
         created_at=link.created_at.isoformat() if link.created_at else "",
+        peer_instance_name=peer_instance_label(peer),
     )
