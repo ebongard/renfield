@@ -209,3 +209,50 @@ Modern phones advertise a **rotating** BLE Resolvable Private Address (RPA), so 
 - **The Esszimmer k8s satellite** (`k8s/satellite-esszimmer.yaml`): node-pinned privileged pod, `hostNetwork`, `hostAliases renfield.local→Traefik LB`, hostPath `/dev/snd` + `/dev/bus/usb` (USB audio + XVF3800 LED via `xvf_host`) + `/run/dbus` (BLE via host BlueZ) + **`/var/lib/bluetooth` RO** (IRK capture). Image built on the Pi, imported into the node containerd (`ctr -n k8s.io images import`), `imagePullPolicy: Never`. The custom `hey_renfield.onnx` wakeword model + personal device MACs/IRKs live in the image build context / backend DB, never in git. **Node resilience:** the pod is hardware-pinned to this node, so a dead node = a dead Esszimmer that k8s can't self-heal — it went `NotReady`+unreachable twice in a day, each needing a manual power-cycle. `k8s/orangepi-node-resilience.sh` (run as root on the node) applies the same two-layer watchdog the bare-metal sats have — SoC HW watchdog (`RuntimeWatchdogSec=14s`, sunxi ~16s max, for kernel/PID-1 hangs) + the shared `renfield-net-watchdog` timer (reboot if the gateway is unreachable, for a wedged net stack) — plus **persistent journald** (the journal was `volatile`, so the death cause was lost on every reboot; now diagnosable).
 - **Bonded vs resolver:** a satellite that has *bonded* the phone (Esszimmer did) lets BlueZ resolve the RPA to the identity MAC natively → it's tracked as a normal `ble` known-device. Non-bonded satellites use the pushed IRK + the software resolver. Device identities live in the **backend known-devices DB** (`UserBleDevice`) — not in the manifest. With the BLE stack on multiple satellites, the backend's `_assign_room` does multi-satellite RSSI arbitration (mean RSSI + per-extra-satellite bonus + hysteresis). **Bonding can BIAS that arbitration (fixed 2026-06-22):** a bonded satellite resolves the phone *natively on every advert* and reports a strong, near-constant signal, so in adjacent/open-plan rooms it **out-shouts** a non-bonded neighbour and wins the room even when the user is physically in the other room (observed Esszimmer-bonded ~20 matches/min vs Wohnzimmer Pi-Zero ~2/min → always assigned Esszimmer). Fix: **un-bond the phone** so *every* satellite uses the same software IRK resolver — `bluetoothctl remove <identity-mac>` on the bonding satellite's **host** (the bond lives in the host's `/var/lib/bluetooth`; the k8s pod mounts it RO and can't remove it). The IRK is already in the backend, so detection continues via software; only the unfair native edge is removed, and RSSI/placement then decides the room correctly (verified: presence tracks the actual room bidirectionally). Re-bond anytime via the IRK pairing flow if a satellite needs native resolution. See `docs/design/ble-presence-improvement.md`.
 - Deploy note: the satellite image needs `bluez`/`bluez-tools` + `cryptography`; bare-metal Pis need the `cryptography` dep and `sudo` for the `/var/lib/bluetooth` read. **`cryptography` is mandatory for IRK resolution and `rpa.py` silently no-ops without it** (`resolve_rpa()` returns `False` for every address → phone presence dies invisibly). It was missing from every bare-metal venv (it lived only in `satellite_python_packages`, installed under the `[python]` tag, which the safety code-only `--tags app` deploy skips — the same drift the `envirophat` task documents). Now installed by a dedicated `[python, app]` task **and** in the satellite `requirements.txt`; the satellite also logs a loud warning if IRKs arrive while `_CRYPTO_AVAILABLE` is False. Verify after deploy: `venv/bin/python -c "from renfield_satellite.ble.rpa import _CRYPTO_AVAILABLE; print(_CRYPTO_AVAILABLE)"`.
+
+## Voice hold (2026-11-13)
+
+A voice or auth sighting is certain; a BLE reading is an estimate. Observed live on 2026-11-13: a voice
+turn in one room moved the user there, and three seconds later a BLE reading at the RSSI floor from another
+room moved them back. Cause: `_should_switch_filtered` switches at once when the current room has no
+filtered value, and a room the phone was never heard in has none (watch-list item F2 of the filter rollout).
+
+Since then `register_voice_presence` sets `UserPresence.voice_hold_until`, and `_assign_room` returns before
+the switch decision while the hold runs: BLE may confirm the voice room, not replace it. `last_seen` and the
+filter state keep updating during the hold, so the user is not marked absent and the first decision after
+the hold rests on current readings. `PRESENCE_VOICE_HOLD_SECONDS` (default 60, 0 = off) sets the length; the
+value is a choice, not a measurement. A second voice sighting moves the user at once and restarts the hold.
+
+The hold covers every caller of `register_voice_presence`, so a typed chat message from a room-bound device
+pins the room for the same time. With the setting at 0 the old path is unchanged.
+
+### After the hold: the last certain sighting stands (2026-11-13, owner's decision)
+
+The hold alone only postpones the flip: once it ends, a room the phone was never heard in still has no
+filtered value, and the first reading from elsewhere would win by default. The phone and the person are not
+the same thing; the owner chose the person. `UserPresence.voice_pinned` marks a room that rests on a voice/auth
+sighting BLE has not confirmed. For such a room `_should_switch_filtered` measures the challenger against the
+RSSI floor plus `PRESENCE_VOICE_RELEASE_MARGIN_DB` (default 10 → −70 dBm at the −80 floor), on the filtered
+value. Only BLE MOVING the user ends the pin. BLE merely agreeing does not: a weak reading in the voice room
+would otherwise hand the room to BLE and lose it the moment that reading ages out (and a second device of the
+same user, whose pass rebuilds the per-user filter, would do the same).
+
+**A held room is a guess, and the privacy gates treat it as unknown.** `UserPresence.room_evidence_at` records
+when something last placed the user in the current room (a sighting, or a BLE pass whose best room was this
+one). `is_location_uncertain()` is true for a pinned user once that is older than the longer of the hold and
+the BLE freshness window — per user, so it neither flickers with several devices nor depends on the filter
+(the legacy path has none). The message relay (`announce_in_room`) drops such a user from the room's occupants
+and blocks when a non-recipient is among them. `ha_should_play_tts_for_notification` likewise
+fails closed: a `confidential` notification is not spoken while ANY tracked user's room is a guess (the target
+may not be there, someone else may be), and for `personal` such a user counts as a possible listener in every
+room and not as an occupant of the booked one. Display surfaces (kiosk, history) and media follow keep using
+the booked room.
+
+Consequences, intended: someone who speaks in a room and leaves the phone elsewhere stays in that room for as
+long as the phone is heard only weakly; they become absent when the phone is not heard for
+`PRESENCE_STALE_TIMEOUT` (the sweep runs on BLE reports, so only while some satellite still reports). The 10 dB is a choice. The readings behind it: on 2026-11-13 the phantom room's
+filtered value sat between −75 and −78 dBm over one minute, while entries with the phone in the room reach
+−60 and better. `0` restores the old rule. Legacy (non-filter) path: unchanged apart from the hold.
+
+Still open: a lone satellite near the floor can place a user in its room when no voice sighting is involved,
+and RSSI is compared across satellites without any per-receiver calibration.

@@ -882,24 +882,39 @@ class InternalToolService:
                 # best-effort, not a guarantee against every eavesdropper.
                 if privacy != "public" and not force:
                     presence = get_presence_service()
-                    occupants = presence.get_room_occupants(room.id)
+                    # A user whose room is only a held guess (an old voice
+                    # sighting, the phone heard elsewhere) may be anywhere: not
+                    # proof of presence in the booked room, and a possible
+                    # listener in this one.
+                    uncertain_ids = set(presence.uncertain_user_ids())
+                    occupants = [
+                        o for o in presence.get_room_occupants(room.id)
+                        if o.user_id not in uncertain_ids
+                    ]
                     allowed_ids = {
                         uid for n in for_users
                         if (uid := presence.find_user_by_name(n)) is not None
                     }
+                    stray_listeners = uncertain_ids - allowed_ids
                     everyone_present_is_recipient = (
                         bool(allowed_ids)
                         and bool(occupants)
                         and all(o.user_id in allowed_ids for o in occupants)
+                        and not stray_listeners
                     )
                     if not everyone_present_is_recipient:
                         if not allowed_ids:
                             why = "die Empfaenger sind nicht bekannt (gib sie in for_users an)"
                         elif not occupants:
                             why = f"in {room.name} ist niemand (mit getracktem Geraet) erkennbar anwesend"
-                        else:
+                        elif any(o.user_id not in allowed_ids for o in occupants):
                             non_rec = sum(1 for o in occupants if o.user_id not in allowed_ids)
                             why = f"in {room.name} ist/sind {non_rec} Nicht-Empfaenger-Person(en) anwesend"
+                        else:
+                            why = (
+                                f"der Aufenthaltsort von {len(stray_listeners)} Nicht-Empfaenger-Person(en) "
+                                f"ist unsicher, sie koennte(n) in {room.name} sein"
+                            )
                         return {
                             "success": False,
                             "action_taken": False,
