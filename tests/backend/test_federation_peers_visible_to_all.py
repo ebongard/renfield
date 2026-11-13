@@ -285,6 +285,25 @@ class TestFlagOnLinked:
         row = (await async_client.get(PEERS)).json()["peers"][0]
         assert row["linked"] is False
 
+    async def test_linked_is_decided_per_pairing(
+        self, async_client: AsyncClient, db_session, world, as_user, flag_on, links_on,
+    ):
+        """Two active pairings, a link to exactly one of them: `linked` is
+        true for that id and false for the other -- not "has any link"."""
+        other = PeerUser(
+            circle_owner_id=world["owner"].id, remote_pubkey="12" * 32,
+            remote_display_name="Second Instance", remote_user_id=9,
+            granted_tier=3, transport_config={},
+        )
+        db_session.add(other)
+        await db_session.commit()
+        await _link(db_session, world["active"], world["member"], MEMBER_REF)
+        as_user(world["member"])
+        peers = (await async_client.get(PEERS)).json()["peers"]
+        assert {p["id"]: p["linked"] for p in peers} == {
+            world["active"].id: True, other.id: False,
+        }
+
     async def test_no_link_of_another_account_appears_anywhere(
         self, async_client: AsyncClient, db_session, world, as_user, flag_on, links_on,
     ):
@@ -368,6 +387,73 @@ class TestFlagOnRevoke:
         resp = await async_client.delete(f"{PEERS}/999999")
         assert resp.status_code == 404
         assert resp.json() == {"detail": "Peer not found"}
+
+
+# ---------------------------------------------------------------------------
+# Through the REAL `get_user_or_default` -- no override of it
+# ---------------------------------------------------------------------------
+
+
+class TestRealAuthDependency:
+    """The tests above hand the route a ready user. These two let the real
+    dependency resolve it, so the admin check runs on a user loaded the way
+    production loads it (role eager-loaded, or not at all)."""
+
+    async def test_auth_off_resolves_to_the_default_admin(
+        self, async_client: AsyncClient, app_with_test_db, db_session, world, flag_on,
+    ):
+        """Auth off: `get_current_user` yields None and `get_user_or_default`
+        falls back to the account named `admin`. It owns nothing, sees every
+        pairing as revocable, and revokes a foreign one."""
+        from services.auth_service import get_current_user
+
+        await _user(db_session, "admin", ["admin"])
+        app_with_test_db.dependency_overrides[get_current_user] = lambda: None
+
+        peers = (await async_client.get(PEERS)).json()["peers"]
+        assert [(p["id"], p["owned_by_me"], p["can_revoke"]) for p in peers] == [
+            (world["active"].id, False, True),
+        ]
+
+        resp = await async_client.delete(f"{PEERS}/{world['active'].id}")
+        assert resp.status_code == 204
+        assert await _is_revoked(db_session, world["active"])
+
+    async def test_a_real_bearer_token_of_an_admin_account(
+        self, async_client: AsyncClient, db_session, world, flag_on, monkeypatch,
+    ):
+        """Auth on, nothing overridden: a real access token for the admin
+        account goes through `get_current_user` -> `get_user_or_default`."""
+        from unittest.mock import AsyncMock
+
+        from services.auth_service import create_access_token
+
+        monkeypatch.setattr(settings, "auth_enabled", True)
+        # The revocation check would need a live Redis.
+        monkeypatch.setattr(
+            "services.token_blacklist.token_blacklist.is_blacklisted",
+            AsyncMock(return_value=False),
+        )
+
+        def bearer(user: User) -> dict[str, str]:
+            token = create_access_token(
+                {"sub": str(user.id)}, token_epoch=int(user.token_epoch or 0),
+            )
+            return {"Authorization": f"Bearer {token}"}
+
+        assert (await async_client.get(PEERS)).status_code == 401
+
+        admin, member = bearer(world["admin"]), bearer(world["member"])
+        row = (await async_client.get(PEERS, headers=admin)).json()["peers"][0]
+        assert (row["owned_by_me"], row["can_revoke"]) == (False, True)
+        row = (await async_client.get(PEERS, headers=member)).json()["peers"][0]
+        assert (row["owned_by_me"], row["can_revoke"]) == (False, False)
+
+        url = f"{PEERS}/{world['active'].id}"
+        assert (await async_client.delete(url, headers=member)).status_code == 404
+        assert not await _is_revoked(db_session, world["active"])
+        assert (await async_client.delete(url, headers=admin)).status_code == 204
+        assert await _is_revoked(db_session, world["active"])
 
 
 # ---------------------------------------------------------------------------

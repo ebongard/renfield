@@ -1726,7 +1726,7 @@
     "peerHoursAgo": "{{n}}h fa",
     "peerDaysAgo": "{{n}}g fa",
     "peerPairedBy": "abbinato da {{name}}",
-    "peerAskLinked": "Chiedi a tuo nome: {{name}} risponde con la portata del tuo account collegato lì.",
+    "peerAskLinked": "Qui sei collegato e chiedi a tuo nome; {{name}} risponde con la portata del tuo account collegato non appena il collegamento esiste anche lì.",
     "peerAskUnlinked": "Lì non sei collegato: {{name}} ti risponde con ciò che l'account di abbinamento lì ha condiviso con questa istanza, più i contenuti pubblici. Il livello è stabilito dall'altra parte.",
     "peerGrantMine": "Le richieste non collegate di {{name}} ricevono da qui ciò che condividi al livello «{{tier}}» e più aperto, più i contenuti pubblici.",
     "peerGrantOther": "Le richieste non collegate di {{name}} ricevono da qui ciò che {{pairedBy}} condivide al livello «{{tier}}» e più aperto, più i contenuti pubblici.",

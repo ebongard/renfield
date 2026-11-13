@@ -2139,7 +2139,7 @@
     "peerHoursAgo": "il y a {{n}} h",
     "peerDaysAgo": "il y a {{n}} j",
     "peerPairedBy": "appairé par {{name}}",
-    "peerAskLinked": "Vous interrogez en votre nom\u00a0: {{name}} répond avec la portée de votre compte lié là-bas.",
+    "peerAskLinked": "Vous êtes lié ici et interrogez en votre nom\u00a0; {{name}} répond avec la portée de votre compte lié dès que le lien existe aussi de son côté.",
     "peerAskUnlinked": "Vous n'y êtes pas lié\u00a0: {{name}} vous répond avec ce que le compte d'appairage là-bas a partagé avec cette instance, plus le contenu public. Le niveau est fixé par l'autre côté.",
     "peerGrantMine": "Les requêtes non liées de {{name}} reçoivent d'ici ce que vous partagez au niveau «\u00a0{{tier}}\u00a0» et plus ouvert, plus le contenu public.",
     "peerGrantOther": "Les requêtes non liées de {{name}} reçoivent d'ici ce que {{pairedBy}} partage au niveau «\u00a0{{tier}}\u00a0» et plus ouvert, plus le contenu public.",

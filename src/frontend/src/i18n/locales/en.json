@@ -2126,7 +2126,7 @@
     "peerHoursAgo": "{{n}}h ago",
     "peerDaysAgo": "{{n}}d ago",
     "peerPairedBy": "paired by {{name}}",
-    "peerAskLinked": "You ask as yourself: {{name}} answers with the reach of your linked account there.",
+    "peerAskLinked": "You are linked here and ask as yourself; {{name}} answers with your linked account's reach once it holds the link too.",
     "peerAskUnlinked": "You are not linked there: {{name}} answers you with what the pairing account there has shared with this instance, plus public. The tier is set on the far side.",
     "peerGrantMine": "Unlinked requests from {{name}} receive from here what you share at tier “{{tier}}” and more open, plus public.",
     "peerGrantOther": "Unlinked requests from {{name}} receive from here what {{pairedBy}} shares at tier “{{tier}}” and more open, plus public.",
