@@ -555,6 +555,421 @@ def test_NEGATIVE_a_recorder_without_a_caller_is_not_in_use():
 
 
 # =============================================================================
+# What only showed once the files were loaded into a Grafana
+#
+# Each check below pins one defect class found on first load (Grafana 13.3,
+# Prometheus 3.16): the expressions were valid and every series existed, and
+# the panels were still wrong. The negative controls hold the JSON as it was.
+# =============================================================================
+
+#: Panel types that draw a value's TEXT: a value mapping or a `noValue` text
+#: is what the reader sees. A timeseries draws a line and keeps the mapping
+#: for the y axis ticks only, so a NaN mapped to "no scan yet" is an empty
+#: graph there. Only types seen rendering it are listed.
+RENDERS_VALUE_TEXT = frozenset({"stat", "state-timeline"})
+
+
+def _split_top_level(text: str, separator: str) -> list[str]:
+    """`text` cut at every `separator` outside brackets and strings. The
+    separator is one operator character, or a keyword such as `or`."""
+    parts: list[str] = []
+    depth = 0
+    start = position = 0
+    keyword = separator.isalpha()
+    while position < len(text):
+        char = text[position]
+        if char == '"':
+            position = _TOKEN.match(text, position).end()
+            continue
+        if char in "({[":
+            depth += 1
+        elif char in ")}]":
+            depth -= 1
+        elif depth == 0 and text.startswith(separator, position):
+            before = text[position - 1] if position else " "
+            after = text[position + len(separator): position + len(separator) + 1]
+            if not keyword or not (before.isalnum() or before == "_" or after.isalnum() or after == "_"):
+                parts.append(text[start:position])
+                start = position + len(separator)
+                position = start
+                continue
+        position += 1
+    parts.append(text[start:])
+    return [part.strip() for part in parts]
+
+
+def _unwrap(text: str) -> str:
+    """`text` without the pair of parentheses that encloses all of it."""
+    text = text.strip()
+    while text.startswith("(") and text.endswith(")"):
+        depth = 0
+        for position, char in enumerate(text):
+            depth += (char == "(") - (char == ")")
+            if depth == 0 and position < len(text) - 1:
+                return text
+        text = text[1:-1].strip()
+    return text
+
+
+def ratio_problems(expr: str) -> list[str]:
+    """What is wrong with `expr` if it divides a subset by its total.
+
+    A numerator that selects on a label the denominator does not (an outcome,
+    a status class) reads series that do not exist until the first such
+    event. Without them the division has no left side: the panel says "No
+    data" exactly while nothing failed, and in a grouped ratio the groups
+    without a failure are missing. The numerator therefore needs a fallback
+    built from the denominator's own series, times zero. `vector(0)` only
+    serves an ungrouped ratio: it carries no labels to match a group with.
+    """
+    sides = _split_top_level(expr, "/")
+    if len(sides) == 1:
+        return []
+    if len(sides) != 2:
+        return ["more than one division: not a ratio this check can read"]
+    numerator, denominator = (read_expression(side) for side in sides)
+    total_labels = {label for _, labels in denominator.selectors for label in labels}
+    narrowing = sorted({label for _, labels in numerator.selectors for label in labels} - total_labels)
+    if not narrowing:
+        return []
+
+    fallbacks = []
+    for branch in _split_top_level(_unwrap(sides[0]), "or"):
+        parsed = read_expression(branch)
+        if any(labels - total_labels for _, labels in parsed.selectors):
+            continue
+        fallbacks.append((branch, parsed))
+    if not fallbacks:
+        return [f"the numerator selects on {narrowing} without a zero fallback"]
+    problems = []
+    for branch, parsed in fallbacks:
+        if not parsed.selectors:
+            if re.sub(r"\s", "", branch) != "vector(0)":
+                problems.append(f"fallback {branch!r} reads no series and is not vector(0)")
+            elif denominator.kept:
+                problems.append(
+                    f"vector(0) has no {sorted(denominator.kept)} label: a group without the event stays missing"
+                )
+            continue
+        if not re.search(r"\*\s*0$", branch):
+            problems.append(f"fallback {branch!r} is not multiplied by 0")
+        if parsed.kept != denominator.kept:
+            problems.append(f"fallback groups by {sorted(parsed.kept)}, the total by {sorted(denominator.kept)}")
+    return problems
+
+
+def _ratio_targets() -> list[tuple[str, str]]:
+    return [
+        (panel, target["expr"])
+        for _file, panel, target in _targets()
+        if len(_split_top_level(target["expr"], "/")) > 1
+    ]
+
+
+def test_every_share_of_a_total_reads_zero_while_nothing_failed():
+    ratios = _ratio_targets()
+    # Every division on the dashboards. The orchestrator coverage divides two
+    # counters without labels, which exist from the start: nothing to fall back to.
+    assert sorted(panel for panel, _ in ratios) == [
+        "Orchestrator domain coverage",
+        "Share of 5xx responses",
+        "Share of runs that did not end in a final answer",
+        "Share of tool calls that timed out, by server",
+    ]
+    assert [f"{panel}: {problem}" for panel, expr in ratios for problem in ratio_problems(expr)] == []
+    guarded = [
+        panel for panel, expr in ratios
+        if len(_split_top_level(_unwrap(_split_top_level(expr, "/")[0]), "or")) > 1
+    ]
+    assert len(guarded) == 3, "the check above must not pass by finding nothing to check"
+
+
+_TOOL_CALLS = 'rate(renfield_mcp_tool_duration_seconds_count{job=~"$job", server=~"$server"}[$__rate_interval])'
+_TOOL_TIMEOUTS = _TOOL_CALLS.replace('"}', '", outcome="timeout"}')
+_REQUESTS = 'rate(renfield_http_requests_total{job=~"$job"}[$__rate_interval])'
+_REQUESTS_5XX = _REQUESTS.replace('"}', '", status_code=~"5.."}')
+
+
+@pytest.mark.parametrize(
+    ("expr", "finding"),
+    [
+        (
+            # renfield-integrations.json as merged: only `paperless` was drawn.
+            f"sum by (server) ({_TOOL_TIMEOUTS}) / sum by (server) ({_TOOL_CALLS})",
+            "the numerator selects on ['outcome'] without a zero fallback",
+        ),
+        (
+            # renfield-overview.json as merged: "No data" without a 5xx.
+            f"sum({_REQUESTS_5XX}) / sum({_REQUESTS})",
+            "the numerator selects on ['status_code'] without a zero fallback",
+        ),
+        (
+            f"(sum by (server) ({_TOOL_TIMEOUTS}) or vector(0)) / sum by (server) ({_TOOL_CALLS})",
+            "vector(0) has no ['server'] label: a group without the event stays missing",
+        ),
+        (
+            # A fallback that is narrowed like the numerator is absent with it.
+            f"(sum({_REQUESTS_5XX}) or sum({_REQUESTS_5XX}) * 0) / sum({_REQUESTS})",
+            "the numerator selects on ['status_code'] without a zero fallback",
+        ),
+        (
+            f"(sum({_REQUESTS_5XX}) or sum({_REQUESTS})) / sum({_REQUESTS})",
+            f"fallback 'sum({_REQUESTS})' is not multiplied by 0",
+        ),
+        (
+            f"(sum by (server) ({_TOOL_TIMEOUTS}) or sum({_TOOL_CALLS}) * 0) / sum by (server) ({_TOOL_CALLS})",
+            "fallback groups by [], the total by ['server']",
+        ),
+    ],
+    ids=["grouped-as-merged", "ungrouped-as-merged", "vector0-in-a-grouped-ratio",
+         "narrowed-fallback", "fallback-not-zeroed", "fallback-grouped-differently"],
+)
+def test_NEGATIVE_a_share_without_a_usable_zero_fallback_is_reported(expr, finding):
+    assert finding in ratio_problems(expr)
+
+
+def test_a_ratio_with_a_fallback_and_one_without_a_subset_are_clean():
+    assert ratio_problems(f"(sum({_REQUESTS_5XX}) or vector(0)) / sum({_REQUESTS})") == []
+    assert ratio_problems(f"(sum({_REQUESTS_5XX}) or sum({_REQUESTS}) * 0) / sum({_REQUESTS})") == []
+    assert ratio_problems("sum(rate(a_total[$__rate_interval])) / sum(rate(b_total[$__rate_interval]))") == []
+    assert ratio_problems(f"sum({_REQUESTS}) * 60") == []
+    # A slash inside a label value is not a division.
+    assert _split_top_level('sum(x_total{endpoint="/api/a"})', "/") == ['sum(x_total{endpoint="/api/a"})']
+    assert _split_top_level("a_or_b or c", "or") == ["a_or_b", "c"]
+
+
+def value_text_problems(panel: dict) -> list[str]:
+    """A panel that names a value in words must be of a type that shows them."""
+    if panel["type"] == "row" or panel["type"] in RENDERS_VALUE_TEXT:
+        return []
+    defaults = panel["fieldConfig"]["defaults"]
+    carried = [key for key in ("mappings", "noValue") if defaults.get(key)]
+    if not carried:
+        return []
+    return [f"{panel['title']}: a {panel['type']} panel does not show its {' / '.join(carried)} text"]
+
+
+def test_every_panel_with_a_value_text_is_of_a_type_that_shows_it():
+    panels = [panel for path in DASHBOARDS for panel in _panels(_load(path))]
+
+    assert [problem for panel in panels for problem in value_text_problems(panel)] == []
+    worded = {
+        panel["title"]: panel["type"]
+        for panel in panels
+        if panel["type"] != "row" and (
+            panel["fieldConfig"]["defaults"].get("mappings") or panel["fieldConfig"]["defaults"].get("noValue")
+        )
+    }
+    assert worded == {
+        "MCP servers with a problem": "stat",
+        "Active memories": "stat",
+        "Knowledge graph conflation candidates": "stat",
+        "Circuit breaker state": "state-timeline",
+    }
+
+
+def test_NEGATIVE_a_value_text_on_a_timeseries_is_reported():
+    """The three panels as merged: the texts were in the JSON and on no screen."""
+    nan_text = {"type": "special", "options": {"match": "null+nan", "result": {"text": "no scan yet"}}}
+    conflation = {
+        "title": "Knowledge graph conflation candidates",
+        "type": "timeseries",
+        "fieldConfig": {"defaults": {"unit": "short", "noValue": "no scan yet", "mappings": [nan_text]}},
+    }
+    breaker = {
+        "title": "Circuit breaker state",
+        "type": "timeseries",
+        "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "closed"}}}]}},
+    }
+    assert value_text_problems(conflation) == [
+        "Knowledge graph conflation candidates: a timeseries panel does not show its mappings / noValue text"
+    ]
+    assert value_text_problems(breaker) == [
+        "Circuit breaker state: a timeseries panel does not show its mappings text"
+    ]
+    assert value_text_problems({**conflation, "type": "stat"}) == []
+    assert value_text_problems({"title": "t", "type": "timeseries", "fieldConfig": {"defaults": {"unit": "s"}}}) == []
+
+
+def _panel(title: str) -> dict:
+    (found,) = [panel for path in DASHBOARDS for panel in _panels(_load(path)) if panel["title"] == title]
+    return found
+
+
+def test_the_measured_gauges_colour_a_count_and_a_tripwire_differently():
+    """Conflation candidates are a tripwire (expected 0); the number of active
+    memories is a count and no health signal. Unmeasured is orange on both."""
+    tripwire = _panel("Knowledge graph conflation candidates")["fieldConfig"]["defaults"]
+    base, above = tripwire["thresholds"]["steps"]
+    assert (base["value"], base["color"]) == (None, "green")
+    assert (above["value"], above["color"]) == (1, "red")
+    assert tripwire.get("color", {}).get("mode", "thresholds") == "thresholds"
+
+    count = _panel("Active memories")["fieldConfig"]["defaults"]
+    assert count["color"]["mode"] == "fixed"
+    assert "thresholds" not in count
+
+    for defaults in (tripwire, count):
+        (unmeasured,) = defaults["mappings"]
+        assert unmeasured["options"]["result"]["color"] == "orange"
+
+
+def stale_value_problems(panel: dict, unlabelled_gauges: set[str]) -> list[str]:
+    """A stat on a gauge that is NaN until measured must reduce with `last`.
+
+    `lastNotNull` skips NaN: after a backend restart the panel kept showing
+    the number from before the restart, in its threshold colour, for as long
+    as that sample was inside the dashboard's time range (6 h by default),
+    while the gauge itself said "not measured"."""
+    if panel["type"] != "stat":
+        return []
+    read = {
+        name
+        for target in panel["targets"]
+        for name in read_expression(target["expr"]).series
+        if name in unlabelled_gauges
+    }
+    calcs = panel["options"]["reduceOptions"]["calcs"]
+    if not read or calcs == ["last"]:
+        return []
+    return [f"{panel['title']}: reduces {sorted(read)} with {calcs}, which hides a NaN behind an older value"]
+
+
+def test_a_stat_on_an_unlabelled_gauge_shows_the_newest_sample_even_if_nan(gauges):
+    unlabelled = {name for name, labels in gauges.items() if not labels}
+    stats = [
+        panel for path in DASHBOARDS for panel in _panels(_load(path))
+        if panel["type"] == "stat" and any(
+            name in unlabelled for target in panel["targets"] for name in read_expression(target["expr"]).series
+        )
+    ]
+    assert len(stats) == 4
+    assert [problem for panel in stats for problem in stale_value_problems(panel, unlabelled)] == []
+    # NEGATIVE: the reducer as merged.
+    merged = {**stats[0], "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}}
+    assert stale_value_problems(merged, unlabelled) == [
+        f"{stats[0]['title']}: reduces {sorted(unlabelled & set(read_expression(stats[0]['targets'][0]['expr']).series))}"
+        " with ['lastNotNull'], which hides a NaN behind an older value"
+    ]
+    # A counter rate has no NaN-until-measured state and may skip gaps.
+    assert stale_value_problems(_panel("Backend targets up"), unlabelled) == []
+
+
+def _circuit_breaker_gauge_values() -> set[int]:
+    """Every number `record_circuit_breaker_state` can set, from its source:
+    the state map and the default for a state name that is not in it."""
+    tree = ast.parse((BACKEND / "utils" / "metrics.py").read_text())
+    (function,) = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "record_circuit_breaker_state"
+    ]
+    (state_map,) = [node for node in ast.walk(function) if isinstance(node, ast.Dict)]
+    (lookup,) = [
+        node for node in ast.walk(function)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get" and len(node.args) == 2
+    ]
+    return {*ast.literal_eval(state_map).values(), ast.literal_eval(lookup.args[1])}
+
+
+def unmapped_states(panel: dict, values: set[int]) -> list[int]:
+    mapped = {
+        key
+        for mapping in panel["fieldConfig"]["defaults"].get("mappings", [])
+        if mapping["type"] == "value"
+        for key in mapping["options"]
+    }
+    return sorted(value for value in values if str(value) not in mapped)
+
+
+def test_the_circuit_breaker_panel_names_every_state_the_gauge_can_hold():
+    values = _circuit_breaker_gauge_values()
+    assert values == {-1, 0, 1, 2}
+    panel = _panel("Circuit breaker state")
+
+    assert unmapped_states(panel, values) == []
+    (mapping,) = panel["fieldConfig"]["defaults"]["mappings"]
+    assert all(option.get("color") for option in mapping["options"].values()), "a band needs a colour per state"
+    # NEGATIVE: the mapping as merged left the unknown state a bare -1.
+    merged = {"fieldConfig": {"defaults": {"mappings": [
+        {"type": "value", "options": {"0": {"text": "closed"}, "1": {"text": "open"}, "2": {"text": "half open"}}},
+    ]}}}
+    assert unmapped_states(merged, values) == [-1]
+
+
+def unranked_quantile_problems(expr: str) -> list[str]:
+    """A quantile is NaN for a group without observations in the window;
+    ranked by topk/bottomk those groups become legend entries without a line."""
+    parsed = read_expression(expr)
+    if "histogram_quantile" not in parsed.calls or not parsed.calls & {"topk", "bottomk"}:
+        return []
+    if re.search(r">\s*0\s*\)\s*$", expr):
+        return []
+    return ["a ranked quantile keeps the groups without observations (NaN): filter with `> 0`"]
+
+
+def test_a_ranked_quantile_drops_the_groups_without_observations():
+    ranked = [
+        (panel, target["expr"])
+        for _file, panel, target in _targets()
+        if read_expression(target["expr"]).calls & {"topk", "bottomk"}
+    ]
+    assert [panel for panel, _ in ranked] == ["Slowest endpoints (p95, top 10)"]
+    assert [problem for _, expr in ranked for problem in unranked_quantile_problems(expr)] == []
+    # NEGATIVE: the expression as merged.
+    (_, expr), = ranked
+    merged = expr.replace(" > 0)", ")")
+    assert merged != expr
+    assert unranked_quantile_problems(merged) == [
+        "a ranked quantile keeps the groups without observations (NaN): filter with `> 0`"
+    ]
+
+
+def layout_gaps(panels: list[dict]) -> list[str]:
+    """Row sections whose panels do not tile the 24 grid columns: a short
+    panel beside a tall one leaves a blank block on the dashboard."""
+    gaps = []
+    sections: list[tuple[str, list[dict]]] = []
+    for panel in sorted(panels, key=lambda p: (p["gridPos"]["y"], p["gridPos"]["x"])):
+        if panel["type"] == "row":
+            sections.append((panel["title"], []))
+        else:
+            sections[-1][1].append(panel)
+    for title, members in sections:
+        cells = {
+            (x, y)
+            for panel in members
+            for x in range(panel["gridPos"]["x"], panel["gridPos"]["x"] + panel["gridPos"]["w"])
+            for y in range(panel["gridPos"]["y"], panel["gridPos"]["y"] + panel["gridPos"]["h"])
+        }
+        covered = sum(panel["gridPos"]["w"] * panel["gridPos"]["h"] for panel in members)
+        if covered != len(cells):
+            gaps.append(f"{title}: panels overlap")
+        rows = {y for _, y in cells}
+        if len(cells) != 24 * (max(rows) - min(rows) + 1):
+            gaps.append(f"{title}: {24 * (max(rows) - min(rows) + 1) - len(cells)} empty grid cells")
+    return gaps
+
+
+@pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
+def test_every_row_section_is_tiled_without_a_blank_block(path):
+    assert layout_gaps(_load(path)["panels"]) == []
+
+
+def test_NEGATIVE_a_short_panel_beside_a_tall_one_is_a_gap():
+    """The "MCP health" row as merged: two stats of height 4 beside a graph of height 8."""
+    def at(x: int, w: int, h: int, kind: str = "stat") -> dict:
+        return {"title": f"{kind} {x}", "type": kind, "gridPos": {"x": x, "y": 1, "w": w, "h": h}}
+
+    row = {"title": "MCP health", "type": "row", "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1}}
+    merged = [row, at(0, 6, 4), at(6, 6, 4), at(12, 12, 8, "timeseries")]
+    assert layout_gaps(merged) == ["MCP health: 48 empty grid cells"]
+    below = {**at(0, 6, 4), "gridPos": {"x": 0, "y": 5, "w": 6, "h": 4}}
+    assert layout_gaps([row, at(0, 6, 4), below, at(6, 18, 8, "timeseries")]) == []
+    assert layout_gaps([row, at(0, 14, 4), at(12, 12, 4)]) == ["MCP health: panels overlap"]
+
+
+# =============================================================================
 # Provisioning
 # =============================================================================
 
