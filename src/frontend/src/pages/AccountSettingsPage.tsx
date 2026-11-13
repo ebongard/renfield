@@ -27,6 +27,7 @@ import { extractApiError } from '../utils/axios';
 import Alert from '../components/Alert';
 import PageHeader from '../components/PageHeader';
 import HapticFeedbackSetting from '../components/HapticFeedbackSetting';
+import PushNotificationsCard from '../components/PushNotificationsCard';
 
 export default function AccountSettingsPage() {
   const { t } = useTranslation();
@@ -218,6 +219,9 @@ export default function AccountSettingsPage() {
 
       {/* Per-device, not per-account: stored in this browser only. */}
       <HapticFeedbackSetting />
+
+      {/* Web Push (#79). Renders nothing unless the instance has it active. */}
+      <PushNotificationsCard />
 
       {ConfirmDialogComponent}
     </div>

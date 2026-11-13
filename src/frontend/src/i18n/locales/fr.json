@@ -2647,5 +2647,34 @@
       "no_embeddings": "Votre profil de locuteur ne contient encore aucun échantillon de voix. Enregistrez-en un d'abord.",
       "device_account": "Il s'agit d'un compte d'appareil, pas d'une personne. Il n'a pas de voix et ne peut donc pas porter le second facteur."
     }
+  },
+  "push": {
+    "title": "Notifications push",
+    "explain": "Alerte cet appareil même lorsque Renfield est fermé — pour les notifications qui vous sont adressées ou destinées à tout le monde. L'activation se fait appareil par appareil.",
+    "contentNote": "Le message affiché sur l'écran verrouillé ne mentionne aucun contenu. Il transite par le service de distribution de votre navigateur (Google, Mozilla, Apple ou Microsoft) ; Renfield ne récupère le texte directement auprès de votre instance qu'une fois que vous l'avez touché.",
+    "stateOn": "Activé — cet appareil est notifié",
+    "stateOff": "Désactivé sur cet appareil",
+    "stateLoading": "Vérification de l'état actuel …",
+    "stateDenied": "Bloqué dans le navigateur — autorisez les notifications pour ce site dans les réglages du navigateur, vous pourrez ensuite les activer ici.",
+    "stateUnsupported": "Ce navigateur ne prend pas en charge les notifications push.",
+    "stateNeedsInstall": "Sur iPhone et iPad, uniquement dans l'application installée : ajoutez Renfield via « Partager » → « Sur l'écran d'accueil », puis ouvrez-le depuis celui-ci.",
+    "enable": "Activer sur cet appareil",
+    "disable": "Désactiver sur cet appareil",
+    "enabled": "Cet appareil reçoit désormais les notifications push.",
+    "disabled": "Cet appareil ne reçoit plus les notifications push.",
+    "failed": "Les notifications push n'ont pas pu être modifiées.",
+    "deviceCount_one": "{{count}} appareil est enregistré pour votre compte.",
+    "deviceCount_many": "{{count}} appareils sont enregistrés pour votre compte.",
+    "deviceCount_other": "{{count}} appareils sont enregistrés pour votre compte.",
+    "errors": {
+      "endpoint_not_allowed": "Le service de distribution de ce navigateur n'est pas autorisé sur cette instance.",
+      "subscription_limit_reached": "Trop d'appareils sont déjà enregistrés pour votre compte. Désactivez d'abord les notifications sur un autre appareil.",
+      "no_service_worker": "L'application n'a pas fini de se charger dans ce navigateur. Rechargez la page et réessayez."
+    },
+    "generic": {
+      "title": "Renfield",
+      "body": "Nouvelle notification",
+      "bodyCritical": "Nouvelle notification urgente"
+    }
   }
 }

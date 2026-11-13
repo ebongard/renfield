@@ -285,6 +285,12 @@ app.include_router(trajectories.router, prefix="/api/trajectories", tags=["Traje
 app.include_router(routing_traces.router, prefix="/api/admin", tags=["Routing Traces"])
 app.include_router(tool_health.router, prefix="/api/tool-health", tags=["Tool Health"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
+# Web Push (#79), dark by default: flag off => no route at all. With the flag
+# on, the routes still answer 404 until every precondition holds
+# (services/push_preconditions.py).
+if settings.push_notifications_enabled:
+    from api.routes import push
+    app.include_router(push.router, prefix="/api/push", tags=["Push"])
 app.include_router(kg_routes.router, prefix="/api/knowledge-graph", tags=["Knowledge Graph"])
 app.include_router(wissensbasis_routes.router, prefix="/api/wissensbasis", tags=["Wissensbasis - Graph"])
 app.include_router(atoms.router, prefix="/api/atoms", tags=["Circles - Atoms"])

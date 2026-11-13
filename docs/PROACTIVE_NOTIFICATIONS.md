@@ -141,6 +141,8 @@ Dieselbe Regel gilt auf **allen** Wegen, nicht nur für REST:
 - **Unterdrückungsregeln:** Ein Nutzer sieht seine eigenen und die globalen Regeln, löschen darf er nur seine eigenen.
 - **Erinnerungen:** Liste und Stornieren nur die eigenen. Eine fällige Erinnerung wird als `privacy="personal"` an ihren Besitzer ausgelöst, nicht mehr öffentlich.
 
+- **Web Push (#79, opt-in):** folgt derselben Sichtbarkeitsregel — ein Push geht an die Geräte der adressierten Person, bei öffentlichen Meldungen ohne Empfänger an alle; die Admin-Übersicht löst keinen Push aus. Der Push trägt keinen Inhalt. Siehe [`design/web-push.md`](design/web-push.md).
+
 Admin heißt: `admin` oder `notifications.manage`.
 
 **Verhaltensänderung bei Login-Instanzen:** Persönliche Benachrichtigungen ohne Empfänger (z. B. eine HA-Automation mit `privacy="personal"` ohne `target_user_id`) und Erinnerungen ohne Besitzer (Sprachbefehl ohne erkannten Sprecher) sehen jetzt nur noch Admins.

@@ -71,6 +71,11 @@ torchaudio>=2.0.0       # Audio processing for SpeechBrain
 # Integrationen
 requests>=2.31.0
 httpx>=0.27.0
+# Web Push (#79). MPL-2.0. Pulls py-vapid + http-ece and needs cryptography>=47
+# (the image had 48.0.0 on 2026-11-11). Imported lazily in
+# services/push_service.py, so a missing package only disables the send.
+# Major capped: a deploy is not a dependency update.
+pywebpush>=2.5.0,<3
 paho-mqtt>=1.6.1
 
 # Service Discovery

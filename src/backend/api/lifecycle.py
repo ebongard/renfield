@@ -748,6 +748,11 @@ async def lifespan(app: "FastAPI"):
                 "Set CORS_ORIGINS to your frontend domain(s) in production."
             )
 
+    # Web Push (#79): flag on but a precondition missing => the feature stays
+    # off; this is the one line that says why.
+    from services.push_preconditions import warn_if_push_misconfigured
+    warn_if_push_misconfigured()
+
     # Stage 0: Bootstrap ha_glue. The ha_glue package itself is
     # side-effect-free (the legacy compat re-export in models/database.py
     # imports the package as part of attribute resolution, so any

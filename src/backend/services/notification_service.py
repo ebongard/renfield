@@ -27,6 +27,7 @@ from models.database import (
     Room,
     SystemSetting,
 )
+from services.push_service import schedule_push
 from utils.config import settings
 from utils.log_safety import error_text_without_content
 
@@ -678,6 +679,19 @@ class NotificationService:
     # ------------------------------------------------------------------
 
     async def _deliver(self, notification: Notification, tts: bool = True) -> list[str]:
+        """Deliver a notification: connected devices first, then Web Push.
+
+        The ONE place a notification goes out. The device delivery is awaited
+        and its result returned; the Web Push (#79) is only handed off --
+        ``schedule_push`` starts a task and returns, does nothing while the
+        feature is inactive, and cannot raise. So a slow or failing push
+        service neither delays nor breaks what happens here.
+        """
+        delivered_to = await self._deliver_to_devices(notification, tts=tts)
+        schedule_push(notification)
+        return delivered_to
+
+    async def _deliver_to_devices(self, notification: Notification, tts: bool = True) -> list[str]:
         """Deliver a notification to connected devices via the hook system.
 
         Fires the `deliver_notification` hook and returns the first

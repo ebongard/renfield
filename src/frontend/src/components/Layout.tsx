@@ -50,6 +50,7 @@ import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
 import LanguageSwitcher from './LanguageSwitcher';
 import NotificationToast from './NotificationToast';
+import { useOpenPushedNotification } from '../hooks/useOpenPushedNotification';
 import ScanJobToast from './ScanJobToast';
 import NavBadge from './NavBadge';
 import { useWissensbasisAvailable } from '../api/resources/wissensbasis';
@@ -195,6 +196,9 @@ export default function Layout({ children }: LayoutProps) {
   // legacy flat nav. The flag resolving late just reveals the collapse once.
   const { data: featureFlags } = useFeatureFlags();
   const wissenWorkspace = featureFlags?.wissen_workspace_enabled ?? false;
+  // Web Push (#79): a click on a push hands over an id; fetch and show it in
+  // the toast below. Inert while the feature is off.
+  useOpenPushedNotification(featureFlags?.push_notifications_enabled === true);
   // Business-instance Phase 1: append the Projects entry only when the runtime flag is on.
   // Gated off the typed /api/config/features flag (NOT item.feature — the
   // AuthContext feature map defaults missing keys to true, so it can't hide it).
