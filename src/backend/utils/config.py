@@ -1373,6 +1373,17 @@ class Settings(BaseSettings):
     # docs/design/federation-identity-mapping.md.
     federation_identity_links_enabled: bool = False
 
+    # Federation — every account SEES the instance's active pairings.
+    # Default off (DARK): `GET /api/federation/peers` lists only the pairings
+    # the caller owns and `DELETE /api/federation/peers/{id}` is owner-only —
+    # byte-identical to before. When on, the list carries every non-revoked
+    # pairing of the instance (plus `owned_by_me`, `paired_by`, `linked`,
+    # `can_revoke`), and an account holding `admin` may revoke a pairing it
+    # does not own. USING a pairing is not affected either way: the asking
+    # side never checked the owner (`mcp_client.py`), which is exactly why the
+    # list has to show what an account can already use.
+    federation_peers_visible_to_all: bool = False
+
     # This instance's OWN reachable URL, advertised to a peer during pairing so
     # the peer's PeerUser.transport_config gets a usable endpoint (without it, a
     # UI pairing yields transport_config.endpoints=[] → _select_endpoint→None →

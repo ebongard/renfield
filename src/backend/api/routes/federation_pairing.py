@@ -25,10 +25,10 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import PeerUser, User
+from models.database import FederationUserLink, PeerUser, User
 from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.federation_identity import get_federation_identity
@@ -159,6 +159,18 @@ class PeerDetailResponse(BaseModel):
     paired_at: str
     last_seen_at: str | None
     circle_tier: int  # the tier THIS user granted the remote peer (their view into us)
+
+    # Additive, set ONLY while `federation_peers_visible_to_all` is on. The
+    # list route serialises with `response_model_exclude_unset`, so a flag-off
+    # response carries exactly the seven keys above and nothing else.
+    #: The caller owns this pairing.
+    owned_by_me: bool | None = None
+    #: Display name of the local account that owns the pairing.
+    paired_by: str | None = None
+    #: The CALLER asks this peer as a linked person (never anyone else's link).
+    linked: bool | None = None
+    #: The caller may revoke: the owner, or an account holding `admin`.
+    can_revoke: bool | None = None
 
 
 class PeerListResponse(BaseModel):
@@ -302,17 +314,118 @@ def _tier_for_peer(peer: PeerUser) -> int:
     return peer.granted_tier
 
 
-@router.get("/peers", response_model=PeerListResponse)
+def _holds_admin(user: User) -> bool:
+    """Whether the account holds `Permission.ADMIN`, checked explicitly.
+
+    `admin` is not a wildcard in the permission hierarchy, so it is asked for
+    by name. Fail closed: any lookup error (no role, role not loaded) is "no".
+    """
+    try:
+        from models.permissions import Permission, has_permission
+
+        return has_permission(user.get_permissions(), Permission.ADMIN)
+    except Exception as e:
+        logger.warning(f"Admin lookup failed for user {getattr(user, 'id', None)} (denied): {e}")
+        return False
+
+
+def _account_label(user: User) -> str:
+    """How an owning account is named to the other accounts of the instance."""
+    full_name = " ".join(p for p in (user.first_name, user.last_name) if p).strip()
+    return full_name or user.username or f"user#{user.id}"
+
+
+def _peer_detail(peer: PeerUser) -> PeerDetailResponse:
+    return PeerDetailResponse(
+        id=peer.id,
+        remote_pubkey=peer.remote_pubkey,
+        remote_display_name=peer.remote_display_name,
+        remote_user_id=peer.remote_user_id,
+        paired_at=peer.paired_at.isoformat() if peer.paired_at else "",
+        last_seen_at=peer.last_seen_at.isoformat() if peer.last_seen_at else None,
+        circle_tier=_tier_for_peer(peer),
+    )
+
+
+async def _list_all_active_peers(db: AsyncSession, current_user: User) -> PeerListResponse:
+    """Every non-revoked pairing of the instance, as seen by `current_user`.
+
+    Any local account can already USE any active pairing (`mcp_client.py`
+    looks the peer up by id, without an owner check), so this shows an account
+    what it can use and on whose grant it rests.
+
+    What a non-owner gets, deliberately:
+      - `remote_pubkey`: yes. It is the far instance's PUBLIC key, the page
+        shows its fingerprint, and it is the filter key of the caller's own
+        audit rows. Holding it authorises nothing -- requests are signed with
+        the private half.
+      - `remote_user_id`: no (`None`). It is the far-side account number of
+        the person who paired, and nothing a non-owner does needs it.
+      - `linked`: the CALLER's link only. Other accounts' links are not read
+        here at all; `GET /links/mine` stays the only list of links.
+    """
+    rows = (await db.execute(
+        select(PeerUser, User)
+        .join(User, User.id == PeerUser.circle_owner_id)
+        .where(PeerUser.revoked_at.is_(None))
+        .order_by(
+            # The caller's own pairings first, then newest first.
+            (PeerUser.circle_owner_id != current_user.id),
+            PeerUser.paired_at.desc(),
+            PeerUser.id.desc(),
+        )
+    )).all()
+
+    # `linked` mirrors what the asking side really sends: a `querier_ref`
+    # goes out only while `federation_identity_links_enabled` is on
+    # (`federation_query_asker.py`). A link row behind a dark flag is not
+    # "you ask as yourself".
+    linked_peer_ids: set[int] = set()
+    if settings.federation_identity_links_enabled and rows:
+        linked_peer_ids = set((await db.execute(
+            select(FederationUserLink.peer_id).where(
+                FederationUserLink.local_user_id == current_user.id,
+            )
+        )).scalars().all())
+
+    is_admin = _holds_admin(current_user)
+    peers = []
+    for peer, owner in rows:
+        owned = peer.circle_owner_id == current_user.id
+        detail = _peer_detail(peer)
+        if not owned:
+            detail.remote_user_id = None
+        detail.owned_by_me = owned
+        detail.paired_by = _account_label(owner)
+        detail.linked = peer.id in linked_peer_ids
+        detail.can_revoke = owned or is_admin
+        peers.append(detail)
+    return PeerListResponse(peers=peers)
+
+
+@router.get(
+    "/peers",
+    response_model=PeerListResponse,
+    # Keeps the flag-off response byte-identical: the four additive fields are
+    # never set there, so they are not emitted (not even as `null`).
+    response_model_exclude_unset=True,
+)
 async def list_peers(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
-    """List the authenticated user's paired peers (non-revoked only).
+    """List paired peers (non-revoked only).
 
-    Response carries the tier the local user granted each peer so the
-    UI can render tier-badges + make the "re-tier a peer" surface
-    simple. Last-seen timestamp lets the UI show "last seen 2 hours ago".
+    Default: the caller's own pairings. With `federation_peers_visible_to_all`
+    every active pairing of the instance, see `_list_all_active_peers`.
+
+    Response carries the tier the local owner granted each peer so the
+    UI can render tier-badges. `last_seen_at` is the time of the peer's last
+    authenticated REQUEST to us, not a connectivity state.
     """
+    if settings.federation_peers_visible_to_all:
+        return await _list_all_active_peers(db, current_user)
+
     rows = (await db.execute(
         select(PeerUser).where(
             PeerUser.circle_owner_id == current_user.id,
@@ -320,19 +433,7 @@ async def list_peers(
         ).order_by(PeerUser.paired_at.desc())
     )).scalars().all()
 
-    peers = []
-    for peer in rows:
-        tier = _tier_for_peer(peer)
-        peers.append(PeerDetailResponse(
-            id=peer.id,
-            remote_pubkey=peer.remote_pubkey,
-            remote_display_name=peer.remote_display_name,
-            remote_user_id=peer.remote_user_id,
-            paired_at=peer.paired_at.isoformat() if peer.paired_at else "",
-            last_seen_at=peer.last_seen_at.isoformat() if peer.last_seen_at else None,
-            circle_tier=tier,
-        ))
-    return PeerListResponse(peers=peers)
+    return PeerListResponse(peers=[_peer_detail(peer) for peer in rows])
 
 
 @router.delete("/peers/{peer_id}", status_code=204)
@@ -351,11 +452,18 @@ async def revoke_peer(
 
     Owner-scoped: only the account that owns the pairing can revoke it,
     and a peer owned by someone else answers 404 like a missing one.
+
+    With `federation_peers_visible_to_all` an account holding `admin` may
+    additionally revoke a pairing it does not own -- but only an ACTIVE one,
+    i.e. exactly what the list shows it. Everyone else keeps the uniform 404.
     """
+    ownership = PeerUser.circle_owner_id == current_user.id
+    if settings.federation_peers_visible_to_all and _holds_admin(current_user):
+        ownership = or_(ownership, PeerUser.revoked_at.is_(None))
     peer = (await db.execute(
         select(PeerUser).where(
             PeerUser.id == peer_id,
-            PeerUser.circle_owner_id == current_user.id,
+            ownership,
         )
     )).scalar_one_or_none()
     if peer is None:
@@ -403,3 +511,8 @@ async def revoke_peer(
         f"🔗 Peer {peer.remote_display_name} (id={peer.id}) revoked by "
         f"user {current_user.id}"
     )
+    if peer.circle_owner_id != current_user.id:
+        logger.warning(
+            f"🔗 Peer id={peer.id} was revoked by admin {current_user.id}, "
+            f"not by its owner {peer.circle_owner_id}"
+        )

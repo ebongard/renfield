@@ -10,7 +10,20 @@ export interface FederationPeer {
   remote_display_name: string;
   remote_pubkey: string;
   circle_tier: CircleTier | number;
+  /** Time of the peer's last authenticated REQUEST to us -- not a connectivity state. */
   last_seen_at?: string | null;
+  /**
+   * The four fields below exist only while the instance shows every account
+   * all of its active pairings (`FEDERATION_PEERS_VISIBLE_TO_ALL`). Absent,
+   * the list holds the caller's own pairings only -- so "absent" reads as
+   * "mine, and I may revoke it", never as `false`.
+   */
+  owned_by_me?: boolean;
+  /** Display name of the local account that owns the pairing. */
+  paired_by?: string;
+  /** The CALLER asks this peer as a linked person. */
+  linked?: boolean;
+  can_revoke?: boolean;
 }
 
 export type AuditStatus = 'success' | 'failed' | 'in_progress' | string;
