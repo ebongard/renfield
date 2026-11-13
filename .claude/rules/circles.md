@@ -50,6 +50,14 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   Fremdschlüssel und band im Haushalt still die falsche Person (BL-0135).
 - 🛑 `skill_service.py:443ff` trägt eine ZWEITE, handgeschriebene Kopie des Prädikats — ein
   Umbau hier erfasst sie nicht. Hergang: `docs/design/federation-identity-mapping.md`.
+- 🛑 **BENUTZEN prüft keinen Eigentümer** (`mcp_client.py`: `id` + `revoked_at IS NULL`), SEHEN
+  schon — ausser mit `FEDERATION_PEERS_VISIBLE_TO_ALL` (dunkel): dann listet `GET /federation/peers`
+  alle aktiven Kopplungen, Widerruf = Eigentümer oder `admin` (namentlich geprüft, fail-closed),
+  sonst dasselbe 404. Flag aus = byte-identisch (`response_model_exclude_unset`).
+- 🛑 `granted_tier` gilt HEREIN (was die Gegenseite von uns erhält). Was ein lokales Konto DORT
+  erhält, steht in deren Zeile — nie aus unserer Stufe ableiten oder so beschriften.
+- 🛑 `linked` = Verknüpfung des AUFRUFERS; fremde Verknüpfungen werden nicht gelesen,
+  `remote_user_id` geht an Nicht-Eigentümer leer.
 
 ## Writing source rows
 - Tables: `atoms` (polymorphic registry), `circles` (per-user dimension config), `circle_memberships`,

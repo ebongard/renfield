@@ -74,6 +74,8 @@ data:
   # wenn Auth aus ist — unter Auth-aus gaebe es keine Kreise durchzusetzen und
   # die Zuordnung oeffnete das ganze Gehirn.
   FEDERATION_IDENTITY_LINKS_ENABLED: "true"
+  # Every account sees the instance's active pairings on the peers page (#1548).
+  FEDERATION_PEERS_VISIBLE_TO_ALL: "true"
   ALLOW_REGISTRATION: "false"      # meaningless while auth is off (register route 403s either way); already the safe cutover value — a "true" here would count as "decided" and disarm the auth-on boot gate
   CORS_ORIGINS: "https://renfield.local"   # gepinnt am Cutover 2026-09-23 (Ingress renfield-https); "*" schaltet den CSWSH-Schutz des WS ab
   TRUSTED_PROXIES: "172.16.0.0/16"  # Cluster-Pod-CIDR, Cutover 2026-09-23 — leer = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)

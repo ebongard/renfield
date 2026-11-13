@@ -74,6 +74,12 @@ Die Zweig-Logik wird einmal zentral formuliert in `services/circle_sql.py` und i
 
 🛑 **Seit 2026-10-27 (F-ID-3) gibt es im peer-bezogenen Zweig gar keine `asker_id` mehr.** Hier stand bis dahin: die föderierte `asker_id` sei `PeerUser.remote_user_id`, ein FK-gebundener lokaler `users.id`, der „im Single-User-Haushalt strukturell = Owner-ID" sei — und die bei der Paarung gesetzte `CircleMembership`-Zeile sei kollisionssicher. Beides stimmte nicht mehr: der Haushalt ist seit dem **2026-09-23** auth-on mit sieben Konten, und die Mitgliedschaft war die Kollision, nicht ihre Abwehr. Am 2026-10-27 brach genau das die erste echte Paarung — auf x-idra am Fremdschlüssel (500), im Haushalt still auf die falsche Person. Die Stufe steht jetzt als `peer_users.granted_tier` an der Paarung, und der Filter nennt den Peer, statt sich eine lokale Kennung zu leihen.
 
+**Benutzen und Sehen einer Kopplung (`FEDERATION_PEERS_VISIBLE_TO_ALL`, standardmäßig aus).** Eine Kopplung gehört EINEM Konto (`peer_users.circle_owner_id`), aber jedes lokale Konto kann sie benutzen: die Fragerseite schlägt den Peer nur über `id` und `revoked_at IS NULL` nach. Die Liste (`GET /api/federation/peers`, Seite `/settings/circles/peers`) zeigte sie dagegen nur dem Eigentümer — wer eine Kopplung benutzen konnte, sah weder, dass es sie gibt, noch auf wessen Freigabe sie ruht. Mit dem Flag sieht jedes Konto alle aktiven Kopplungen der Instanz samt `paired_by`; widerrufen dürfen der Eigentümer und ein Konto mit `admin`. Aus = unverändert, byte-identische Antwort.
+
+🛑 **Die Stufe an der Zeile gilt für die Richtung HEREIN, nicht hinaus.** `granted_tier` ist, was DIESE Instanz der Gegenseite gewährt: unverknüpfte Anfragen von dort erhalten die Atome des Eigentümers der Kopplung bis zu dieser Stufe, dazu Öffentliches. Was ein lokales Konto bei der Gegenseite erhält, entscheidet deren eigene Paarungszeile (deren Eigentümer, deren Stufe) — diese Instanz kennt sie nicht. Die Seite sagt deshalb beides getrennt: „Du bist hier verknüpft und fragst als du selbst“ (verknüpft — die Gegenseite antwortet erst dann mit der Reichweite des verknüpften Kontos, wenn sie ihre Hälfte der Verknüpfung ebenfalls hält; eine lokale Zeile beweist das nicht) bzw. „die Gegenseite legt die Stufe fest“ (unverknüpft) für die eigene Anfrage, und „erhält von hier, was `<paired_by>` auf Stufe X teilt“ für die Gegenrichtung. Wer die beiden Richtungen in einem Satz zusammenzieht, verspricht dem Konto eine Reichweite, die es nicht hat.
+
+🛑 **`linked` ist die Verknüpfung des AUFRUFENDEN Kontos, nie die eines anderen** — und nur, solange `FEDERATION_IDENTITY_LINKS_ENABLED` an ist, denn sonst sendet die Fragerseite keinen `querier_ref`. Die Verknüpfungen anderer Konten liest die Liste gar nicht erst; `GET /api/federation/links/mine` bleibt die einzige Liste von Verknüpfungen. Ein fremdes Konto erhält `remote_pubkey` (öffentlich, Filterschlüssel der eigenen Prüfprotokoll-Zeilen), aber kein `remote_user_id`.
+
 ### System KBs are per owner (chat uploads, meetings)
 
 The filter makes the KB a document is filed into decide who reads it: the OWNER branch reads `kb.owner_id`
@@ -402,7 +408,7 @@ Jedes Subsystem, das Inhalte dem LLM präsentiert, wendet den Circle-Filter an:
 | `/brain/review` | Review-Queue: vom System vorgeschlagene Tier-Zuweisungen bestätigen |
 | `/brain/fristen` | Verpflichtungs-Agenda: Fristen-Inbox nach Dringlichkeit gruppiert (Überfällig/Diese Woche/Später), `⚑ rechtlich` bei `legal_gate`, server-gestütztes Bestätigen (Quittungs-Ledger) mit Undo-Toast; gespeist vom Fristen-Notifier (`OBLIGATION_NOTIFIER_ENABLED`) |
 | `/settings/circles` | Circle-Mitglieder pro Stufe verwalten |
-| `/settings/circles/peers` | Federations-Peers (für externe Anfragen über die Circle-Grenze) |
+| `/settings/circles/peers` | Federations-Peers (für externe Anfragen über die Circle-Grenze). Zeigt die eigenen Kopplungen; mit `FEDERATION_PEERS_VISIBLE_TO_ALL` alle aktiven der Instanz, je Zeile mit einrichtendem Konto und der für den Betrachter geltenden Reichweite. Die Zeitangabe ist die letzte ANFRAGE der Gegenseite, kein Verbindungsstatus. |
 
 Die Dokument-Karten unter `/knowledge` tragen eine inline **Fakten**-Panel (`FaktenPanel`, lazy-Fetch beim Aufklappen) und verlinken bidirektional mit der Agenda (`?doc={id}#fakten` ↔ `#frist-{id}`).
 

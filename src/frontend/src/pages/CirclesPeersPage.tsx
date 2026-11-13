@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { Users, Trash2, Clock, Fingerprint, History, Link2, Link2Off } from 'lucide-react';
+import { Users, Trash2, Clock, Fingerprint, History, Link2, Link2Off, UserRound } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import TierBadge from '../components/TierBadge';
@@ -50,22 +50,24 @@ export default function CirclesPeersPage() {
 
   const displayError = error ?? peersQuery.errorMessage;
 
-  const formatRelative = (iso?: string | null): string => {
-    if (!iso) return t('circles.peerNeverSeen');
-    try {
-      const when = toLocalDate(iso);
-      if (!when) return iso;
-      const diff = Date.now() - when.getTime();
-      const minutes = Math.floor(diff / 60000);
-      if (minutes < 1) return t('circles.peerJustNow');
-      if (minutes < 60) return t('circles.peerMinutesAgo', { n: minutes });
-      const hours = Math.floor(minutes / 60);
-      if (hours < 24) return t('circles.peerHoursAgo', { n: hours });
-      const days = Math.floor(hours / 24);
-      return t('circles.peerDaysAgo', { n: days });
-    } catch {
-      return iso;
+  // `last_seen_at` is written when the peer sends US an authenticated
+  // request. It says nothing about reachability, so the label names the
+  // event ("last request ...") instead of reading like a connection state.
+  const formatLastRequest = (iso?: string | null): string => {
+    if (!iso) return t('circles.peerNeverAsked');
+    const when = toLocalDate(iso);
+    if (!when) return t('circles.peerLastRequest', { when: iso });
+    const minutes = Math.floor((Date.now() - when.getTime()) / 60000);
+    if (minutes < 1) return t('circles.peerLastRequest', { when: t('circles.peerJustNow') });
+    if (minutes < 60) {
+      return t('circles.peerLastRequest', { when: t('circles.peerMinutesAgo', { n: minutes }) });
     }
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+      return t('circles.peerLastRequest', { when: t('circles.peerHoursAgo', { n: hours }) });
+    }
+    const days = Math.floor(hours / 24);
+    return t('circles.peerLastRequest', { when: t('circles.peerDaysAgo', { n: days }) });
   };
 
   const handleRevokeLink = async (link: IdentityLink) => {
@@ -85,9 +87,17 @@ export default function CirclesPeersPage() {
   };
 
   const handleRevoke = async (peer: FederationPeer) => {
+    // Someone else's pairing (an admin revoking): the standard text speaks of
+    // "your shared information", which would be wrong here.
+    const foreign = peer.owned_by_me === false;
     const ok = await confirm({
       title: t('circles.revokePeerTitle'),
-      message: t('circles.revokePeerConfirm', { name: peer.remote_display_name }),
+      message: foreign
+        ? t('circles.revokePeerConfirmOther', {
+            name: peer.remote_display_name,
+            pairedBy: peer.paired_by ?? '',
+          })
+        : t('circles.revokePeerConfirm', { name: peer.remote_display_name }),
       confirmLabel: t('common.delete'),
       variant: 'danger',
     });
@@ -143,60 +153,106 @@ export default function CirclesPeersPage() {
         </div>
       ) : (
         <ul className="space-y-3 animate-stagger">
-          {peers.map((peer) => (
-            <li
-              key={peer.id}
-              className={`atom-row tier-ring-${peer.circle_tier} flex-col sm:flex-row`}
-            >
-              <div className="flex-1 min-w-0 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-gray-900 dark:text-white truncate">
-                    {peer.remote_display_name}
-                  </span>
-                  <TierBadge tier={peer.circle_tier} />
+          {peers.map((peer) => {
+            // The instance lists every account's pairings only when the
+            // response carries the additive fields. Without them the row is
+            // the caller's own pairing and renders exactly as before.
+            const showsAllPairings = typeof peer.owned_by_me === 'boolean';
+            const ownedByMe = peer.owned_by_me ?? true;
+            const canRevoke = peer.can_revoke ?? true;
+            const tierLabel = t(`circles.tier.${Math.max(0, Math.min(4, Number(peer.circle_tier) || 0))}`);
+            return (
+              <li
+                key={peer.id}
+                className={`atom-row tier-ring-${peer.circle_tier} flex-col sm:flex-row`}
+              >
+                <div className="flex-1 min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-gray-900 dark:text-white truncate">
+                      {peer.remote_display_name}
+                    </span>
+                    <TierBadge tier={peer.circle_tier} />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                    <span className="inline-flex items-center gap-1">
+                      <Fingerprint className="w-3 h-3" aria-hidden="true" />
+                      <code className="tabular-nums">{peer.remote_pubkey.slice(0, 12)}…</code>
+                    </span>
+                    <span
+                      className="inline-flex items-center gap-1"
+                      title={t('circles.peerLastRequestHelp')}
+                    >
+                      <Clock className="w-3 h-3" aria-hidden="true" />
+                      {formatLastRequest(peer.last_seen_at)}
+                    </span>
+                    {showsAllPairings && !ownedByMe && (
+                      <span className="inline-flex items-center gap-1">
+                        <UserRound className="w-3 h-3" aria-hidden="true" />
+                        {t('circles.peerPairedBy', { name: peer.paired_by ?? '' })}
+                      </span>
+                    )}
+                  </div>
+                  {showsAllPairings && (
+                    <div className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
+                      <p data-testid={`peer-ask-hint-${peer.id}`}>
+                        {peer.linked
+                          ? t('circles.peerAskLinked', { name: peer.remote_display_name })
+                          : t('circles.peerAskUnlinked', { name: peer.remote_display_name })}
+                      </p>
+                      <p data-testid={`peer-grant-hint-${peer.id}`}>
+                        {ownedByMe
+                          ? t('circles.peerGrantMine', {
+                              name: peer.remote_display_name,
+                              tier: tierLabel,
+                            })
+                          : t('circles.peerGrantOther', {
+                              name: peer.remote_display_name,
+                              pairedBy: peer.paired_by ?? '',
+                              tier: tierLabel,
+                            })}
+                      </p>
+                    </div>
+                  )}
                 </div>
-                <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-                  <span className="inline-flex items-center gap-1">
-                    <Fingerprint className="w-3 h-3" aria-hidden="true" />
-                    <code className="tabular-nums">{peer.remote_pubkey.slice(0, 12)}…</code>
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <Clock className="w-3 h-3" aria-hidden="true" />
-                    {formatRelative(peer.last_seen_at)}
-                  </span>
+                <div className="sm:ml-4 sm:flex-shrink-0 flex items-center gap-2 mt-3 sm:mt-0">
+                  <Link
+                    to={`/brain/audit?peer=${encodeURIComponent(peer.remote_pubkey)}`}
+                    className="btn-icon btn-icon-ghost"
+                    title={t('circles.peerShowAudit')}
+                    aria-label={t('circles.peerShowAudit')}
+                  >
+                    <History className="w-4 h-4" />
+                  </Link>
+                  {/* The person handshake presupposes a pairing the person
+                      OWNS (the server answers 404 otherwise), so the button
+                      is offered on own pairings only. */}
+                  {ownedByMe && (
+                    <button
+                      type="button"
+                      onClick={() => setLinkPeer(peer)}
+                      className="btn-icon btn-icon-ghost"
+                      title={t('circles.linkStartHandshake')}
+                      aria-label={t('circles.linkStartHandshake')}
+                    >
+                      <Link2 className="w-4 h-4" />
+                    </button>
+                  )}
+                  {canRevoke && (
+                    <button
+                      type="button"
+                      onClick={() => handleRevoke(peer)}
+                      disabled={revokingIds.has(peer.id)}
+                      className="btn-icon btn-icon-danger disabled:opacity-50"
+                      title={t('circles.revokePeer')}
+                      aria-label={t('circles.revokePeer')}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
-              </div>
-              <div className="sm:ml-4 sm:flex-shrink-0 flex items-center gap-2 mt-3 sm:mt-0">
-                <Link
-                  to={`/brain/audit?peer=${encodeURIComponent(peer.remote_pubkey)}`}
-                  className="btn-icon btn-icon-ghost"
-                  title={t('circles.peerShowAudit')}
-                  aria-label={t('circles.peerShowAudit')}
-                >
-                  <History className="w-4 h-4" />
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => setLinkPeer(peer)}
-                  className="btn-icon btn-icon-ghost"
-                  title={t('circles.linkStartHandshake')}
-                  aria-label={t('circles.linkStartHandshake')}
-                >
-                  <Link2 className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleRevoke(peer)}
-                  disabled={revokingIds.has(peer.id)}
-                  className="btn-icon btn-icon-danger disabled:opacity-50"
-                  title={t('circles.revokePeer')}
-                  aria-label={t('circles.revokePeer')}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
 

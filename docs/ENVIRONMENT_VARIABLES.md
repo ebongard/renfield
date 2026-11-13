@@ -2957,6 +2957,39 @@ renfields eigene `/ws/*`. Der Voice-Server prüft im Modus `registry` über
 auch dort zu verlangen ist ein eigener Schritt im Voice-Server-Code und gatet
 das Umlegen hier nicht.
 
+### Föderation: Kopplungen für alle Konten sichtbar
+
+```bash
+# Jedes Konto SIEHT die aktiven Kopplungen der Instanz
+# Default: false
+FEDERATION_PEERS_VISIBLE_TO_ALL=false
+```
+
+Jedes lokale Konto kann jede aktive Kopplung **benutzen** — die Fragerseite
+schlägt den Peer nur über seine Kennung nach, ohne Eigentümerprüfung
+(`services/mcp_client.py`). Die Liste unter `/settings/circles/peers` zeigte
+eine Kopplung aber nur dem Konto, das sie eingerichtet hat. Das Flag hebt
+diese Lücke zwischen Benutzen und Sehen auf; am Benutzen ändert es nichts.
+
+- **Aus (Standard):** `GET /api/federation/peers` liefert nur die eigenen
+  Kopplungen, `DELETE /api/federation/peers/{id}` ist dem Eigentümer
+  vorbehalten. Die Antwort ist byte-identisch zum Stand vor dem Flag.
+- **An:** die Liste trägt alle nicht widerrufenen Kopplungen der Instanz,
+  je Zeile zusätzlich `owned_by_me`, `paired_by` (Anzeigename des
+  einrichtenden Kontos), `linked` (das **aufrufende** Konto fragt dort als
+  verknüpfte Person) und `can_revoke`. Widerrufen darf neben dem Eigentümer
+  ein Konto mit der Berechtigung `admin`; alle anderen erhalten weiterhin
+  dasselbe 404 wie bei einer unbekannten Kennung.
+
+Was ein fremdes Konto NICHT erhält: `remote_user_id` (leer) und jede Angabe
+über die Personenverknüpfungen anderer — `GET /api/federation/links/mine`
+bleibt je Konto. Den öffentlichen Schlüssel der Gegenseite (`remote_pubkey`)
+erhält es; er ist öffentlich und berechtigt zu nichts.
+
+`linked` folgt dem, was die Fragerseite tatsächlich sendet: bei
+`FEDERATION_IDENTITY_LINKS_ENABLED=false` ist es immer `false`, auch wenn
+eine Verknüpfungszeile existiert.
+
 ---
 
 ## Integrationen
