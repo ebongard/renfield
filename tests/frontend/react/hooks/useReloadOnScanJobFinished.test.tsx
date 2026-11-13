@@ -19,6 +19,44 @@ function finish(sessionId?: string): void {
   });
 }
 
+function finishIntoDeleted(sessionId: string): void {
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(SCAN_JOB_FINISHED_EVENT, {
+        detail: { reason: 'done', sessionId, conversationDeleted: true },
+      }),
+    );
+  });
+}
+
+describe('useReloadOnScanJobFinished — the conversation was deleted (#1507)', () => {
+  it('does not reload the thread a tab still shows: the reload would empty it', () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => useReloadOnScanJobFinished(false, reload, 'open'));
+    finishIntoDeleted('open');
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('does not queue a reload for the end of a streaming turn either', () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = renderHook(
+      ({ loading }) => useReloadOnScanJobFinished(loading, reload, 'open'),
+      { initialProps: { loading: true } },
+    );
+    finishIntoDeleted('open');
+    rerender({ loading: false });
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('still reloads for a normal event afterwards', () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => useReloadOnScanJobFinished(false, reload, 'open'));
+    finishIntoDeleted('open');
+    finish('open');
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('useReloadOnScanJobFinished', () => {
   it('reloads right away when no turn is streaming', () => {
     const reload = vi.fn().mockResolvedValue(undefined);

@@ -829,6 +829,7 @@ Kinoreife Vollbild-Variante fürs Wandtablet/-display (`kiosk.view`-gated, auße
 - **Status = physische Satelliten-LEDs** (`hardware/led.py`): idle=blau, listening=grün, processing=gelb, speaking=cyan, error=rot, offline=dunkel-gestrichelt — angewandt auf Kern, Raum-Punkte (pro Raum der signifikanteste Live-Zustand seiner Online-Satelliten) und Legende. **Das gesamte Ambiente-Feld** (Halo/Nebel/Basis-Verlauf/Sweep) folgt der Kernfarbe, damit der Hintergrund den Zustand mitträgt (blau im Ruhezustand, grün beim Zuhören …).
 - **Ambiente-Kacheln** (blenden sich bei Nichtverfügbarkeit aus; Daten kommen jetzt über den `/ws/kiosk`-Push, nicht mehr per Poll): **Wetter** (Wetter-MCP für `KIOSK_WEATHER_LOCATION`, ~10-min-Cache, ins Snapshot/`weather_updated`-Delta eingespeist) und **Now-Playing** (aus `MediaFollowService.active_sessions()`, ein Eintrag pro Raum, inhaltsminimal — keine Nutzer-IDs, `now_playing_changed`-Delta).
 - **Orientierungs-agnostisch:** `preserveAspectRatio="meet"` (Konstellation nie beschnitten) + Basis-Verlauf als CSS-Gradient am Wrapper — Landscape-Wand-TVs UND Portrait-Raumtablets rendern korrekt. `prefers-reduced-motion` respektiert; inhaltsfrei by design.
+- **Uhr-Kachel** (unten links, #263): Wandzeit und Datum ausschließlich aus der Geräteuhr — kein Netzwerk, kein Socket, keine Nutzlast. Formatiert über `Intl` in der aktiven Oberflächensprache, als `<time>` mit maschinenlesbarem `dateTime`, ohne Live-Region. Ein einziger Timer zielt auf die nächste Minutengrenze und richtet sich nach jedem Auslösen neu an der Geräteuhr aus (kein Drift; Nachführen nach verborgenem Tab oder Geräteschlaf über `visibilitychange`). Keine Sekunden, kein blinkender Trenner, keine Übergänge — damit ohne Sonderfall `prefers-reduced-motion`-gerecht. Die Uhr nimmt bewusst **nicht** an der Veraltet-Anzeige teil: sie behauptet nur die Zeit; veraltete Daten meldet weiterhin das Banner samt rotem Kern.
 - Öffnbar über den „Kiosk"-Button im Admin-Board-Header.
 
 ## Admin Maintenance Page
@@ -874,6 +875,7 @@ Siehe [ACCESS_CONTROL.md](ACCESS_CONTROL.md) für vollständige Dokumentation.
 ### Unterstützte Sprachen
 - **Deutsch (de)**: Vollständig übersetzt (Standard)
 - **Englisch (en)**: Vollständig übersetzt
+- **Französisch (fr)** und **Italienisch (it)**: Übersetzt; ein dort fehlender Schlüssel fällt auf Deutsch zurück
 
 ### Implementierung
 - **react-i18next** für Frontend-Internationalisierung
@@ -901,6 +903,17 @@ Siehe [MULTILANGUAGE.md](MULTILANGUAGE.md) für die vollständige Anleitung.
 - **Full-Screen**: Ohne Browser-UI
 - **Responsive**: Mobile-First Design mit adaptivem Layout
 - **Offline**: Funktioniert ohne Internet (Service Worker)
+
+### Haptisches Feedback (#84, je Gerät, Standard: aus)
+
+Kurze Vibrationen über die Web Vibration API (`utils/haptics.ts`, `haptic(pattern)` mit `tap` / `success` / `error` / `notification`). Keine Server-Einstellung und kein Feature-Flag: der Schalter steht unter **Mein Konto** (`/settings/account`), gilt nur für den jeweiligen Browser (`localStorage`, Schlüssel `renfield_haptics_enabled`) und ist ohne Zutun aus.
+
+- **Drei Bedingungen**, sonst geschieht nichts: Schalter an, `navigator.vibrate` vorhanden, und das Betriebssystem verlangt keine reduzierte Bewegung (`prefers-reduced-motion` ist das einzige OS-Signal, das ein Browser preisgibt).
+- **Spürbar nur auf Geräten mit Vibrationsmotor** (praktisch: Android). iOS Safari kennt die API nicht; dort ist der Schalter deaktiviert und sagt, warum. Desktop-Chromium dagegen HAT die API und meldet Erfolg, ohne dass etwas vibriert — der Schalter ist dort bedienbar und wirkungslos. „Unterstützt“ heißt: die API existiert; ob ein Motor da ist, verrät kein Browser (bewusst keine User-Agent-Erkennung).
+- **Reduzierte Bewegung**: ist der Schalter an und das OS-Signal gesetzt, sagt die Statuszeile „pausiert“ statt „ein“.
+- **Wirft nie**: ein blockierter Speicher oder ein vom Browser abgelehnter Aufruf (keine Nutzergeste) bleibt folgenlos; ein gesperrter Speicher heißt „aus".
+- **Einsatzstellen**: Nachricht gesendet, Mikrofon-Knopf, Wake-Word-Schalter (`tap`); erkanntes Wake-Word (`success`); Geräte-Widget im Chat und Smart-Home-Seite beim Umschalten (`tap`); eingehende Benachrichtigung (`notification`); fehlgeschlagene Schnellaktion am Anhang und fehlgeschlagener Scan-Auftrag (`error`).
+- **Nicht gebaut**: Pull-to-Refresh (gibt es in der Oberfläche nicht), native iOS-Haptik.
 
 ## Sicherheit
 

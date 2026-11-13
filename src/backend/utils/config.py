@@ -188,7 +188,7 @@ class Settings(BaseSettings):
 
     # Language
     default_language: str = "de"
-    supported_languages: str = "de,en,it"  # Comma-separated list of supported languages
+    supported_languages: str = "de,en,it,fr"  # Comma-separated list of supported languages
     whisper_model: str = "base"
     # Recommended overrides via env: WHISPER_MODEL=medium for CPU production,
     # WHISPER_MODEL=large-v3 on GPU hosts (~3 GB VRAM in float16).

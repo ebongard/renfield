@@ -14,6 +14,10 @@ import { SCAN_JOB_FINISHED_EVENT, type ScanJobFinishedDetail } from './useUserEv
  * without login every tab receives every scan's event. An event without a
  * conversation (older backend) reloads, as before.
  *
+ * An event for a DELETED conversation never reloads: nothing was written into
+ * it, and a tab still showing that thread (deleted from another device) would
+ * be emptied by the reload — the history of a missing conversation is `[]`.
+ *
  * `loading`, `reload` and `sessionId` are read through refs, so the window
  * listener is registered once rather than on every turn start/end.
  */
@@ -32,7 +36,9 @@ export function useReloadOnScanJobFinished(
 
   useEffect(() => {
     const onFinished = (event: Event) => {
-      const target = (event as CustomEvent<ScanJobFinishedDetail>).detail?.sessionId;
+      const detail = (event as CustomEvent<ScanJobFinishedDetail>).detail;
+      if (detail?.conversationDeleted) return;
+      const target = detail?.sessionId;
       if (target && target !== sessionIdRef.current) return;
       if (loadingRef.current) {
         pendingRef.current = true;

@@ -1,6 +1,6 @@
 # Multi-Language Support (i18n)
 
-Renfield unterstützt vollständige Mehrsprachigkeit im Frontend mit Deutsch und Englisch als verfügbare Sprachen.
+Renfield unterstützt Mehrsprachigkeit im Frontend mit Deutsch, Englisch, Italienisch und Französisch als verfügbare Sprachen. Pflicht für jeden neuen Schlüssel sind Deutsch und Englisch; Italienisch und Französisch werden nachgezogen, ein dort fehlender Schlüssel fällt auf Deutsch zurück.
 
 ---
 
@@ -8,7 +8,7 @@ Renfield unterstützt vollständige Mehrsprachigkeit im Frontend mit Deutsch und
 
 | Komponente | Technologie | Sprachen |
 |------------|-------------|----------|
-| **Frontend** | react-i18next | Deutsch, Englisch |
+| **Frontend** | react-i18next | Deutsch, Englisch, Italienisch, Französisch |
 | **STT (Whisper)** | Per-Request Parameter | Alle Whisper-Sprachen |
 | **TTS (Piper)** | Multi-Voice Config | DE, EN (konfigurierbar) |
 | **Satellite** | Config-basiert | DE, EN |
@@ -25,7 +25,7 @@ Renfield unterstützt vollständige Mehrsprachigkeit im Frontend mit Deutsch und
 
 ### Konfiguration
 
-Die i18n-Konfiguration befindet sich in `src/frontend/src/i18n/index.js`:
+Die i18n-Konfiguration befindet sich in `src/frontend/src/i18n/index.ts` (gekürzt; die `pro`-Edition legt je Sprache zusätzlich `<lang>.pro.json` darüber):
 
 ```javascript
 import i18n from 'i18next';
@@ -38,10 +38,12 @@ i18n
   .init({
     resources: {
       de: { translation: de },
-      en: { translation: en }
+      en: { translation: en },
+      it: { translation: it },
+      fr: { translation: fr }
     },
     fallbackLng: 'de',
-    supportedLngs: ['de', 'en'],
+    supportedLngs: ['de', 'en', 'it', 'fr'],
     detection: {
       order: ['localStorage', 'navigator'],
       caches: ['localStorage'],
@@ -86,10 +88,13 @@ function LanguageSwitcher() {
 
 ```
 src/frontend/src/i18n/
-├── index.js              # Konfiguration
+├── index.ts              # Konfiguration
 └── locales/
-    ├── de.json           # Deutsche Übersetzungen (~400 Keys)
-    └── en.json           # Englische Übersetzungen (~400 Keys)
+    ├── de.json           # Deutsch (Rückfallsprache, Pflicht)
+    ├── en.json           # Englisch (Pflicht)
+    ├── it.json           # Italienisch (Lücken fallen auf Deutsch zurück)
+    ├── fr.json           # Französisch (Lücken fallen auf Deutsch zurück)
+    └── <lang>.pro.json   # Überlagerung der pro-Edition je Sprache
 ```
 
 ### Namespace-Struktur
@@ -205,7 +210,9 @@ new Date().toLocaleString(i18n.language);
 
 ## Neue Übersetzungen hinzufügen
 
-### Schritt 1: Keys in beiden Dateien einfügen
+### Schritt 1: Keys in den Sprachdateien einfügen
+
+Pflicht sind `de.json` und `en.json`. `it.json` und `fr.json` bekommen den Schlüssel dort, wo die Nachbarschlüssel vorhanden sind (siehe „Nachziehen neuer Schlüssel“ unten).
 
 **de.json:**
 ```json
@@ -349,7 +356,7 @@ Die gewählte Sprache wird in `localStorage` gespeichert:
 
 ```javascript
 localStorage.getItem('renfield_language');
-// → "de" oder "en"
+// → "de", "en", "it" oder "fr"
 ```
 
 ### Backend-Präferenz (Optional)
@@ -366,6 +373,12 @@ ALTER TABLE users ADD COLUMN preferred_language VARCHAR(10) DEFAULT 'de';
 GET /api/preferences/language
 PUT /api/preferences/language {"language": "en"}
 ```
+
+Das Backend nimmt nur Codes aus `SUPPORTED_LANGUAGES` an (Vorgabe `de,en,it,fr`) und weist alles andere mit 400 ab.
+
+**Die gespeicherte Präferenz gewinnt beim Laden.** Bei jedem Seitenaufruf holt der `LanguageSwitcher` die Präferenz des Kontos und stellt die Oberfläche darauf um — auch dann, wenn der Browser eine andere Sprache in `localStorage` hält; der dortige Wert wird dabei überschrieben. So folgt die Sprache der Person von Gerät zu Gerät. Die Kehrseite: Eine Sprache, die der Umschalter anbietet, das Backend aber nicht speichert, hält nur bis zum nächsten Laden — der abgewiesene `PUT` bleibt für den Nutzer unsichtbar. Jede Sprache des Umschalters muss deshalb in `SUPPORTED_LANGUAGES` stehen, und zwar in der laufenden Backend-Konfiguration, **bevor** das Frontend mit der neuen Sprache ausgeliefert wird.
+
+Dieselbe Liste gibt den Code auch für den ausdrücklichen `language`-Parameter der Sprachrouten (`/api/voice/stt`, `/tts`, `/voice-chat`) frei. Die gespeicherte Präferenz selbst liest nur die Präferenzroute; für eine Sprache ohne Piper-Stimme greift TTS auf die Standardstimme zurück.
 
 ---
 
@@ -472,41 +485,71 @@ t('greeting', { name: 'Max' })
 
 ## Weitere Sprachen hinzufügen
 
-### Schritt 1: Übersetzungsdatei erstellen
+Französisch (`fr`) ist das durchgezogene Beispiel; jede weitere Sprache braucht dieselben Stellen.
+
+### Schritt 1: Übersetzungsdateien erstellen
 
 ```bash
 cp src/frontend/src/i18n/locales/en.json src/frontend/src/i18n/locales/fr.json
-# Alle Werte in fr.json übersetzen
+cp src/frontend/src/i18n/locales/en.pro.json src/frontend/src/i18n/locales/fr.pro.json
+# Alle Werte übersetzen; Schlüssel, {{Platzhalter}} und eingebettete Tags bleiben unverändert
 ```
+
+**Pluralformen:** i18next wählt die Form nach den CLDR-Kategorien der Sprache. Französisch kennt `one` (0 und 1), `many` (Millionen-Vielfache) und `other`; zu jedem englischen `x_other` gehört daher ein französisches `x_many`, und die `_one`-Form muss `{{count}}` einsetzen, weil sie auch die Null abdeckt.
+
+**Typografie:** Im Französischen steht vor `? ! : ; »` und nach `«` ein geschütztes Leerzeichen (in der Datei als `\u00a0` geschrieben).
 
 ### Schritt 2: In i18n-Config registrieren
 
-```javascript
-// src/frontend/src/i18n/index.js
+```typescript
+// src/frontend/src/i18n/index.ts
 import fr from './locales/fr.json';
+import frPro from './locales/fr.pro.json';
+
+const frResources = edition === 'pro' ? deepMerge(fr, frPro as Record<string, unknown>) : fr;
 
 i18n.init({
   resources: {
-    de: { translation: de },
-    en: { translation: en },
-    fr: { translation: fr }  // NEU
+    // …
+    fr: { translation: frResources }
   },
-  supportedLngs: ['de', 'en', 'fr']  // NEU
+  supportedLngs: ['de', 'en', 'it', 'fr']
 });
 ```
 
 ### Schritt 3: LanguageSwitcher erweitern
 
-```jsx
-// src/frontend/src/components/LanguageSwitcher.jsx
-const languages = [
-  { code: 'de', name: 'Deutsch', flag: '🇩🇪' },
-  { code: 'en', name: 'English', flag: '🇬🇧' },
-  { code: 'fr', name: 'Français', flag: '🇫🇷' }  // NEU
+```tsx
+// src/frontend/src/components/LanguageSwitcher.tsx
+type LanguageCode = 'de' | 'en' | 'it' | 'fr';
+
+const LANGUAGES: Language[] = [
+  // …
+  { code: 'fr', name: 'Français', flag: '🇫🇷' },
 ];
 ```
 
-### Schritt 4: Piper-Stimme hinzufügen (optional)
+### Schritt 4: Datumsauswahl
+
+`CALENDAR_LOCALES` in `src/frontend/src/components/paperless/reviewControls.tsx` ordnet dem Sprachcode das date-fns-Locale zu; ohne Eintrag zeigt der Kalender englische Monatsnamen.
+
+### Schritt 5: Tests
+
+- `tests/frontend/react/i18n/frenchLocale.test.ts` — Schlüsselmenge, Platzhalter, leere und unübersetzte Werte, Pluralformen, pro-Überlagerung. Eine neue Sprache bekommt dieselbe Prüfung.
+- `tests/frontend/react/i18n/refusalKeys.test.ts` — die Sprache in `LOCALES` aufnehmen.
+- `tests/frontend/react/components/LanguageSwitcher.test.tsx` — Option und Umschalten.
+
+**Nachziehen neuer Schlüssel:** Ein Schlüssel, der in `en.json` hinzukommt und in `fr.json` noch fehlt, fällt zur Laufzeit auf Deutsch zurück. Der Test meldet die Lücke nur als Warnung; er schlägt erst mit `RENFIELD_I18N_STRICT=1` fehl, und diese Variable setzt nichts von selbst. Französisch ist damit — wie Italienisch — nicht auf Vollständigkeit verriegelt. Wer den Stand wissen will, ruft den strengen Lauf ausdrücklich auf:
+
+```bash
+cd tests/frontend/react && RENFIELD_I18N_STRICT=1 npx vitest run i18n/frenchLocale.test.ts
+```
+
+### Schritt 6: Backend (`SUPPORTED_LANGUAGES`)
+
+Der Code der Sprache muss in `SUPPORTED_LANGUAGES` stehen: Vorgabe in `utils/config.py`, `k8s/configmap.yaml`, die ConfigMap jeder weiteren Instanz und die Angaben in `docs/ENVIRONMENT_VARIABLES.md`. Ohne das springt die Oberfläche beim nächsten Laden auf die gespeicherte Sprache zurück (siehe „Backend-Präferenz“). Reihenfolge beim Ausrollen: erst die Backend-Konfiguration, dann das Frontend. Dieselbe Liste gibt den Code auch für die Sprachrouten frei — vorher prüfen, ob STT/TTS die Sprache tragen.
+
+### Schritt 7: Piper-Stimme hinzufügen (optional)
 
 ```bash
 # .env

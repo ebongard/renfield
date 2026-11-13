@@ -14,8 +14,9 @@ What must hold, against real Postgres (the record is written by a trigger):
 - an upload made under the deleted id after the delete follows the turn to the
   fresh id; older uploads and other people's uploads stay where they were;
 - the row is never recreated where it is written (`save_message`): a turn that
-  started before the delete, a scan outcome and a Paperless announcement are
-  refused; only the satellite's fixed room id opts in.
+  started before the delete, a scan outcome and a Paperless announcement write
+  nothing (the scan still notifies its requester live, #1507); only the
+  satellite's fixed room id opts in.
 """
 from __future__ import annotations
 
@@ -590,11 +591,14 @@ class TestTheWriterRefusesADeletedId:
         ) == (None, None, None)
         assert ws.sent == []
 
-    async def test_a_scan_outcome_after_the_delete_is_refused(
+    async def test_a_scan_outcome_after_the_delete_writes_nothing_but_notifies(
         self, db_session, monkeypatch,
     ):
         """The scan started in the conversation; it was deleted before the
-        scanner reported. The outcome settles as refused and writes nothing."""
+        scanner reported. Nothing is written and the row is not recreated; the
+        requester still gets the content-free live event (#1507)."""
+        import json
+
         from services import scanner_jobs as sj
         from tests.backend.test_scanner_jobs import JOB_ID, FakeRedis, _event, _tool_result
         from utils.config import settings
@@ -608,8 +612,13 @@ class TestTheWriterRefusesADeletedId:
         )
         await _delete(db_session, "weg-scan")
 
-        assert await sj.handle_job_event(db_session, _event(), redis=redis) == "refused"
+        assert await sj.handle_job_event(db_session, _event(), redis=redis) == "notified"
         assert await _row(db_session, "weg-scan") is None
-        assert redis.published == []
-        # Final, like any refusal: the retry is a duplicate, not a second try.
+        assert [json.loads(payload) for _channel, payload in redis.published] == [{
+            "target": None, "type": "scan_job_finished", "reason": "done",
+            "session_id": "weg-scan", "conversation_deleted": True,
+        }]
+        # Final: the retry is a duplicate -- no second try, no second notice.
         assert await sj.handle_job_event(db_session, _event(), redis=redis) == "duplicate"
+        assert await _row(db_session, "weg-scan") is None
+        assert len(redis.published) == 1
