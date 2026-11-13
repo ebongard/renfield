@@ -1196,6 +1196,7 @@ PRESENCE_RSSI_FILTER_ALPHA_DOWN=0.1     # EWMA-Gewicht wenn SCHWÄCHER (langsam 
 PRESENCE_FILTER_FRESH_SECONDS=35.0      # ein Raum, der so lange nicht gehört wurde, verfällt Richtung Boden
 PRESENCE_SWITCH_ENTER_MARGIN_DB=8.0     # dB, um die der GEFILTERTE Wert des Herausforderers den aktuellen Raum schlagen muss (ersetzt den Scan-Count)
 PRESENCE_VOICE_HOLD_SECONDS=60.0        # Sekunden, in denen eine Sprach-/Auth-Sichtung den Raum gegen BLE-Messwerte hält (0 = aus: der nächste BLE-Scan darf sofort umbuchen)
+PRESENCE_VOICE_RELEASE_MARGIN_DB=10.0   # dB über PRESENCE_RSSI_THRESHOLD, die der GEFILTERTE Wert eines Raums braucht, um jemanden aus einem Sprach-/Auth-Raum zu holen, in dem das Telefon nie gehört wurde (0 = aus). Nur im RSSI-Filter-Pfad
 PRESENCE_HOUSEHOLD_ROLES="Admin,Familie" # Rollen die als Haushaltsmitglieder gelten (für Privacy-TTS)
 PRESENCE_ANALYTICS_TIMEZONE="Europe/Berlin" # Lokale Zeitzone für Heatmap-/Prognose-Stunden+Tage (Events werden UTC gespeichert); ungültiger Wert => UTC
 

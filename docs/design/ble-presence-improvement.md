@@ -195,7 +195,20 @@ value is a choice, not a measurement. A second voice sighting moves the user at 
 The hold covers every caller of `register_voice_presence`, so a typed chat message from a room-bound device
 pins the room for the same time. With the setting at 0 the old path is unchanged.
 
-Not addressed here, and the reason the hold is a bound rather than a cure: once it ends, the switch rule is the
-old one. A room the phone was never heard in still has no filtered value, so the first reading from elsewhere —
-even one at the RSSI floor — takes the user back. What should count after the hold (the phone, or the last
-certain sighting) is an open decision; a lone satellite at the floor can also still place a user in its room.
+### After the hold: the last certain sighting stands (2026-11-13, owner's decision)
+
+The hold alone only postpones the flip: once it ends, a room the phone was never heard in still has no
+filtered value, and the first reading from elsewhere would win by default. The phone and the person are not
+the same thing; the owner chose the person. `UserPresence.voice_pinned` marks a room that rests on a voice/auth
+sighting BLE has not confirmed. For such a room `_should_switch_filtered` measures the challenger against the
+RSSI floor plus `PRESENCE_VOICE_RELEASE_MARGIN_DB` (default 10 → −70 dBm at the −80 floor), on the filtered
+value. BLE confirming the room, or moving the user, ends the pin; from then on the old rules apply.
+
+Consequences, intended: someone who speaks in a room and leaves the phone elsewhere stays in that room for as
+long as the phone is heard only weakly; they become absent when the phone is not heard for
+`PRESENCE_STALE_TIMEOUT`. The 10 dB is a choice. The readings behind it: on 2026-11-13 the phantom room's
+filtered value sat between −75 and −78 dBm over one minute, while entries with the phone in the room reach
+−60 and better. `0` restores the old rule. Legacy (non-filter) path: unchanged apart from the hold.
+
+Still open: a lone satellite near the floor can place a user in its room when no voice sighting is involved,
+and RSSI is compared across satellites without any per-receiver calibration.

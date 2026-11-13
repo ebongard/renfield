@@ -119,6 +119,7 @@ Phones rotate their address; `ble/rpa.py` resolves it with the per-person IRK an
 biases room arbitration). Do not bond a phone to one satellite — it out-shouts its neighbours.
 A voice/auth sighting pins the room for `PRESENCE_VOICE_HOLD_SECONDS` (60): BLE may confirm it but not move the user out —
 before that, the next scan undid every voice move (the filter has no value for a room the phone was never heard in).
+After the hold such a room stays until another room's FILTERED value is `PRESENCE_VOICE_RELEASE_MARGIN_DB` (10) above the floor.
 
 ## Wake word model files
 The config push carries `model_sha256` per keyword (`services/wakeword_models.py`); a satellite ≥ 1.4.17 replaces

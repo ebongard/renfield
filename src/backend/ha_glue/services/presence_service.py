@@ -76,6 +76,11 @@ class UserPresence:
     # Wall-clock time until which a voice/auth sighting pins the room: a BLE
     # reading cannot move the user out of it before then. 0.0 = no hold.
     voice_hold_until: float = 0.0
+    # True while the current room rests on a voice/auth sighting that BLE has
+    # not confirmed. Such a room has no filtered RSSI of its own, so a BLE
+    # challenger is measured against the floor plus the release margin instead
+    # of winning by default. Cleared once BLE places the user itself.
+    voice_pinned: bool = False
 
 
 class PresenceService:
@@ -102,6 +107,7 @@ class PresenceService:
         self._filter_fresh_seconds: float = float(ha_glue_settings.presence_filter_fresh_seconds)
         self._switch_enter_margin_db: float = float(ha_glue_settings.presence_switch_enter_margin_db)
         self._voice_hold_seconds: float = float(ha_glue_settings.presence_voice_hold_seconds)
+        self._voice_release_margin_db: float = float(ha_glue_settings.presence_voice_release_margin_db)
         self._room_names: dict[int, str] = {}            # room_id → name cache
         self._user_names: dict[int, str] = {}            # user_id → username
         self._user_first_names: dict[int, str] = {}      # user_id → first_name
@@ -330,6 +336,14 @@ class PresenceService:
             return True
         filt = current.room_rssi_filtered
         if current.room_id not in filt:
+            if current.voice_pinned and self._voice_release_margin_db > 0:
+                # The room came from a voice/auth sighting and the phone was
+                # never heard there, so there is nothing that could have "aged
+                # out". The last certain sighting stands until BLE is clearly
+                # stronger elsewhere: floor + release margin, on the FILTERED
+                # value (a single strong stray is damped below it).
+                return (filt.get(best_room_id, float("-inf")) - float(self._rssi_threshold)
+                        >= self._voice_release_margin_db)
             return True  # current room no longer heard at all → follow the signal
         return (filt.get(best_room_id, float("-inf")) - filt[current.room_id]
                 >= self._switch_enter_margin_db)
@@ -428,6 +442,7 @@ class PresenceService:
 
         # --- Same room? reinforce and stop -----------------------------------
         if best_room_id == current.room_id:
+            current.voice_pinned = False  # BLE confirms the room: its evidence now
             current.consecutive_room_count += 1
             current.pending_room_id = None
             current.pending_room_count = 0
@@ -459,6 +474,7 @@ class PresenceService:
 
         current.room_id = best_room_id
         current.room_name = self._room_names.get(best_room_id) if best_room_id else None
+        current.voice_pinned = False
         current.satellite_id = best_satellite_id
         current.consecutive_room_count = 1
         current.pending_room_id = None
@@ -585,6 +601,9 @@ class PresenceService:
             current.last_seen = now
             current.confidence = confidence
             current.voice_hold_until = now + self._voice_hold_seconds
+            # Pin only a room BLE is not vouching for; if the phone is heard
+            # here, the ordinary margin rule already protects the room.
+            current.voice_pinned = room_id not in current.room_rssi_filtered
             return
 
         # Different room or first appearance — bypass hysteresis
@@ -625,6 +644,8 @@ class PresenceService:
         current.last_seen = now
         current.consecutive_room_count = 1
         current.voice_hold_until = now + self._voice_hold_seconds
+        # Pin only a room BLE is not vouching for (see the same-room branch).
+        current.voice_pinned = room_id not in current.room_rssi_filtered
         if self._voice_hold_seconds > 0:
             # A BLE candidate that was counting towards a switch is void now.
             # Only with the hold on, so that 0 leaves the old path untouched.

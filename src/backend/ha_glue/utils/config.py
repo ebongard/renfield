@@ -116,6 +116,7 @@ class HaGlueSettings(BaseSettings):
     presence_filter_fresh_seconds: float = 35.0         # a room not heard within this is treated as fading and decays toward the floor
     presence_switch_enter_margin_db: float = 8.0        # dB the challenger's FILTERED value must beat the current room by to switch (replaces the scan count)
     presence_voice_hold_seconds: float = 60.0           # Seconds a voice/auth sighting pins the room against BLE readings (0 = off: the next BLE scan may move the user at once)
+    presence_voice_release_margin_db: float = 10.0      # dB above presence_rssi_threshold a room's FILTERED RSSI needs to take a user out of a voice/auth room the phone was never heard in (0 = off: any reading takes over once the hold ends). RSSI-filter path only.
     presence_household_roles: str = "Admin,Familie"     # Roles considered household members for privacy TTS
     presence_webhook_url: str = ""                      # URL to POST presence events (empty = disabled)
     presence_webhook_secret: SecretStr | None = None    # Shared secret for webhook auth (X-Webhook-Secret header)
