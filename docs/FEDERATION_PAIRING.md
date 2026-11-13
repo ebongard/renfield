@@ -45,6 +45,10 @@ instances these are **already done** — this section is for any new instance.
    still completes but the *first query* dies with **"Peer has no usable transport
    endpoint"** (`_select_endpoint` returned `None`).
 
+3. **Optional: a name for the instance.** `FEDERATION_INSTANCE_NAME` is what the
+   *other* side shows for this instance ("Instance A"). Unset, the host of the
+   advertised URL is sent instead. See §3a.
+
 Verify both live:
 
 ```bash
@@ -193,6 +197,87 @@ must never be treated as the local owner.
 
 ---
 
+## 3a. What a pairing is called, and whether it is reachable
+
+### The instance name
+
+A pairing row carried one name: the **person** who paired on the far side. When
+one person owns both instances, each side showed the other under that person's
+name. A pairing now also carries the far **instance's** own name, shown first:
+"Instance B · alex".
+
+- **Sent by:** `FEDERATION_INSTANCE_NAME`; unset, the host of
+  `FEDERATION_ADVERTISED_URL`; neither, nothing. Never a person's name.
+- **Carrier:** two extra top-level fields, `instance_name` and
+  `instance_name_signature`, on the pairing offer and response, on
+  `query_brain/initiate` and the terminal `query_brain/retrieve` answer, and on
+  the reachability ping and its answer. They sit **outside** every envelope's
+  signed payload; the second is an Ed25519 signature by the same key over
+  `{"purpose": "renfield.federation.instance_name.v1", "instance_name",
+  "pubkey", "envelope_signature"}`, which binds the name to the one envelope it
+  rode on.
+- **Mixed versions, both directions:** an older instance drops the two unknown
+  fields and verifies the envelope exactly as before; a newer instance that
+  receives nothing keeps the fallback label. An instance with no name to send
+  emits the same JSON it always did. Existing pairings learn the name with the
+  next query or ping — no re-pairing.
+- **Accepted only** after the envelope verified against a paired, non-revoked
+  key; then capped at 64 characters and stripped of control and format
+  characters. An attachment that does not verify is dropped and the request
+  stands.
+- 🛑 **Display text only.** Never an identifier, never a lookup key, never part
+  of a server or tool name — `peer_<id>` and the pubkey remain the only keys.
+- **Shown as** instance name → host of the stored endpoint → the person alone,
+  on the kiosk, the peers page, the audit view and the chat status line. The
+  audit view shows the name the **row recorded** when it was written
+  (`federation_query_log.peer_instance_name_snapshot`); rows from before carry
+  none and show the person alone.
+- 🛑 The tool description the model reads names the instance once a **verified**
+  name is stored (never the endpoint-host fallback). That wording is pinned in
+  `test_peer_tool_description.py` but **not measured** — run
+  `bin/measure-preselect.py` after a name goes live.
+
+### Reachability (`FEDERATION_REACHABILITY_ENABLED`, default off)
+
+Three statements that used to be one light:
+
+| | from |
+|---|---|
+| **paired** | the row exists and is not revoked |
+| **recently active** | a real request in either direction within 5 minutes (`last_seen_at` inbound, the newest `asked` audit row outbound) |
+| **reachable / unreachable / unknown** | a signed round trip, `POST /api/federation/peer/ping` |
+
+The ping: `{version, asker_pubkey, nonce, timestamp, signature}`, signed over
+`{"kind": "ping", …}`. It is answered only to a paired, non-revoked key, inside
+a ±60 s window, once per nonce, and under a budget of its own
+(`FEDERATION_PING_RATE_PER_MINUTE`, both sides). Everything else gets the same
+uniform 400 a stranger's query gets; with the flag off the route answers 404
+whatever is posted. The answer `{version, status: "ok", nonce, answered_at,
+responder_pubkey, responder_signature}` is checked like a query's — paired key,
+signature, **our** nonce — so a recorded answer cannot be replayed.
+
+A ping is not a request: it does not move `last_seen_at`, writes no audit row
+and spends no query budget.
+
+**Who probes, and when** — never a free-running poll:
+
+- the kiosk refresher, while a wall display is connected: each pairing at most
+  every 5 minutes, plus one round when a display connects (in the background;
+  the snapshot never waits for another instance);
+- a person: "check now" on the peers page (`POST /peers/{id}/check` — the owner,
+  an `admin` holder, or with `FEDERATION_PEERS_VISIBLE_TO_ALL` every account),
+  and once when the page shows a row that has no reading.
+
+Readings live in Redis under a 15-minute TTL, not in the database: an
+observation nobody refreshed ceases to exist and the pairing reads `unknown`
+again. A claim (`SET NX EX 30`) per pairing makes several backend processes —
+or a refresher and an impatient person — send one ping, not several.
+
+🛑 `unsupported` (the far side answers 404: one release behind, or its flag is
+off) is **unknown**, never unreachable. Both sides need the flag for a verdict.
+
+---
+
 ## 4. Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -201,6 +286,10 @@ must never be treated as the local owner.
 | Pairing worked, breaks after a redeploy | Ephemeral identity key regenerated → pubkey changed | Provision the persisted-identity Secret (§0.1) and re-pair. |
 | **"Pairing handshake failed"** on complete | Wrong/edited/expired JSON, or offer↔response nonce mismatch | Restart the handshake from Step 1 with a fresh offer. |
 | Peer reaches only public content | Expected — see §2 | Person-link (Piece 3) not shipped yet. |
+| Peers page / kiosk: **reachability unknown**, reason "does not answer reachability checks" | The far side is one release behind or has `FEDERATION_REACHABILITY_ENABLED` off | Switch it on there too (§3a). The pairing itself may be fine. |
+| **Unreachable**, reason "certificate is no longer the one remembered" | The far side's TLS certificate was renewed; the pin from pairing is stale | Queries fail the same way. Re-pair, or refresh the pin — waiting does not help. |
+| **Unreachable**, reason "rejects the signed check" | Pairing revoked on the far side, clocks more than a minute apart, or its ping budget is spent | Check the far side's peers page and both clocks. |
+| A peer is shown under a host name | It has not sent a name yet, or sets none | Set `FEDERATION_INSTANCE_NAME` there; the label follows with the next query or ping. |
 
 ---
 
@@ -214,6 +303,7 @@ All under `/api/federation`, authenticated as the local user:
 | B step 2 | `POST /pair/accept` | `{offer, my_tier_for_you, accepted_endpoints}` | signed response (B saved) |
 | A step 3 | `POST /pair/complete` | `{response, their_tier_for_me}` | peer record (live) |
 | both | `GET /peers` · `DELETE /peers/{id}` | — | list / revoke |
+| both | `POST /peers/{id}/check` | — | `{state, reason, checked_at}` — one signed round trip now (404 while `FEDERATION_REACHABILITY_ENABLED` is off) |
 | both | `GET /identity` | — | this instance's pubkey |
 
 The offer, response, and the advertised endpoints are all Ed25519-signed; the

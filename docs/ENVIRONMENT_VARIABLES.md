@@ -3021,6 +3021,89 @@ erhält es; er ist öffentlich und berechtigt zu nichts.
 `FEDERATION_IDENTITY_LINKS_ENABLED=false` ist es immer `false`, auch wenn
 eine Verknüpfungszeile existiert.
 
+### Föderation: Name der Instanz
+
+```bash
+# Der Name, unter dem DIESE Instanz bei ihren Gegenstellen erscheint
+# Default: leer
+FEDERATION_INSTANCE_NAME=
+```
+
+Eine Kopplung trug bisher nur den Namen der **Person**, die gekoppelt hat.
+Gehören beide Instanzen derselben Person, zeigte jede Seite die andere unter
+diesem Personennamen. Der Instanzname steht jetzt davor: „Instance B · alex“.
+
+- **Was gesendet wird:** `FEDERATION_INSTANCE_NAME`; ist er leer, der Host aus
+  `FEDERATION_ADVERTISED_URL`; ist auch der leer, nichts. Nie der Name einer
+  Person.
+- **Womit:** als eigens signierter Anhang (`instance_name` +
+  `instance_name_signature`) am Kopplungsangebot, an der Kopplungsantwort, an
+  jeder Anfrage und an jeder Erreichbarkeitsprüfung. Bestehende Kopplungen
+  lernen den Namen also mit dem nächsten Austausch, ohne neu zu koppeln; eine
+  Gegenstelle auf älterem Stand ignoriert den Anhang.
+- **Was die Gegenseite damit tut:** sie speichert ihn nur von einem
+  authentifizierten, nicht widerrufenen Peer und nur bei gültiger Signatur
+  (`peer_users.remote_instance_name`), auf 64 Zeichen gekürzt und von
+  Steuer- und Formatzeichen befreit. Er ist **Anzeigetext**: nie Kennung, nie
+  Suchschlüssel, nie Teil des Servernamens (`peer_<id>` bleibt).
+- **Anzeige** (Kiosk, `/settings/circles/peers`, Audit-Ansicht, Chat-Statuszeile):
+  Instanzname → Host des gespeicherten Endpunkts → Personenname allein.
+
+🛑 Der Name steht auch in der Werkzeugbeschreibung, die das Modell liest
+(`services/peer_mcp_registry.py`), sobald die Gegenseite einen **verifizierten**
+Namen gesendet hat — der Host-Rückfall der Anzeige zählt dort nicht. Diese
+Fassung der Beschreibung ist festgenagelt, aber **nicht gemessen**: nach dem
+Setzen eines Namens mit `bin/measure-preselect.py` nachmessen.
+
+### Föderation: Erreichbarkeitsprüfung
+
+```bash
+# Signierter Rundlauf je Kopplung: "erreichbar" heisst erreichbar
+# Default: false
+FEDERATION_REACHABILITY_ENABLED=false
+
+# Prüfungen pro Minute je Kopplung, auf BEIDEN Seiten (1-120)
+# Default: 12
+FEDERATION_PING_RATE_PER_MINUTE=12
+```
+
+Bisher galt ein Peer auf dem Kiosk als „erreichbar“, wenn er **uns** in den
+letzten fünf Minuten etwas gefragt hatte — eine Aussage über seine Neugier,
+nicht über die Verbindung. Mit dem Flag werden drei Dinge getrennt gezeigt:
+**gekoppelt**, **kürzlich aktiv** (eine echte Anfrage in einer der beiden
+Richtungen) und **erreichbar / nicht erreichbar / unbekannt** aus einem
+signierten Rundlauf (`POST /api/federation/peer/ping`).
+
+- **Aus (Standard):** kein Ping verlässt die Instanz; die Route antwortet 404
+  wie eine Version, die sie nicht kennt; die Kiosk-Nutzlast und
+  `GET /api/federation/peers` sind byte-identisch zum Stand davor.
+- **An:** der Kiosk-Auffrischer prüft jede Kopplung höchstens alle fünf
+  Minuten — nur solange ein Wanddisplay verbunden ist, und einmal, wenn eines
+  sich verbindet. Die Peer-Seite bekommt „Jetzt prüfen“
+  (`POST /api/federation/peers/{id}/check`: Eigentümer, Konto mit `admin`,
+  mit `FEDERATION_PEERS_VISIBLE_TO_ALL` jedes Konto) und prüft eine Zeile ohne
+  Messwert einmal beim Öffnen. Kein frei laufender Abruf.
+
+| Ergebnis | Anzeige | Bedeutung |
+|---|---|---|
+| `reachable` | erreichbar | Rundlauf verifiziert (gekoppelter Schlüssel, Signatur, unsere Nonce) |
+| `unreachable` | nicht erreichbar | keine Verbindung, Zeitüberschreitung, 5xx |
+| `pin_mismatch` | nicht erreichbar | das TLS-Zertifikat ist nicht mehr das gemerkte — warten hilft nicht |
+| `refused` | nicht erreichbar | die Gegenseite weist die signierte Prüfung ab (Kopplung dort aufgehoben, Uhren weichen ab, Limit) |
+| `invalid_response` | nicht erreichbar | Antwort nicht dem gekoppelten Schlüssel zuzuordnen |
+| `no_endpoint` | nicht erreichbar | die Kopplung trägt keine Adresse |
+| `unsupported` | **unbekannt** | die Gegenseite beantwortet keine Prüfung (ältere Version oder Flag dort aus) |
+| — | **unbekannt** | noch nicht geprüft, oder der letzte Messwert ist älter als 15 Minuten |
+
+🛑 **Beide Seiten brauchen das Flag.** Ist es nur auf einer Seite an, liest
+diese `unsupported` → „unbekannt“, nie „nicht erreichbar“.
+
+Eine Prüfung ist keine Anfrage: sie verschiebt `last_seen_at` nicht („Letzte
+Anfrage …“ behält seine Bedeutung), schreibt keine Audit-Zeile und verbraucht
+kein Anfrage-Kontingent. Messwerte liegen in Redis mit Ablaufzeit, nicht in
+der Datenbank; mehrere Backend-Prozesse senden je Kopplung einen Ping, nicht
+mehrere.
+
 ---
 
 ## Integrationen

@@ -357,7 +357,27 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
   satellite is reinstated via `satellite_online`.
 - Consequence for the frontend: NO wall-clock decay of frozen snapshot values; a reconnect re-anchors from a fresh
   snapshot. Federation peers get the live `peer_status_changed` delta (#969, `kiosk_data.py` → `useKioskSocket.ts`);
-  the wall-clock freshness backstop (`PEER_OFFLINE_MS` in `useKioskModel.ts`) is kept as a deliberate second guard.
-  A peer also appears on the TOOLS ring, because the backend registers its `query_brain` tool server as
-  `peer_<peer id>` (stable across a rename). The kiosk labels that node with the peer's display name
-  (`toolServerLabel`), not with the id; an unlisted peer falls back to the prettified server name.
+  a wall-clock freshness backstop in `useKioskModel.ts` is kept as a deliberate second guard (see below).
+- **A paired instance appears ONCE: on the outer peers arc (2026-11-13).** The backend registers a peer's
+  `query_brain` tool server as `peer_<peer id>` with `connected=True` and no session behind it, so the same
+  instance used to show twice — a permanently green diamond on the TOOLS ring (counted as one "healthy tool")
+  next to its own red ring on the arc. `kiosk_data.kiosk_mcp_status` now drops federation-transport servers from
+  `mcp.servers`, `tool_health[]` and `total_tools` (recognised by transport, not by the name prefix), and
+  `MCPManager._broadcast_tool_health` sends no `tool_health_changed` for them — one filter layer, so snapshot and
+  deltas agree. Not gated: it removes a duplicate and a false "healthy". The label helper `toolServerLabel`
+  from #1544 went with it.
+- **The arc node carries everything.** Label = the far instance's name with the person who paired beneath it (the
+  person alone when the instance has no label). A turn that asked the peer still names `peer_<id>` in
+  `turn_activity.subsystems`; the arc node (`PeerNode.pulseId`) lights and runs the same expanding ring a tool
+  node does. A single peer sits at the very top of the arc (y = 20 of 1080), where a label above it is cut off
+  by the screen edge — there the label stands beside the node.
+- **Peer state, two rules, chosen by the payload.** With `FEDERATION_REACHABILITY_ENABLED` the payload carries
+  `reachability` (reachable / unreachable / unknown), `reachability_reason`, `checked_at` and `recently_active`
+  from a signed round trip; the ring is solid / dashed / dotted-and-muted, a filled centre marks "recently
+  active", and the localized state + reason is the `<title>`. `last_seen_at` plays no part then (a ping does not
+  move it); the backstop is on `checked_at` (`PEER_CHECK_STALE_MS`, 20 min) and degrades to **unknown**, never to
+  unreachable. Without the flag the payload is byte-identical to before and the wall keeps its old two-valued
+  rule: "queried us within 5 minutes" plus the `PEER_OFFLINE_MS` backstop on `last_seen_at`.
+- **Probing is consumer-gated, not a poll.** The peer refresher tick (`api/lifecycle.py`) runs a probe round
+  first, only while a display is connected; a connecting display triggers one round in the background and its
+  snapshot goes out with the stored readings — it never waits for another instance.

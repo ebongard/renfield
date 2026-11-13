@@ -31,8 +31,18 @@ roles at startup. The gate fails closed: a lookup error denies.
   glow/bloom lives ONLY here. Motion (nebula/stars/radar sweep) stays reduced-motion-gated.
 - **No wall-clock decay in the frontend.** Liveness is backend-authoritative: a satellite in the roster IS online; the
   backend pushes `satellite_offline`, a reconnect re-anchors from a fresh snapshot. Federation peers get the
-  `peer_status_changed` delta (#969) and additionally keep a wall-clock freshness backstop (`PEER_OFFLINE_MS`) in
-  `useKioskModel.ts` — a second guard behind the delta, not a substitute for it.
+  `peer_status_changed` delta (#969) and additionally keep a wall-clock freshness backstop in `useKioskModel.ts`
+  (`peerNodeFor`) — a second guard behind the delta, not a substitute for it.
+- **A paired instance is ONE node, on the peers arc — never also a `peer_<id>` node on the tools ring.** Its MCP
+  entry has `connected=True` with no session behind it; shown as a tool it was a permanent false "healthy".
+  Filtered in ONE place, `kiosk_data.kiosk_mcp_status` (by transport, not name prefix) plus the suppressed
+  `tool_health_changed` in `MCPManager._broadcast_tool_health`, so snapshot, deltas and counts agree. A turn that
+  asked the peer still names `peer_<id>` in `turn_activity`; the ARC node pulses on it (`PeerNode.pulseId`).
+- **Peer state follows the payload.** `reachability` present (`FEDERATION_REACHABILITY_ENABLED`): the signed
+  round trip decides, three-valued; `last_seen_at` plays no part (a ping does not move it) and a stale
+  `checked_at` degrades to `unknown`, never to unreachable. Absent: the old two-valued rule on `reachable` +
+  `PEER_OFFLINE_MS`, payload byte-identical. Probes run only while a display is connected, and the connect
+  snapshot never waits for another instance.
 
 ## Health verdicts
 - Primary = `get_status()`, which folds connectivity AND functionality: **degraded** = connected but a bound startup

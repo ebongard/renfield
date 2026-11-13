@@ -58,6 +58,15 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   erhält, steht in deren Zeile — nie aus unserer Stufe ableiten oder so beschriften.
 - 🛑 `linked` = Verknüpfung des AUFRUFERS; fremde Verknüpfungen werden nicht gelesen,
   `remote_user_id` geht an Nicht-Eigentümer leer.
+- 🛑 **Der Instanzname (`remote_instance_name`) ist ANZEIGETEXT**, nie Kennung, Suchschlüssel oder
+  Teil von `peer_<id>`. Er reist als Anhang AUSSERHALB der signierten Nutzlast (mit eigener
+  Signatur über Name + Schlüssel + Umschlag-Signatur) — ein Feld IN der Nutzlast bräche jede
+  Gegenstelle auf älterem Stand. Übernommen erst NACH Umschlag-Signatur und Peer-Nachschlag;
+  ungültiger Anhang = verwerfen, Anfrage gilt. Einziger Schreiber: `federation_instance_name.py`.
+- 🛑 **Ein Ping ist keine Anfrage** (`FEDERATION_REACHABILITY_ENABLED`, dunkel): `last_seen_at`
+  bleibt „letzte ANFRAGE", keine Prüfprotokoll-Zeile, eigenes Kontingent, Fremden dasselbe
+  einheitliche 400. `unsupported` (Gegenseite antwortet 404) ist UNBEKANNT, nie „nicht erreichbar".
+  Messwerte liegen in Redis mit Ablaufzeit, nie in `peer_users`. Kein frei laufender Abruf.
 
 ## Writing source rows
 - Tables: `atoms` (polymorphic registry), `circles` (per-user dimension config), `circle_memberships`,
@@ -107,6 +116,8 @@ engere Behauptung im Bild statt im Wort, und die Farbe liest man zuerst.
 🛑 Der Antwortende fuehrt `peer_display_name` auf dem Pending-Satz MIT — ein Schnappschuss des Zeitpunkts,
 kein Nachschlagen beim Schreiben (die Paarung kann spaeter umbenannt oder widerrufen sein). Zeilen vor dem
 2026-10-29 tragen dort leer; die Ansicht faellt dann auf den Schluessel zurueck, nie auf einen Platzhalter.
+Der Instanzname ist ein ZWEITER Schnappschuss (`peer_instance_name_snapshot`, nullable): alte Zeilen zeigen die
+Person allein — nie aus der heutigen Paarung nachtragen.
 🛑 **Ein ABGEBROCHENER Zugriff wird verzeichnet, und zwar als `aborted`, nicht als `unknown` oder `failed`.**
 Die Fragerseite schreibt ihren Vermerk in einem `finally` (`mcp_client.py`); der Antwortende hatte das bis zum
 2026-10-29 NICHT — sein `except CancelledError` warf ohne Vermerk, also verlor ausgerechnet die Seite, die den
