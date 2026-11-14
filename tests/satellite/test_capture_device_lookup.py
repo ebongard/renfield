@@ -1,7 +1,7 @@
 """
 Microphone lookup: a configured device that is missing is not replaced.
 
-Fitnessraum, 2026-11-09: with the USB XVF3800 unplugged, the ALSA "default"
+Hobbyraum, 2026-11-09: with the USB XVF3800 unplugged, the ALSA "default"
 PCM vanished from PortAudio's list and the only input left was "pulse" -- the
 null PCM that /etc/asound.conf installs so PortAudio cannot hang on a missing
 PulseAudio server. ``_find_pyaudio_device`` fell back to PortAudio's default

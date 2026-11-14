@@ -192,7 +192,7 @@ def test_record_logs_counts_and_returns_the_detail(monkeypatch):
     lines, done = _capture_warnings()
     try:
         detail = record_empty_turn(
-            source="satellite", session_id="sat-1", room="Kinderbad",
+            source="satellite", session_id="sat-1", room="Badezimmer",
             turn_end_reason="silence", audio_seconds=3.12, floor_seconds=FLOOR,
         )
     finally:
@@ -202,7 +202,7 @@ def test_record_logs_counts_and_returns_the_detail(monkeypatch):
     assert counted == [("satellite", "vad_floor")]
     assert len(lines) == 1
     assert "kind=vad_floor" in lines[0]
-    assert "room=Kinderbad" in lines[0]
+    assert "room=Badezimmer" in lines[0]
     assert "turn_end=silence" in lines[0]
     assert "audio=3.12s" in lines[0]
     assert "vad_speech=-" in lines[0], "an unreported verdict is shown as unknown"
@@ -216,7 +216,7 @@ def test_record_logs_the_reported_verdict(monkeypatch, seen, text):
     lines, done = _capture_warnings()
     try:
         detail = record_empty_turn(
-            source="satellite", session_id="sat-1", room="Kinderbad",
+            source="satellite", session_id="sat-1", room="Badezimmer",
             turn_end_reason="silence", audio_seconds=3.12, floor_seconds=FLOOR,
             vad_speech_seen=seen,
         )
@@ -418,7 +418,7 @@ async def _run_turn(
     if vad_speech_seen is not _ABSENT:
         frame["vad_speech_seen"] = vad_speech_seen
     ws = _FakeSatelliteSocket([frame])
-    await mgr.register(satellite_id="sat-bad", room="Kinderbad", websocket=ws, capabilities={})
+    await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=ws, capabilities={})
     await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
     n_bytes = round(audio_seconds * 32000)
     if n_bytes:
@@ -556,7 +556,7 @@ async def test_satellite_a_failing_cue_send_keeps_the_connection(satellite_env):
         await real_send(data)
 
     ws.send_json = send_json
-    await mgr.register(satellite_id="sat-bad", room="Kinderbad", websocket=ws, capabilities={})
+    await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=ws, capabilities={})
     await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
     mgr.buffer_audio_bytes("s1", b"\0" * 99840, 1)
     lines, done = _capture_warnings()
@@ -622,7 +622,7 @@ async def test_satellite_fault_while_ending_an_empty_turn_counts_once(satellite_
 
     mgr.end_session = end_once_then_fail
     ws = _FakeSatelliteSocket([{"type": "audio_end", "session_id": "s1", "reason": "silence"}])
-    await mgr.register(satellite_id="sat-bad", room="Kinderbad", websocket=ws, capabilities={})
+    await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=ws, capabilities={})
     await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
     mgr.buffer_audio_bytes("s1", b"\0" * 99840, 1)
     await handler.satellite_websocket(ws, token=None)
@@ -644,7 +644,7 @@ async def test_satellite_empty_turn_whose_every_end_fails_still_goes_idle(satell
     handler, mgr, whisper, counted = satellite_env
     whisper.transcribe_bytes = AsyncMock(return_value="")
     ws = _FakeSatelliteSocket([{"type": "audio_end", "session_id": "s1", "reason": "silence"}])
-    await mgr.register(satellite_id="sat-bad", room="Kinderbad", websocket=ws, capabilities={})
+    await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=ws, capabilities={})
     await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
     mgr.buffer_audio_bytes("s1", b"\0" * 99840, 1)
     mgr.end_session = AsyncMock(side_effect=RuntimeError("history store gone"))
@@ -687,7 +687,7 @@ async def _registered_with_session(monkeypatch, broadcast):
     mgr = SatelliteManager()
     ducks: list[tuple] = []
     monkeypatch.setattr(mgr, "_spawn_duck", lambda rid, room, duck: ducks.append((rid, duck)))
-    await mgr.register(satellite_id="sat-bad", room="Kinderbad", websocket=_FakeSatelliteSocket([]), capabilities={})
+    await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=_FakeSatelliteSocket([]), capabilities={})
     mgr.set_room_id("sat-bad", 7)
     await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
     ducks.clear()

@@ -2,7 +2,7 @@
 
 Before the checksum a satellite only asked "do I have a file of that name?",
 so a retrained model never replaced the previous one on a satellite that
-already had it (Fitnessraum + Wohnzimmer ran an older renfield_de for months).
+already had it (Hobbyraum + Wohnzimmer ran an older renfield_de for months).
 """
 
 import hashlib

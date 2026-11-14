@@ -1,7 +1,7 @@
 """
 Capture liveness counter in the heartbeat (#1211).
 
-The backend first judged a deaf satellite by a FROZEN level. The Fitnessraum
+The backend first judged a deaf satellite by a FROZEN level. The Hobbyraum
 (2026-11-09, USB microphone unplugged) defeated that: it kept reporting a level
 that cycled between two exact values (1499.6 / 525.1) on every heartbeat, at
 ~40 % CPU -- the capture handed out its last buffers again and again. The
@@ -48,7 +48,7 @@ class TestFreshChunkCounter:
         assert sat._fresh_chunk_count == 50
 
     def test_two_replayed_buffers_freeze_the_counter_but_not_the_level(self):
-        """The Fitnessraum case: A, B, A, B ... moves the level, never the counter."""
+        """The Hobbyraum case: A, B, A, B ... moves the level, never the counter."""
         sat = _make_satellite()
         a, b = _noise(1, 2000), _noise(2, 700)
         levels = set()

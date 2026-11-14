@@ -191,7 +191,7 @@ class TestTheMessage:
     async def test_days_instead_of_hours_once_it_gets_long(self, settled):
         n = _Notify()
         out = await _run(notify=n, connected=[],
-                         rows=_rows(("a", "BensZimmer", 24 * 30)), state=_State())
+                         rows=_rows(("a", "Gästezimmer", 24 * 30)), state=_State())
         assert "30 Tagen" in out
 
     async def test_never_connected_says_so(self, settled):

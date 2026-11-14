@@ -55,8 +55,8 @@ class TestSatelliteManager:
         survive into get_all_satellites() so the fleet page shows THIS
         device (not the legacy hardcoded '3 LEDs' for everyone)."""
         await manager.register(
-            satellite_id="benszimmer",
-            room="BensZimmer",
+            satellite_id="gaestezimmer",
+            room="Gästezimmer",
             websocket=AsyncMock(),
             capabilities={
                 "local_wakeword": True,
@@ -71,7 +71,7 @@ class TestSatelliteManager:
             language="de",
         )
 
-        caps = manager.satellites["benszimmer"].capabilities
+        caps = manager.satellites["gaestezimmer"].capabilities
         assert caps.led_count == 12
         assert caps.led_type == "xvf3800"
         assert caps.mic_count == 4
@@ -82,7 +82,7 @@ class TestSatelliteManager:
         # Serialized payload the REST route forwards to the frontend
         serialized = next(
             s for s in manager.get_all_satellites()
-            if s["satellite_id"] == "benszimmer"
+            if s["satellite_id"] == "gaestezimmer"
         )["capabilities"]
         assert serialized["led_count"] == 12
         assert serialized["led_type"] == "xvf3800"

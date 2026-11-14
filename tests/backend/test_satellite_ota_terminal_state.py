@@ -34,7 +34,7 @@ def _manager_with_satellite(status=None, stage=None, error=None):
     mgr = SatelliteManager()
     mgr.satellites["sat-1"] = SatelliteInfo(
         satellite_id="sat-1",
-        room="Fitnessraum",
+        room="Hobbyraum",
         websocket=MagicMock(),
         capabilities=SatelliteCapabilities(),
         version="1.4.6",
@@ -489,7 +489,7 @@ def _session(mgr, sat_id="sat-1", state=None, age=0.0):
     sess = SatelliteSession(
         session_id="sess-1",
         satellite_id=sat_id,
-        room="Fitnessraum",
+        room="Hobbyraum",
         state=state or SatelliteState.LISTENING,
     )
     sess.started_at = _t.time() - age
