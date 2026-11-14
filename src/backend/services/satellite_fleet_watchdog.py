@@ -4,10 +4,10 @@ WHY THIS EXISTS
 ---------------
 On 2026-09-26 half the fleet was dark, and NOTHING said so:
 
-    Fitnessraum, Kinderbad, Wohnzimmer   connected
+    Hobbyraum, Badezimmer, Wohnzimmer    connected
     Esszimmer                            gone for 1 day (node NotReady)
     Arbeitszimmer                        gone for 2 days
-    BensZimmer                           gone for 30 DAYS
+    Gästezimmer                          gone for 30 DAYS
 
 In 36 hours of notifications: exclusively `mcp_health`, not a single one about a
 satellite. The MCP servers have health probes with alerting, the tasks have
@@ -49,7 +49,7 @@ that this meant it would "not be reported again every hour". That was wrong,
 and operation showed it within three hours: three identical notifications at
 13:59, 14:59, 15:59. The reason is in `config.py` --
 `proactive_suppression_window` is **60 seconds**. That suppresses bursts, not
-an hourly repetition. For BensZimmer (gone for 30 days) that would be 24
+an hourly repetition. For Gästezimmer (gone for 30 days) that would be 24
 reports a day: alert fatigue by design, and thereby exactly the thing broken
 that this task was built for.
 

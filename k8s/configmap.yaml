@@ -297,7 +297,7 @@ data:
   # H1 Satellite-Enrollment: PERMISSIVE läuft seit 2026-07 (ENABLED via
   # renfield-env-private); der Auto-Flip latcht zu ENFORCING, sobald JEDE
   # enrollte Satellites-Row mindestens einmal authentifiziert hat — Stand
-  # 2026-08-22 hält allein sat-benszimmer (frisch enrolled, Token noch nicht
+  # 2026-08-22 hält allein sat-gaestezimmer (frisch enrolled, Token noch nicht
   # provisioniert) den Latch. Nach dessen Provisionierung flippt die Fleet
   # automatisch und dauerhaft (Latch löscht sich nie selbst).
   SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED: "true"
@@ -485,7 +485,7 @@ data:
   # Backend-wide "accept opus when a satellite requests it" — safe fleet-wide
   # because it is gated per-satellite by the register handshake (a satellite
   # only streams opus if its own audio.codec: opus is set AND this is on).
-  # Enabled 2026-07-07 for the Fitnessraum (XVF3800) canary; all other
+  # Enabled 2026-07-07 for the Hobbyraum (XVF3800) canary; all other
   # satellites keep the legacy base64-PCM path until re-provisioned.
   SATELLITE_OPUS_ENABLED: "true"
 

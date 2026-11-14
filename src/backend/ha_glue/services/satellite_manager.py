@@ -953,7 +953,7 @@ class SatelliteManager:
         if fresh_chunks is not None:
             # The satellite counts only chunks that repeat none of the recent
             # ones, so a capture replaying its last buffers freezes this counter
-            # while the level keeps cycling (Fitnessraum, 2026-11-09). Digital
+            # while the level keeps cycling (Hobbyraum, 2026-11-09). Digital
             # silence is counted on the satellite; no exemption needed here.
             signal: tuple[Any, ...] = ("fresh_chunks", fresh_chunks)
             silent = False
