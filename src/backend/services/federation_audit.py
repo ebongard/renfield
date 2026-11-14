@@ -54,6 +54,9 @@ REVOCATION_DIRECTION = "revoke"
 #: What was revoked, stored in `final_status` (16 characters wide).
 PAIRING_REVOKED = "pairing_revoked"
 LINK_REVOKED = "link_revoked"
+#: `cause` of a link revocation that came with a re-pairing of a revoked
+#: pairing (the other cause is `PAIRING_REVOKED`).
+PAIRING_REVIVED = "pairing_revived"
 
 #: On whose authority a revocation rested, stored in `identity_basis`.
 BASIS_OWNER = "owner"   # the account that owns the pairing
@@ -186,6 +189,7 @@ def record_revocation(
     subject_user_id: int | None = None,
     link_id: int | None = None,
     links_removed: int | None = None,
+    cause: str | None = None,
 ) -> FederationQueryLog:
     """Add the audit row for a revoked pairing or person link to `db`.
 
@@ -195,9 +199,17 @@ def record_revocation(
     does for queries) could lose exactly the record of an admin acting on
     someone else's row.
 
-    The row is filed under the AFFECTED account (`user_id`): the owner of a
-    revoked pairing, or the account a revoked link belonged to -- the pairing
-    owner again when that account is gone. Who acted is in `query_text`.
+    🛑 `user_id` stays NULL. The column is a foreign key onto `users.id`
+    without a delete rule, and these rows are never pruned: filed under an
+    account -- the affected one or the acting one -- a single revocation would
+    make that account undeletable for good. Every account concerned is named in
+    `query_text` instead: who acted, who owns the pairing, and the SUBJECT (the
+    owner of a revoked pairing, or the account a revoked link belonged to --
+    the pairing owner again when that account is gone).
+
+    `cause` names the larger act a link revocation was part of
+    (`pairing_revoked`, `pairing_revived`); absent when the link itself was
+    the target.
 
     Ids only. `query_text` is JSON built here from integers and a boolean; the
     display-name snapshot stays empty, because that name is text the far side
@@ -217,10 +229,12 @@ def record_revocation(
         detail["link_id"] = link_id
     if links_removed is not None:
         detail["links_removed"] = links_removed
+    if cause is not None:
+        detail["cause"] = cause
     row = FederationQueryLog(
         direction=REVOCATION_DIRECTION,
         identity_basis=basis,
-        user_id=subject,
+        user_id=None,
         peer_user_id=peer.id,
         peer_pubkey_snapshot=peer.remote_pubkey,
         peer_display_name_snapshot="",
