@@ -145,7 +145,7 @@ New class: `BeamformerDAS4Mic`
 
 #### 4. Ansible host_vars — Update for native capture
 ```yaml
-# satellite-fitnessraum.yml
+# satellite-hobbyraum.yml
 audio_device: "seeed-4mic"      # Raw hw device name in PyAudio
 audio_channels: 4               # Native 4 channels
 audio_format_bits: 32           # S32_LE

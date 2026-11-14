@@ -60,7 +60,7 @@ Ausgewertete Quellen: `TODOS.md` (eingecheckter Stand), `docs/design/*.md` (42 D
 | # | Eintrag | Inhalt | Trigger / Status | Fundstelle |
 |---|---|---|---|---|
 | 1 | #10 Presence / Media-Follow Raumwechsel-Latenz | RSSI-EWMA-Filter live zur Feldvalidierung; Watch-List F1–F5 | „LANDING ACTIVE for real-world validation" — widerspricht `:328` („LARGELY RESOLVED 2026-07-09/10", dort nur noch Grenzmessung (a) offen) | `TODOS.md:107` |
-| 2 | #6 Provisioning config drift | Rest: Benszimmer-host_var-Enrollment-Token (offline), Inventory → mDNS + DHCP-Reservierungen | Ops, kein PR | `TODOS.md:108` |
+| 2 | #6 Provisioning config drift | Rest: Gästezimmer-host_var-Enrollment-Token (offline), Inventory → mDNS + DHCP-Reservierungen | Ops, kein PR | `TODOS.md:108` |
 
 Durchgestrichen: Broadcast (`:104`), #12 KB-Maintenance (`:106`), Security-Audit-Dach (`:110`, zwei Durchgänge, Reste in #1116).
 
@@ -640,7 +640,7 @@ auf den Lieferstand gebracht.
 | `scanner-measure-then-repair-plan.md` | 6 | Sensorabruf-Härtung im Scanner-Repo; Lage seit dem Abschalten des Knopfwächters offen |
 | `scanner-device-ownership-plan.md` | 4 | Gerätemakler, Stufen 0–3 |
 | `document-tier-control-plan.md` | 2 | Fristen-Popover, Omnisearch-Rücksprung |
-| `satellite-iot-vlan-plan.md` | 2 | Arbeitszimmer/Benszimmer (aus), alte Leases räumen |
+| `satellite-iot-vlan-plan.md` | 2 | Arbeitszimmer/Gästezimmer (aus), alte Leases räumen |
 | `e11-react-query-handover.md` | 1 | Pairing-Modals noch auf `apiClient` |
 
 ## Überholt (28)

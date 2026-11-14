@@ -1,13 +1,13 @@
 # Satellite Audio Capture — hardware-appropriate stereo→mono combine
 
-**Status:** DESIGN (2026-07-07) → **BUILT** (`b0ef9001`, `capture.py` `combine`/`select_channel` with auto-derived legacy defaults; §9 Q2 resolved). Triggered by a live Fitnessraum (XVF3800) incident where the wakeword stopped firing.
+**Status:** DESIGN (2026-07-07) → **BUILT** (`b0ef9001`, `capture.py` `combine`/`select_channel` with auto-derived legacy defaults; §9 Q2 resolved). Triggered by a live Hobbyraum (XVF3800) incident where the wakeword stopped firing.
 **Scope:** the satellite capture pipeline (`src/satellite/renfield_satellite/audio/capture.py`) — how multi-channel hardware audio is reduced to the single mono stream the wakeword/STT require. Not the transport (C1) or the backend.
 
 ---
 
 ## 1. Problem — measured, not assumed
 
-The Fitnessraum satellite (ReSpeaker **XVF3800** USB, Pi Zero 2 W) stopped detecting the wakeword. After ruling out AGC gain, wakeword threshold, the deployed code, USB/ALSA health, and a chip factory-reset, a direct capture measurement found the cause. Same spoken "Renfield", captured three ways:
+The Hobbyraum satellite (ReSpeaker **XVF3800** USB, Pi Zero 2 W) stopped detecting the wakeword. After ruling out AGC gain, wakeword threshold, the deployed code, USB/ALSA health, and a chip factory-reset, a direct capture measurement found the cause. Same spoken "Renfield", captured three ways:
 
 | Capture path | loudest-300 ms RMS | verdict |
 |---|---|---|
@@ -95,7 +95,7 @@ Flag-off / unspecified → `passthrough` (or `beamform` when `beamforming: true`
 1. **`config.py`** — add `combine: str = "passthrough"` + `select_channel: int = 0` to `AudioConfig`; loader reads `audio.combine`/`audio.select_channel`; `beamforming: true` back-compat → `combine="beamform"` (and forces `channels=2`, as today).
 2. **`capture.py`** — the PyAudio consumer path gains a `select` branch: from the interleaved `int16` stereo frame, take `frame[select_channel::channels]` (mirrors the arecord path's `s32[1::channels]` at `capture.py:348`, minus the S32→S16 shift). Factor the combine into one `_combine(frame) -> mono` helper used by both the PyAudio and arecord loops so the three modes live in one place (removes the arecord path's ad-hoc extraction duplication).
 3. **`templates/satellite.yaml.j2`** — emit `combine` + `select_channel` from `hat_type` defaults (the audio block already added `codec` for C1).
-4. **`host_vars/satellite-fitnessraum.yml`** — `audio_channels: 2`, `audio_combine: select`, `audio_select_channel: 0`. (host_vars are gitignored — operator-local.)
+4. **`host_vars/satellite-hobbyraum.yml`** — `audio_channels: 2`, `audio_combine: select`, `audio_select_channel: 0`. (host_vars are gitignored — operator-local.)
 5. **Provisioning (`provision.yml`)** — the XVF3800 tuning task pins `AUDIO_MGR_OP_L` to the processed-beam source + `SAVE_CONFIGURATION` (§3a), so ch0 is deterministic.
 
 No backend change. No transport change. The mono contract downstream of capture is unchanged, so wakeword/VAD/STT/C1 are untouched.
@@ -114,9 +114,9 @@ No backend change. No transport change. The mono contract downstream of capture 
 The bug was found only after a live satellite was destabilized by an unrelated change. The rollout rules encode that lesson:
 
 1. **Land the code change as a small PR** (config + combine + unit test), build a satellite image deliberately.
-2. **Never validate on a live, working satellite.** Fitnessraum is already service-disabled from this investigation — it is the safe canary. Deploy there with the service down.
+2. **Never validate on a live, working satellite.** Hobbyraum is already service-disabled from this investigation — it is the safe canary. Deploy there with the service down.
 3. **Prove the audio path with the RMS harness first** (§6), *then* re-enable the service and test the wakeword. Do not infer the audio path from wakeword behavior — that inversion is what cost this whole investigation.
-4. **Only after Fitnessraum passes** does the XVF3800 template default flip for the fleet; other XVF3800 sats re-provision in a maintenance window (deps/config land restart-free via `--tags`, the activating restart is explicit and confirmed).
+4. **Only after Hobbyraum passes** does the XVF3800 template default flip for the fleet; other XVF3800 sats re-provision in a maintenance window (deps/config land restart-free via `--tags`, the activating restart is explicit and confirmed).
 5. Flag-off / other hardware unchanged and byte-identical throughout.
 
 ### 7a. Fleet capture audit — every hardware type (not just the XVF3800)
@@ -138,7 +138,7 @@ Each hat: capture with the `bin/` RMS harness (§6) while someone speaks, confir
 
 ## 8. Alternatives considered
 
-- **ALSA-route quick fix** (a device-local `.asoundrc` mapping ch0→mono, point `device:` at it): restores Fitnessraum today with zero code, but it's a per-device config hack that leaves the fleet architecture wrong and the XVF3800 a special case outside the combine stage. Acceptable as a stopgap; not the fix. (If function is needed *before* the PR lands, do this, and treat it as temporary.)
+- **ALSA-route quick fix** (a device-local `.asoundrc` mapping ch0→mono, point `device:` at it): restores Hobbyraum today with zero code, but it's a per-device config hack that leaves the fleet architecture wrong and the XVF3800 a special case outside the combine stage. Acceptable as a stopgap; not the fix. (If function is needed *before* the PR lands, do this, and treat it as temporary.)
 - **Full stereo to the backend:** rejected — wakeword/STT are mono-only (§2) and it doubles C1 bandwidth for no gain.
 - **Keep ALSA downmix, "fix" it with mixer weights:** brittle, device-specific, and still mixes a beam with a residual. Channel select is simpler and correct.
 - **Software beamforming on the XVF3800's two channels:** meaningless — they aren't two mics (§1 root cause).
@@ -151,4 +151,4 @@ Each hat: capture with the `bin/` RMS harness (§6) while someone speaks, confir
 2. ~~Unify the arecord path~~ **RESOLVED (implemented):** both the S16 PyAudio path and the S32 arecord path share `_select_mono` (dtype-preserving channel select); the AC108 stays byte-identical because `select_channel` and `combine` **auto-derive** the legacy defaults when unset (`combine`: beamforming→beamform / channels>1→select / else passthrough; `select_channel`: 4-mic→ch1, else ch0). Un-reprovisioned sats need no config change.
 3. ~~**Deprecation of `beamforming:`**~~ **RESOLVED: the alias stays** (cheap; `beamforming.enabled: true` auto-derives `combine: beamform`, `capture.py`); templates migrate opportunistically, no work item.
 
-**Source:** Fitnessraum XVF3800 wakeword incident 2026-07-07 (live capture measurements above; root-caused to the ALSA mono downmix of the processed-beam + AEC-residual). Related: `docs/design/voice-identity-wakeword-verification.md` (C1 transport, adjacent in the same audio path), `docs/XVF3800_SATELLITE.md`, `src/satellite/renfield_satellite/audio/{capture,beamformer}.py`, ReSpeaker XVF3800 host_control docs (`AUDIO_MGR_OP_L/R`, `CLEAR_CONFIGURATION`, `REBOOT`, `SAVE_CONFIGURATION`).
+**Source:** Hobbyraum XVF3800 wakeword incident 2026-07-07 (live capture measurements above; root-caused to the ALSA mono downmix of the processed-beam + AEC-residual). Related: `docs/design/voice-identity-wakeword-verification.md` (C1 transport, adjacent in the same audio path), `docs/XVF3800_SATELLITE.md`, `src/satellite/renfield_satellite/audio/{capture,beamformer}.py`, ReSpeaker XVF3800 host_control docs (`AUDIO_MGR_OP_L/R`, `CLEAR_CONFIGURATION`, `REBOOT`, `SAVE_CONFIGURATION`).

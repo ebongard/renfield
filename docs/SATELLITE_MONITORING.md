@@ -265,7 +265,7 @@ Heartbeat messages now include optional metrics:
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `audio_rms` | float | Audio RMS level (0-32768 for 16-bit). An implausibly high value in a quiet room means a **capture DC offset**, not a loud room — on TLV320AIC3104 HATs the ADC high-pass filter defaults to `Disabled` (Kinderbad read 1812 while the room sat at -55 dBFS). See `SATELLITE_ACOUSTIC_COMMISSIONING.md`. |
+| `audio_rms` | float | Audio RMS level (0-32768 for 16-bit). An implausibly high value in a quiet room means a **capture DC offset**, not a loud room — on TLV320AIC3104 HATs the ADC high-pass filter defaults to `Disabled` (Badezimmer read 1812 while the room sat at -55 dBFS). See `SATELLITE_ACOUSTIC_COMMISSIONING.md`. |
 | `audio_db` | float | Audio level in dB (relative to full scale) |
 | `is_speech` | bool | Voice activity detection state |
 | `cpu_percent` | float | CPU usage percentage |
@@ -294,7 +294,7 @@ not capturing.
 
 The signal is `capture_fresh_chunks` in the heartbeat (satellite ≥ 1.4.20): the count of
 chunks that repeat none of the last 16 byte for byte. A frozen level is not enough: the
-Fitnessraum (2026-11-09, USB microphone unplugged) kept cycling between two exact levels
+Hobbyraum (2026-11-09, USB microphone unplugged) kept cycling between two exact levels
 (1499.6 / 525.1) at ~40 % CPU — the capture replayed its last buffers, and the level
 watch read that as a live microphone. A replayed chunk does not count, so the counter
 froze. A constant chunk (digital silence) always counts; a replayed ring longer than

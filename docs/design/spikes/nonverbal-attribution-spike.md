@@ -63,8 +63,8 @@ room** — because there is only one identified person to begin with.
 | Arbeitszimmer | 424 | 199.8 |
 | Wohnzimmer | 397 | 82.2 |
 | Esszimmer | 18 | 62.2 |
-| Kinderbad | 190 | 59.4 |
-| Fitnessraum | 33 | 0.5 |
+| Badezimmer | 190 | 59.4 |
+| Hobbyraum | 33 | 0.5 |
 
 \* dwell = time from each `enter` to that user's next event; trailing intervals are
 open-ended so absolute hours are soft (an idle "still in room" period inflates a single
