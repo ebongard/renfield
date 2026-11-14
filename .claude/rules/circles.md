@@ -60,8 +60,8 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   `remote_user_id` geht an Nicht-Eigentümer leer.
 - 🛑 **Niemand verknüpft ein ANDERES Konto** — das verknüpfte Konto kommt aus der Sitzung, nie aus dem Rumpf
   (`POST /user-links`: `admin` nur für sich selbst; Handschlag: nur der Eigentümer der Kopplung). Einen fremden
-  `querier_ref` gibt keine Route heraus. Widerruf der Kopplung LÖSCHT ihre Verknüpfungen (die Zeile lebt beim
-  Neukoppeln unter derselben `id` wieder auf); ein deaktiviertes Konto wird nicht bedient. `docs/FEDERATION_PAIRING.md` §3b.
+  `querier_ref` gibt keine Route heraus. Widerruf der Kopplung LÖSCHT ihre Verknüpfungen, ebenso das
+  Neukoppeln einer WIDERRUFENEN (die Zeile lebt unter derselben `id` wieder auf); ein deaktiviertes Konto wird nicht bedient. `docs/FEDERATION_PAIRING.md` §3b.
 - 🛑 **Der Instanzname (`remote_instance_name`) ist ANZEIGETEXT der GEGENSEITE** — nie Kennung oder Teil von
   `peer_<id>`; einziger Schreiber `federation_instance_name.py`, erst NACH Signatur und Peer-Nachschlag. In den
   Prompt nur mit `FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED` (aus): begrenzt Form und Länge, nicht Inhalt.
@@ -108,7 +108,7 @@ zustande kam — beim ersten erfolgreichen Zug war das hinterher nur noch zu ers
 🛑 **Der ANTWORTENDE schreibt es**, nicht der Frager: die Instanz, deren Daten gelesen wurden, verzeichnet den
 Zugriff. Ein Vermerk auf der Fragerseite wäre die Behauptung der Gegenseite über ihre eigene Zugriffsentscheidung.
 🛑 `user_id` heisst durchgehend „die lokale Person, deren Reichweite benutzt wurde" — gemappt die verknüpfte Person,
-im Rückfall der Eigentümer der Paarung. Darum bleibt die Spalte NOT NULL; `identity_basis` ist nullable, weil
+im Rückfall der Eigentümer der Paarung. Darum tragen ANFRAGE-Zeilen sie immer; `identity_basis` ist nullable, weil
 Bestandszeilen und Frager-Zeilen es nicht WISSEN und ein Vorgabewert Unwissen als Tatsache ausgäbe.
 🛑 **Die Ansicht (`/brain/audit`) darf aus Unwissen keine Behauptung machen.** Fehlt `identity_basis`, zeigt sie
 **nichts** — nicht „als fremde Instanz“, denn das unterstellte die ENGERE Stufe für Züge mit voller Reichweite.
@@ -128,6 +128,7 @@ solange nichts gelesen wurde, danach die Trefferzahl (`0` = gelesen, nichts gefu
 Ein Abbruch NACH dem Abruf ist kein Fehlschlag, sondern ein geglückter Zugriff ohne Auslieferung; unter den
 Fehlschlägen begraben sähe das Protokoll ruhiger aus, als es war.
 🛑 **Ein WIDERRUF (Kopplung, Verknüpfung) ist eine Zeile mit `direction='revoke'`, in DERSELBEN Transaktion**
-(`federation_audit.record_revocation`): `user_id` = das BETROFFENE Konto, `identity_basis` = `owner`/`self`/`admin`,
-`query_text` = JSON nur aus Kennungen, kein Text der Gegenseite. Sie ist keine Anfrage: wer Anfragen listet, zählt
+(`federation_audit.record_revocation`): `identity_basis` = `owner`/`self`/`admin`, `query_text` = JSON nur aus
+Kennungen, kein Text der Gegenseite; je entfernter Verknüpfung EINE Zeile. 🛑 `user_id` bleibt dort NULL — der
+Fremdschlüssel hat keine Löschregel, die Zeile verfällt nie, das Konto wäre sonst für immer unlöschbar. Sie ist keine Anfrage: wer Anfragen listet, zählt
 oder löscht, filtert auf `QUERY_DIRECTIONS` — sonst zeigt die Ansicht den Widerruf als gestellte Frage.

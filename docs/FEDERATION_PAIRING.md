@@ -226,7 +226,10 @@ place of the pairing's granted tier. The bounds, decided on 2026-11-14:
 - **A link ends with its pairing and with its account.** Revoking a pairing
   deletes its links — the row is kept and pairing again revives it under the
   same id, so a link left behind would be live again without anyone linking
-  anew. A deactivated account is not served through its link.
+  anew. The same cleanup runs when a REVOKED pairing is paired again and when
+  an already revoked pairing is revoked once more: a pairing revoked before
+  2026-11-14 still carries its links. Pairing again over an ACTIVE pairing
+  keeps them. A deactivated account is not served through its link.
 - **A refused handshake step answers the one uniform 400.** Until 2026-11-14
   it left as a 500 (the route read the signed-in account after the rollback).
 
@@ -238,15 +241,31 @@ transaction as the revocation itself:
 | `direction` | `revoke` |
 | `final_status` | `pairing_revoked` or `link_revoked` |
 | `identity_basis` | on whose authority: `owner`, `self`, or `admin` (acting on someone else's row) |
-| `user_id` | the AFFECTED account: the pairing's owner, or the linked account |
+| `user_id` | always NULL (see below) |
 | `peer_user_id`, `peer_pubkey_snapshot` | the pairing |
 | `initiated_at` | when |
-| `query_text` | JSON of ids: `action`, `actor_user_id`, `owner_user_id`, `subject_user_id`, `peer_id`, `as_admin`, and `link_id` or `links_removed` |
+| `query_text` | JSON of ids: `action`, `actor_user_id`, `owner_user_id`, `subject_user_id` (the pairing's owner, or the account the link belonged to), `peer_id`, `as_admin`; a link row adds `link_id`, a pairing row `links_removed` |
 
 Ids only: the display-name snapshots stay empty, since those are text the far
 side chose. The rows are not queries — the audit view (`GET /audit`) leaves
 them out, and the 90-day retention does not prune them. There is no view for
 them yet; they are read in the database.
+
+- **One row per link.** A pairing revoke removes links of accounts other than
+  the one revoking, so each removed link gets its own `link_revoked` row with
+  `cause` `pairing_revoked` (or `pairing_revived`, when a revoked pairing is
+  paired again); the pairing row carries the count.
+- **`user_id` is NULL on these rows.** The column references `users.id`
+  without a delete rule and the rows are never pruned: filed under an account
+  — the affected or the acting one — a single revocation would make that
+  account undeletable for good. The accounts are named in the JSON.
+- 🛑 **Migrate before the rollout:** revision `pc20261114_fed_log_user_null`
+  drops the NOT NULL on `federation_query_log.user_id`
+  (`bin/deploy-production.sh … --migrate`, each instance). A new pod on an
+  unmigrated database cannot write the record, and since record and
+  revocation share one transaction, **every revoke fails** until the
+  migration ran. The foreign key and its delete rule are unchanged. The
+  downgrade refuses while rows without a `user_id` exist.
 
 ---
 
@@ -388,6 +407,14 @@ off) is **unknown**, never unreachable. Both sides need the flag for a verdict.
 
 Reviewed on 2026-11-14 and left as they are:
 
+- **A request can outlive the link or pairing it was admitted on, by one
+  retrieval.** A revocation commits and then discards the pending requests of
+  that far side. `handle_retrieve` does not check the link or the pairing
+  again, so a request that resolved its link just before the commit but was
+  stored just after the purge can still be collected once, with the reach it
+  was admitted on. The window is the gap between those two steps; closing it
+  means carrying the link on the pending record and re-checking at retrieve
+  time.
 - **ZERO WIDTH JOINER and NON-JOINER are removed from a name**, with every
   other format character. Scripts that shape with them (Persian, several Indic
   conjuncts) and emoji sequences built on them lose that shaping; the letters
