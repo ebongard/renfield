@@ -1764,6 +1764,8 @@
     "peerReachCheckNow": "Verifica ora",
     "peerReachChecking": "Verifica in corso…",
     "peerReachCheckFailed": "Impossibile verificare la raggiungibilità.",
+    "peerInstanceNamePending": "nome dell'istanza non ancora noto",
+    "peerInstanceNamePendingHelp": "L'altra istanza comunica il suo nome al primo scambio firmato, ad esempio quando ne verifichi la raggiungibilità.",
     "peerRecentlyActive": "Attivo di recente",
     "peerRecentlyActiveHelp": "Negli ultimi cinque minuti una vera richiesta è passata in una delle due direzioni.",
     "peerLastAsked": "Ultima richiesta inviata da qui {{when}}",
