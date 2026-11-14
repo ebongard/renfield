@@ -27,7 +27,7 @@ def _manager_with_satellite():
     mgr = SatelliteManager()
     mgr.satellites["sat-1"] = SatelliteInfo(
         satellite_id="sat-1",
-        room="Fitnessraum",
+        room="Hobbyraum",
         websocket=MagicMock(),
         capabilities=SatelliteCapabilities(),
         version="1.4.6",
@@ -217,7 +217,7 @@ async def test_update_request_carries_the_minted_run_id(monkeypatch):
 
 async def _register(mgr, version="1.4.6", ws=None):
     return await mgr.register(
-        satellite_id="sat-1", room="Fitnessraum", websocket=ws or AsyncMock(),
+        satellite_id="sat-1", room="Hobbyraum", websocket=ws or AsyncMock(),
         capabilities={}, version=version,
     )
 

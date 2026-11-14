@@ -493,7 +493,7 @@ Erste Major-Version seit `v1.0.0`. Der Sprung reflektiert drei generationelle Ar
 - **XVF3800** USB-Array + Enviro pHAT ([#310](https://github.com/ebongard/renfield/pull/310)).
 - **Whisplay HAT**-Support.
 - **Konfigurierbare IDLE-LED-Farbe** pro Satellit.
-- **Neue Satelliten**: Esszimmer ([#292](https://github.com/ebongard/renfield/pull/292)), Arbeitszimmer, BensZimmer.
+- **Neue Satelliten**: Esszimmer ([#292](https://github.com/ebongard/renfield/pull/292)), Arbeitszimmer, Gästezimmer.
 - **Action-Success-Metadata** in Konversationshistorie — verhindert Fehler-Nachgeplapper in Follow-ups ([#431](https://github.com/ebongard/renfield/pull/431), [#432](https://github.com/ebongard/renfield/pull/432)).
 
 #### Media

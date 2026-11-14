@@ -108,7 +108,7 @@ Verbindung geaendert) — nach Neuverbinden/Backend-Neustart beginnt das Fenster
 Getrennte bleiben drin, solange eingebucht.
 
 **Warum es das ueberhaupt gibt:** am 2026-09-26 war die halbe Flotte dunkel — Esszimmer
-1 Tag (k8s-Knoten `NotReady`), Arbeitszimmer 2 Tage, BensZimmer **30 Tage** — und in
+1 Tag (k8s-Knoten `NotReady`), Arbeitszimmer 2 Tage, Gästezimmer **30 Tage** — und in
 36 Stunden gab es keine einzige Satelliten-Benachrichtigung. MCP-Server hatten
 Gesundheitsproben, Aufgaben eine Fehlerserien-Erkennung, die Satelliten nichts.
 

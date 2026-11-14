@@ -32,8 +32,8 @@ describe('SatellitesPage capability badges', () => {
   it('renders the real hardware of a fully-equipped satellite', async () => {
     mockSatellites({
       ...base,
-      satellite_id: 'benszimmer',
-      room: 'BensZimmer',
+      satellite_id: 'gaestezimmer',
+      room: 'Gästezimmer',
       capabilities: {
         local_wakeword: true,
         speaker: true,
@@ -50,9 +50,9 @@ describe('SatellitesPage capability badges', () => {
 
     // Cards render collapsed; capability badges live in the expanded body.
     await waitFor(() => {
-      expect(screen.getByText('BensZimmer')).toBeInTheDocument();
+      expect(screen.getByText('Gästezimmer')).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByText('BensZimmer'));
+    await userEvent.click(screen.getByText('Gästezimmer'));
 
     // Data-driven, not the hardcoded 3
     expect(await screen.findByText('12 LEDs')).toBeInTheDocument();

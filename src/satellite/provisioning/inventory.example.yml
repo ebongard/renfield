@@ -56,8 +56,8 @@ all:
     # (needs the proprietary AW ISP libs staged at files/awisp/ — see provision-camera.yml).
 
 # CAMERA is a per-host capability, not a group:
-#   * Pi + Pi-camera (arbeitszimmer, kinderbad): host_vars set `camera_enabled: true`
+#   * Pi + Pi-camera (arbeitszimmer, badezimmer): host_vars set `camera_enabled: true`
 #     (camera_backend defaults to "rpicam" → no host provisioning, the OS handles it).
-#   * Pi + no camera (wohnzimmer, benszimmer, fitnessraum): camera_enabled stays false.
+#   * Pi + no camera (wohnzimmer, gaestezimmer, hobbyraum): camera_enabled stays false.
 #   * A733 + CSI (esszimmer): host_vars set camera_enabled: true + camera_backend: sunxi_isp.
 # provision-camera.yml applies the right thing per host from these vars.

@@ -184,15 +184,15 @@ sats), then let the model handle the rest. The gain lives in the gitignored
 `host_vars/satellite-<room>.yml` (`xvf3800_tuning.PP_AGCDESIREDLEVEL`), persisted
 on-device with `xvf_host SAVE_CONFIGURATION 1`.
 
-### v5 — Kinderbad in-use ambient (2026-09-05)
+### v5 — Badezimmer in-use ambient (2026-09-05)
 
 `md5 = e11f769cd141c303b87d602acc39910a`. Config identical to v4
 (`renfield_de_v5.yaml` = `renfield_de_v4.yaml`); the only change is the ambient
-corpus, which gained 45 min of **in-use** Kinderbad audio (`ambient_kinderbad_inuse_{a,b}.wav`,
+corpus, which gained 45 min of **in-use** Badezimmer audio (`ambient_badezimmer_inuse_{a,b}.wav`,
 split so part of it stays held out). Augmentation was skipped — the positive/negative
 clips from June are unchanged, only `--train_model` was re-run (~9 min).
 
-**The finding that motivated it:** Kinderbad was *already* in the v3 corpus, with a
+**The finding that motivated it:** Badezimmer was *already* in the v3 corpus, with a
 quiet 10-minute capture. Scored against v3 that capture peaks at **0.127 with zero
 detections** — the model never reacted to it, so it taught the model nothing, and
 the room kept false-firing (25 genuine wakes in 9 h). The new in-use capture peaks
@@ -202,11 +202,11 @@ Per-room A/B via `score_wav.py` (streaming, 80 ms chunks — the faithful path):
 
 | Ambient | v3 | v4 | v5 |
 |---|---|---|---|
-| kinderbad in-use A (23 min) | peak 0.969, 6 ev | peak 0.964, 4 ev | **peak 0.609, 1 ev** |
-| kinderbad in-use B (22 min) | peak 0.909, 2 ev | peak 0.925, 1 ev | peak 0.970, 1 ev |
-| kinderbad (old, quiet) | peak 0.127, 0 | 0.003, 0 | 0.010, 0 |
+| badezimmer in-use A (23 min) | peak 0.969, 6 ev | peak 0.964, 4 ev | **peak 0.609, 1 ev** |
+| badezimmer in-use B (22 min) | peak 0.909, 2 ev | peak 0.925, 1 ev | peak 0.970, 1 ev |
+| badezimmer (old, quiet) | peak 0.127, 0 | 0.003, 0 | 0.010, 0 |
 | arbeitszimmer | — | 0.049, 0 | 0.028, 0 |
-| fitnessraum | — | 0.150, 0 | 0.161, 0 |
+| hobbyraum | — | 0.150, 0 | 0.161, 0 |
 | wohnzimmer | — | 0.001, 0 | 0.001, 0 |
 | audiobook g4 / g7 | — | 0.191 / 0.002, 0 | 0.010 / 0.002, 0 |
 
@@ -220,7 +220,7 @@ Two honest caveats:
   v4 — visible as a lone 0.815 hit at **t=1 s** of the Arbeitszimmer file that
   vanishes (peak 0.028) once the first 5 s are skipped. In production a satellite
   warms up once per restart, so prefer the per-file streaming numbers above.
-- **Kinderbad B still peaks 0.970 at t=243 s.** That segment is in v5's own
+- **Badezimmer B still peaks 0.970 at t=243 s.** That segment is in v5's own
   *training* portion, and it is the one point in the whole corpus that lines up
   exactly with a logged false positive (09:08:50 CEST). So the single verifiable
   false positive in the material is precisely the one v5 did **not** learn to
@@ -265,7 +265,7 @@ testing.
 ≥ 1.4.17): the push carries a SHA-256 per model, and a satellite whose file
 differs downloads it again, verifies it and reloads it on the next push or
 reconnect. A failed download keeps the running model. Before 1.4.17 a
-satellite only fetched a model it did not have at all — Fitnessraum and
+satellite only fetched a model it did not have at all — Hobbyraum and
 Wohnzimmer ran an older `renfield_de` until 2026-11-06 while freshly set-up
 satellites had v5. Check what a device runs with
 `md5sum /opt/renfield-satellite/models/renfield_de.onnx` against the backend's

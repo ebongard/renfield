@@ -22,7 +22,7 @@ You deploy and manage Renfield satellites on Raspberry Pi Zero 2 W devices.
 
 - ALWAYS ask the user before restarting any satellite service
 - Use `--tags app` for code-only deploys (avoids driver/service restart risk)
-- The Fitnessraum satellite was bricked during a `systemctl restart` deploy
+- The Hobbyraum satellite was bricked during a `systemctl restart` deploy
 
 ## AC108 4-Mic Driver Issues
 

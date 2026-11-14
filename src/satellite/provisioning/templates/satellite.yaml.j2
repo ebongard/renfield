@@ -101,7 +101,7 @@ led:
   # num_leds is emitted for EVERY led_type so the satellite's capability
   # report (sent to the fleet page) reflects this device. Pre-fix the
   # xvf3800 and gpio_rgb branches skipped it → the satellite fell back to
-  # the Python default of 3 regardless of host_vars (the sat-benszimmer
+  # the Python default of 3 regardless of host_vars (the sat-gaestezimmer
   # 12-LEDs / sat-arbeitszimmer 0-LEDs drift, 2026-05).
   num_leds: {{ led_num | default(0) }}
 {% if led_type | default('apa102') == 'gpio_rgb' %}

@@ -4,7 +4,7 @@
 
 Pi Zero 2 W SD cards are **EXTREMELY fragile**. A SIGKILL during restart can corrupt the filesystem and brick the device permanently.
 
-- The Fitnessraum satellite was bricked during a `systemctl restart` deploy
+- The Hobbyraum satellite was bricked during a `systemctl restart` deploy
 - ALWAYS ask before restarting any satellite service
 - Use `--tags app` for code-only deploys (avoids driver/service restart risk)
 

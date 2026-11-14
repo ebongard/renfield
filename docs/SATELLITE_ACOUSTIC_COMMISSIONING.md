@@ -24,7 +24,7 @@ Three production incidents, each the same root cause:
 |---|---|---|---|
 | 2026-06-30 | fleet-wide | `renfield_de` v1 measured ~16 FP/hr on synthetic speech, then false-fired **~500/hr** in real rooms. Constant wake to empty-transcription storm. | Threshold. A model scoring 0.90-0.99 on noise cannot be thresholded out without destroying recall. |
 | 2026-07-06 | Arbeitszimmer | An audiobook on the room's speaker false-woke the satellite **~24x/day**; the model scored narration up to 97%. v3 had been hardened against room *ambient* but never against continuous media speech. | Cutting `ALC Max Gain` 7 to 4 halved it. It did not eliminate it. Only v4, retrained with the audiobook as a hard-negative, reached 0. |
-| 2026-09-04/05 | Kinderbad | **25 wakes in 9 h** (~3/h), every one an empty transcription, zero successful sessions. | Enabling the ADC high-pass filter. It removed a real measurement artefact (a DC offset reading as `audio_rms` 1812 while the room actually sat at -55 dBFS) but the false wakes continued unabated. |
+| 2026-09-04/05 | Badezimmer | **25 wakes in 9 h** (~3/h), every one an empty transcription, zero successful sessions. | Enabling the ADC high-pass filter. It removed a real measurement artefact (a DC offset reading as `audio_rms` 1812 while the room actually sat at -55 dBFS) but the false wakes continued unabated. |
 
 The pattern is consistent: **mic-gain and filter levers reduce false positives;
 only room-specific hard-negatives eliminate them.** Reach for the levers first
@@ -175,14 +175,14 @@ python src/satellite/wakeword-training/scripts/score_wav.py \
     <deployed-model>.onnx <capture>-mono.wav
 ```
 
-Kinderbad, 2026-09-05, scored against the deployed `renfield_de` v3:
+Badezimmer, 2026-09-05, scored against the deployed `renfield_de` v3:
 
 | Capture | Peak score | Detections |
 |---|---|---|
 | The 10-min capture already in the v3 corpus (June, quiet) | **0.127** | **0** |
 | The 45-min in-use capture (September) | **0.969** | **8** (~11/h) |
 
-That is the whole argument for this gate in one table. Kinderbad *was* already
+That is the whole argument for this gate in one table. Badezimmer *was* already
 represented in the negative set — with ten quiet minutes the model never reacted
 to, which is why v3 learned nothing about the room and kept false-firing.
 **A capture that peaks below ~0.3 is not usable hard-negative material.**
@@ -199,7 +199,7 @@ kubectl --context renfield-private -n renfield logs deploy/backend --since=8h --
 **Convert the timezone before you correlate anything.** The backend logs in
 **UTC**; a capture's filename and mtime are in the satellite's **local** time.
 Comparing them directly puts every wake two hours (CEST) off its true offset —
-which is exactly the mistake that first made the Kinderbad capture look like it
+which is exactly the mistake that first made the Badezimmer capture look like it
 contained no triggering audio at all. Verify with the pod's own log rather than
 assuming:
 
@@ -212,7 +212,7 @@ kubectl --context renfield-private -n renfield logs deploy/backend --tail=100000
 The pod's `startTime` is UTC; if the first log line carries the same clock, the
 logs are UTC too.
 
-**Even with the timezone right, alignment is partial.** On the Kinderbad capture,
+**Even with the timezone right, alignment is partial.** On the Badezimmer capture,
 four logged wakes fall inside the window and exactly **one** (09:08:50 CEST,
 t=1643 s) lands on an offline detection; the other three have no offline hit
 within 120 s. The satellite gates a wake on VAD as well as the wakeword, so the
@@ -346,11 +346,11 @@ settings (group_vars) drift away from them.
 
 | Satellite | Hardware | Room ambient in the negative set | Notes |
 |---|---|---|---|
-| Fitnessraum | XVF3800 | yes (v3) | `PP_AGCDESIREDLEVEL=0.015`; runs v5 since 2026-11-06 |
+| Hobbyraum | XVF3800 | yes (v3) | `PP_AGCDESIREDLEVEL=0.015`; runs v5 since 2026-11-06 |
 | Arbeitszimmer | WM8960 / Whisplay | yes (v3 + v4 audiobook) | `ALC Max Gain=4` |
 | Wohnzimmer | XVF3800 (was 2-mic HAT until 2026-10-13) | yes (v3, with the old HAT) | runs v5 since 2026-11-06 |
-| Kinderbad | 2-mic HAT (AIC3104) | **yes (v5, 2026-09-05)** | ADC HPF enabled 2026-09-04; FPs persisted (25 genuine wakes in the following 9 h). Its 10-min June capture scored peak 0.127 (0 detections) — useless as a negative. The 45-min in-use capture scores 0.969 / 8 against v3; v5 brings that to 0.609 / 1. **v5 deployed + live-verified 2026-09-05** (backend `2026-09-05-renfield-de-v5`): 4 `completed` sessions in the first 1.6 h, versus 0 in 9 h under v3. |
-| Esszimmer | Orange Pi / XVF3800 | yes (v3) | bare-metal via Ansible since 2026-11-06 (was a k8s pod until then); audio path aligned to Fitnessraum (ch0 select) 2026-07-10; runs v5 |
+| Badezimmer | 2-mic HAT (AIC3104) | **yes (v5, 2026-09-05)** | ADC HPF enabled 2026-09-04; FPs persisted (25 genuine wakes in the following 9 h). Its 10-min June capture scored peak 0.127 (0 detections) — useless as a negative. The 45-min in-use capture scores 0.969 / 8 against v3; v5 brings that to 0.609 / 1. **v5 deployed + live-verified 2026-09-05** (backend `2026-09-05-renfield-de-v5`): 4 `completed` sessions in the first 1.6 h, versus 0 in 9 h under v3. |
+| Esszimmer | Orange Pi / XVF3800 | yes (v3) | bare-metal via Ansible since 2026-11-06 (was a k8s pod until then); audio path aligned to Hobbyraum (ch0 select) 2026-07-10; runs v5 |
 | Küche | Orange Pi / XVF3800 | **no** | bare-metal since 2026-11-05; runs v5; room capture still to do |
 
 ---

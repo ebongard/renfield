@@ -29,7 +29,7 @@ Provision a single satellite:
 
 ```bash
 cd src/satellite/provisioning
-ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum -v
+ansible-playbook -i inventory.yml provision.yml --limit satellite-hobbyraum -v
 ```
 
 Provision all satellites:
@@ -44,13 +44,13 @@ Run individual phases:
 
 ```bash
 # Just update the config
-ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --tags config
+ansible-playbook -i inventory.yml provision.yml --limit satellite-hobbyraum --tags config
 
 # Just redeploy code
-ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --tags app
+ansible-playbook -i inventory.yml provision.yml --limit satellite-hobbyraum --tags app
 
 # Just update models
-ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --tags models
+ansible-playbook -i inventory.yml provision.yml --limit satellite-hobbyraum --tags models
 
 # Just (re)apply WM8960 audio-mixer tuning (ALC + mic input path) — restart-free
 ansible-playbook -i inventory.yml provision.yml --limit satellite-wohnzimmer --tags audio
@@ -80,7 +80,7 @@ front of the model (`--tags audio`, restart-free):
 Preview changes without applying:
 
 ```bash
-ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --check -v
+ansible-playbook -i inventory.yml provision.yml --limit satellite-hobbyraum --check -v
 ```
 
 ## HiFiBerry DLNA Renderers (http TTS)
@@ -178,10 +178,10 @@ Then check by hand:
 
 ```bash
 # Sound card detected?
-ssh satellite-fitnessraum.local "cat /proc/asound/cards"
+ssh satellite-hobbyraum.local "cat /proc/asound/cards"
 
 # Service running?
-ssh satellite-fitnessraum.local "sudo journalctl -u renfield-satellite -n 30"
+ssh satellite-hobbyraum.local "sudo journalctl -u renfield-satellite -n 30"
 
 # Expected log lines:
 #   LED power enabled on GPIO5       (4-mic only)

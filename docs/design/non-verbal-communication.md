@@ -51,8 +51,8 @@ on-device?":**
   NPU is the performance ceiling **but requires model conversion** to the
   Allwinner/Verisilicon NPU toolchain (stock MediaPipe does not target it — real
   eng work, not plug-and-play).
-- **The 3 current camera satellites cannot** — `arbeitszimmer` / `benszimmer` /
-  `kinderbad` are Pi Zero 2 W-class (quad A53), too weak for real-time MediaPipe.
+- **The 3 current camera satellites cannot** — `arbeitszimmer` / `gaestezimmer` /
+  `badezimmer` are Pi Zero 2 W-class (quad A53), too weak for real-time MediaPipe.
 - **The Esszimmer A733 has no camera yet** (`k8s/satellite-esszimmer.yaml` mounts
   no `/dev/video*`; the Pi CSI module is unsupported on that board) → needs a **USB
   camera**.
@@ -134,7 +134,7 @@ in the same temporal classifier — but it is not part of this design.
    classifier on a starter vocabulary, wire it through the `device_action`
    fail-closed gate. Grow the vocabulary as config + classes.
 4. **Phase 4 — House-wide rollout.** Standardize/upgrade gesture satellites to
-   Orange Pi + USB cam; add cameras to `wohnzimmer` / `fitnessraum` / `esszimmer`.
+   Orange Pi + USB cam; add cameras to `wohnzimmer` / `hobbyraum` / `esszimmer`.
 
 ## Decisions
 
@@ -156,7 +156,7 @@ in the same temporal classifier — but it is not part of this design.
    affect/engagement timeline, no mood log. Per-turn / per-window, ephemeral,
    discarded. (Contrast: presence history *is* persisted — non-verbal reads
    deliberately are not. Storing them is surveillance creep.)
-8. **`kinderbad` (bathroom) requires a dedicated opt-in.** It does **not** inherit
+8. **`badezimmer` (bathroom) requires a dedicated opt-in.** It does **not** inherit
    the camera/feature flag. Non-verbal inference runs there only behind a separate
    explicit per-satellite flag, off by default, so it can never be enabled by
    accident — regardless of its camera being on for occupancy. (User decision.)
@@ -234,7 +234,7 @@ the scope, not an afterthought:
   satellite drives a **distinct LED state** (`LEDController.set_pattern` /
   `set_all`, `src/satellite/renfield_satellite/hardware/led.py`) — a non-defeatable,
   always-visible indicator that the camera is processing. Off pipeline → normal LED.
-- **Per-room enable** + the **`kinderbad` dedicated opt-in** (Decision 8).
+- **Per-room enable** + the **`badezimmer` dedicated opt-in** (Decision 8).
 - **"Pause vision"** — a voice command *and* the palm-stop gesture both send
   `gesture_stream_stop` for a cooldown; resumes on explicit re-enable.
 - **Landmark-only by default (Tier 1).** Raw video leaving the room (Tier 2) is the
@@ -250,10 +250,10 @@ the scope, not an afterthought:
   bare-metal Ansible like the Pi sats.
 - **Esszimmer:** add a USB camera to the existing A733 pod (mount `/dev/video*`); it
   becomes the first gesture node with no new board.
-- **Migrate the 3 Pi Zero 2 W cameras** (`arbeitszimmer` / `benszimmer` /
-  `kinderbad`): either upgrade the board to A733-class (Tier 1) or keep them on
+- **Migrate the 3 Pi Zero 2 W cameras** (`arbeitszimmer` / `gaestezimmer` /
+  `badezimmer`): either upgrade the board to A733-class (Tier 1) or keep them on
   Tier 2 (video → GPU) until upgraded.
-- **Add cameras** to `wohnzimmer` / `fitnessraum` for house-wide coverage.
+- **Add cameras** to `wohnzimmer` / `hobbyraum` for house-wide coverage.
 - **GPU node:** the temporal classifier shares the existing CUDA node with
   voice-server — confirm headroom (see Risks).
 

@@ -1424,8 +1424,8 @@ angezeigt). Rollout gestaffelt: dark → Flotte einschreiben → `…_ENABLED=tr
 # damit auch ein Code-only `--tags app`-Deploy sie mitnimmt) + libopus0 in
 # satellite_system_packages ([system]), k8s-Pod-Sat (Esszimmer) über das
 # Satelliten-Image (Dockerfile). Fehlt opuslib/libopus0, fällt der Satellit
-# graceful auf pcm zurück. Flotte auf Opus (2026-07-09): Fitnessraum,
-# Arbeitszimmer, Wohnzimmer, Kinderbad (bare-metal) + Esszimmer (Pod).
+# graceful auf pcm zurück. Flotte auf Opus (2026-07-09): Hobbyraum,
+# Arbeitszimmer, Wohnzimmer, Badezimmer (bare-metal) + Esszimmer (Pod).
 #
 # DEPLOY-INVARIANTE: Vor dem Aktivieren MUSS das Voice-Server-Image opuslib +
 # libopus0 enthalten (seit C2 Phase 1 im voice-server Dockerfile/requirements).

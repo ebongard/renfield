@@ -18,7 +18,7 @@ stronger BT radio than the Pi-Zero fleet — and a good primary anchor.
 2. **Scan latency / coverage.** 5 s scan every 30 s → up to ~30 s latency; a
    device advertising in the gap is missed.
 3. **RSSI jitter.** Single-shot advertisement RSSI is noisy → room arbitration
-   flip-flops (cf. the Kinderbad synthetic-−50 hijack incident).
+   flip-flops (cf. the Badezimmer synthetic-−50 hijack incident).
 
 ## What the BT 5.4 controller offers (probed on the A733)
 - ✅ LE **2M** + **Coded (Long Range)** PHY (`LECODEDTX/RX`), Extended

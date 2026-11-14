@@ -20,7 +20,7 @@ replays the satellite's own collapse, using the satellite's own beamformer code
 rather than a reimplementation.
 
 Usage:
-    python derive_detector_mono.py data/wakeword-ambient/satellite-kinderbad/*.wav
+    python derive_detector_mono.py data/wakeword-ambient/satellite-badezimmer/*.wav
     python derive_detector_mono.py --out-dir /work/ambient <wav> [<wav> ...]
 """
 from __future__ import annotations

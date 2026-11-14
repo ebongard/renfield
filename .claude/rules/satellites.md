@@ -11,7 +11,7 @@ paths:
 
 🛑 **Ein ausgefallener Satellit faellt NICHT von selbst auf.** Bis 2026-09-26 gab es
 dafuer nichts: die halbe Flotte war dunkel (Esszimmer 1 Tag, Arbeitszimmer 2 Tage,
-BensZimmer 30 Tage) und keine einzige Benachrichtigung. Jetzt meldet die stuendliche
+Gästezimmer 30 Tage) und keine einzige Benachrichtigung. Jetzt meldet die stuendliche
 Aufgabe `satellite_fleet_watchdog` die Fehlenden. Das Lebenszeichen ist die LAUFENDE
 Registratur des `SatelliteManager`, NICHT `satellites.last_authenticated_at` — die
 Spalte wird nur beim Verbindungsaufbau gesetzt und altert bei einem stabil verbundenen
@@ -21,7 +21,7 @@ Frames (Wohnzimmer 2026-11: XVF3800-Stream `RUNNING`, `hw_ptr` 0, zwei Tage). Pr
 Geraet: `/proc/asound/cardN/pcm0c/sub0/status` zweimal im Abstand von 2 s — `hw_ptr` muss
 laufen. Ein Dienst-Neustart setzte das Geraet NICHT zurueck, erst der Neustart des Pi.
 Das Signal im Backend ist der Zaehler `capture_fresh_chunks` (ab 1.4.20), NICHT der Pegel:
-ohne Mikrofon wechselte der Fitnessraum-Pegel zwischen zwei exakten Werten (wiederholte
+ohne Mikrofon wechselte der Hobbyraum-Pegel zwischen zwei exakten Werten (wiederholte
 Puffer, ~40 % CPU) und galt als lebendig. Wiederholte Bloecke zaehlen nicht, konstante
 (digitale Stille) immer. Fuer aeltere Satelliten bleibt der Pegel: `-96.0` dB heisst
 „noch kein Frame", `-90.3` heisst „Frames, aber digital still" und ist KEIN Ausfall (#1211,

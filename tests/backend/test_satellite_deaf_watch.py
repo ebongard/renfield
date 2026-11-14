@@ -168,7 +168,7 @@ def _counted_beat(m: SatelliteManager, sid: str, fresh: int, rms: float, at: flo
 
 
 class TestTheFreshChunkCounter:
-    """The Fitnessraum case (2026-11-09): USB mic unplugged, the level cycled
+    """The Hobbyraum case (2026-11-09): USB mic unplugged, the level cycled
     between 1499.6 and 525.1 on every heartbeat and the level watch saw a live
     microphone. The satellite's counter of non-repeating chunks froze."""
 

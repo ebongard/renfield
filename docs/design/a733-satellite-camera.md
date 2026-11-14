@@ -241,8 +241,8 @@ group — the fleet has every combination:
 
 | Host | `camera_enabled` | `camera_backend` | Host provisioning |
 |---|---|---|---|
-| Pi + Pi-camera (arbeitszimmer, kinderbad) | true | `rpicam` (default) | none — OS libcamera/rpicam + app rpicam-still |
-| Pi, no camera (wohnzimmer, benszimmer, fitnessraum) | false | — | skipped |
+| Pi + Pi-camera (arbeitszimmer, badezimmer) | true | `rpicam` (default) | none — OS libcamera/rpicam + app rpicam-still |
+| Pi, no camera (wohnzimmer, gaestezimmer, hobbyraum) | false | — | skipped |
 | **A733 (esszimmer)** | true | **`sunxi_isp`** | DT overlay + sunxi-vin modules + `/opt/awisp` (ISP libs + `renfield_isp_capture`) |
 
 **`src/satellite/provisioning/provision-camera.yml`** is config-driven (targets `all`, gated on

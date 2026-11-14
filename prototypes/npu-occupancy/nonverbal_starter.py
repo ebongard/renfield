@@ -131,4 +131,4 @@ class NonVerbalReader:
 #     identifies a single BLE-tracked occupant; multi-person / unidentified → read-only.
 #   * Safe-action allowlist = REVERSIBLE actions only; no irreversible action via gesture
 #     without a voice/tap confirm (D7).
-#   * kinderbad needs its OWN opt-in flag (Decision 8) — never inherits the camera flag.
+#   * badezimmer needs its OWN opt-in flag (Decision 8) — never inherits the camera flag.

@@ -157,7 +157,7 @@ audio:
 > Beam, Kanal 1 = ASR/AEC-Residual — KEIN zweites Mikrofon). Bei `channels: 1`
 > mischt ALSA die beiden Kanaele zu Mono zusammen (`default`-Plug-Downmix), und
 > Beam + Residual **loeschen sich zu Stille aus** — der Wakeword bekommt kein
-> Signal (Fitnessraum-Vorfall 2026-07-07). Stattdessen beide Kanaele erfassen
+> Signal (Hobbyraum-Vorfall 2026-07-07). Stattdessen beide Kanaele erfassen
 > (`channels: 2`) und den Beam **auswaehlen** (`combine: select`,
 > `select_channel: 0`). Details: `docs/design/satellite-audio-combine-pipeline.md`.
 
@@ -594,7 +594,7 @@ ersetzt werden — guenstiger, stromsparender, kein SD-Karten-Risiko.
 ## Bekannte Probleme & Fixes (Ansatz A: USB am Pi)
 
 Operative Stolpersteine beim Aufbau des ersten bare-metal XVF3800-Satelliten
-(Fitnessraum, Pi Zero 2 W). Alle im `xvf3800-usb`-Provisioning codifiziert.
+(Hobbyraum, Pi Zero 2 W). Alle im `xvf3800-usb`-Provisioning codifiziert.
 
 ### Satellit hängt beim Audio-Start (PyAudio `Pa_Initialize`) — die ALSA-`pulse`-Plugin-Falle
 
@@ -621,7 +621,7 @@ schleppen System-V-IPC-sem/shm mit, die bei root-Erstanlage auf 0600 owner-locke
 
 ### Mikrofon abgezogen: kein Rückfall auf das Null-PCM (ab Satellit 1.4.21)
 
-**Symptom (Fitnessraum, 2026-11-09):** XVF3800 abgezogen, Satellit verbunden und
+**Symptom (Hobbyraum, 2026-11-09):** XVF3800 abgezogen, Satellit verbunden und
 scheinbar gesund, aber zwei Erfassungs-Threads bei 100 % und 64 % CPU, Pegel um
 -5 dB, der zwischen zwei Werten wechselt.
 
