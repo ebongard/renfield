@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import FederationUserLink, PeerUser, User
 from services.auth_service import get_user_or_default
 from services.database import get_db
+from services.federation_audit import BASIS_SELF, LINK_REVOKED, record_revocation
 from services.federation_identity_link import delete_link
 from services.federation_instance_name import peer_instance_label
 from services.link_handshake_service import (
@@ -102,6 +103,11 @@ async def accept_link_offer(
     current_user: User = Depends(get_user_or_default),
 ):
     """Step 2 (on B, as X) -- consent, write our own row, sign."""
+    # 🛑 Read the id BEFORE anything can roll back. A rollback expires every
+    # object of the session, the signed-in account included, and reading
+    # `current_user.id` afterwards is a lazy load outside a greenlet: the
+    # refusal then left as a 500 instead of the uniform 400.
+    user_id = current_user.id
     try:
         confirmation = await LinkHandshakeService(db).accept_offer(
             current_user, body.offer,
@@ -109,7 +115,7 @@ async def accept_link_offer(
         await db.commit()
     except LinkHandshakeError as e:
         await db.rollback()
-        raise _reject(e, current_user.id) from e
+        raise _reject(e, user_id) from e
     except IntegrityError:
         # 🛑 The uniqueness index on (peer_id, querier_ref) IS the real guard
         # against a replay -- see the service's module docstring. This is where
@@ -128,6 +134,7 @@ async def complete_link(
     current_user: User = Depends(get_user_or_default),
 ):
     """Step 3 (back on A, as U) -- verify, write our own row."""
+    user_id = current_user.id  # before any rollback, see `accept_link_offer`
     try:
         link = await LinkHandshakeService(db).complete(
             current_user, body.offer, body.confirmation,
@@ -135,7 +142,7 @@ async def complete_link(
         await db.commit()
     except LinkHandshakeError as e:
         await db.rollback()
-        raise _reject(e, current_user.id) from e
+        raise _reject(e, user_id) from e
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
@@ -196,6 +203,15 @@ async def revoke_my_link(
     link, peer = row
 
     await delete_link(db, link_id=link.id)
+    record_revocation(
+        db,
+        action=LINK_REVOKED,
+        basis=BASIS_SELF,
+        actor_user_id=current_user.id,
+        peer=peer,
+        subject_user_id=current_user.id,
+        link_id=link.id,
+    )
     await db.commit()
 
     # 🛑 Clean up requests in flight, the way `revoke_peer` does:

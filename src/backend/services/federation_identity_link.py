@@ -27,7 +27,7 @@ import secrets
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import FederationUserLink
+from models.database import FederationUserLink, User
 
 
 def mint_querier_ref() -> str:
@@ -41,18 +41,26 @@ async def resolve_linked_user(
 ) -> int | None:
     """RESPONDER side: (peer_id, querier_ref) -> local user id, or None.
 
-    None when: no ref, no matching row, or the row's local_user_id was NULLed by
-    a user delete. Callers treat None as unmapped → peer-scoped fallback.
+    None when: no ref, no matching row, the row's local_user_id was NULLed by
+    a user delete, or the linked account is deactivated. Callers treat None as
+    unmapped → peer-scoped fallback.
+
+    The inner join on an ACTIVE account is the point: a link lends the far
+    side that account's own reach, and a deactivated account has none -- it
+    cannot sign in here either.
     """
     if not querier_ref:
         return None
     row = (await db.execute(
-        select(FederationUserLink.local_user_id).where(
+        select(FederationUserLink.local_user_id)
+        .join(User, User.id == FederationUserLink.local_user_id)
+        .where(
             FederationUserLink.peer_id == peer_id,
             FederationUserLink.querier_ref == querier_ref,
+            User.is_active.is_(True),
         )
     )).scalar_one_or_none()
-    return row  # int local_user_id, or None (no row / NULLed)
+    return row  # int local_user_id, or None (no row / NULLed / deactivated)
 
 
 async def resolve_querier_ref(
@@ -112,3 +120,17 @@ async def list_links(db: AsyncSession, *, peer_id: int | None = None) -> list[Fe
 async def delete_link(db: AsyncSession, *, link_id: int) -> bool:
     res = await db.execute(delete(FederationUserLink).where(FederationUserLink.id == link_id))
     return res.rowcount > 0
+
+
+async def delete_links_for_peer(db: AsyncSession, *, peer_id: int) -> int:
+    """Remove every person link of one pairing; returns how many.
+
+    Called when the pairing is revoked. The pairing row is KEPT and pairing
+    again revives it under the same id -- link rows left behind would come back
+    to life with it, and the far side, which still holds the `querier_ref`,
+    would be served with a person's full reach that nobody consented to anew.
+    """
+    res = await db.execute(
+        delete(FederationUserLink).where(FederationUserLink.peer_id == peer_id)
+    )
+    return res.rowcount or 0

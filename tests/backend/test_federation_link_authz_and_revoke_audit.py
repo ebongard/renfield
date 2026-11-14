@@ -1,0 +1,644 @@
+"""Who may create or remove a person link, and what a revocation leaves behind.
+
+Two follow-ups from the review of #1548 ("every account can see the instance's
+active pairings"), established at the code on 2026-11-14:
+
+1. **Linking.** The self-service handshake was owner-bound all along (the
+   offer route and `_peer_by_pubkey` both filter on `circle_owner_id`), but
+   nothing proved it against two real accounts. The path that DID let an
+   account which does not own a pairing create a link was the admin assertion,
+   `POST /api/federation/user-links`: it took the linked account from the BODY.
+   An `admin` holder could map a `querier_ref` to any local account on any
+   active pairing, lending that account's full own reach to the far side
+   without its consent -- and could read every other account's ref from the
+   list. A person link also outlived the revocation of its pairing and came
+   back to life when the pairing was revived.
+
+2. **Audit.** Revoking a pairing or deleting a link as an `admin` left a log
+   line and nothing durable.
+
+Real Postgres with real, distinct accounts throughout: every assertion here is
+about ownership BETWEEN accounts, and the foreign keys have to hold for it to
+mean anything.
+"""
+from __future__ import annotations
+
+import json
+import secrets
+import time
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from httpx import AsyncClient
+from sqlalchemy import func, select
+
+from models.database import FederationQueryLog, FederationUserLink, PeerUser, Role, User
+from services.auth_service import get_current_user, get_user_or_default
+from services.federation_audit import (
+    BASIS_ADMIN,
+    BASIS_OWNER,
+    BASIS_SELF,
+    LINK_REVOKED,
+    PAIRING_REVOKED,
+    REVOCATION_DIRECTION,
+    prune_old_audit_rows,
+)
+from services.federation_identity import (
+    FederationIdentity,
+    canonical_bytes,
+    get_federation_identity,
+    init_federation_identity,
+    reset_federation_identity_for_tests,
+)
+from services.federation_identity_link import resolve_linked_user
+from utils.config import settings
+
+pytestmark = [pytest.mark.backend, pytest.mark.database]
+
+PEERS = "/api/federation/peers"
+USER_LINKS = "/api/federation/user-links"
+LINKS = "/api/federation/links"
+AUDIT = "/api/federation/audit"
+
+#: The far side's name for itself. It must never reach a revocation record.
+FAR_NAME = "Far Instance Display Name"
+
+
+async def _user(db, name: str, permissions: list[str], **kw) -> User:
+    role = Role(name=f"role-{name}", permissions=permissions, is_system=False)
+    db.add(role)
+    await db.flush()
+    user = User(username=name, password_hash="x", role_id=role.id, **kw)
+    db.add(user)
+    await db.commit()
+    await db.refresh(user, attribute_names=["role"])
+    return user
+
+
+@pytest.fixture
+def far_side() -> FederationIdentity:
+    """The other instance, built alongside the singleton."""
+    return FederationIdentity(ed25519.Ed25519PrivateKey.generate())
+
+
+@pytest.fixture
+def this_instance(tmp_path):
+    reset_federation_identity_for_tests()
+    init_federation_identity(tmp_path / "instance_key")
+    yield get_federation_identity()
+    reset_federation_identity_for_tests()
+
+
+@pytest.fixture
+async def fresh_pending_store():
+    from services.federation_pending_store import reset_store_for_tests
+    reset_store_for_tests()
+    yield
+    reset_store_for_tests()
+
+
+@pytest.fixture
+async def world(db_session, far_side):
+    """owner: owns the one active pairing. member: a plain account that owns
+    nothing. admin: holds ``admin`` and owns nothing either."""
+    owner = await _user(db_session, "link-owner", ["chat.own"])
+    member = await _user(db_session, "link-member", ["chat.own"])
+    admin = await _user(db_session, "link-admin", ["admin"])
+    assert len({owner.id, member.id, admin.id}) == 3
+
+    pairing = PeerUser(
+        circle_owner_id=owner.id, remote_pubkey=far_side.public_key_hex(),
+        remote_display_name=FAR_NAME, remote_user_id=555,
+        granted_tier=2, transport_config={},
+        paired_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=3),
+    )
+    db_session.add(pairing)
+    await db_session.commit()
+    return {
+        "owner": owner, "member": member, "admin": admin, "pairing": pairing,
+        "pairing_id": pairing.id,
+    }
+
+
+async def _reload(db, user: User) -> User:
+    """Make an account usable again after a rollback expired it."""
+    await db.refresh(user)
+    await db.refresh(user, attribute_names=["role"])
+    return user
+
+
+@pytest.fixture
+def as_user(app_with_test_db, monkeypatch):
+    """Sign in as `user` with auth ON: both dependencies resolve to the same
+    account, the way a real session does."""
+    monkeypatch.setattr(settings, "auth_enabled", True)
+
+    def _as(user: User) -> None:
+        app_with_test_db.dependency_overrides[get_user_or_default] = lambda: user
+        app_with_test_db.dependency_overrides[get_current_user] = lambda: user
+    return _as
+
+
+@pytest.fixture
+def visible_to_all(monkeypatch):
+    monkeypatch.setattr(settings, "federation_peers_visible_to_all", True)
+
+
+@pytest.fixture
+def purged(monkeypatch):
+    """Records which pubkeys had their in-flight requests purged."""
+    import services.federation_query_responder as responder
+    seen: list[str] = []
+
+    async def _purge(pubkey: str) -> int:
+        seen.append(pubkey)
+        return 0
+
+    monkeypatch.setattr(responder, "purge_requests_for_pubkey", _purge)
+    return seen
+
+
+async def _link(db, pairing: PeerUser, user: User | None, ref: str | None = None) -> FederationUserLink:
+    link = FederationUserLink(
+        peer_id=pairing.id, querier_ref=ref or secrets.token_hex(32),
+        local_user_id=user.id if user is not None else None,
+    )
+    db.add(link)
+    await db.commit()
+    return link
+
+
+async def _links(db, pairing_id: int) -> list[FederationUserLink]:
+    """By ID: a refused request rolls the shared session back, which expires
+    every loaded object -- the pairing included."""
+    return list((await db.execute(
+        select(FederationUserLink)
+        .where(FederationUserLink.peer_id == pairing_id)
+        .order_by(FederationUserLink.id)
+        .execution_options(populate_existing=True)
+    )).scalars().all())
+
+
+async def _revocations(db) -> list[FederationQueryLog]:
+    return list((await db.execute(
+        select(FederationQueryLog)
+        .where(FederationQueryLog.direction == REVOCATION_DIRECTION)
+        .order_by(FederationQueryLog.id)
+    )).scalars().all())
+
+
+def _signed_offer(far_side: FederationIdentity, this_instance: FederationIdentity) -> dict:
+    """A genuine offer from the far side, naming this instance."""
+    now = int(time.time())
+    unsigned = {
+        "version": 1,
+        "initiator_pubkey": far_side.public_key_hex(),
+        "responder_pubkey": this_instance.public_key_hex(),
+        "stated_by": 4711,
+        "querier_ref": secrets.token_hex(32),
+        "nonce": secrets.token_hex(16),
+        "issued_at": now,
+        "expires_at": now + 600,
+    }
+    return {**unsigned, "signature": far_side.sign(canonical_bytes(unsigned)).hex()}
+
+
+# ---------------------------------------------------------------------------
+# 1a. The self-service handshake is bound to the pairing's owner
+# ---------------------------------------------------------------------------
+
+
+class TestHandshakeIsOwnerBound:
+    async def test_an_account_that_does_not_own_the_pairing_gets_no_offer(
+        self, async_client: AsyncClient, world, as_user, this_instance,
+    ):
+        as_user(world["member"])
+        resp = await async_client.post(f"{LINKS}/offer", json={"peer_id": world["pairing"].id})
+        assert resp.status_code == 404
+
+        as_user(world["owner"])
+        resp = await async_client.post(f"{LINKS}/offer", json={"peer_id": world["pairing"].id})
+        assert resp.status_code == 200
+        assert resp.json()["stated_by"] == world["owner"].id
+
+    @pytest.mark.parametrize("who", ["member", "admin"])
+    async def test_a_genuine_offer_cannot_be_accepted_by_anyone_but_the_owner(
+        self, async_client: AsyncClient, db_session, world, as_user,
+        this_instance, far_side, fresh_pending_store, who,
+    ):
+        """Not even an `admin` holder: accepting writes a link for the
+        signed-in account on a pairing somebody else set up."""
+        as_user(world[who])
+        resp = await async_client.post(
+            f"{LINKS}/accept", json={"offer": _signed_offer(far_side, this_instance)},
+        )
+        # The uniform refusal -- until 2026-11-14 this left as a 500, because
+        # the route read `current_user.id` after the rollback.
+        assert resp.status_code == 400
+        assert resp.json() == {"detail": "Link handshake failed"}
+        assert await _links(db_session, world["pairing_id"]) == []
+
+    async def test_the_owner_accepts_and_is_the_one_linked(
+        self, async_client: AsyncClient, db_session, world, as_user,
+        this_instance, far_side, fresh_pending_store,
+    ):
+        as_user(world["owner"])
+        offer = _signed_offer(far_side, this_instance)
+        resp = await async_client.post(f"{LINKS}/accept", json={"offer": offer})
+        assert resp.status_code == 200, resp.text
+        (link,) = await _links(db_session, world["pairing_id"])
+        assert link.local_user_id == world["owner"].id
+        assert link.querier_ref == offer["querier_ref"]
+
+    @pytest.mark.parametrize("who", ["member", "admin"])
+    async def test_the_owners_offer_cannot_be_completed_by_another_account(
+        self, async_client: AsyncClient, db_session, world, as_user,
+        this_instance, far_side, fresh_pending_store, who,
+    ):
+        """Step 3 with a genuine confirmation from the far side: refused for
+        everyone but the account that stated the offer -- as the uniform 400,
+        not as a server error -- and completed for that account."""
+        as_user(world["owner"])
+        offer = (await async_client.post(
+            f"{LINKS}/offer", json={"peer_id": world["pairing"].id},
+        )).json()
+        unsigned = {
+            "version": 1,
+            "nonce": offer["nonce"],
+            "querier_ref": offer["querier_ref"],
+            "responder_pubkey": far_side.public_key_hex(),
+            "responder_user_id": 4711,
+            "accepted_at": int(time.time()),
+        }
+        body = {"offer": offer, "confirmation": {
+            **unsigned, "signature": far_side.sign(canonical_bytes(unsigned)).hex(),
+        }}
+
+        as_user(world[who])
+        resp = await async_client.post(f"{LINKS}/complete", json=body)
+        assert resp.status_code == 400
+        assert resp.json() == {"detail": "Link handshake failed"}
+        assert await _links(db_session, world["pairing_id"]) == []
+
+        as_user(await _reload(db_session, world["owner"]))
+        resp = await async_client.post(f"{LINKS}/complete", json=body)
+        assert resp.status_code == 200, resp.text
+        (link,) = await _links(db_session, world["pairing_id"])
+        assert link.local_user_id == world["owner"].id
+
+
+# ---------------------------------------------------------------------------
+# 1b. The admin assertion links the SIGNED-IN account, nobody else
+# ---------------------------------------------------------------------------
+
+
+class TestAdminAssertionLinksOnlyTheSessionAccount:
+    @pytest.mark.parametrize("victim", ["owner", "member"])
+    async def test_an_admin_cannot_link_another_account(
+        self, async_client: AsyncClient, db_session, world, as_user, victim,
+    ):
+        """The escalation: the far side, presenting the minted ref, would be
+        served with the victim's full own reach."""
+        as_user(world["admin"])
+        resp = await async_client.post(USER_LINKS, json={
+            "peer_id": world["pairing"].id, "local_user_id": world[victim].id,
+        })
+        assert resp.status_code == 403
+        assert await _links(db_session, world["pairing_id"]) == []
+
+    async def test_the_linked_account_comes_from_the_session(
+        self, async_client: AsyncClient, db_session, world, as_user,
+    ):
+        as_user(world["admin"])
+        resp = await async_client.post(USER_LINKS, json={"peer_id": world["pairing"].id})
+        assert resp.status_code == 200, resp.text
+        (link,) = await _links(db_session, world["pairing_id"])
+        assert link.local_user_id == world["admin"].id
+        assert link.created_by == world["admin"].id
+        assert resp.json()["local_user_id"] == world["admin"].id
+        # The caller's own ref is returned: it has to be mirrored on the far side.
+        assert resp.json()["querier_ref"] == link.querier_ref
+
+    async def test_naming_oneself_in_the_body_is_accepted(
+        self, async_client: AsyncClient, db_session, world, as_user,
+    ):
+        as_user(world["admin"])
+        resp = await async_client.post(USER_LINKS, json={
+            "peer_id": world["pairing"].id, "local_user_id": world["admin"].id,
+        })
+        assert resp.status_code == 200
+        (link,) = await _links(db_session, world["pairing_id"])
+        assert link.local_user_id == world["admin"].id
+
+    async def test_a_plain_account_is_refused_while_auth_is_on(
+        self, async_client: AsyncClient, db_session, world, as_user,
+    ):
+        as_user(world["member"])
+        assert (await async_client.post(
+            USER_LINKS, json={"peer_id": world["pairing"].id},
+        )).status_code == 403
+        assert (await async_client.get(USER_LINKS)).status_code == 403
+        link = await _link(db_session, world["pairing"], world["owner"])
+        assert (await async_client.delete(f"{USER_LINKS}/{link.id}")).status_code == 403
+        assert len(await _links(db_session, world["pairing_id"])) == 1
+
+    async def test_a_revoked_pairing_cannot_be_linked(
+        self, async_client: AsyncClient, db_session, world, as_user,
+    ):
+        world["pairing"].revoked_at = datetime.now(UTC).replace(tzinfo=None)
+        await db_session.commit()
+        as_user(world["admin"])
+        resp = await async_client.post(USER_LINKS, json={"peer_id": world["pairing"].id})
+        assert resp.status_code == 404
+
+    async def test_a_ref_already_used_on_the_pairing_is_a_conflict(
+        self, async_client: AsyncClient, db_session, world, as_user,
+    ):
+        taken = await _link(db_session, world["pairing"], world["owner"])
+        as_user(world["admin"])
+        resp = await async_client.post(USER_LINKS, json={
+            "peer_id": world["pairing"].id, "querier_ref": taken.querier_ref,
+        })
+        assert resp.status_code == 409
+
+    async def test_the_list_shows_a_ref_only_to_the_account_it_belongs_to(
+        self, async_client: AsyncClient, db_session, world, as_user,
+    ):
+        """An admin who could read the owner's ref could delete that link,
+        re-create it for itself and ask the far side as the owner."""
+        theirs = await _link(db_session, world["pairing"], world["owner"])
+        mine = await _link(db_session, world["pairing"], world["admin"])
+        as_user(world["admin"])
+        resp = await async_client.get(USER_LINKS, params={"peer_id": world["pairing"].id})
+        assert resp.status_code == 200
+        by_id = {row["id"]: row for row in resp.json()}
+        assert by_id[theirs.id]["querier_ref"] is None
+        assert by_id[theirs.id]["local_user_id"] == world["owner"].id
+        assert by_id[mine.id]["querier_ref"] == mine.querier_ref
+        assert theirs.querier_ref not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# 1c. A link does not outlive its pairing, nor its account
+# ---------------------------------------------------------------------------
+
+
+class TestALinkEndsWithItsPairingAndItsAccount:
+    async def test_revoking_the_pairing_removes_its_links(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        """The pairing row is kept and pairing again revives it under the same
+        id. A link left behind would map again with it."""
+        pairing = world["pairing"]
+        link = await _link(db_session, pairing, world["owner"])
+        ref, pairing_id = link.querier_ref, pairing.id
+        await _link(db_session, pairing, world["admin"])
+
+        as_user(world["owner"])
+        assert (await async_client.delete(f"{PEERS}/{pairing_id}")).status_code == 204
+        assert await _links(db_session, pairing_id) == []
+
+        # Pairing again: `pairing_service` clears `revoked_at` on the same row.
+        await db_session.refresh(pairing)
+        pairing.revoked_at = None
+        await db_session.commit()
+        assert await resolve_linked_user(
+            db_session, peer_id=pairing_id, querier_ref=ref,
+        ) is None
+
+    async def test_a_deactivated_account_is_not_served_through_its_link(
+        self, db_session, world,
+    ):
+        link = await _link(db_session, world["pairing"], world["member"])
+        resolved = await resolve_linked_user(
+            db_session, peer_id=world["pairing"].id, querier_ref=link.querier_ref,
+        )
+        assert resolved == world["member"].id
+
+        world["member"].is_active = False
+        await db_session.commit()
+        assert await resolve_linked_user(
+            db_session, peer_id=world["pairing"].id, querier_ref=link.querier_ref,
+        ) is None
+
+    async def test_no_ref_and_an_unknown_ref_resolve_to_nobody(self, db_session, world):
+        assert await resolve_linked_user(
+            db_session, peer_id=world["pairing"].id, querier_ref=None,
+        ) is None
+        assert await resolve_linked_user(
+            db_session, peer_id=world["pairing"].id, querier_ref="f" * 64,
+        ) is None
+
+
+# ---------------------------------------------------------------------------
+# 2. A revocation leaves a durable record
+# ---------------------------------------------------------------------------
+
+
+def _assert_ids_only(row: FederationQueryLog) -> dict:
+    """The record carries ids, a key and fixed words -- nothing the far side
+    chose. Returns the decoded detail."""
+    assert row.peer_display_name_snapshot == ""
+    assert row.peer_instance_name_snapshot is None
+    assert row.answer_excerpt is None
+    assert row.error_message is None
+    assert FAR_NAME not in row.query_text
+    detail = json.loads(row.query_text)
+    for key, value in detail.items():
+        assert key == "action" or isinstance(value, (int, bool)), (key, value)
+    return detail
+
+
+class TestPairingRevocationIsRecorded:
+    async def test_an_admin_revoking_someone_elses_pairing_is_on_record(
+        self, async_client: AsyncClient, db_session, world, as_user,
+        visible_to_all, purged,
+    ):
+        pairing, owner, admin = world["pairing"], world["owner"], world["admin"]
+        pairing_id, pubkey = pairing.id, pairing.remote_pubkey
+        await _link(db_session, pairing, owner)
+        before = datetime.now(UTC).replace(tzinfo=None)
+
+        as_user(admin)
+        assert (await async_client.delete(f"{PEERS}/{pairing_id}")).status_code == 204
+
+        (row,) = await _revocations(db_session)
+        assert row.final_status == PAIRING_REVOKED
+        assert row.identity_basis == BASIS_ADMIN
+        assert row.user_id == owner.id            # filed under the affected account
+        assert row.peer_user_id == pairing_id
+        assert row.peer_pubkey_snapshot == pubkey
+        assert before <= row.initiated_at <= datetime.now(UTC).replace(tzinfo=None)
+        assert _assert_ids_only(row) == {
+            "action": PAIRING_REVOKED,
+            "actor_user_id": admin.id,
+            "as_admin": True,
+            "owner_user_id": owner.id,
+            "peer_id": pairing_id,
+            "subject_user_id": owner.id,
+            "links_removed": 1,
+        }
+
+    async def test_the_owner_revoking_is_recorded_as_the_owner(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        as_user(world["owner"])
+        assert (await async_client.delete(f"{PEERS}/{world['pairing'].id}")).status_code == 204
+        (row,) = await _revocations(db_session)
+        assert row.identity_basis == BASIS_OWNER
+        detail = _assert_ids_only(row)
+        assert detail["actor_user_id"] == world["owner"].id
+        assert detail["as_admin"] is False
+        assert detail["links_removed"] == 0
+
+    async def test_a_refused_revocation_leaves_no_record(
+        self, async_client: AsyncClient, db_session, world, as_user,
+        visible_to_all, purged,
+    ):
+        as_user(world["member"])
+        assert (await async_client.delete(f"{PEERS}/{world['pairing'].id}")).status_code == 404
+        assert await _revocations(db_session) == []
+        await db_session.refresh(world["pairing"])
+        assert world["pairing"].revoked_at is None
+
+    async def test_revoking_twice_is_recorded_once(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        as_user(world["owner"])
+        url = f"{PEERS}/{world['pairing'].id}"
+        assert (await async_client.delete(url)).status_code == 204
+        assert (await async_client.delete(url)).status_code == 204
+        assert len(await _revocations(db_session)) == 1
+
+
+class TestLinkRevocationIsRecorded:
+    async def test_an_admin_deleting_someone_elses_link_is_on_record(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        pairing, owner, admin = world["pairing"], world["owner"], world["admin"]
+        link = await _link(db_session, pairing, owner)
+        link_id = link.id
+
+        as_user(admin)
+        resp = await async_client.delete(f"{USER_LINKS}/{link_id}")
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": link_id}
+        assert await _links(db_session, world["pairing_id"]) == []
+
+        (row,) = await _revocations(db_session)
+        assert row.final_status == LINK_REVOKED
+        assert row.identity_basis == BASIS_ADMIN
+        assert row.user_id == owner.id
+        assert row.peer_user_id == pairing.id
+        assert _assert_ids_only(row) == {
+            "action": LINK_REVOKED,
+            "actor_user_id": admin.id,
+            "as_admin": True,
+            "owner_user_id": owner.id,
+            "peer_id": pairing.id,
+            "subject_user_id": owner.id,
+            "link_id": link_id,
+        }
+        # Requests in flight are discarded, as on the self-service route.
+        assert purged == [pairing.remote_pubkey]
+
+    async def test_an_admin_deleting_its_own_link_did_not_act_as_admin(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        link = await _link(db_session, world["pairing"], world["admin"])
+        as_user(world["admin"])
+        assert (await async_client.delete(f"{USER_LINKS}/{link.id}")).status_code == 200
+        (row,) = await _revocations(db_session)
+        assert row.identity_basis == BASIS_SELF
+        assert row.user_id == world["admin"].id
+        assert json.loads(row.query_text)["as_admin"] is False
+
+    async def test_a_link_without_an_account_is_filed_under_the_pairing_owner(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        """`local_user_id` is NULL once the linked account was deleted."""
+        link = await _link(db_session, world["pairing"], None)
+        as_user(world["admin"])
+        assert (await async_client.delete(f"{USER_LINKS}/{link.id}")).status_code == 200
+        (row,) = await _revocations(db_session)
+        assert row.user_id == world["owner"].id
+        assert row.identity_basis == BASIS_ADMIN
+
+    async def test_an_unknown_link_is_a_404_and_no_record(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        as_user(world["admin"])
+        assert (await async_client.delete(f"{USER_LINKS}/999999")).status_code == 404
+        assert await _revocations(db_session) == []
+        assert purged == []
+
+    async def test_revoking_ones_own_link_is_recorded_as_self(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        link = await _link(db_session, world["pairing"], world["member"])
+        link_id = link.id
+        as_user(world["member"])
+        assert (await async_client.delete(f"{LINKS}/{link_id}")).status_code == 204
+        (row,) = await _revocations(db_session)
+        assert row.final_status == LINK_REVOKED
+        assert row.identity_basis == BASIS_SELF
+        assert row.user_id == world["member"].id
+        detail = _assert_ids_only(row)
+        assert detail["actor_user_id"] == world["member"].id
+        assert detail["link_id"] == link_id
+        assert detail["as_admin"] is False
+
+    async def test_someone_elses_link_cannot_be_revoked_on_the_self_service_route(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        """Not by a plain account and not by an `admin` holder either: this
+        route knows only "mine". The admin's way is `/user-links`, on record."""
+        link = await _link(db_session, world["pairing"], world["owner"])
+        for who in ("member", "admin"):
+            as_user(world[who])
+            assert (await async_client.delete(f"{LINKS}/{link.id}")).status_code == 404
+        assert len(await _links(db_session, world["pairing_id"])) == 1
+        assert await _revocations(db_session) == []
+
+
+class TestARevocationIsNotAQuery:
+    async def _old_rows(self, db, world) -> None:
+        old = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=400)
+        common = {
+            "user_id": world["owner"].id, "peer_user_id": world["pairing"].id,
+            "peer_pubkey_snapshot": world["pairing"].remote_pubkey,
+            "initiated_at": old, "finalized_at": old, "verified_signature": False,
+        }
+        db.add_all([
+            FederationQueryLog(
+                direction="asked", final_status="success", query_text="a question",
+                peer_display_name_snapshot="x", **common,
+            ),
+            FederationQueryLog(
+                direction=REVOCATION_DIRECTION, final_status=PAIRING_REVOKED,
+                identity_basis=BASIS_ADMIN, query_text="{}",
+                peer_display_name_snapshot="", **common,
+            ),
+        ])
+        await db.commit()
+
+    async def test_the_query_view_does_not_show_it_as_a_question(
+        self, async_client: AsyncClient, db_session, world, as_user,
+    ):
+        await self._old_rows(db_session, world)
+        as_user(world["owner"])
+        resp = await async_client.get(AUDIT)
+        assert resp.status_code == 200
+        assert [e["direction"] for e in resp.json()["entries"]] == ["asked"]
+
+    async def test_retention_prunes_queries_and_keeps_the_revocation(
+        self, db_session, world, own_session_to_test_db,
+    ):
+        await self._old_rows(db_session, world)
+        assert await prune_old_audit_rows() == 1
+        remaining = (await db_session.execute(
+            select(FederationQueryLog.direction, func.count())
+            .group_by(FederationQueryLog.direction)
+        )).all()
+        assert remaining == [(REVOCATION_DIRECTION, 1)]
