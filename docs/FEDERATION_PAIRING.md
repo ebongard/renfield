@@ -320,7 +320,14 @@ name. A pairing now also carries the far **instance's** own name, shown first:
 - **Shown as** instance name → host of the stored endpoint → the person alone,
   on the peers page, the audit view and the chat status line. **The kiosk never
   shows a host:** the verified instance name, else the person alone — its
-  payload is content-free and a host name is an address. The audit view shows
+  payload is content-free and a host name is an address. On the peers page
+  the host is a stand-in, not a headline: where the list says the label is
+  not a verified name (`instance_name_verified: false`), the row is headed by
+  the person with the hint "instance name not yet known", and the host is not
+  shown. 🛑 The list does not send that field yet — until it does, the page
+  cannot tell a host from a name and shows the label as it comes. A check that
+  comes back `reachable` reads the list once more, so the name it delivered
+  replaces the hint in place. The audit view shows
   the name the **row recorded** when it was written
   (`federation_query_log.peer_instance_name_snapshot`); rows from before carry
   none and show the person alone.
@@ -530,6 +537,16 @@ Reviewed on 2026-11-14 and left as they are:
   sent to it.
 - **`FEDERATION_ADVERTISED_URL` is checked for form only**, and only when an
   offer or an acceptance is made — not at boot.
+- **A sleeping wall display.** The age of a reading is continued on the
+  device's monotonic clock, which stands still on some tablets while they
+  sleep. When the page comes back (`visibilitychange` with the monotonic clock
+  seen standing still over the hidden period, a `pageshow` out of the
+  back/forward cache, `online`) the kiosk shows every verdict as unknown /
+  "checked, but the result is old" and reconnects for a fresh snapshot — one
+  reconnect, no timer. What remains: a device that wakes **without** any of
+  the three events keeps the too-young age until the next push (at most 10
+  minutes on a live socket), and with the check off (the two-valued "asked us
+  recently" light) nothing is degraded, since that rule cannot say unknown.
 
 ---
 
@@ -546,7 +563,7 @@ Reviewed on 2026-11-14 and left as they are:
 | Peers page / kiosk: **reachability unknown**, reason "does not answer reachability checks" | The far side is one release behind or has `FEDERATION_REACHABILITY_ENABLED` off | Switch it on there too (§3a). The pairing itself may be fine. |
 | **Unreachable**, reason "certificate is no longer the one remembered" | The far side's TLS certificate was renewed; the pin from pairing is stale | Queries fail the same way. Re-pair, or refresh the pin — waiting does not help. |
 | **Unreachable**, reason "rejects the signed check" | Pairing revoked on the far side, clocks more than a minute apart, or its ping budget is spent | Check the far side's peers page and both clocks. |
-| A peer is shown under a host name | It has not sent a name yet, or sets none | Set `FEDERATION_INSTANCE_NAME` there; the label follows with the next query or ping. |
+| A peer is shown under a host name | It has not sent a name yet, or sets none | Set `FEDERATION_INSTANCE_NAME` there; the label follows with the next query or ping — on the open peers page as soon as a check comes back reachable. |
 
 ---
 

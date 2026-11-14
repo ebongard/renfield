@@ -405,8 +405,16 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
   for the elapsed part either: a wall clock stepped while the page is open (NTP, daylight saving) aged every
   reading by the step. Older than `PEER_CHECK_STALE_MS` (20 min) degrades to **unknown** with a reason of its
   own, `stale` ("checked, but the result is old"), never to unreachable and never to "not checked yet". Where
-  `performance.now()` does not advance while a device sleeps, a reading can look younger than it is until the
-  next push re-anchors it (with the check on: at most 10 minutes on a live socket).
+  `performance.now()` does not advance while a device sleeps, a reading would look younger than it is: so a
+  **wake-up** distrusts the stamp (`KioskPeerClock.distrusted`) — every verdict reads unknown / `stale` at once —
+  and `useKioskSocket` opens the socket anew, which the hub answers with a snapshot (its protocol has no "send me
+  a snapshot" message; one reconnect per wake-up, no timer, no polling). A wake-up is: `visibilitychange` to
+  visible when the wall clock ran ahead of the monotonic one by more than 2 s over the hidden period (or the
+  hidden moment was not seen) — a tab that was merely in the background is left alone; a `pageshow` out of the
+  back/forward cache; `online`. The old socket is let go without its `onclose`, so the drop we caused neither
+  starts a second reconnect nor arms the "backend unreachable" timer. Not covered: a device that wakes without
+  any of the three events (then the next push re-anchors, at most 10 minutes on a live socket), and the
+  two-valued rule with the check off, which cannot say unknown.
 - **What is pushed.** The diff gate leaves `checked_at` out: a check that found the same thing changes nothing a
   person can see and pushes nothing. A reading that expires (15 min TTL) reads `unknown / not_checked` and IS a
   state change. With the check on, an unchanged list is re-affirmed every 10 minutes
