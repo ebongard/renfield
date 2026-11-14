@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { screen, waitFor, act } from '@testing-library/react';
 import { renderWithProviders } from '../test-utils';
 import KioskPage from '../../../../src/frontend/src/pages/KioskPage';
+import i18n from '../../../../src/frontend/src/i18n';
 
 // Security audit M2: useKioskSocket now fetches a short-lived WS-scoped token
 // (fetchWsToken → POST /api/ws/token) and AWAITS it before constructing the
@@ -538,6 +539,29 @@ describe('KioskPage', () => {
       });
       await waitFor(() =>
         expect(peerNode(3)?.getAttribute('data-peer-reachability')).toBe('unreachable'));
+    });
+
+    it('reads a peer as unknown from the wake-up until the fresh snapshot is there', async () => {
+      renderWithProviders(<KioskPage />);
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
+      await waitFor(() =>
+        expect(peerNode(3)?.getAttribute('data-peer-reachability')).toBe('reachable'));
+      const sockets = MockWebSocket.instances.length;
+
+      // The network is back after a sleep: the age of the reading on the wall
+      // cannot be stood behind any more.
+      act(() => { window.dispatchEvent(new Event('online')); });
+      await waitFor(() =>
+        expect(peerNode(3)?.getAttribute('data-peer-reachability')).toBe('unknown'));
+      expect(peerNode(3)!.querySelector('title')?.textContent).toBe(
+        `${i18n.t('kiosk.peer.state.unknown')} — ${i18n.t('circles.peerReachReason.stale')}`,
+      );
+
+      // The display asked for the current state by connecting anew.
+      await waitFor(() => expect(MockWebSocket.instances.length).toBe(sockets + 1));
+      await pushSnapshot(snapshot('idle', { peers: [probedPeer()] }));
+      await waitFor(() =>
+        expect(peerNode(3)?.getAttribute('data-peer-reachability')).toBe('reachable'));
     });
 
     it('lights the ARC node when a turn asked the peer; the pulse itself creates no tool node', async () => {

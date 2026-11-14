@@ -153,6 +153,12 @@ export interface KioskPeerClock {
   receivedMono: number;
   /** The payload's own `at`, as epoch ms; null when the server sent none. */
   serverAt: number | null;
+  /** Set when the device may have SLEPT since the list arrived (see
+   *  `useKioskSocket`, "waking up"). Where `performance.now()` stands still
+   *  during sleep, the elapsed part above is too small by the length of the
+   *  sleep and the age cannot be stood behind: the readings show as stale
+   *  until the next list replaces this stamp. Absent = trusted. */
+  distrusted?: true;
 }
 
 /** The full folded model the kiosk derives its view from. */
@@ -280,6 +286,13 @@ interface TurnActivityDelta {
   at?: string;
 }
 
+/** Not a frame from the hub: dispatched by the hook itself when the device
+ *  wakes up. A frame of this type from the wire could only make the peers read
+ *  "unknown" until the next list -- the safe side. */
+interface PeerClockDistrusted {
+  type: 'local:peer_clock_distrusted';
+}
+
 /** Any parsed inbound frame. Unknown `type`s are tolerated (see reducer). */
 type KioskMessage =
   | SnapshotMessage
@@ -293,6 +306,7 @@ type KioskMessage =
   | PeerStatusChangedDelta
   | TurnActivityDelta
   | ChatActivityDelta
+  | PeerClockDistrusted
   | { type: string; [key: string]: unknown };
 
 // ---- reducer ---------------------------------------------------------------
@@ -514,6 +528,12 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
       return { ...state, peers: delta.peers ?? [], peersClock: peerClock(delta.at) };
     }
 
+    case 'local:peer_clock_distrusted':
+      // Only a stamp that is still trusted changes: a second wake-up before
+      // the fresh list must not re-render the wall for nothing.
+      if (!state.peersClock || state.peersClock.distrusted) return state;
+      return { ...state, peersClock: { ...state.peersClock, distrusted: true } };
+
     case 'chat_activity': {
       const delta = msg as ChatActivityDelta;
       return { ...state, chatActive: !!delta.active };
@@ -548,6 +568,29 @@ const MAX_BACKOFF_MS = 30_000;
 /** A drop shorter than this keeps the last-good board (a WS blip mustn't flip
  *  the whole display to "unreachable"); a sustained outage flips after it. */
 const SUSTAINED_DISCONNECT_MS = 8000;
+/** Waking up: how far the wall clock may run ahead of the monotonic one over
+ *  a hidden period before the monotonic clock counts as having stood still.
+ *  Timer granularity and an ordinary NTP slew stay far below this. */
+const CLOCK_PAUSE_TOLERANCE_MS = 2000;
+
+/** The two clocks, read together. */
+interface ClockPair {
+  wall: number;
+  mono: number;
+}
+
+function readClocks(): ClockPair {
+  return { wall: Date.now(), mono: performance.now() };
+}
+
+/** Whether the monotonic clock stood still between `since` and `now` -- the
+ *  wall clock moved on and `performance.now()` did not keep up. That is what a
+ *  sleeping tablet looks like afterwards. Without a `since` nobody watched the
+ *  clocks, and the answer is yes: unknown is not "it ran". */
+export function monotonicClockPaused(since: ClockPair | null, now: ClockPair): boolean {
+  if (!since) return true;
+  return (now.wall - since.wall) - (now.mono - since.mono) > CLOCK_PAUSE_TOLERANCE_MS;
+}
 
 export interface KioskSocketState {
   live: KioskLiveModel;
@@ -584,6 +627,16 @@ async function kioskWsUrl(): Promise<string> {
  * Reconnect uses exponential backoff (1s → 30s, reset on open). On every
  * (re)connect the hub re-sends a full `snapshot`, so a missed delta during a
  * blip self-heals without the client asking for anything.
+ *
+ * WAKING UP. The age of a peer reading is continued on `performance.now()`,
+ * which stands still on some devices while they sleep -- afterwards a reading
+ * looks younger than it is. So when the page comes back (`visibilitychange` to
+ * visible, a `pageshow` out of the back/forward cache, `online`), the peer
+ * stamp is marked distrusted (the readings show as stale at once) and the
+ * socket is opened anew: the hub's protocol has no "send me a snapshot"
+ * message, a fresh connection is how a client asks. No timer, no polling --
+ * one reconnect per wake-up. A tab that was merely in the background, with
+ * both clocks seen running over the hidden period, is left alone.
  */
 export function useKioskSocket(): KioskSocketState {
   const [live, dispatch] = useReducer(reduce, EMPTY_MODEL);
@@ -598,6 +651,11 @@ export function useKioskSocket(): KioskSocketState {
   const sustainedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptRef = useRef(0);
   const intentionalCloseRef = useRef(false);
+  // Counts connection attempts, so one that was overtaken while it waited for
+  // its token does not open a second socket next to the newer one.
+  const connectSeqRef = useRef(0);
+  // The two clocks as read when the page was hidden; null = not watched.
+  const hiddenAtRef = useRef<ClockPair | null>(null);
 
   useEffect(() => {
     intentionalCloseRef.current = false;
@@ -615,9 +673,11 @@ export function useKioskSocket(): KioskSocketState {
         reconnectTimerRef.current = null;
       }
 
+      const seq = ++connectSeqRef.current;
       const url = await kioskWsUrl();
-      // The effect may have torn down during the async token fetch.
-      if (intentionalCloseRef.current) return;
+      // The effect may have torn down during the async token fetch -- or a
+      // newer attempt (a wake-up resync) has started in the meantime.
+      if (intentionalCloseRef.current || seq !== connectSeqRef.current) return;
 
       let ws: WebSocket;
       try {
@@ -687,9 +747,52 @@ export function useKioskSocket(): KioskSocketState {
       reconnectTimerRef.current = setTimeout(connect, delay);
     };
 
+    // Ask the hub for the current state the only way its protocol knows: a
+    // new connection, which it answers with a snapshot. The old socket is let
+    // go silently -- its `onclose` must neither start a second reconnect nor
+    // arm the "backend unreachable" timer for a drop we caused ourselves.
+    // Several wake-up events in a row (`visibilitychange` and `pageshow` come
+    // together) still open ONE socket: each attempt supersedes the one before
+    // it (`connectSeqRef`).
+    const resync = () => {
+      dispatch({ type: 'local:peer_clock_distrusted' });
+      const old = wsRef.current;
+      if (old) {
+        old.onopen = null;
+        old.onmessage = null;
+        old.onerror = null;
+        old.onclose = null;
+        old.close();
+        wsRef.current = null;
+      }
+      attemptRef.current = 0;
+      void connect();
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') {
+        hiddenAtRef.current = readClocks();
+        return;
+      }
+      const hiddenAt = hiddenAtRef.current;
+      hiddenAtRef.current = null;
+      if (monotonicClockPaused(hiddenAt, readClocks())) resync();
+    };
+    // Out of the back/forward cache the page is resumed as it was frozen;
+    // the first `pageshow` of a normal load is not a wake-up.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) resync();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('online', resync);
+
     connect();
 
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('online', resync);
       intentionalCloseRef.current = true;
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);

@@ -6,7 +6,11 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useKioskSocket } from '../../../../src/frontend/src/components/kiosk/useKioskSocket';
+import {
+  monotonicClockPaused,
+  useKioskSocket,
+} from '../../../../src/frontend/src/components/kiosk/useKioskSocket';
+import { fetchWsToken } from '../../../../src/frontend/src/utils/wsToken';
 
 // Security audit M2: the hook now fetches a short-lived WS-scoped token
 // (fetchWsToken → POST /api/ws/token) and AWAITS it before constructing the
@@ -488,5 +492,261 @@ describe('useKioskSocket', () => {
       vi.advanceTimersByTime(8000);
     });
     expect(result.current.backendUnreachable).toBe(true);
+  });
+
+  describe('waking up (the monotonic clock may have stood still)', () => {
+    // The age of a peer reading is continued on `performance.now()`. Where
+    // that clock stops while a tablet sleeps, a reading looks younger after
+    // the wake-up than it is. The hub has no "send me a snapshot" message: a
+    // fresh connection is how a client asks for the current state.
+    const T0 = Date.parse('2026-11-14T10:00:00Z');
+    let wall = T0;
+    let mono = 5_000;
+    let visibility: DocumentVisibilityState = 'visible';
+
+    beforeEach(() => {
+      wall = T0;
+      mono = 5_000;
+      visibility = 'visible';
+      vi.spyOn(Date, 'now').mockImplementation(() => wall);
+      vi.spyOn(performance, 'now').mockImplementation(() => mono);
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => visibility,
+      });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.mocked(fetchWsToken).mockResolvedValue('test-ws-token');
+      Reflect.deleteProperty(document, 'visibilityState');
+    });
+
+    /** Fake the timers only: the two clocks are driven by hand above, and the
+     *  default set would put vitest's own `Date` and `performance` over them. */
+    const fakeTimersOnly = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    const probedSnapshot = () => ({
+      ...baseSnapshot(),
+      at: '2026-11-14T10:00:00+00:00',
+      peers: [{
+        id: 3, name: 'alex', last_seen_at: null, reachable: true,
+        reachability: 'reachable', reachability_reason: null,
+        checked_at: '2026-11-14T09:59:00', recently_active: false,
+      }],
+    });
+
+    async function hydrated() {
+      const view = renderHook(() => useKioskSocket());
+      await flushConnect();
+      act(() => {
+        latest().fireOpen();
+        latest().fireMessage(probedSnapshot());
+      });
+      return view;
+    }
+
+    function hide(): void {
+      visibility = 'hidden';
+      act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    }
+
+    /** The page comes back after `wallMs` on the wall clock, during which the
+     *  monotonic clock advanced by `monoMs` only. */
+    function show(wallMs: number, monoMs: number): void {
+      wall += wallMs;
+      mono += monoMs;
+      visibility = 'visible';
+      act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    }
+
+    function pageShow(persisted: boolean): void {
+      const event = new Event('pageshow');
+      Object.defineProperty(event, 'persisted', { value: persisted });
+      act(() => { window.dispatchEvent(event); });
+    }
+
+    it('distrusts the peer stamp at once and asks for a fresh snapshot after a sleep', async () => {
+      fakeTimersOnly();
+      const { result } = await hydrated();
+      const first = latest();
+      expect(result.current.live.peersClock?.distrusted).toBeUndefined();
+
+      hide();
+      // Thirty minutes passed; the monotonic clock saw 40 ms of them.
+      show(30 * 60_000, 40);
+
+      // At once, before any answer: the readings are not to be stood behind.
+      expect(result.current.live.peersClock?.distrusted).toBe(true);
+      // The peers themselves are kept -- the view decides what a distrusted
+      // stamp means (stale), nothing is thrown away here.
+      expect(result.current.live.peers).toHaveLength(1);
+
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(2);
+      // The old socket was let go, silently: closed, and with no handler left
+      // that could start a second reconnect or arm the "unreachable" timer.
+      expect(first.readyState).toBe(MockWebSocket.CLOSED);
+      expect(first.onclose).toBeNull();
+      expect(first.onmessage).toBeNull();
+      act(() => { vi.advanceTimersByTime(60_000); });
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(2);
+      expect(result.current.backendUnreachable).toBe(false);
+
+      // The fresh snapshot brings a stamp of its own, trusted again.
+      act(() => {
+        latest().fireOpen();
+        latest().fireMessage({ ...probedSnapshot(), at: '2026-11-14T10:30:00+00:00' });
+      });
+      expect(result.current.live.peersClock?.distrusted).toBeUndefined();
+      expect(result.current.live.peersClock?.receivedMono).toBe(mono);
+      expect(result.current.live.peersClock?.serverAt).toBe(Date.parse('2026-11-14T10:30:00Z'));
+    });
+
+    it('leaves a tab alone that was only in the background (both clocks ran)', async () => {
+      const { result } = await hydrated();
+      const before = result.current.live;
+      hide();
+      show(30 * 60_000, 30 * 60_000);
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(result.current.live).toBe(before);
+    });
+
+    it('does not take timer jitter for a sleep', async () => {
+      const { result } = await hydrated();
+      hide();
+      show(60_000, 60_000 - 1_500);
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(result.current.live.peersClock?.distrusted).toBeUndefined();
+    });
+
+    it('resyncs when it becomes visible without having been seen hidden', async () => {
+      // Nobody watched the clocks: unknown is not "it ran".
+      const { result } = await hydrated();
+      show(0, 0);
+      expect(result.current.live.peersClock?.distrusted).toBe(true);
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(2);
+    });
+
+    it('resyncs when the page comes out of the back/forward cache, not on a normal load', async () => {
+      const { result } = await hydrated();
+      pageShow(false);
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(result.current.live.peersClock?.distrusted).toBeUndefined();
+
+      pageShow(true);
+      expect(result.current.live.peersClock?.distrusted).toBe(true);
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(2);
+    });
+
+    it('resyncs when the network comes back', async () => {
+      const { result } = await hydrated();
+      act(() => { window.dispatchEvent(new Event('online')); });
+      expect(result.current.live.peersClock?.distrusted).toBe(true);
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(2);
+    });
+
+    it('opens ONE new socket when several wake-up events arrive together', async () => {
+      const { result } = await hydrated();
+      hide();
+      show(30 * 60_000, 0);
+      pageShow(true);
+      act(() => { window.dispatchEvent(new Event('online')); });
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(2);
+
+      // Answered: the next wake-up is a new one.
+      act(() => {
+        latest().fireOpen();
+        latest().fireMessage(probedSnapshot());
+      });
+      expect(result.current.live.peersClock?.distrusted).toBeUndefined();
+      act(() => { window.dispatchEvent(new Event('online')); });
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(3);
+    });
+
+    it('has nothing to distrust before a list arrived, and still connects at once', async () => {
+      fakeTimersOnly();
+      const { result } = renderHook(() => useKioskSocket());
+      await flushConnect();
+      // The first connection fails; the next attempt waits out its backoff.
+      act(() => { latest().fireClose(); });
+      expect(MockWebSocket.instances).toHaveLength(1);
+      const before = result.current.live;
+
+      act(() => { window.dispatchEvent(new Event('online')); });
+      expect(result.current.live).toBe(before);
+      expect(result.current.live.peersClock).toBeNull();
+      await flushConnect();
+      // No waiting for the backoff -- and the backoff's own attempt is gone.
+      expect(MockWebSocket.instances).toHaveLength(2);
+      act(() => { vi.advanceTimersByTime(60_000); });
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(2);
+    });
+
+    it('does not open a second socket for an attempt the resync overtook', async () => {
+      fakeTimersOnly();
+      const releases: Array<(token: string) => void> = [];
+      await hydrated();
+      vi.mocked(fetchWsToken).mockImplementation(
+        () => new Promise<string>((resolve) => { releases.push(resolve); }),
+      );
+      // The socket drops; after the backoff an attempt waits for its token.
+      act(() => { latest().fireClose(); });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(releases).toHaveLength(1);
+      // The network returns meanwhile: a resync starts an attempt of its own.
+      act(() => { window.dispatchEvent(new Event('online')); });
+      expect(releases).toHaveLength(2);
+
+      releases[0]('late-token');
+      releases[1]('fresh-token');
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(2);
+      expect(latest().url).toContain('fresh-token');
+    });
+
+    it('stops listening when the display is unmounted', async () => {
+      const { unmount } = await hydrated();
+      unmount();
+      act(() => { window.dispatchEvent(new Event('online')); });
+      pageShow(true);
+      hide();
+      show(30 * 60_000, 0);
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+  });
+
+  describe('monotonicClockPaused', () => {
+    const at = (wall: number, mono: number) => ({ wall, mono });
+
+    it('says yes when the wall clock moved on and the monotonic one did not keep up', () => {
+      expect(monotonicClockPaused(at(0, 0), at(600_000, 50))).toBe(true);
+      // A partial stop counts as well: ten minutes, of which it saw nine.
+      expect(monotonicClockPaused(at(0, 0), at(600_000, 540_000))).toBe(true);
+    });
+
+    it('says no while both ran, within the tolerance', () => {
+      expect(monotonicClockPaused(at(0, 0), at(600_000, 600_000))).toBe(false);
+      expect(monotonicClockPaused(at(0, 0), at(600_000, 598_000))).toBe(false);
+    });
+
+    it('does not read a wall clock stepped BACK as a sleep', () => {
+      expect(monotonicClockPaused(at(0, 0), at(-3_600_000, 60_000))).toBe(false);
+    });
+
+    it('says yes when nobody watched the clocks', () => {
+      expect(monotonicClockPaused(null, at(1, 1))).toBe(true);
+    });
   });
 });
