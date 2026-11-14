@@ -58,6 +58,10 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   erhält, steht in deren Zeile — nie aus unserer Stufe ableiten oder so beschriften.
 - 🛑 `linked` = Verknüpfung des AUFRUFERS; fremde Verknüpfungen werden nicht gelesen,
   `remote_user_id` geht an Nicht-Eigentümer leer.
+- 🛑 **Niemand verknüpft ein ANDERES Konto** — das verknüpfte Konto kommt aus der Sitzung, nie aus dem Rumpf
+  (`POST /user-links`: `admin` nur für sich selbst; Handschlag: nur der Eigentümer der Kopplung). Einen fremden
+  `querier_ref` gibt keine Route heraus. Widerruf der Kopplung LÖSCHT ihre Verknüpfungen (die Zeile lebt beim
+  Neukoppeln unter derselben `id` wieder auf); ein deaktiviertes Konto wird nicht bedient. `docs/FEDERATION_PAIRING.md` §3b.
 - 🛑 **Der Instanzname (`remote_instance_name`) ist ANZEIGETEXT der GEGENSEITE** — nie Kennung oder Teil von
   `peer_<id>`; einziger Schreiber `federation_instance_name.py`, erst NACH Signatur und Peer-Nachschlag. In den
   Prompt nur mit `FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED` (aus): begrenzt Form und Länge, nicht Inhalt.
@@ -123,3 +127,7 @@ FREMDEN Zugriff verzeichnet, die Zeile. Die Trennlinie ist `_retrieve`: `pending
 solange nichts gelesen wurde, danach die Trefferzahl (`0` = gelesen, nichts gefunden — nicht dasselbe).
 Ein Abbruch NACH dem Abruf ist kein Fehlschlag, sondern ein geglückter Zugriff ohne Auslieferung; unter den
 Fehlschlägen begraben sähe das Protokoll ruhiger aus, als es war.
+🛑 **Ein WIDERRUF (Kopplung, Verknüpfung) ist eine Zeile mit `direction='revoke'`, in DERSELBEN Transaktion**
+(`federation_audit.record_revocation`): `user_id` = das BETROFFENE Konto, `identity_basis` = `owner`/`self`/`admin`,
+`query_text` = JSON nur aus Kennungen, kein Text der Gegenseite. Sie ist keine Anfrage: wer Anfragen listet, zählt
+oder löscht, filtert auf `QUERY_DIRECTIONS` — sonst zeigt die Ansicht den Widerruf als gestellte Frage.

@@ -156,9 +156,9 @@ must never be treated as the local owner.
 > F-ID-2): the mapped path runs the query *as* the linked local user — since
 > F-ID-3 (2026-10-28) that is `mapped=True` on the pending record, which makes
 > `_peer_scope_for` return `None`, i.e. no peer scoping at all (it was
-> `enforce_circles=False` before). Today an ADMIN can create/list/delete links via
-> `GET/POST/DELETE /api/federation/user-links` (`federation_user_links.py`); their
-> effect is gated on `FEDERATION_IDENTITY_LINKS_ENABLED`, **on in both instances
+> `enforce_circles=False` before). An ADMIN can list and delete links, and assert
+> one for its OWN account, via `GET/POST/DELETE /api/federation/user-links`
+> (`federation_user_links.py`, bounds in §3b); their effect is gated on `FEDERATION_IDENTITY_LINKS_ENABLED`, **on in both instances
 > since 2026-10-27** (renfield #1418 / x-ren !31) — it was a no-op at the time
 > of flipping, since both carried zero link rows, and it takes effect with the
 > first link. The responder additionally requires `AUTH_ENABLED=true` and a
@@ -194,6 +194,59 @@ must never be treated as the local owner.
   control) — removes the peer; the other side still holds its record until it
   revokes too (revocation is per-side). Owner only; with
   `FEDERATION_PEERS_VISIBLE_TO_ALL=true` also an account holding `admin`.
+  Revoking deletes every person link of the pairing and is recorded (§3b).
+
+---
+
+## 3b. Person links: who may create and remove one, and what is recorded
+
+A person link lends the far side one local account's **full own reach** in
+place of the pairing's granted tier. The bounds, decided on 2026-11-14:
+
+| | who | how |
+|---|---|---|
+| create, by proof | the account that **owns the pairing**, for itself | the handshake `POST /links/offer` → `/links/accept` → `/links/complete` |
+| create, by assertion | an `admin` holder, **for itself only**, on any active pairing | `POST /user-links` — the linked account is the signed-in one |
+| remove | the linked account | `DELETE /links/{id}` |
+| remove | an `admin` holder, any link | `DELETE /user-links/{id}` |
+| remove all of a pairing | whoever may revoke the pairing | `DELETE /peers/{id}` |
+
+- **Nobody links another account.** Until 2026-11-14 `POST /user-links` took
+  `local_user_id` from the body: an `admin` holder could map a `querier_ref`
+  to any local account, and the far side presenting that ref was served with
+  that account's full reach, tier 0 included, without its consent. The field
+  is still accepted; naming a different account is a 403.
+- **`GET /user-links` shows a `querier_ref` only to the account it belongs
+  to.** With another account's ref an admin could delete that link, re-create
+  it for itself and ask the far side as that person.
+- **An account that does not own the pairing cannot use the handshake.** It
+  uses the pairing unlinked, on the far side's granted tier. Whether such an
+  account should be able to link itself is an open product decision; today
+  only the assertion above does that, and only for an `admin` holder.
+- **A link ends with its pairing and with its account.** Revoking a pairing
+  deletes its links — the row is kept and pairing again revives it under the
+  same id, so a link left behind would be live again without anyone linking
+  anew. A deactivated account is not served through its link.
+- **A refused handshake step answers the one uniform 400.** Until 2026-11-14
+  it left as a 500 (the route read the signed-in account after the rollback).
+
+**Every revocation is recorded** in `federation_query_log`, in the same
+transaction as the revocation itself:
+
+| column | value |
+|---|---|
+| `direction` | `revoke` |
+| `final_status` | `pairing_revoked` or `link_revoked` |
+| `identity_basis` | on whose authority: `owner`, `self`, or `admin` (acting on someone else's row) |
+| `user_id` | the AFFECTED account: the pairing's owner, or the linked account |
+| `peer_user_id`, `peer_pubkey_snapshot` | the pairing |
+| `initiated_at` | when |
+| `query_text` | JSON of ids: `action`, `actor_user_id`, `owner_user_id`, `subject_user_id`, `peer_id`, `as_admin`, and `link_id` or `links_removed` |
+
+Ids only: the display-name snapshots stay empty, since those are text the far
+side chose. The rows are not queries — the audit view (`GET /audit`) leaves
+them out, and the 90-day retention does not prune them. There is no view for
+them yet; they are read in the database.
 
 ---
 
