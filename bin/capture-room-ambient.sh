@@ -49,9 +49,9 @@
 # worse than a failed capture.
 #
 # Usage:
-#   bin/capture-room-ambient.sh satellite-kinderbad
-#   bin/capture-room-ambient.sh satellite-kinderbad --minutes 45 --label evening-use
-#   bin/capture-room-ambient.sh satellite-fitnessraum --minutes 45 --allow-service-stop
+#   bin/capture-room-ambient.sh satellite-badezimmer
+#   bin/capture-room-ambient.sh satellite-badezimmer --minutes 45 --label evening-use
+#   bin/capture-room-ambient.sh satellite-hobbyraum --minutes 45 --allow-service-stop
 #
 # Flags:
 #   --minutes N           capture length in minutes (default 15)
@@ -437,7 +437,7 @@ for c in gate["per_channel"]:
           % (c["channel"], c["dc_offset"], c["rms"], c["rms_dbfs"], c["peak"],
              c["crest"], c["clipped_fraction"] * 100))
     # A DC offset dominating the signal means the capture measures the codec's
-    # bias, not the room. That is what made Kinderbad report audio_rms 1812
+    # bias, not the room. That is what made Badezimmer report audio_rms 1812
     # while the actual room sat at -55 dBFS. Unusable as a negative.
     if c["rms"] > 0 and abs(c["dc_offset"]) > 0.3 * c["rms"]:
         fail.append("ch%d: DC offset %.1f dominates RMS %.1f — enable the ADC high-pass "

@@ -5,16 +5,16 @@
 # Supports ReSpeaker 2-Mic HAT (V1 + V2) and 4-Mic Array via hat_type variable.
 #
 # Usage:
-#   ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum -v
+#   ansible-playbook -i inventory.yml provision.yml --limit satellite-hobbyraum -v
 #
 # Tags:
 #   system, network, boot, driver, python, app, config, models, service
 #
 # Run a single phase:
-#   ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --tags config
+#   ansible-playbook -i inventory.yml provision.yml --limit satellite-hobbyraum --tags config
 #
 # Dry run:
-#   ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --check
+#   ansible-playbook -i inventory.yml provision.yml --limit satellite-hobbyraum --check
 
 - name: Provision Renfield Satellite
   hosts: satellites
@@ -43,7 +43,7 @@
     - name: reboot after driver install
       ansible.builtin.reboot:
         # Pi Zero 2 W boots slowly (~130-150s with USB re-enumeration) — 120s
-        # timed out mid-provision on the fitnessraum XVF3800 swap.
+        # timed out mid-provision on the hobbyraum XVF3800 swap.
         reboot_timeout: 300
         msg: "Rebooting after audio driver installation"
 
@@ -655,7 +655,7 @@
     # store twice. Restored on boot by alsa-restore.service.
     # --- TLV320AIC3104 (hat_type "2mic-v2") ADC high-pass filter ---
     # The AIC3104 ships with 'ADC HPF Cut-off' = Disabled, which leaves a large
-    # DC offset on the capture path. Measured on sat-kinderbad 2026-09-04:
+    # DC offset on the capture path. Measured on sat-badezimmer 2026-09-04:
     #
     #   DC component  2320.9  (-23.0 dBFS)
     #   real ambient    56.4  (-55.3 dBFS)
@@ -668,7 +668,7 @@
     #      so the satellite reported ~1812 where the true ambient was ~5. Any
     #      comparison of mic levels across satellites was meaningless.
     #   2. The wakeword model sees a constant offset it was never trained on and
-    #      fires at high confidence on it — sat-kinderbad produced false wakes at
+    #      fires at high confidence on it — sat-badezimmer produced false wakes at
     #      0.84-0.98 (4 of 5 sessions ended in an empty transcription), while the
     #      threshold sits at 0.5. Raising the threshold cannot fix that, and the
     #      threshold is fleet-wide anyway.
@@ -690,7 +690,7 @@
           - sset
           - "ADC HPF Cut-off"
           # Both channels: a single value only sets Item0 and leaves the right
-          # channel Disabled (verified on sat-kinderbad).
+          # channel Disabled (verified on sat-badezimmer).
           - "{{ aic3104_adc_hpf }},{{ aic3104_adc_hpf }}"
       changed_when: true
 
@@ -773,7 +773,7 @@
     # safety-recommended code-only deploy (`--tags app`, avoids driver/service
     # restart brick-risk on Pi Zero 2 W) would otherwise skip it forever — a
     # device enabling enviro_phat would silently never get the lib (the
-    # sat-benszimmer drift, 2026-05). This pip task notifies no restart/reboot
+    # sat-gaestezimmer drift, 2026-05). This pip task notifies no restart/reboot
     # handler, so running it on `app` deploys stays restart-free.
     - name: Install envirophat package
       tags: [python, app]
@@ -791,7 +791,7 @@
     # satellite, so we link just this one ABI-matching module (system python
     # and venv python are the same 3.11.x on Pi OS). Without these two tasks
     # the envirophat install above imports-fails and enviro telemetry is
-    # silently dead (the sat-benszimmer drift, 2026-05).
+    # silently dead (the sat-gaestezimmer drift, 2026-05).
     - name: Install python3-smbus (envirophat C-extension dependency)
       tags: [python, app]
       when: enviro_phat_enabled | default(false)

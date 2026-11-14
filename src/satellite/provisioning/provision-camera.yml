@@ -12,7 +12,7 @@
 #   * camera_enabled=false            → host is skipped entirely.
 #   * camera_backend=rpicam  (Pi)     → NO host provisioning needed; the Pi camera works
 #                                       via the OS libcamera/rpicam stack + the app's
-#                                       rpicam-still path (arbeitszimmer, kinderbad). A
+#                                       rpicam-still path (arbeitszimmer, badezimmer). A
 #                                       no-op check only.
 #   * camera_backend=sunxi_isp (A733) → install the DT overlay + sunxi-vin module autoload
 #                                       + the Allwinner ISP userspace + renfield_isp_capture
