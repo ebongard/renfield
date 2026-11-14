@@ -404,8 +404,17 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
   state change. With the check on, an unchanged list is re-affirmed every 10 minutes
   (`_PEER_STATUS_REAFFIRM_SECONDS`, a choice) with its current `checked_at` values — so the frontend's
   20-minute backstop fires only when the socket went silent without closing, not on a quiet evening.
-- **Probing is a consumer-gated periodic check, every 5 minutes per pairing while at least one kiosk is
-  connected; owner decision pending.** The peer refresher tick (`api/lifecycle.py`, 60 s) runs a probe round
-  first, which pings a pairing whose reading is older than 300 s; a connecting display triggers one round in the
-  background and its snapshot goes out with the stored readings — it never waits for another instance. With no
-  display connected nothing runs.
+- **Probing is a periodic check — a sanctioned exception to the "no polling" directive, approved by the owner on
+  2026-11-14.** The reason: whether another instance is reachable cannot be known without asking it; no event
+  on this side announces that the far side went away. Its bounds, which are the terms of the exception:
+  - **consumer-gated** — it runs only while at least one kiosk is connected; with no display connected nothing
+    runs;
+  - **every 5 minutes per pairing** — the peer refresher tick (`api/lifecycle.py`, 60 s) runs a probe round
+    first, which pings a pairing whose reading is older than 300 s; a connecting display triggers one round in
+    the background, and its snapshot goes out with the stored readings — it never waits for another instance;
+  - **one small signed request per pairing** — the ping and its answer are a few hundred bytes, capped at 4096,
+    and carry no content;
+  - **claim + outbound budget** — a claim per pairing (`SET NX EX 30`) makes several backend processes send one
+    ping, not several, and `FEDERATION_PING_RATE_PER_MINUTE` caps what leaves per pairing.
+
+  The exception covers this check and nothing else: every other kiosk data path stays event-push.

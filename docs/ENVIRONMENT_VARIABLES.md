@@ -3129,8 +3129,12 @@ signierten Rundlauf (`POST /api/federation/peer/ping`).
   Minuten je Kopplung, solange mindestens ein Kiosk verbunden ist (der
   60-Sekunden-Takt des Kiosk-Auffrischers prüft, sobald der Messwert älter
   als 300 Sekunden ist), und einmal, wenn sich einer verbindet. Ohne
-  verbundenen Kiosk läuft nichts. **Ob es bei diesem Takt bleibt, ist eine
-  offene Entscheidung des Eigentümers.** Die Peer-Seite bekommt „Jetzt
+  verbundenen Kiosk läuft nichts. **Das ist eine genehmigte Ausnahme von der
+  Kein-Polling-Regel (Eigentümer, 2026-11-14):** ob eine andere Instanz
+  erreichbar ist, lässt sich nur durch Fragen erfahren. Ihre Grenzen:
+  verbrauchergebunden, fünf Minuten, eine kleine signierte Anfrage je
+  Kopplung, Anspruch je Kopplung plus ausgehendes Kontingent
+  (`FEDERATION_PING_RATE_PER_MINUTE`). Die Peer-Seite bekommt „Jetzt
   prüfen“ (`POST /api/federation/peers/{id}/check`: Eigentümer, Konto mit
   `admin`, mit `FEDERATION_PEERS_VISIBLE_TO_ALL` jedes Konto) und prüft eine
   Zeile ohne Messwert einmal beim Öffnen.

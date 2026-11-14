@@ -296,11 +296,14 @@ and spends no query budget.
 **Who probes, and when:**
 
 - **a consumer-gated periodic check, every 5 minutes per pairing while at
-  least one kiosk is connected; owner decision pending.** Mechanically: the
-  kiosk refresher's 60 s timer probes a pairing once its reading is older than
-  300 s, plus one round when a display connects (in the background; the
-  snapshot never waits for another instance). With no display connected,
-  nothing runs;
+  least one kiosk is connected.** This is a sanctioned exception to the
+  project's no-polling rule, approved by the owner on 2026-11-14: whether
+  another instance is reachable cannot be known without asking it. Its bounds:
+  consumer-gated (with no display connected, nothing runs), 5 minutes, one
+  small signed request per pairing, a claim per pairing plus the outbound ping
+  budget. Mechanically: the kiosk refresher's 60 s timer probes a pairing once
+  its reading is older than 300 s, plus one round when a display connects (in
+  the background; the snapshot never waits for another instance);
 - a person: "check now" on the peers page (`POST /peers/{id}/check` — the owner,
   an `admin` holder, or with `FEDERATION_PEERS_VISIBLE_TO_ALL` every account),
   and once when the page shows a row that has no reading. The request's

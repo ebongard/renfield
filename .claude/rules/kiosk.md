@@ -50,9 +50,12 @@ roles at startup. The gate fails closed: a lookup error denies.
   since receipt; never device wall clock vs. server timestamp. Stale (20 min) → `unknown` / reason `stale`,
   never unreachable. The diff gate ignores `checked_at`; with the check on an unchanged list is re-affirmed
   every 10 min, so the backstop fires only on a silent socket.
-- **The reachability check IS periodic:** a consumer-gated periodic check, every 5 minutes per pairing while at
-  least one kiosk is connected (60 s refresher tick, probe when the reading is older than 300 s); owner decision
-  pending. The connect snapshot never waits for another instance.
+- 🛑 **The reachability check is a SANCTIONED EXCEPTION to "never poll"** (approved by the owner 2026-11-14).
+  Reason: whether another instance is reachable cannot be known without asking it. Bounds — do not widen without
+  a new decision: consumer-gated (only while at least one kiosk is connected), every 5 minutes per pairing (60 s
+  refresher tick, probe when the reading is older than 300 s), one small signed request per pairing, a claim
+  per pairing (`SET NX EX 30`) plus the outbound ping budget. It licenses nothing else: every other kiosk data
+  path stays event-push, and the connect snapshot never waits for another instance.
 
 ## Health verdicts
 - Primary = `get_status()`, which folds connectivity AND functionality: **degraded** = connected but a bound startup

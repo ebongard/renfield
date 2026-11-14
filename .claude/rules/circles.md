@@ -72,8 +72,12 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
 - 🛑 **Ein Ping ist keine Anfrage** (`FEDERATION_REACHABILITY_ENABLED`): `last_seen_at`
   bleibt „letzte ANFRAGE", keine Prüfprotokoll-Zeile, eigenes Kontingent, Fremden dasselbe
   einheitliche 400. `unsupported` (Gegenseite antwortet 404) ist UNBEKANNT, nie „nicht erreichbar".
-  Messwerte liegen in Redis mit Ablaufzeit, nie in `peer_users`. Geprüft wird periodisch, aber
-  verbrauchergebunden: alle 5 Minuten je Kopplung, solange ein Kiosk verbunden ist.
+  Messwerte liegen in Redis mit Ablaufzeit, nie in `peer_users`.
+- 🛑 **Die periodische Prüfung ist eine GENEHMIGTE AUSNAHME von der Kein-Polling-Regel** (Eigentümer,
+  2026-11-14). Grund: ob eine andere Instanz erreichbar ist, lässt sich nur durch Fragen erfahren.
+  Grenzen, nicht ohne neue Entscheidung erweitern: verbrauchergebunden (nur solange ein Kiosk
+  verbunden ist), alle 5 Minuten je Kopplung, EINE kleine signierte Anfrage je Kopplung, Anspruch
+  je Kopplung (`SET NX EX 30`) plus ausgehendes Ping-Kontingent.
 - 🛑 **Die Ping-Route ist ohne Kopplung erreichbar:** Rumpf höchstens 4096 Byte (vor und beim
   Lesen), Reihenfolge Signatur → Zeitfenster → Kopplung → Kontingent → Nonce — alles, was
   SCHREIBT, steht hinter dem Kopplungs-Nachschlag. `handle_initiate` hält das noch nicht ein.

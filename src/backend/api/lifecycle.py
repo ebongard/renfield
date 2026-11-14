@@ -318,9 +318,12 @@ def _schedule_kiosk_peer_status_refresh(app):
     With ``federation_reachability_enabled`` the same tick first runs a probe
     round (``services.federation_reachability.probe_due_peers``): a signed ping
     to each pairing whose stored result is older than the probe interval. That
-    IS a periodic check -- every 5 minutes per pairing -- and it is
-    consumer-gated: it runs only while a wall display is connected, like
-    everything else here, so with nobody watching no ping leaves the instance.
+    IS a periodic check -- every 5 minutes per pairing -- and a sanctioned
+    exception to the no-polling rule (approved by the owner, 2026-11-14):
+    whether another instance is reachable cannot be known without asking it.
+    Its bounds are in `.claude/rules/kiosk.md`. It is consumer-gated: it runs
+    only while a wall display is connected, like everything else here, so with
+    nobody watching no ping leaves the instance.
     """
     from api.websocket.kiosk_data import _PEER_STATUS_REFRESH_SECONDS
 
