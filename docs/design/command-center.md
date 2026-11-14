@@ -357,7 +357,72 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
   satellite is reinstated via `satellite_online`.
 - Consequence for the frontend: NO wall-clock decay of frozen snapshot values; a reconnect re-anchors from a fresh
   snapshot. Federation peers get the live `peer_status_changed` delta (#969, `kiosk_data.py` → `useKioskSocket.ts`);
-  the wall-clock freshness backstop (`PEER_OFFLINE_MS` in `useKioskModel.ts`) is kept as a deliberate second guard.
-  A peer also appears on the TOOLS ring, because the backend registers its `query_brain` tool server as
-  `peer_<peer id>` (stable across a rename). The kiosk labels that node with the peer's display name
-  (`toolServerLabel`), not with the id; an unlisted peer falls back to the prettified server name.
+  a wall-clock freshness backstop in `useKioskModel.ts` is kept as a deliberate second guard (see below).
+- **A paired instance appears ONCE: on the outer peers arc (2026-11-13).** The backend registers a peer's
+  `query_brain` tool server as `peer_<peer id>` with `connected=True` and no session behind it, so the same
+  instance used to show twice — a permanently green diamond on the TOOLS ring (counted as one "healthy tool")
+  next to its own red ring on the arc. `kiosk_data.kiosk_mcp_status` now drops federation-transport servers from
+  `mcp.servers`, `tool_health[]` and `total_tools` (recognised by transport, not by the name prefix), and
+  `MCPManager._broadcast_tool_health` sends no `tool_health_changed` for them — one filter layer, so snapshot and
+  deltas agree. Not gated: it removes a duplicate and a false "healthy". The label helper `toolServerLabel`
+  from #1544 went with it. **Mixed versions:** a new bundle against an OLD backend briefly shows the peer twice
+  and labels the tool node generically (the old backend still lists `peer_<id>` among the servers); it ends with
+  the backend rollout.
+- **The arc node carries everything.** Label = the far instance's **verified** name with the person who paired
+  beneath it; the person alone when no verified name is stored. 🛑 **Never the endpoint host** — the peers page
+  falls back to it behind a login, the wall does not: the kiosk payload is content-free and a host name is an
+  address. A turn that asked the peer still names `peer_<id>` in `turn_activity.subsystems`; the arc node
+  lights and runs the same expanding ring a tool node does.
+- **One node per far INSTANCE, not per pairing row.** Two local accounts paired with the same instance are two
+  rows on one remote key. `compute_peer_status` reads the rows `ORDER BY id` and groups them by key; the node
+  takes its `id` and person from the **lowest-id** row, the first verified instance name in the group, the
+  latest `last_seen_at`, `recently_active` if any row is, and a reading by a FIXED precedence: **reachable as
+  soon as any row's unexpired reading is** (with the time of the latest reachable check), otherwise the
+  **lowest id's** reading. Not "the most recently checked row wins": two rows that disagree are checked in turn,
+  and the node then changed state — and pushed — every five minutes. A consequence: while the lowest id has no
+  reading, another row's outage does not show; the node reads unknown.
+  A group additionally sends `pulse_ids` (every row's `peer_<id>`), and the node (`PeerNode.pulseIds`)
+  pulses on any of them — a turn through the other account's row lights the same node. Single rows send no
+  `pulse_ids`; the frontend derives the one id.
+- **Arc layout (`components/kiosk/peerArc.ts`).** Labels are peer-chosen text of up to 64 characters: the view
+  clips them to 22 characters plus an ellipsis; the full label appears only as text in the node's `<title>`,
+  never in an attribute. Up to three peers are spread evenly; from four on the inner one or two keep the top
+  (0° or ±12°) and the rest spread over 34°–50° on each side, so no beside-label reaches a neighbour's centred
+  label. Placement is tested for one to six peers with the longest labels; a single peer sits at the very top
+  (y = 20 of 1080), where a label above it would be cut off by the screen edge — there it stands beside the node.
+- **Peer state, two rules, chosen by the payload.** With `FEDERATION_REACHABILITY_ENABLED` the payload carries
+  `reachability` (reachable / unreachable / unknown), `reachability_reason`, `checked_at` and `recently_active`
+  from a signed round trip; the ring is solid / dashed (`8 5`) / dotted with round caps and muted (`1 6`) —
+  two channels, told apart from across the room — a filled centre marks "recently active", and the localized
+  state + reason is the `<title>`. The legend lists the peer states (the "unknown" row only while the check is
+  on). `last_seen_at` plays no part then (a ping does not move it). Without the flag the payload is
+  byte-identical to before and the wall keeps its old two-valued rule: "queried us within 5 minutes" plus the
+  `PEER_OFFLINE_MS` backstop on `last_seen_at`.
+- **The age of a reading is measured on the SERVER's clock.** Snapshot and `peer_status_changed` carry `at`, the
+  server's time at the push. The display takes `at − checked_at` and adds the time elapsed since receipt on its
+  own MONOTONIC clock (`performance.now()`, `KioskPeerClock.receivedMono`) — never its wall clock against a
+  server timestamp, which a tablet running 20 minutes fast turned into "every peer unknown", and not `Date.now()`
+  for the elapsed part either: a wall clock stepped while the page is open (NTP, daylight saving) aged every
+  reading by the step. Older than `PEER_CHECK_STALE_MS` (20 min) degrades to **unknown** with a reason of its
+  own, `stale` ("checked, but the result is old"), never to unreachable and never to "not checked yet". Where
+  `performance.now()` does not advance while a device sleeps, a reading can look younger than it is until the
+  next push re-anchors it (with the check on: at most 10 minutes on a live socket).
+- **What is pushed.** The diff gate leaves `checked_at` out: a check that found the same thing changes nothing a
+  person can see and pushes nothing. A reading that expires (15 min TTL) reads `unknown / not_checked` and IS a
+  state change. With the check on, an unchanged list is re-affirmed every 10 minutes
+  (`_PEER_STATUS_REAFFIRM_SECONDS`, a choice) with its current `checked_at` values — so the frontend's
+  20-minute backstop fires only when the socket went silent without closing, not on a quiet evening.
+- **Probing is a periodic check — a sanctioned exception to the "no polling" directive, approved by the owner on
+  2026-11-14.** The reason: whether another instance is reachable cannot be known without asking it; no event
+  on this side announces that the far side went away. Its bounds, which are the terms of the exception:
+  - **consumer-gated** — it runs only while at least one kiosk is connected; with no display connected nothing
+    runs;
+  - **every 5 minutes per pairing** — the peer refresher tick (`api/lifecycle.py`, 60 s) runs a probe round
+    first, which pings a pairing whose reading is older than 300 s; a connecting display triggers one round in
+    the background, and its snapshot goes out with the stored readings — it never waits for another instance;
+  - **one small signed request per pairing** — the ping and its answer are a few hundred bytes, capped at 4096,
+    and carry no content;
+  - **claim + outbound budget** — a claim per pairing (`SET NX EX 30`) makes several backend processes send one
+    ping, not several, and `FEDERATION_PING_RATE_PER_MINUTE` caps what leaves per pairing.
+
+  The exception covers this check and nothing else: every other kiosk data path stays event-push.

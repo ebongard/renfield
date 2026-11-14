@@ -417,6 +417,14 @@
       "failed": "{{name}}'s {{appName}} couldn't answer.",
       "fallback": "Asking {{name}}'s {{appName}}..."
     },
+    "federationProgressInstance": {
+      "waking_up": "Connecting to {{peer}}...",
+      "retrieving": "{{peer}} is searching...",
+      "synthesizing": "{{peer}} is drafting a reply...",
+      "complete": "{{peer}} is done.",
+      "failed": "{{peer}} couldn't answer.",
+      "fallback": "Asking {{peer}}..."
+    },
     "exampleWeather": "How's the weather?",
     "exampleLight": "Turn on the living room light",
     "exampleMusic": "Play some jazz music",
@@ -2137,6 +2145,29 @@
     "revokePeerConfirmOther": "Really end pairing with {{name}}? It was set up by {{pairedBy}}; afterwards no account of this instance can use it.",
     "peerRevoked": "Pairing with {{name}} revoked.",
     "peerRevokeFailed": "Could not revoke the pairing.",
+    "peerReachState": {
+      "reachable": "Reachable",
+      "unreachable": "Unreachable",
+      "unknown": "Reachability unknown"
+    },
+    "peerReachReason": {
+      "unreachable": "The instance does not answer (no connection, or a timeout).",
+      "pin_mismatch": "The instance's certificate is no longer the one remembered at pairing.",
+      "refused": "The instance rejects the signed check (pairing revoked there, clocks apart, or its request limit).",
+      "unsupported": "The instance does not answer reachability checks (older version, or switched off there).",
+      "invalid_response": "The answer could not be tied to the paired key.",
+      "no_endpoint": "No address is stored for this pairing.",
+      "not_checked": "Not checked yet.",
+      "stale": "Checked, but the result is old."
+    },
+    "peerReachCheckedAt": "checked {{when}}",
+    "peerReachCheckNow": "Check now",
+    "peerReachChecking": "Checking…",
+    "peerReachCheckFailed": "Reachability could not be checked.",
+    "peerRecentlyActive": "Recently active",
+    "peerRecentlyActiveHelp": "A real request went one way or the other within the last five minutes.",
+    "peerLastAsked": "Last asked from here {{when}}",
+    "peerLastAskedHelp": "Time of the last request this instance sent to the other one.",
     "pairingTitle": "{{appName}} pairing",
     "pairingSubtitle": "Pair your {{appName}} with another household member's for federated queries.",
     "pairingManageLinkText": "Manage paired peers →",
@@ -2554,6 +2585,19 @@
     "toolHint_one": "{{count}} tool",
     "toolHint_other": "{{count}} tools",
     "exit": "Exit kiosk",
+    "peer": {
+      "state": {
+        "reachable": "reachable",
+        "unreachable": "unreachable",
+        "unknown": "reachability unknown"
+      },
+      "recentlyActive": "recently active",
+      "legend": {
+        "reachable": "instance reachable",
+        "unreachable": "instance unreachable",
+        "unknown": "instance: unknown"
+      }
+    },
     "subsystem": {
       "knowledge": "Knowledge",
       "presence": "Presence",

@@ -115,6 +115,12 @@ class _PendingRequest:
     #: than none at all.
     peer_display_name: str = ""
 
+    #: The instance part of the far side's label at the time of the access
+    #: (verified instance name, else the endpoint host) -- the audit snapshot
+    #: next to `peer_display_name`, with the same reasoning and the same empty
+    #: default for a row from an older version.
+    peer_instance_name: str = ""
+
     #: Number of hits `_retrieve` returned -- or `None` while it has not
     #: returned.
     #:

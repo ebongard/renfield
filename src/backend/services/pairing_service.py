@@ -57,6 +57,22 @@ from models.database import (
 )
 from services.federation_cert_pin import probe_peer_cert_fingerprint
 from services.federation_identity import canonical_bytes, get_federation_identity
+from services.federation_instance_name import (
+    ATTACHMENT_FIELDS,
+    sign_name_attachment,
+    verify_name_attachment,
+)
+
+#: The two fields of the instance-name attachment ride on the offer and the
+#: response but are NOT part of what `signature` covers -- the verifier
+#: recomputes the signed bytes from the parsed model, so a field an older
+#: version does not know would otherwise break verification in BOTH directions
+#: (old verifier drops it, new verifier adds a `None` the old signer never
+#: signed). See services/federation_instance_name.py.
+#: Everything `signature` does not cover.
+_UNSIGNED_FIELDS = frozenset({"signature", *ATTACHMENT_FIELDS})
+#: Wire bound for both attachment fields (see federation_query_schemas).
+_ATTACHMENT_WIRE_MAX = 512
 
 OFFER_TTL_SECONDS = 600  # 10 minutes — enough to scan + accept, short
                          # enough that a leaked QR code doesn't outlive its usefulness
@@ -83,6 +99,10 @@ class PairingOffer(BaseModel):
     issued_at: int  # unix seconds
     expires_at: int  # unix seconds
     signature: str = Field(..., min_length=128, max_length=128)  # hex
+    # The initiator INSTANCE's name -- separately signed attachment, absent on
+    # an offer from an older version or from an instance without a name.
+    instance_name: str | None = Field(default=None, max_length=_ATTACHMENT_WIRE_MAX)
+    instance_name_signature: str | None = Field(default=None, max_length=_ATTACHMENT_WIRE_MAX)
 
 
 class PairingResponse(BaseModel):
@@ -101,6 +121,9 @@ class PairingResponse(BaseModel):
     my_tier_for_you: int = Field(..., ge=0, le=4)
     accepted_at: int  # unix seconds
     signature: str = Field(..., min_length=128, max_length=128)
+    # The responder INSTANCE's name -- see `PairingOffer.instance_name`.
+    instance_name: str | None = Field(default=None, max_length=_ATTACHMENT_WIRE_MAX)
+    instance_name_signature: str | None = Field(default=None, max_length=_ATTACHMENT_WIRE_MAX)
 
 
 # =============================================================================
@@ -298,7 +321,10 @@ class PairingService:
 
         _cache_nonce(nonce, expires_at=expires_at, initiator_user_id=current_user.id)
 
-        return PairingOffer(**unsigned, signature=signature)
+        return PairingOffer(
+            **unsigned, signature=signature,
+            **sign_name_attachment(self.identity, signature),
+        )
 
     # -------------------------------------------------------------------------
     # Step 2 — responder accepts
@@ -333,6 +359,14 @@ class PairingService:
             owner_user_id=current_user.id,
             remote_pubkey=offer.initiator_pubkey,
             remote_display_name=offer.display_name,
+            # Verified AFTER `_verify_offer` above; `None` from an older
+            # initiator or on an attachment that does not verify.
+            remote_instance_name=verify_name_attachment(
+                name=offer.instance_name,
+                signature_hex=offer.instance_name_signature,
+                signer_pubkey_hex=offer.initiator_pubkey,
+                envelope_signature_hex=offer.signature,
+            ),
             remote_user_id=offer.initiator_user_id,
             # 🛑 The tier sits ON THE PAIRING, since F-ID-3. Until
             # 2026-10-27 an `_upsert_circle_membership(member_user_id=
@@ -359,7 +393,10 @@ class PairingService:
             "accepted_at": now,
         }
         signature = self.identity.sign(_canonical_bytes(unsigned)).hex()
-        return PairingResponse(**unsigned, signature=signature)
+        return PairingResponse(
+            **unsigned, signature=signature,
+            **sign_name_attachment(self.identity, signature),
+        )
 
     # -------------------------------------------------------------------------
     # Step 3 — initiator completes
@@ -399,6 +436,12 @@ class PairingService:
             owner_user_id=current_user.id,
             remote_pubkey=response.responder_pubkey,
             remote_display_name=response.responder_display_name,
+            remote_instance_name=verify_name_attachment(
+                name=response.instance_name,
+                signature_hex=response.instance_name_signature,
+                signer_pubkey_hex=response.responder_pubkey,
+                envelope_signature_hex=response.signature,
+            ),
             remote_user_id=response.responder_user_id,
             granted_tier=their_tier_for_me,   # see `accept_offer`
             transport_config=transport_config,
@@ -419,7 +462,7 @@ class PairingService:
         if offer.expires_at < now:
             raise PairingError("Offer expired")
 
-        unsigned = offer.model_dump(exclude={"signature"})
+        unsigned = offer.model_dump(exclude=set(_UNSIGNED_FIELDS))
         try:
             pubkey = bytes.fromhex(offer.initiator_pubkey)
             signature = bytes.fromhex(offer.signature)
@@ -431,7 +474,7 @@ class PairingService:
     def _verify_response(self, response: PairingResponse) -> None:
         if response.version != 1:
             raise PairingError("Unsupported pairing response version")
-        unsigned = response.model_dump(exclude={"signature"})
+        unsigned = response.model_dump(exclude=set(_UNSIGNED_FIELDS))
         try:
             pubkey = bytes.fromhex(response.responder_pubkey)
             signature = bytes.fromhex(response.signature)
@@ -449,6 +492,7 @@ class PairingService:
         remote_user_id: int | None,
         granted_tier: int,
         transport_config: dict[str, Any],
+        remote_instance_name: str | None = None,
     ) -> PeerUser:
         # 🛑 A second ACTIVE pairing with the same far side under a
         # DIFFERENT local account must not come into being. The uniqueness index
@@ -479,6 +523,11 @@ class PairingService:
         now = datetime.now(UTC).replace(tzinfo=None)
         if existing is not None:
             existing.remote_display_name = remote_display_name
+            # Only a verified name replaces a stored one. Pairing again with a
+            # far side that sends none (an older version) keeps what the same
+            # key vouched for earlier -- same pubkey, same instance.
+            if remote_instance_name:
+                existing.remote_instance_name = remote_instance_name
             existing.remote_user_id = remote_user_id
             # Pairing again sets the tier ANEW -- otherwise a second pairing
             # would silently keep the old grant, and the interface would show a
@@ -495,6 +544,7 @@ class PairingService:
             circle_owner_id=owner_user_id,
             remote_pubkey=remote_pubkey,
             remote_display_name=remote_display_name,
+            remote_instance_name=remote_instance_name,
             remote_user_id=remote_user_id,
             granted_tier=granted_tier,
             transport_config=transport_config,

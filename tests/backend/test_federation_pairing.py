@@ -33,6 +33,12 @@ from services.pairing_service import (
     _clear_nonce_cache_for_tests,
 )
 
+#: What `signature` does NOT cover: itself, and the instance-name attachment,
+#: which carries a signature of its own (services/federation_instance_name.py).
+#: Spelled out here rather than imported from the service, so that widening the
+#: set there turns these tests red.
+NOT_SIGNED = {"signature", "instance_name", "instance_name_signature"}
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -148,8 +154,8 @@ class TestCreateOffer:
     def test_offer_is_signed(self, tmp_identity, mock_user):
         svc = PairingService(db=MagicMock())
         offer = svc.create_offer(current_user=mock_user, display_name="Renfield-A")
-        # Signature covers all non-signature fields
-        unsigned = offer.model_dump(exclude={"signature"})
+        # Signature covers every field except itself and the name attachment
+        unsigned = offer.model_dump(exclude=NOT_SIGNED)
         assert FederationIdentity.verify(
             bytes.fromhex(offer.initiator_pubkey),
             bytes.fromhex(offer.signature),
@@ -493,7 +499,7 @@ class TestAdvertisedEndpointResolution:
         eps = [{"url": "http://backend.renfield.svc.cluster.local:8000"}]
         offer = svc.create_offer(current_user=mock_user, offered_endpoints=eps)
         assert offer.offered_endpoints == eps
-        unsigned = offer.model_dump(exclude={"signature"})
+        unsigned = offer.model_dump(exclude=NOT_SIGNED)
         assert FederationIdentity.verify(
             bytes.fromhex(offer.initiator_pubkey),
             bytes.fromhex(offer.signature),

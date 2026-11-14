@@ -319,6 +319,65 @@ describe('FederationAuditPage', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows the instance name the ROW recorded, instance first', async () => {
+    // The name is a snapshot like the person's. A row written before the
+    // instance name existed has none and shows the person alone -- it is not
+    // filled in from what the pairing is called today.
+    mockAuditResponse({
+      entries: [
+        {
+          id: '2',
+          peer_pubkey: MOM_PUBKEY,
+          peer_display_name: 'alex',
+          peer_instance_name: 'Instance B',
+          query_text: 'eine neue Frage',
+          initiated_at: '2026-11-13T10:00:00',
+          final_status: 'success',
+          direction: 'asked',
+        },
+        {
+          id: '1',
+          peer_pubkey: MOM_PUBKEY,
+          peer_display_name: 'alex',
+          peer_instance_name: null,
+          query_text: 'eine alte Frage',
+          initiated_at: '2026-10-29T14:43:37',
+          final_status: 'success',
+          direction: 'asked',
+        },
+      ],
+      limit: 50, offset: 0, peer_pubkey: null,
+    });
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+
+    expect(await screen.findByText('Instance B · alex')).toBeInTheDocument();
+    // The old row: the person alone, once.
+    expect(screen.getAllByText('alex')).toHaveLength(1);
+    expect(screen.getAllByText('Instance B · alex')).toHaveLength(1);
+  });
+
+  it('still falls back to the key when a row has neither name', async () => {
+    mockAuditResponse({
+      entries: [
+        {
+          id: '1',
+          peer_pubkey: MOM_PUBKEY,
+          peer_display_name: '',
+          peer_instance_name: null,
+          query_text: 'q',
+          initiated_at: '2026-10-29T14:43:37',
+          final_status: 'success',
+          direction: 'answered',
+        },
+      ],
+      limit: 50, offset: 0, peer_pubkey: null,
+    });
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+    expect(
+      await screen.findByText(`${MOM_PUBKEY.slice(0, 12)}\u2026`),
+    ).toBeInTheDocument();
+  });
+
   it('assigns each value its own help text', async () => {
     // Measured directly on the mapping function, not on the `title`
     // attribute: a tooltip is invisible on touch devices, but the mapping is

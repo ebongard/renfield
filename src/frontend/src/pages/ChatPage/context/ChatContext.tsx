@@ -82,6 +82,8 @@ type AgentStep =
 
 interface FederationProgressEntry {
   peer_display_name: string;
+  /** The far instance's label; absent when it has none. */
+  peer_instance_name?: string;
   label: string;
   sequence: number;
 }
@@ -1017,7 +1019,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // seq > stored seq (drops stale late arrivals but keeps terminal
   // chunks regardless, since losing a `complete` would strand the line).
   const handleAgentFederationProgress = useCallback((data: AgentFederationProgressMessage) => {
-    const { peer_pubkey, peer_display_name, label, sequence } = data;
+    const { peer_pubkey, peer_display_name, peer_instance_name, label, sequence } = data;
     setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
       if (!lastMsg || lastMsg.role !== 'assistant' || !lastMsg.streaming) {
@@ -1027,7 +1029,9 @@ export function ChatProvider({ children }: ChatProviderProps) {
           role: 'assistant',
           content: '',
           streaming: true,
-          federationProgress: { [peer_pubkey]: { peer_display_name, label, sequence } },
+          federationProgress: {
+            [peer_pubkey]: { peer_display_name, peer_instance_name, label, sequence },
+          },
         }];
       }
       const current = lastMsg.federationProgress ?? {};
@@ -1040,7 +1044,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
         if (existing && sequence <= existing.sequence) {
           return prev; // stale chunk, drop it
         }
-        next[peer_pubkey] = { peer_display_name, label, sequence };
+        next[peer_pubkey] = { peer_display_name, peer_instance_name, label, sequence };
       }
       return [...prev.slice(0, -1), { ...lastMsg, federationProgress: next }];
     });

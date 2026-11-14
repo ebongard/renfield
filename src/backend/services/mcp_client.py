@@ -1409,6 +1409,12 @@ class MCPManager:
         task.add_done_callback(self._health_bg_tasks.discard)
 
     async def _broadcast_tool_health(self, server_name: str, connected: bool) -> None:
+        # A paired peer is not a tool server on the wall display: it has ONE
+        # node, on the peers arc, fed by `peer_status_changed`. The snapshot
+        # leaves `peer_<id>` out of the tool ring (`kiosk_data.kiosk_mcp_status`), and
+        # this delta must agree -- the frontend ADDS a server it does not know.
+        if self.is_federation_server(server_name):
+            return
         try:
             from api.websocket.kiosk_handler import broadcast_kiosk_event
 
@@ -2884,6 +2890,10 @@ class MCPManager:
         initiated_at = _dt.now(UTC).replace(tzinfo=None)
         peer_pubkey_snapshot = peer.remote_pubkey
         peer_display_snapshot = peer.remote_display_name
+        # The instance part of the label, snapshotted with the rest: what the
+        # person saw when they asked, not what the pairing says later.
+        from services.federation_instance_name import peer_instance_label
+        peer_instance_snapshot = peer_instance_label(peer)
         peer_id_snapshot = peer.id
 
         asker = FederationQueryAsker()
@@ -2902,6 +2912,12 @@ class MCPManager:
                         await progress_sink({
                             "peer_pubkey": peer.remote_pubkey,
                             "peer_display_name": peer.remote_display_name,
+                            # Present only when the peer has an instance
+                            # label -- the frame is otherwise unchanged.
+                            **(
+                                {"peer_instance_name": peer_instance_snapshot}
+                                if peer_instance_snapshot else {}
+                            ),
                             "label": item.label,
                             "detail": item.detail,
                             "sequence": item.sequence,
@@ -2927,6 +2943,7 @@ class MCPManager:
                 peer_user_id=peer_id_snapshot,
                 peer_pubkey_snapshot=peer_pubkey_snapshot,
                 peer_display_name_snapshot=peer_display_snapshot,
+                peer_instance_name_snapshot=peer_instance_snapshot,
                 query_text=query_text,
                 initiated_at=initiated_at,
                 final_item=final_item,

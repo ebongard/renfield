@@ -19,6 +19,7 @@ import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import { useFederationAuditQuery, type AuditStatus } from '../api/resources/federation';
 import { formatDateTime as formatUtcDateTime, toLocalDate } from '../utils/datetime';
+import { formatPeerLabel } from '../utils/peerLabel';
 
 interface StatusIconProps {
   status: AuditStatus;
@@ -139,7 +140,10 @@ export default function FederationAuditPage() {
   const filteredPeerName = useMemo(() => {
     if (!peerFilter || entries.length === 0) return null;
     const match = entries.find((e) => e.peer_pubkey === peerFilter);
-    return match?.peer_display_name || peerFilter.slice(0, 12) + '…';
+    const label = match
+      ? formatPeerLabel(match.peer_instance_name, match.peer_display_name)
+      : '';
+    return label || peerFilter.slice(0, 12) + '…';
   }, [peerFilter, entries]);
 
   return (
@@ -213,8 +217,12 @@ export default function FederationAuditPage() {
                           the spot that says WHO accessed the data. Better a
                           fingerprint than a gap; an invented name would be
                           worse than either. */}
+                      {/* The instance name is a SNAPSHOT like the person's:
+                          what the row recorded when it was written. Rows from
+                          before the instance name existed show the person
+                          alone -- never today's name of that pairing. */}
                       <span className="font-medium text-gray-900 dark:text-white truncate">
-                        {entry.peer_display_name || (
+                        {formatPeerLabel(entry.peer_instance_name, entry.peer_display_name) || (
                           <code className="tabular-nums text-sm">
                             {entry.peer_pubkey.slice(0, 12)}…
                           </code>

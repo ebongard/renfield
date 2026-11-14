@@ -56,10 +56,32 @@ export interface RoomNode {
   hint?: string;
 }
 
+/** What the wall says about the way to a paired instance. `unknown` is a state
+ *  of its own and never drawn as a fault: nobody has checked (yet), or the far
+ *  side cannot answer a check. */
+export type PeerReachability = 'reachable' | 'unreachable' | 'unknown';
+
+/** A paired instance. It has exactly ONE node on the wall -- this one, on the
+ *  outer arc; its `peer_<id>` tool server is not on the tools ring. */
 export interface PeerNode {
   id: string;
+  /** The far instance's name when one is known, else the person who paired. */
   label: string;
-  online: boolean;
+  /** The person who paired -- set only when `label` is the instance. */
+  sublabel?: string;
+  reachability: PeerReachability;
+  /** Machine code behind a non-reachable state (localised into `hint`). */
+  reason?: string | null;
+  /** A real request went either way within the last few minutes. Only known
+   *  while the backend runs the reachability check. */
+  recentlyActive: boolean;
+  /** The subsystem ids a `turn_activity` can name when a turn asked this
+   *  peer (`peer_<id>`): the node pulses on ANY of them, as a tool node does.
+   *  More than one when several accounts here are paired with the same far
+   *  instance -- each turn runs through the asking account's own pairing. */
+  pulseIds: string[];
+  /** Tooltip: the localised state and reason. */
+  hint?: string;
 }
 
 /** One recent role activation (the pulse trail). Content-free by design:

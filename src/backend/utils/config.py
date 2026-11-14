@@ -1384,6 +1384,42 @@ class Settings(BaseSettings):
     # list has to show what an account can already use.
     federation_peers_visible_to_all: bool = False
 
+    # Federation — the name THIS INSTANCE goes by on its peers ("Instance A").
+    # A pairing used to carry only the name of the PERSON who paired; when the
+    # same person owns both instances, each side showed the other under that
+    # person's name. Sent as a separately signed attachment with the pairing
+    # offer/response, every query and every reachability ping, so existing
+    # pairings learn it without re-pairing. Empty = advertise the host of
+    # `federation_advertised_url`; if that is empty too, advertise nothing.
+    # Never falls back to a person's name. Display text only on the far side
+    # -- never an identifier (`services/federation_instance_name.py`).
+    federation_instance_name: str = ""
+    # Whether a paired peer's instance name may appear in the TOOL DESCRIPTION
+    # the agent model reads. Default off: the name is text the far side
+    # chooses and can change with any query or ping, and a tool description is
+    # part of this instance's prompt. Off = the description is the measured
+    # text byte for byte, whatever name is stored. On = an allow-list form of
+    # the name (letters, digits, "_", space, ".", "-"; 32 characters) is set
+    # into it. 🛑 UNMEASURED: run `bin/measure-preselect.py` before enabling.
+    federation_peer_name_in_tool_description_enabled: bool = False
+    # A peer may change the name we store for it at most once per this many
+    # seconds; an earlier change is ignored until the interval has passed.
+    federation_instance_rename_min_interval_seconds: int = Field(default=600, ge=0, le=86400)
+
+    # Federation — a real, signed round-trip per pairing ("reachable").
+    # Default off (DARK): no ping is sent, `POST /api/federation/peer/ping`
+    # answers 404 exactly like a version that does not know the route, and the
+    # kiosk payload and `GET /api/federation/peers` stay byte-identical. When
+    # on, the kiosk refresher probes each pairing while a wall display is
+    # connected and the peers page gets a "check now" action; the result is
+    # one of reachable / unreachable / pin_mismatch / refused / unsupported /
+    # invalid_response / no_endpoint. See `services/federation_reachability.py`.
+    federation_reachability_enabled: bool = False
+    # Pings per minute per paired peer, enforced on BOTH sides with buckets of
+    # their own -- a ping never spends a query token and a query never a ping
+    # token.
+    federation_ping_rate_per_minute: int = Field(default=12, ge=1, le=120)
+
     # This instance's OWN reachable URL, advertised to a peer during pairing so
     # the peer's PeerUser.transport_config gets a usable endpoint (without it, a
     # UI pairing yields transport_config.endpoints=[] → _select_endpoint→None →

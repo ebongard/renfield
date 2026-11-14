@@ -3021,6 +3021,176 @@ erhält es; er ist öffentlich und berechtigt zu nichts.
 `FEDERATION_IDENTITY_LINKS_ENABLED=false` ist es immer `false`, auch wenn
 eine Verknüpfungszeile existiert.
 
+### Föderation: Name der Instanz
+
+```bash
+# Der Name, unter dem DIESE Instanz bei ihren Gegenstellen erscheint
+# Default: leer
+FEDERATION_INSTANCE_NAME=
+```
+
+Eine Kopplung trug bisher nur den Namen der **Person**, die gekoppelt hat.
+Gehören beide Instanzen derselben Person, zeigte jede Seite die andere unter
+diesem Personennamen. Der Instanzname steht jetzt davor: „Instance B · alex“.
+
+- **Was gesendet wird:** `FEDERATION_INSTANCE_NAME`; ist er leer, der Host aus
+  `FEDERATION_ADVERTISED_URL`; ist auch der leer, nichts. Nie der Name einer
+  Person.
+- **Womit:** als eigens signierter Anhang (`instance_name` +
+  `instance_name_signature`) am Kopplungsangebot, an der Kopplungsantwort, an
+  jeder Anfrage und an jeder Erreichbarkeitsprüfung. Bestehende Kopplungen
+  lernen den Namen also mit dem nächsten Austausch, ohne neu zu koppeln; eine
+  Gegenstelle auf älterem Stand ignoriert den Anhang.
+- **Was die Gegenseite damit tut:** sie speichert ihn nur von einem
+  authentifizierten, nicht widerrufenen Peer und nur bei gültiger Signatur
+  (`peer_users.remote_instance_name`). Er ist **Anzeigetext**: nie Kennung, nie
+  Suchschlüssel, nie Teil des Servernamens (`peer_<id>` bleibt).
+- **Bereinigung vor dem Speichern:** NFKC-Normalform, wobei thailändisches
+  und laotisches SARA AM (U+0E33, U+0EB3) stehen bleibt, wie es geschrieben
+  wurde; Steuer- und Formatzeichen, leere Füllzeichen (U+3164, U+115F,
+  U+1160, U+FFA0, U+2800, U+034F, U+FFFC, U+1D159) und Variantenselektoren
+  fallen weg; höchstens vier kombinierende Zeichen je Grundzeichen, keines
+  ohne Grundzeichen; Leerraum zu einem Leerzeichen; 64 Zeichen. Ohne
+  mindestens einen **Buchstaben oder eine Ziffer** gilt der Name als nicht
+  gesendet — ein einzelner Punkt ist kein Name. Bekannte Grenze: die
+  Verbinder U+200D/U+200C fallen als Formatzeichen mit weg
+  (`docs/FEDERATION_PAIRING.md` → „Known limits“).
+- **Anzeige:** auf `/settings/circles/peers`, in der Audit-Ansicht und in der
+  Chat-Statuszeile Instanzname → Host des gespeicherten Endpunkts →
+  Personenname allein. **Der Kiosk zeigt nie einen Host:** dort nur der
+  verifizierte Instanzname, sonst der Personenname allein (die Kiosk-Nutzlast
+  trägt keine Adresse).
+- **Migration vor dem Rollout:** `pc20261113_peer_instance_name` legt die
+  Spalten `peer_users.remote_instance_name` und
+  `federation_query_log.peer_instance_name_snapshot` an. Das ORM liest jede
+  Spalte mit — ein neuer Pod vor der Migration scheitert an jeder Abfrage
+  dieser Tabellen. Also `bin/deploy-production.sh … --migrate`, je Instanz,
+  wie bei `pc20261111_push_subs`.
+
+```bash
+# Wie oft eine Gegenstelle ihren Namen ändern darf: höchstens einmal je
+# Kopplung in diesem Abstand (Sekunden, 0-86400; 0 = ohne Grenze)
+# Default: 600
+FEDERATION_INSTANCE_RENAME_MIN_INTERVAL_SECONDS=600
+```
+
+Der Name ist Text, den die **Gegenseite** wählt und mit jeder Anfrage und
+jeder Prüfung mitschickt. Eine Änderung innerhalb des Abstands wird verworfen
+(die Gegenseite schickt ihn mit der nächsten Anfrage erneut); ein unveränderter
+Name kostet weder eine Anweisung an die Datenbank noch einen Neuabgleich der
+Werkzeugliste. Jede übernommene Änderung steht mit Kopplungs-ID und
+Zeichenzahl im Protokoll (INFO), nie mit dem Namen selbst. Zehn Minuten sind
+eine **Festlegung**, kein Messwert.
+
+```bash
+# Den Instanznamen der Gegenstelle in die Werkzeugbeschreibung schreiben,
+# die das Modell liest
+# Default: false -- UNGEMESSEN; vor dem Einschalten mit
+# bin/measure-preselect.py messen
+FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED=false
+```
+
+🛑 **Ein gekoppelter Peer bestimmt seinen Namen selbst und kann ihn ohne
+Zustimmung dieser Instanz ändern.** Eine Werkzeugbeschreibung ist Teil des
+Prompts des hiesigen Agenten. Deshalb ist die benannte Fassung
+(„Ask the Renfield instance „<Name>“ (paired by <Person>) …“) ein eigener
+Schalter und **standardmäßig aus**: ohne ihn ist die Beschreibung Zeichen für
+Zeichen der gemessene Text, was immer als Name gespeichert ist.
+
+Mit dem Schalter geht nur eine **Positivlisten-Form** des Namens in den Prompt
+(`prompt_safe_instance_name`): NFKC, ausschließlich Zeichen der
+Unicode-Kategorien Lu, Ll, Lt, Lo und Nd sowie Unterstrich, Leerzeichen und
+Bindestrich, höchstens 32 Zeichen — Anführungszeichen, Doppelpunkte,
+Klammern, Zeilenumbrüche, der Punkt (keine Satzgrenze) und
+Modifikatorbuchstaben, die wie Anführungszeichen oder Doppelpunkte aussehen,
+fallen weg; sie werden nicht maskiert. 🛑 Die Positivliste begrenzt **Form
+und Länge, nicht den Inhalt**: eine schlichte Aufforderung aus 32 Buchstaben
+besteht sie. Deshalb ist der Schalter aus. Bleibt nichts Benennbares, gilt die unbenannte
+Fassung; der Host-Rückfall der Anzeige zählt hier nie. Die Anzeige behält
+überall den volleren, bereinigten Namen. Die benannte Fassung ist
+festgenagelt, aber **ungemessen** — vor dem Einschalten mit
+`bin/measure-preselect.py` messen.
+
+### Föderation: Erreichbarkeitsprüfung
+
+```bash
+# Signierter Rundlauf je Kopplung: "erreichbar" heisst erreichbar
+# Default: false
+FEDERATION_REACHABILITY_ENABLED=false
+
+# Prüfungen pro Minute je Kopplung, auf BEIDEN Seiten (1-120)
+# Default: 12
+FEDERATION_PING_RATE_PER_MINUTE=12
+```
+
+Bisher galt ein Peer auf dem Kiosk als „erreichbar“, wenn er **uns** in den
+letzten fünf Minuten etwas gefragt hatte — eine Aussage über seine Neugier,
+nicht über die Verbindung. Mit dem Flag werden drei Dinge getrennt gezeigt:
+**gekoppelt**, **kürzlich aktiv** (eine echte Anfrage in einer der beiden
+Richtungen) und **erreichbar / nicht erreichbar / unbekannt** aus einem
+signierten Rundlauf (`POST /api/federation/peer/ping`).
+
+- **Aus (Standard):** kein Ping verlässt die Instanz; die Route antwortet 404
+  wie eine Version, die sie nicht kennt; die Kiosk-Nutzlast und
+  `GET /api/federation/peers` sind byte-identisch zum Stand davor.
+- **An:** eine **verbrauchergebundene, periodische Prüfung** — alle fünf
+  Minuten je Kopplung, solange mindestens ein Kiosk verbunden ist (der
+  60-Sekunden-Takt des Kiosk-Auffrischers prüft, sobald der Messwert älter
+  als 300 Sekunden ist), und einmal, wenn sich einer verbindet. Ohne
+  verbundenen Kiosk läuft nichts. **Das ist eine genehmigte Ausnahme von der
+  Kein-Polling-Regel (Eigentümer, 2026-11-14):** ob eine andere Instanz
+  erreichbar ist, lässt sich nur durch Fragen erfahren. Ihre Grenzen:
+  verbrauchergebunden, fünf Minuten, eine kleine signierte Anfrage je
+  Kopplung, Anspruch je Kopplung plus ausgehendes Kontingent
+  (`FEDERATION_PING_RATE_PER_MINUTE`). Die Peer-Seite bekommt „Jetzt
+  prüfen“ (`POST /api/federation/peers/{id}/check`: Eigentümer, Konto mit
+  `admin`, mit `FEDERATION_PEERS_VISIBLE_TO_ALL` jedes Konto) und prüft eine
+  Zeile ohne Messwert einmal beim Öffnen.
+- **Was der Kiosk davon erfährt:** eine `peer_status_changed`-Nachricht nur,
+  wenn sich etwas Sichtbares ändert — der Zeitpunkt der Prüfung allein zählt
+  nicht. Läuft ein Messwert ab (15 Minuten), ist das eine Zustandsänderung
+  („unbekannt“) und wird gesendet. Eine unveränderte Liste wird alle zehn
+  Minuten bestätigt (eine Festlegung), damit das Display eine verstummte
+  Verbindung von „nichts hat sich geändert“ unterscheiden kann: hört es
+  zwanzig Minuten nichts, zeigt es „unbekannt — geprüft, aber das Ergebnis
+  ist alt“. Dieses Alter misst das Display auf der Uhr des **Servers**
+  (Zeitstempel `at` der Nachricht) plus der seit dem Empfang vergangenen
+  Zeit, nie gegen die eigene Wanduhr.
+
+| Ergebnis | Anzeige | Bedeutung |
+|---|---|---|
+| `reachable` | erreichbar | Rundlauf verifiziert (gekoppelter Schlüssel, Signatur, unsere Nonce) |
+| `unreachable` | nicht erreichbar | keine Verbindung, Zeitüberschreitung, 5xx |
+| `pin_mismatch` | nicht erreichbar | das TLS-Zertifikat ist nicht mehr das gemerkte — warten hilft nicht |
+| `refused` | nicht erreichbar | die Gegenseite weist die signierte Prüfung ab (Kopplung dort aufgehoben, Uhren weichen ab, Limit) |
+| `invalid_response` | nicht erreichbar | Antwort nicht dem gekoppelten Schlüssel zuzuordnen |
+| `no_endpoint` | nicht erreichbar | die Kopplung trägt keine Adresse |
+| `unsupported` | **unbekannt** | die Gegenseite beantwortet keine Prüfung (ältere Version oder Flag dort aus) |
+| — | **unbekannt** | noch nicht geprüft, oder der letzte Messwert ist älter als 15 Minuten |
+
+🛑 **Beide Seiten brauchen das Flag.** Ist es nur auf einer Seite an, liest
+diese `unsupported` → „unbekannt“, nie „nicht erreichbar“.
+
+Die Route `POST /api/federation/peer/ping` ist ohne Kopplung erreichbar (die
+Signatur lässt sich erst prüfen, wenn der Rumpf da ist). Deshalb: Rumpf
+höchstens 4096 Byte auf der Leitung — eine größere `Content-Length` wird
+ungelesen abgewiesen, ein Rumpf ohne Längenangabe nur bis zur Grenze gelesen,
+ein komprimierter Rumpf (`Content-Encoding` außer `identity`) gar nicht; geprüft
+wird in der Reihenfolge Signatur → Zeitfenster → Kopplung → Kontingent →
+Nonce, sodass ein ungekoppelter Schlüssel **nichts** hinterlässt (keine Nonce,
+kein Kontingent, keine Zeile). Jede Ablehnung ist dieselbe einheitliche 400.
+Die anfragende Seite liest auch die Antwort nur bis 4096 Byte, verlangt sie
+unkomprimiert (`Accept-Encoding: identity`) und wertet eine komprimierte
+Antwort als `invalid_response`, ohne sie zu entpacken. Bekannte Grenze: eine
+wiederholte, gültig signierte Prüfung verbraucht ein Kontingent, bevor die
+Nonce sie abweist (`docs/FEDERATION_PAIRING.md` → „Known limits“).
+
+Eine Prüfung ist keine Anfrage: sie verschiebt `last_seen_at` nicht („Letzte
+Anfrage …“ behält seine Bedeutung), schreibt keine Audit-Zeile und verbraucht
+kein Anfrage-Kontingent. Messwerte liegen in Redis mit Ablaufzeit, nicht in
+der Datenbank; mehrere Backend-Prozesse senden je Kopplung einen Ping, nicht
+mehrere.
+
 ---
 
 ## Integrationen

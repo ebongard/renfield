@@ -3468,6 +3468,16 @@ class PeerUser(Base):
     # through it again. See F-ID-3 / BL-0135.
     remote_user_id = Column(Integer, nullable=True)
 
+    #: The name the far INSTANCE goes by -- next to `remote_display_name`,
+    #: which is the PERSON who paired there. NULL until the far side has sent
+    #: one in a verified attachment (pairing, query or ping); an older far side
+    #: never does, and the UI then falls back to the endpoint host.
+    #:
+    #: 🛑 DISPLAY TEXT ONLY. Never an identifier, a lookup key, or part of a
+    #: tool/server name (`peer_<id>` stays). Written only from
+    #: `services.federation_instance_name.verify_name_attachment`.
+    remote_instance_name = Column(String(64), nullable=True)
+
     #: The circle tier THIS instance grants the peer at pairing time
     #: (0 self ... 4 public). It is a property of the PAIRING, not of a
     #: membership between two local people -- confusing the two was the bug.
@@ -3585,6 +3595,13 @@ class FederationQueryLog(Base):
     # what the user saw when they asked.
     peer_pubkey_snapshot = Column(String(64), nullable=False)
     peer_display_name_snapshot = Column(String(255), nullable=False)
+    # The instance part of the label shown AT THE TIME of the query (verified
+    # instance name, else the endpoint host). A snapshot like the two above,
+    # in a column of its own so the person's name is not rewritten.
+    # 🛑 Nullable and never backfilled: rows from before 2026-11-13 did not
+    # record it, and the view shows the person's name alone for them rather
+    # than looking up today's name for a query of back then.
+    peer_instance_name_snapshot = Column(String(64), nullable=True)
 
     # The asker's own request_id (uuid-ish string from /initiate).
     request_id = Column(String(64), nullable=True, index=True)

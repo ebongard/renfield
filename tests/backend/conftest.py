@@ -106,6 +106,22 @@ def _reset_shared_redis_clients():
     _drop()
 
 
+# A paired instance may change its name once per interval; the record of "this
+# pairing just renamed" lives in Redis in production. Every test gets a record
+# of its own in memory -- otherwise a rename in one test would block the rename
+# in the next, and the build box's Redis would hold test pairing ids.
+@pytest.fixture(autouse=True)
+def _own_rename_claims():
+    try:
+        from services import federation_instance_name as _fin
+    except ImportError:
+        yield
+        return
+    _fin.set_rename_claims_for_tests(_fin.MemoryRenameClaims())
+    yield
+    _fin.set_rename_claims_for_tests(None)
+
+
 # ============================================================================
 # Database Fixtures
 # ============================================================================

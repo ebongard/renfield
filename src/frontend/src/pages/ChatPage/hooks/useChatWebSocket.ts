@@ -145,6 +145,9 @@ export interface AgentFederationProgressMessage extends BaseWsMessage {
   type: 'agent_federation_progress';
   peer_pubkey: string;
   peer_display_name: string;
+  /** The far instance's label (verified name, else its endpoint host). The
+   *  key is absent when the peer has none. */
+  peer_instance_name?: string;
   label: string;
   sequence: number;
 }

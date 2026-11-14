@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { Users, Trash2, Clock, Fingerprint, History, Link2, Link2Off, UserRound } from 'lucide-react';
+import {
+  Users, Trash2, Clock, Fingerprint, History, Link2, Link2Off, UserRound,
+  CheckCircle, XCircle, HelpCircle, RefreshCw, Activity, Send,
+} from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import TierBadge from '../components/TierBadge';
@@ -13,11 +16,29 @@ import {
   useDeleteFederationPeer,
   useMyIdentityLinksQuery,
   useDeleteIdentityLink,
+  useCheckFederationPeer,
   type FederationPeer,
   type IdentityLink,
 } from '../api/resources/federation';
 import { extractApiError } from '../utils/axios';
 import { formatDate, toLocalDate } from '../utils/datetime';
+import { formatPeerLabel, peerLabelParts } from '../utils/peerLabel';
+
+/** How each reachability state looks: a symbol AND a colour (never colour
+ *  alone), in the semantic colours of DESIGN.md -- success = turquoise,
+ *  error = crimson, and "unknown" deliberately neutral: it is not a fault. */
+const REACH_LOOK = {
+  reachable: { Icon: CheckCircle, className: 'text-accent-700 dark:text-accent-300' },
+  unreachable: { Icon: XCircle, className: 'text-primary-700 dark:text-primary-300' },
+  unknown: { Icon: HelpCircle, className: 'text-gray-500 dark:text-gray-400' },
+} as const;
+
+type ReachState = keyof typeof REACH_LOOK;
+
+/** A state this build does not know is UNKNOWN -- never "unreachable". */
+function reachStateOf(state: string): ReachState {
+  return state === 'reachable' || state === 'unreachable' ? state : 'unknown';
+}
 
 export default function CirclesPeersPage() {
   const { t } = useTranslation();
@@ -27,6 +48,7 @@ export default function CirclesPeersPage() {
   const peers = peersQuery.data ?? [];
 
   const deletePeer = useDeleteFederationPeer();
+  const { mutateAsync: checkPeerAsync } = useCheckFederationPeer();
 
   // F-ID-2: the person's own links. Deliberately HERE and not on a page of
   // their own -- a link always hangs off a pairing, and whoever wants to
@@ -39,7 +61,8 @@ export default function CirclesPeersPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [revokingIds, setRevokingIds] = useState<Set<string>>(() => new Set());
+  const [revokingIds, setRevokingIds] = useState<Set<number>>(() => new Set());
+  const [checkingIds, setCheckingIds] = useState<Set<number>>(() => new Set());
 
   useEffect(() => {
     if (success) {
@@ -55,25 +78,64 @@ export default function CirclesPeersPage() {
   // event ("last request ...") instead of reading like a connection state.
   const formatLastRequest = (iso?: string | null): string => {
     if (!iso) return t('circles.peerNeverAsked');
-    const when = toLocalDate(iso);
-    if (!when) return t('circles.peerLastRequest', { when: iso });
-    const minutes = Math.floor((Date.now() - when.getTime()) / 60000);
-    if (minutes < 1) return t('circles.peerLastRequest', { when: t('circles.peerJustNow') });
-    if (minutes < 60) {
-      return t('circles.peerLastRequest', { when: t('circles.peerMinutesAgo', { n: minutes }) });
-    }
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) {
-      return t('circles.peerLastRequest', { when: t('circles.peerHoursAgo', { n: hours }) });
-    }
-    const days = Math.floor(hours / 24);
-    return t('circles.peerLastRequest', { when: t('circles.peerDaysAgo', { n: days }) });
+    return t('circles.peerLastRequest', { when: relativeWhen(iso) });
   };
+
+  // "just now" / "5m ago" / ... for a server timestamp; the raw value when it
+  // cannot be parsed, so nothing is silently dropped.
+  const relativeWhen = (iso: string): string => {
+    const when = toLocalDate(iso);
+    if (!when) return iso;
+    const minutes = Math.floor((Date.now() - when.getTime()) / 60000);
+    if (minutes < 1) return t('circles.peerJustNow');
+    if (minutes < 60) return t('circles.peerMinutesAgo', { n: minutes });
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return t('circles.peerHoursAgo', { n: hours });
+    return t('circles.peerDaysAgo', { n: Math.floor(hours / 24) });
+  };
+
+  // One signed round trip on demand. The answer lands in the cached list (see
+  // `useCheckFederationPeer`), so the row redraws by itself. `quiet` = nobody
+  // pressed anything: a failure leaves the row as it was and raises no alert.
+  const runCheck = useCallback(async (peerId: number, quiet: boolean) => {
+    setCheckingIds((prev) => new Set(prev).add(peerId));
+    try {
+      await checkPeerAsync(peerId);
+    } catch (err) {
+      if (!quiet) setError(extractApiError(err, t('circles.peerReachCheckFailed')));
+      // Silent to the person, not to whoever debugs it: the row id only.
+      else console.debug('[federation] automatic reachability check failed for pairing', peerId, err);
+    } finally {
+      setCheckingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(peerId);
+        return next;
+      });
+    }
+  }, [checkPeerAsync, t]);
+
+  // The readings are kept current only while a wall display is connected (the
+  // server's periodic check is consumer-gated). A row without a reading -- never
+  // checked, or the last one expired -- is therefore checked ONCE when this
+  // page shows it: a person opening the page is the demand. Once per row and
+  // page visit; the server caps it per pairing on top.
+  const autoChecked = useRef<Set<number>>(new Set());
+  const peerList = peersQuery.data;
+  useEffect(() => {
+    for (const peer of peerList ?? []) {
+      if (!peer.reachability || peer.reachability.checked_at) continue;
+      if (autoChecked.current.has(peer.id)) continue;
+      autoChecked.current.add(peer.id);
+      void runCheck(peer.id, true);
+    }
+  }, [peerList, runCheck]);
 
   const handleRevokeLink = async (link: IdentityLink) => {
     const ok = await confirm({
       title: t('circles.revokeLinkTitle'),
-      message: t('circles.revokeLinkConfirm', { name: link.peer_display_name }),
+      message: t('circles.revokeLinkConfirm', {
+        name: formatPeerLabel(link.peer_instance_name, link.peer_display_name),
+      }),
       confirmLabel: t('common.delete'),
       variant: 'danger',
     });
@@ -90,14 +152,13 @@ export default function CirclesPeersPage() {
     // Someone else's pairing (an admin revoking): the standard text speaks of
     // "your shared information", which would be wrong here.
     const foreign = peer.owned_by_me === false;
+    // Whoever revokes must see WHICH pairing: the full label, instance and person.
+    const name = formatPeerLabel(peer.instance_name, peer.remote_display_name);
     const ok = await confirm({
       title: t('circles.revokePeerTitle'),
       message: foreign
-        ? t('circles.revokePeerConfirmOther', {
-            name: peer.remote_display_name,
-            pairedBy: peer.paired_by ?? '',
-          })
-        : t('circles.revokePeerConfirm', { name: peer.remote_display_name }),
+        ? t('circles.revokePeerConfirmOther', { name, pairedBy: peer.paired_by ?? '' })
+        : t('circles.revokePeerConfirm', { name }),
       confirmLabel: t('common.delete'),
       variant: 'danger',
     });
@@ -106,7 +167,7 @@ export default function CirclesPeersPage() {
     setRevokingIds((prev) => new Set(prev).add(peer.id));
     try {
       await deletePeer.mutateAsync(peer.id);
-      setSuccess(t('circles.peerRevoked', { name: peer.remote_display_name }));
+      setSuccess(t('circles.peerRevoked', { name }));
     } catch (err) {
       setError(extractApiError(err, t('circles.peerRevokeFailed')));
     } finally {
@@ -161,6 +222,21 @@ export default function CirclesPeersPage() {
             const ownedByMe = peer.owned_by_me ?? true;
             const canRevoke = peer.can_revoke ?? true;
             const tierLabel = t(`circles.tier.${Math.max(0, Math.min(4, Number(peer.circle_tier) || 0))}`);
+            // Instance first, person second; the person alone when the far
+            // instance has no label -- then the row reads as it always did.
+            const label = peerLabelParts(peer.instance_name, peer.remote_display_name);
+            // In running text the peer is called by its primary name; the
+            // heading right above carries the full label.
+            const name = label.primary;
+            // Present only while the instance runs the signed check.
+            const reach = peer.reachability ?? null;
+            const reachState = reach ? reachStateOf(reach.state) : null;
+            const reachLook = reachState ? REACH_LOOK[reachState] : null;
+            // A code this build has no text for: the state stands alone.
+            const reachReason = reach?.reason
+              ? t(`circles.peerReachReason.${reach.reason}`, { defaultValue: '' })
+              : '';
+            const checking = checkingIds.has(peer.id);
             return (
               <li
                 key={peer.id}
@@ -169,10 +245,83 @@ export default function CirclesPeersPage() {
                 <div className="flex-1 min-w-0 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-gray-900 dark:text-white truncate">
-                      {peer.remote_display_name}
+                      {label.primary}
                     </span>
+                    {label.secondary && (
+                      <span
+                        className="text-sm text-gray-500 dark:text-gray-400 truncate"
+                        data-testid={`peer-person-${peer.id}`}
+                      >
+                        · {label.secondary}
+                      </span>
+                    )}
                     <TierBadge tier={peer.circle_tier} />
                   </div>
+                  {reach && reachState && reachLook && (
+                    <div
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
+                      data-testid={`peer-reach-${peer.id}`}
+                      data-reach-state={reachState}
+                    >
+                      {/* The live region: the state and its reason, read as
+                          ONE statement when a check comes back. A real box --
+                          `display: contents` drops an element from the
+                          accessibility tree in some browsers. The relative
+                          time and the button stay OUTSIDE: "2 minutes ago"
+                          turning into "3 minutes ago" is not news, and neither
+                          is the button's own "checking…". */}
+                      <span
+                        className="inline-flex flex-wrap items-center gap-x-3 gap-y-1"
+                        aria-live="polite"
+                        aria-atomic="true"
+                        data-testid={`peer-reach-status-${peer.id}`}
+                      >
+                        <span className={`inline-flex items-center gap-1 font-medium ${reachLook.className}`}>
+                          <reachLook.Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                          {t(`circles.peerReachState.${reachState}`)}
+                        </span>
+                        {reachReason && (
+                          <span className="text-gray-600 dark:text-gray-300">{reachReason}</span>
+                        )}
+                      </span>
+                      {reach.checked_at && (
+                        <span
+                          className="text-gray-500 dark:text-gray-400"
+                          data-testid={`peer-reach-checked-${peer.id}`}
+                        >
+                          {t('circles.peerReachCheckedAt', { when: relativeWhen(reach.checked_at) })}
+                        </span>
+                      )}
+                      {/* No aria-label: the accessible name is the button's own
+                          text, so it CONTAINS what is visible (voice control:
+                          "click Check now") and follows it to "Checking…". The
+                          peer it belongs to is appended for screen readers --
+                          a page lists several of these. */}
+                      <button
+                        type="button"
+                        onClick={() => runCheck(peer.id, false)}
+                        disabled={checking}
+                        className="inline-flex items-center gap-1 text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50 disabled:no-underline"
+                      >
+                        <RefreshCw
+                          className={`w-3 h-3 ${checking ? 'motion-safe:animate-spin' : ''}`}
+                          aria-hidden="true"
+                        />
+                        {/* One inline box for both, so the space between them is
+                            a text node in an inline run: as a child of the
+                            flex button it is not rendered, and inside the
+                            sr-only span it is trimmed away when the name is
+                            computed -- "Check nowFar Instance" either way. */}
+                        <span>
+                          {checking ? t('circles.peerReachChecking') : t('circles.peerReachCheckNow')}
+                          {' '}
+                          <span className="sr-only">
+                            {formatPeerLabel(peer.instance_name, peer.remote_display_name)}
+                          </span>
+                        </span>
+                      </button>
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
                     <span className="inline-flex items-center gap-1">
                       <Fingerprint className="w-3 h-3" aria-hidden="true" />
@@ -185,6 +334,25 @@ export default function CirclesPeersPage() {
                       <Clock className="w-3 h-3" aria-hidden="true" />
                       {formatLastRequest(peer.last_seen_at)}
                     </span>
+                    {peer.last_asked_at && (
+                      <span
+                        className="inline-flex items-center gap-1"
+                        title={t('circles.peerLastAskedHelp')}
+                      >
+                        <Send className="w-3 h-3" aria-hidden="true" />
+                        {t('circles.peerLastAsked', { when: relativeWhen(peer.last_asked_at) })}
+                      </span>
+                    )}
+                    {peer.recently_active && (
+                      <span
+                        className="inline-flex items-center gap-1 text-accent-700 dark:text-accent-300"
+                        title={t('circles.peerRecentlyActiveHelp')}
+                        data-testid={`peer-recent-${peer.id}`}
+                      >
+                        <Activity className="w-3 h-3" aria-hidden="true" />
+                        {t('circles.peerRecentlyActive')}
+                      </span>
+                    )}
                     {showsAllPairings && !ownedByMe && (
                       <span className="inline-flex items-center gap-1">
                         <UserRound className="w-3 h-3" aria-hidden="true" />
@@ -196,17 +364,14 @@ export default function CirclesPeersPage() {
                     <div className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
                       <p data-testid={`peer-ask-hint-${peer.id}`}>
                         {peer.linked
-                          ? t('circles.peerAskLinked', { name: peer.remote_display_name })
-                          : t('circles.peerAskUnlinked', { name: peer.remote_display_name })}
+                          ? t('circles.peerAskLinked', { name })
+                          : t('circles.peerAskUnlinked', { name })}
                       </p>
                       <p data-testid={`peer-grant-hint-${peer.id}`}>
                         {ownedByMe
-                          ? t('circles.peerGrantMine', {
-                              name: peer.remote_display_name,
-                              tier: tierLabel,
-                            })
+                          ? t('circles.peerGrantMine', { name, tier: tierLabel })
                           : t('circles.peerGrantOther', {
-                              name: peer.remote_display_name,
+                              name,
                               pairedBy: peer.paired_by ?? '',
                               tier: tierLabel,
                             })}
@@ -293,7 +458,7 @@ export default function CirclesPeersPage() {
               <li key={link.id} className="atom-row flex-col sm:flex-row">
                 <div className="flex-1 min-w-0">
                   <span className="font-medium text-gray-900 dark:text-white truncate">
-                    {link.peer_display_name}
+                    {formatPeerLabel(link.peer_instance_name, link.peer_display_name)}
                   </span>
                   <div className="text-xs text-gray-500 dark:text-gray-400">
                     {t('circles.linkCreatedAt', {
@@ -318,8 +483,9 @@ export default function CirclesPeersPage() {
 
       <LinkIdentityInitiatorModal
         isOpen={linkPeer !== null}
-        peerId={linkPeer ? Number(linkPeer.id) : null}
-        peerName={linkPeer?.remote_display_name}
+        peerId={linkPeer ? linkPeer.id : null}
+        /* Running text ("your account at <peer>"): the primary name. */
+        peerName={linkPeer ? peerLabelParts(linkPeer.instance_name, linkPeer.remote_display_name).primary : undefined}
         onClose={() => setLinkPeer(null)}
         onLinked={() => { setSuccess(t('circles.linkSuccess')); linksQuery.refetch(); }}
       />

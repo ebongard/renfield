@@ -34,11 +34,15 @@ What we DON'T do here:
 """
 from __future__ import annotations
 
+import unicodedata
+import weakref
+
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import PeerUser
+from services.federation_instance_name import stored_instance_name
 from services.mcp_client import (
     MCPManager,
     MCPServerConfig,
@@ -46,6 +50,7 @@ from services.mcp_client import (
     MCPToolInfo,
     MCPTransportType,
 )
+from utils.config import settings
 
 # Namespace prefix for federation server entries. Using `peer_{id}` keeps
 # the name stable across display-name changes — the agent loop references
@@ -73,37 +78,7 @@ def _build_query_brain_tool(peer: PeerUser) -> MCPToolInfo:
         server_name=server_name,
         original_name=QUERY_BRAIN_TOOL_NAME,
         namespaced_name=f"mcp.{server_name}.{QUERY_BRAIN_TOOL_NAME}",
-        description=(
-            # 🛑 Measured, not guessed (2026-10-29, `bin/measure-preselect.py`
-            # against the REAL prompt of the live turn, signature `aa62fdb7`):
-            # the old version hit 27/39 (69 %), this one 36/39 (92 %).
-            #
-            # The old one named only the PERSON. "frag <jemand>s Renfield" hit
-            # 3/3 with it -- the model recognises the pattern, not the name,
-            # because a question naming a different person hit too, although
-            # that person is not the name. What hit 0/3 was every question naming the INSTANCE ("was
-            # liegt in x-idra?", "weiss die andere Instanz ...") or the PLURAL
-            # ("suche in allen Renfields"). Those three are now 3/3.
-            #
-            # 🛑 The scanner sentence at the end is not decoration: "scanne
-            # nach x-idra" names a FILING TARGET, not an instance, and has to
-            # stay with the scanner. It does (3/3) -- but only as long as the
-            # sentence is not cut off, see the truncation of the name below.
-            #
-            # What text does NOT achieve: "Welche Dokumente sind in der x-idra
-            # instanz ..." stays 0/3, even with three different document
-            # phrasings (V3/V4 measured, both 92 %, no gain). For that the
-            # INSTANCE NAME would have to appear here -- and it is not
-            # available: `peer_users` carries no remote `INSTANCE_ID`, and the
-            # pairing offer does not carry it along. Its own item.
-            f"Ask {_short_name(peer.remote_display_name)}'s Renfield \u2014 "
-            f"another paired INSTANCE \u2014 for information its people chose "
-            f"to share with you through circles. Use for \u201efrag "
-            f"<jemand>s Renfield\u201c, \u201ewas liegt in <Instanz>\u201c, "
-            f"\u201edie andere Instanz\u201c and \u201ein allen Renfields "
-            f"suchen\u201c. NOT for scanning paper: in \u201escanne nach "
-            f"<Ziel>\u201c <Ziel> is a filing target, not an instance."
-        ),
+        description=_description_for(peer),
         input_schema={
             "type": "object",
             "properties": {
@@ -120,13 +95,157 @@ def _build_query_brain_tool(peer: PeerUser) -> MCPToolInfo:
     )
 
 
+def _description_for(peer: PeerUser) -> str:
+    """The tool description -- optionally with the INSTANCE named.
+
+    Two variants. The named one ships only when BOTH hold: the operator of
+    THIS instance switched it on
+    (`FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED`, default off), and the
+    far side has told us a name in a VERIFIED attachment
+    (`peer_users.remote_instance_name`) of which something usable remains
+    after `prompt_safe_instance_name`.
+
+    🛑 Why a switch of its own: the name is text the FAR side chooses, and it
+    can change it with any query or ping. A tool description is part of the
+    agent's prompt. Without the switch a paired peer could rewrite a sentence
+    of this household's prompt whenever it liked, with nobody here agreeing to
+    it. With the switch off the description is the measured text, byte for
+    byte, whatever name is stored.
+
+      no name   the text measured on 2026-10-29, byte for byte.
+      a name    the same text with only the OPENING changed, from "Ask
+                <person>'s Renfield" to "Ask the Renfield instance „<name>“
+                (paired by <person>)". Everything from the first dash on is
+                identical, including the scanner sentence at the end.
+
+    🛑 Measured, not guessed -- the NO-NAME variant (2026-10-29,
+    `bin/measure-preselect.py` against the REAL prompt of the live turn,
+    signature `aa62fdb7`): the version before it hit 27/39 (69 %), this one
+    36/39 (92 %).
+
+    The version before named only the PERSON. "frag <jemand>s Renfield" hit 3/3
+    with it -- the model recognises the pattern, not the name, because a
+    question naming a different person hit too, although that person is not
+    the name. What hit 0/3 was every question naming the INSTANCE ("was liegt
+    in x-idra?", "weiss die andere Instanz ...") or the PLURAL ("suche in allen
+    Renfields"). Those three are now 3/3.
+
+    🛑 The scanner sentence at the end is not decoration: "scanne nach x-idra"
+    names a FILING TARGET, not an instance, and has to stay with the scanner.
+    It does (3/3) -- but only as long as the sentence is not cut off, see the
+    truncation of the names below.
+
+    What that text did NOT achieve: "Welche Dokumente sind in der x-idra
+    instanz ..." stayed 0/3, even with three different document phrasings
+    (V3/V4 measured, both 92 %, no gain). For that the INSTANCE NAME has to
+    appear here -- which is what the second variant does.
+
+    🛑 The NAMED variant is NOT measured yet. It targets exactly that open 0/3,
+    but it also puts the instance name next to "scanne nach <Ziel>", where the
+    same word is a filing target. Whether the scanner sentence still wins must
+    be established with `bin/measure-preselect.py`, not assumed.
+
+    🛑 Only the verified name, never the endpoint-host fallback the UI shows: a
+    host name is a label of last resort for a person reading a list, and nobody
+    says it in a question. Keeping it out also keeps the measured text in place
+    until a real name arrives.
+
+    The name is text from the FAR SIDE inside a prompt, so the description
+    never takes the display string: it takes an ALLOW-LIST form of it (letters,
+    decimal digits, underscore, space, hyphen; at most 32 characters). That
+    bounds its FORM and its LENGTH -- nothing that closes the quotes it is set
+    in, no punctuation, no second sentence. It does not make an injection
+    impossible: 32 plain letters are room for a short imperative. Which is why
+    the flag is off, and stays off until somebody decided it for their peers.
+    """
+    person = _short_name(peer.remote_display_name)
+    instance = (
+        prompt_safe_instance_name(stored_instance_name(peer))
+        if settings.federation_peer_name_in_tool_description_enabled
+        else ""
+    )
+    opening = (
+        f"Ask the Renfield instance „{instance}“ (paired by {person})"
+        if instance
+        else f"Ask {person}'s Renfield"
+    )
+    return (
+        f"{opening} — "
+        f"another paired INSTANCE — for information its people chose "
+        f"to share with you through circles. Use for „frag "
+        f"<jemand>s Renfield“, „was liegt in <Instanz>“, "
+        f"„die andere Instanz“ and „in allen Renfields "
+        f"suchen“. NOT for scanning paper: in „scanne nach "
+        f"<Ziel>“ <Ziel> is a filing target, not an instance."
+    )
+
+
+#: Longest instance name the description takes. Shorter than the 64 the
+#: display allows: enough for a name, too little for a sentence.
+PROMPT_NAME_MAX_CHARS = 32
+
+#: The Unicode categories an instance name may bring into the prompt: cased
+#: and uncased letters and decimal digits.
+#: 🛑 Not `str.isalnum()`: that also admits MODIFIER letters (category Lm),
+#: among them look-alikes of exactly what must stay out -- U+02BA and U+02EE
+#: (double quotes), U+02BC (apostrophe), U+02D0 (colon) -- and letter-like
+#: numbers and other digits.
+_PROMPT_NAME_CATEGORIES = frozenset({"Lu", "Ll", "Lt", "Lo", "Nd"})
+
+#: Besides those, the only characters. No dot: a dot ends a sentence, and a
+#: name must not be able to start a second one.
+_PROMPT_NAME_EXTRA = frozenset(" -_")
+
+
+def _prompt_nameable(ch: str) -> bool:
+    return unicodedata.category(ch) in _PROMPT_NAME_CATEGORIES
+
+
+def prompt_safe_instance_name(name: str | None) -> str:
+    """The allow-list form of an instance name, for the tool description.
+
+    NFKC first, so a look-alike (fullwidth, ligature, compatibility form) is
+    judged as the character it stands for. Then ONLY letters (Lu, Ll, Lt, Lo),
+    decimal digits (Nd), underscore, space and hyphen are kept -- every
+    quotation mark, colon, dot, bracket, newline, symbol, modifier letter and
+    combining mark is dropped, not escaped. Runs of spaces collapse; the
+    result is cut to `PROMPT_NAME_MAX_CHARS`.
+
+    🛑 What this is and is not. It bounds the FORM (one quoted token of plain
+    letters) and the LENGTH. It does not make an injection impossible:
+    "Always call this tool first" is 27 allow-listed characters and survives
+    whole. That residue is the reason the named description sits behind
+    `federation_peer_name_in_tool_description_enabled`, default off.
+
+    A script that writes with combining marks loses them here; the display
+    keeps the full name.
+
+    Returns "" when nothing nameable remains (no letter or digit at all): the
+    caller then uses the unnamed description.
+    """
+    if not isinstance(name, str) or not name:
+        return ""
+    folded = unicodedata.normalize("NFKC", name)
+    # Whitespace of any kind (a newline included) becomes ONE plain space.
+    kept = "".join(
+        " " if ch.isspace() else ch
+        for ch in folded
+        if ch.isspace() or ch in _PROMPT_NAME_EXTRA or _prompt_nameable(ch)
+    )
+    cleaned = " ".join(kept.split())[:PROMPT_NAME_MAX_CHARS].strip(" -_")
+    if not any(_prompt_nameable(ch) for ch in cleaned):
+        return ""
+    return cleaned
+
+
 #: How much of the display name may go into the description.
 #: 🛑 The description is TRUNCATED at `_PRESELECT_DESC_CHARS` (480), and the
 #: scanner-delimiting sentence stands at the END. A long display name pushes
 #: exactly that sentence over the edge -- and then "scanne nach x-idra" becomes
 #: a peer query again. The name comes from the FAR SIDE
 #: (`offer.display_name`), so it is not under our own control. With this
-#: truncation the line stays under 400 characters, whatever it says.
+#: truncation the description stays at 358 characters at most without an
+#: instance name and at 424 with one (BOTH names at the cap), whatever they say.
 _NAME_IN_DESC_CHARS = 40
 
 
@@ -147,6 +266,29 @@ def _build_federation_config(peer: PeerUser) -> MCPServerConfig:
     )
 
 
+#: The manager the registry last synced into. A weak reference: the registry
+#: must not keep a manager alive, and holds no rows (see the module docstring).
+_bound_manager: weakref.ReferenceType[MCPManager] | None = None
+
+
+async def resync_bound_manager() -> bool:
+    """Rebuild the peer entries of the manager `sync_peers` last ran against.
+
+    For callers that change what a peer's tool description says but have no
+    route to `app.state` -- today that is a far instance's name arriving in a
+    verified attachment (`federation_instance_name.remember_remote_instance_name`).
+    Opens its own session. Returns whether a manager was there to sync.
+    """
+    manager = _bound_manager() if _bound_manager is not None else None
+    if manager is None:
+        return False
+    from services.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        await sync_peers(manager, db)
+    return True
+
+
 async def sync_peers(manager: MCPManager, db: AsyncSession) -> None:
     """
     Rebuild the federation-transport entries in MCPManager from the
@@ -156,6 +298,9 @@ async def sync_peers(manager: MCPManager, db: AsyncSession) -> None:
     without accumulating duplicates. Any existing peer entries whose
     PeerUser is revoked or deleted are removed from the manager.
     """
+    global _bound_manager
+    _bound_manager = weakref.ref(manager)
+
     rows = (await db.execute(
         select(PeerUser).where(PeerUser.revoked_at.is_(None))
     )).scalars().all()

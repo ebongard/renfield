@@ -28,6 +28,12 @@ class FederationAuditEntry(BaseModel):
     peer_user_id: int | None
     peer_pubkey: str
     peer_display_name: str
+    #: The instance part of the peer's label AS SNAPSHOTTED when the row was
+    #: written. `None` on rows from before 2026-11-13 and wherever no instance
+    #: label existed at the time -- the view then shows `peer_display_name`
+    #: alone. 🛑 Never filled in from today's pairing: that would put a name
+    #: on an old access that nobody saw when it happened.
+    peer_instance_name: str | None = None
     query_text: str
     initiated_at: str
     finalized_at: str | None
@@ -91,6 +97,7 @@ async def list_federation_audit(
             peer_user_id=row.peer_user_id,
             peer_pubkey=row.peer_pubkey_snapshot,
             peer_display_name=row.peer_display_name_snapshot,
+            peer_instance_name=row.peer_instance_name_snapshot,
             query_text=row.query_text,
             initiated_at=row.initiated_at.isoformat() if row.initiated_at else "",
             finalized_at=row.finalized_at.isoformat() if row.finalized_at else None,

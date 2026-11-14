@@ -33,6 +33,14 @@ roles at startup. The gate fails closed: a lookup error denies.
   backend pushes `satellite_offline`, a reconnect re-anchors from a fresh snapshot. Federation peers get the
   `peer_status_changed` delta (#969) and additionally keep a wall-clock freshness backstop (`PEER_OFFLINE_MS`) in
   `useKioskModel.ts` — a second guard behind the delta, not a substitute for it.
+- 🛑 **A paired instance is ONE node on the peers arc, never also `peer_<id>` on the tools ring** (no session behind
+  that entry: a permanent false "healthy"). Filtered only in `kiosk_data.kiosk_mcp_status` +
+  `MCPManager._broadcast_tool_health`; rows on one remote key are one node. Label = VERIFIED instance name or
+  the person, never the endpoint host.
+- 🛑 **Age of a peer reading = server clock** (`at` − `checked_at`) plus MONOTONIC device time since receipt, never
+  the device's wall clock. Stale → `unknown`, never unreachable; the diff gate ignores `checked_at`.
+- 🛑 **The periodic reachability check is a SANCTIONED EXCEPTION to "never poll"** (owner, 2026-11-14) — reason and
+  bounds in `docs/design/command-center.md` ("Probing is a periodic check"). It licenses nothing else.
 
 ## Health verdicts
 - Primary = `get_status()`, which folds connectivity AND functionality: **degraded** = connected but a bound startup

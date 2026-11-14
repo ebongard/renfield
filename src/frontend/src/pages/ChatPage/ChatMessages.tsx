@@ -17,6 +17,7 @@ import { useFeatureFlags } from '../../api/resources/brain';
 import { useChatContext } from './context/ChatContext';
 import { CitationChip } from '../../components/wissensbasis/CitationChip';
 import { splitCites } from '../../components/wissensbasis/citeMarkup';
+import { formatPeerLabel } from '../../utils/peerLabel';
 import { useTraceQuery, useWissensbasisAvailable, type TraceEntity } from '../../api/resources/wissensbasis';
 
 const IMAGE_URL_RE = /https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?/i;
@@ -397,10 +398,20 @@ export default function ChatMessages() {
                   >
                     <Radio className="w-4 h-4 flex-shrink-0 text-accent-500 dark:text-accent-400 animate-pulse" aria-hidden="true" />
                     <span>
-                      {t(`chat.federationProgress.${entry.label}`, {
-                        name: entry.peer_display_name,
-                        defaultValue: t('chat.federationProgress.fallback', { name: entry.peer_display_name }),
-                      })}
+                      {/* Two wordings: the existing one is built around a
+                          PERSON ("<name>'s Renfield"); a peer with an instance
+                          label is called by that label, person second. */}
+                      {entry.peer_instance_name
+                        ? t(`chat.federationProgressInstance.${entry.label}`, {
+                            peer: formatPeerLabel(entry.peer_instance_name, entry.peer_display_name),
+                            defaultValue: t('chat.federationProgressInstance.fallback', {
+                              peer: formatPeerLabel(entry.peer_instance_name, entry.peer_display_name),
+                            }),
+                          })
+                        : t(`chat.federationProgress.${entry.label}`, {
+                            name: entry.peer_display_name,
+                            defaultValue: t('chat.federationProgress.fallback', { name: entry.peer_display_name }),
+                          })}
                     </span>
                   </li>
                 ))}

@@ -12,9 +12,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { roleLabel } from '../chat/AgentRoleBadge';
-import { useKioskSocket, type KioskLiveModel } from './useKioskSocket';
+import {
+  parseServerMs,
+  useKioskSocket,
+  type KioskLiveModel,
+  type KioskPeer,
+  type KioskPeerClock,
+} from './useKioskSocket';
 import type { KioskWeather, KioskNowPlaying } from '../../api/resources/kiosk';
-import type { CommandCenterModel, NodeHealth, ToolNode } from './types';
+import { peerLabelParts } from '../../utils/peerLabel';
+import type { CommandCenterModel, NodeHealth, PeerNode, PeerReachability, ToolNode } from './types';
 
 export type CoreState = 'idle' | 'listening' | 'processing' | 'speaking' | 'busy';
 
@@ -42,9 +49,18 @@ const TRAIL_WINDOW_MS = 15 * 60_000;
 /** Wall-clock recompute cadence: active-role expiry / trail decay / peer
  *  staleness must advance by the PASSAGE OF TIME, not only on new data. */
 const CLOCK_TICK_MS = 15_000;
-/** A federation peer unseen for longer than this renders unreachable (the
- *  freshness backstop behind the peer_status_changed delta). */
+/** Reachability check OFF: a federation peer unseen for longer than this
+ *  renders unreachable (the freshness backstop behind the peer_status_changed
+ *  delta). Not applied while the check is on -- see `peerNodeFor`. */
 const PEER_OFFLINE_MS = 10 * 60_000;
+/** Reachability check ON: a verdict whose check is older than this renders
+ *  `unknown` with the reason `stale`. The backend is the authority: it checks
+ *  every pairing every 5 min while a display is connected, re-affirms an
+ *  unchanged list at least every 10 min, and pushes `unknown` itself when a
+ *  result expires. So a healthy socket never gets near this; it is the guard
+ *  for a socket that went SILENT without closing. Measured without the
+ *  device's wall clock -- see `peerAgeMs`. */
+const PEER_CHECK_STALE_MS = 20 * 60_000;
 /** Aggregated per-server success rate below this (with enough calls) = degraded. */
 const DEGRADED_SUCCESS_RATE = 0.8;
 const DEGRADED_MIN_CALLS = 3;
@@ -79,31 +95,99 @@ function prettifyServerName(name: string): string {
     .join(' ');
 }
 
-/** A federation peer's tool server is named `peer_<peer id>` by the backend
- *  (`FEDERATION_SERVER_PREFIX` in services/peer_mcp_registry.py) so the name
- *  survives a display-name change. That id means nothing on a wall display. */
-const PEER_SERVER_NAME = /^peer_(\d+)$/;
-
-/** Label for a node on the tools ring. A peer's tool server carries the peer's
- *  display name; every other server (and a peer the snapshot does not list,
- *  e.g. one revoked a moment ago) keeps the prettified server name. */
-export function toolServerLabel(
-  name: string,
-  peers: readonly { id: string | number; name: string }[],
-): string {
-  const match = PEER_SERVER_NAME.exec(name);
-  if (match) {
-    // The backend sends the id as a JSON number; `KioskPeer` types it as string.
-    const peerName = peers.find((peer) => String(peer.id) === match[1])?.name.trim();
-    if (peerName) return peerName;
-  }
-  return prettifyServerName(name);
-}
-
 /** The backend emits naive-UTC ISO strings (no zone suffix); anchor them so
  *  Date.parse doesn't read them as LOCAL time. */
 function parseNaiveUtcMs(iso: string): number {
   return Date.parse(iso.endsWith('Z') ? iso : `${iso}Z`);
+}
+
+const PEER_STATES: readonly PeerReachability[] = ['reachable', 'unreachable', 'unknown'];
+
+/** How old a server timestamp is NOW, without trusting the device's wall
+ *  clock: its age on the server's clock when the list arrived, plus the time
+ *  that has passed on the device since then. Both terms are differences on
+ *  ONE clock each, so a device that runs fast or slow reads the same age.
+ *
+ *  The device's part is taken on its MONOTONIC clock (`monoNow`,
+ *  `performance.now()`), not on `Date.now()`: a wall clock that is stepped
+ *  while the page is open -- NTP, daylight saving, a manual change -- must
+ *  not age a reading by the size of the step, nor rejuvenate it.
+ *
+ *  Without a server stamp (a backend older than this build) there is nothing
+ *  to anchor on, and the two wall clocks are compared directly as before
+ *  (`now`, the only use of it). */
+export function peerAgeMs(
+  iso: string,
+  now: number,
+  clock?: KioskPeerClock | null,
+  monoNow: number = performance.now(),
+): number {
+  const at = parseServerMs(iso);
+  if (at === null) return NaN;
+  if (!clock || clock.serverAt === null) return now - at;
+  return Math.max(0, clock.serverAt - at) + Math.max(0, monoNow - clock.receivedMono);
+}
+
+/** The arc node of one paired instance -- everything except the localised
+ *  tooltip. Pure, so the rules below can be tested without a socket.
+ *
+ *  A paired instance has ONE node. The backend keeps its `peer_<id>` tool
+ *  server out of `mcp.servers`, so nothing here has to hide it; what a turn
+ *  that asked the peer still names is the subsystem `peer_<id>` of the asking
+ *  account's pairing. Those are the node's `pulseIds`: one for a single
+ *  pairing, all of them when several accounts are paired with this instance.
+ *
+ *  Two rules for the state, chosen by what the backend sent:
+ *
+ *  - `reachability` present (the signed check is on): the backend's verdict
+ *    stands, three-valued. `last_seen_at` plays NO part -- a ping does not move
+ *    it, so gating on it would paint a reachable but quiet instance red. The
+ *    backstop is on the AGE of `checked_at` instead (`peerAgeMs`), and it
+ *    degrades to `unknown`, never to `unreachable`: a reading nobody refreshed
+ *    is not a finding about the far side. Its reason is `stale` -- "checked,
+ *    but the result is old" -- which is not the same as never checked.
+ *  - absent (check off, or an older backend): the rule the wall has always
+ *    had -- the peer queried us recently (`reachable`) and `last_seen_at` is
+ *    younger than `PEER_OFFLINE_MS`. Two-valued; it cannot say `unknown`.
+ */
+export function peerNodeFor(
+  peer: KioskPeer,
+  now: number,
+  clock?: KioskPeerClock | null,
+  monoNow: number = performance.now(),
+): PeerNode {
+  const id = String(peer.id);
+  const { primary, secondary } = peerLabelParts(peer.instance_name, peer.name);
+  const sent = Array.isArray(peer.pulse_ids)
+    ? peer.pulse_ids.filter((p): p is string => typeof p === 'string' && p !== '')
+    : [];
+  const pulseIds = sent.length > 0 ? sent : [`peer_${id}`];
+  const base = { id, label: primary, sublabel: secondary, pulseIds };
+
+  if (typeof peer.reachability !== 'string') {
+    const seenAge = peer.last_seen_at ? peerAgeMs(peer.last_seen_at, now, clock, monoNow) : NaN;
+    const fresh = Number.isFinite(seenAge) && seenAge < PEER_OFFLINE_MS;
+    return {
+      ...base,
+      reachability: peer.reachable && fresh ? 'reachable' : 'unreachable',
+      recentlyActive: false,
+    };
+  }
+
+  const known = PEER_STATES.find((state) => state === peer.reachability);
+  const checkedAge = peer.checked_at ? peerAgeMs(peer.checked_at, now, clock, monoNow) : NaN;
+  // A verdict with no check behind it was never checked; one whose check is
+  // too old to stand behind is stale. Either way the wall says unknown -- and
+  // so it does for a state this build does not know.
+  const verdict = known === 'reachable' || known === 'unreachable';
+  const unchecked = verdict && !Number.isFinite(checkedAge);
+  const stale = verdict && Number.isFinite(checkedAge) && checkedAge >= PEER_CHECK_STALE_MS;
+  return {
+    ...base,
+    reachability: !known || unchecked || stale ? 'unknown' : known,
+    reason: stale ? 'stale' : unchecked ? 'not_checked' : (peer.reachability_reason ?? null),
+    recentlyActive: peer.recently_active === true,
+  };
 }
 
 /** Stable empty default so `?? EMPTY` doesn't mint a fresh array reference each
@@ -216,7 +300,7 @@ function buildCommandCenterModel(
         : toolHint;
     return {
       id: server.name,
-      label: toolServerLabel(server.name, live.peers),
+      label: prettifyServerName(server.name),
       health,
       hint: !server.connected
         ? server.last_error || t('kiosk.legend.down')
@@ -310,18 +394,24 @@ function buildCommandCenterModel(
   }
 
   // ---- peers arc --------------------------------------------------------
-  // The peer_status_changed delta (#969) updates `reachable` live; the
-  // wall-clock staleness decay stays as a second guard: a peer we haven't seen
-  // for PEER_OFFLINE_MS reads offline even if a delta was lost on the socket,
-  // so a since-gone-down peer can't stay green until the next reconnect.
+  // The peer_status_changed delta (#969) updates the peers live; a wall-clock
+  // backstop stays as a second guard behind it, so a delta lost on the socket
+  // cannot freeze a verdict until the next reconnect. Rules: `peerNodeFor`.
   const peers = live.peers.map((peer) => {
-    const lastSeen = peer.last_seen_at ? parseNaiveUtcMs(peer.last_seen_at) : NaN;
-    const fresh = Number.isFinite(lastSeen) && now - lastSeen < PEER_OFFLINE_MS;
-    return {
-      id: String(peer.id),
-      label: peer.name,
-      online: peer.reachable && fresh,
-    };
+    const node = peerNodeFor(peer, now, live.peersClock);
+    // The tooltip says what the ring shows, in words -- only while the signed
+    // check is on. Without it the ring is the old "asked us recently" light,
+    // which never had a tooltip and gets no reachability wording now.
+    if (typeof peer.reachability !== 'string') return node;
+    const state = t(`kiosk.peer.state.${node.reachability}`);
+    // Localise the machine code (never render a raw backend string); a code
+    // this build has no text for leaves the state standing alone.
+    const reason = node.reason
+      ? t(`circles.peerReachReason.${node.reason}`, { defaultValue: '' })
+      : '';
+    const parts = [reason ? `${state} — ${reason}` : state];
+    if (node.recentlyActive) parts.push(t('kiosk.peer.recentlyActive'));
+    return { ...node, hint: parts.join(' · ') };
   });
 
   return {

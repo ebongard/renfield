@@ -417,6 +417,14 @@
       "failed": "{{name}}s {{appName}} konnte nicht antworten.",
       "fallback": "Frage {{name}}s {{appName}}..."
     },
+    "federationProgressInstance": {
+      "waking_up": "Verbinde mit {{peer}}...",
+      "retrieving": "{{peer}} sucht Wissen...",
+      "synthesizing": "{{peer}} formuliert eine Antwort...",
+      "complete": "{{peer}} ist fertig.",
+      "failed": "{{peer}} konnte nicht antworten.",
+      "fallback": "Frage {{peer}}..."
+    },
     "exampleWeather": "Wie wird das Wetter?",
     "exampleLight": "Schalte das Licht im Wohnzimmer ein",
     "exampleMusic": "Spiel Jazz Musik",
@@ -2137,6 +2145,29 @@
     "revokePeerConfirmOther": "Kopplung zu {{name}} wirklich beenden? Sie wurde von {{pairedBy}} eingerichtet; danach kann kein Konto dieser Instanz sie mehr nutzen.",
     "peerRevoked": "Kopplung zu {{name}} beendet.",
     "peerRevokeFailed": "Kopplung konnte nicht beendet werden.",
+    "peerReachState": {
+      "reachable": "Erreichbar",
+      "unreachable": "Nicht erreichbar",
+      "unknown": "Erreichbarkeit unbekannt"
+    },
+    "peerReachReason": {
+      "unreachable": "Die Instanz antwortet nicht (keine Verbindung oder Zeitüberschreitung).",
+      "pin_mismatch": "Das Zertifikat der Instanz ist nicht mehr das bei der Kopplung gemerkte.",
+      "refused": "Die Instanz weist die signierte Prüfung ab (Kopplung dort aufgehoben, abweichende Uhrzeit oder Anfragelimit).",
+      "unsupported": "Die Instanz beantwortet keine Erreichbarkeitsprüfung (ältere Version oder dort abgeschaltet).",
+      "invalid_response": "Die Antwort ließ sich nicht dem gekoppelten Schlüssel zuordnen.",
+      "no_endpoint": "Für diese Kopplung ist keine Adresse hinterlegt.",
+      "not_checked": "Noch nicht geprüft.",
+      "stale": "Geprüft, aber das Ergebnis ist veraltet."
+    },
+    "peerReachCheckedAt": "geprüft {{when}}",
+    "peerReachCheckNow": "Jetzt prüfen",
+    "peerReachChecking": "Prüfe …",
+    "peerReachCheckFailed": "Die Erreichbarkeit konnte nicht geprüft werden.",
+    "peerRecentlyActive": "Kürzlich aktiv",
+    "peerRecentlyActiveHelp": "In den letzten fünf Minuten lief eine echte Anfrage in eine der beiden Richtungen.",
+    "peerLastAsked": "Zuletzt von hier gefragt {{when}}",
+    "peerLastAskedHelp": "Zeitpunkt der letzten Anfrage dieser Instanz an die andere.",
     "pairingTitle": "{{appName}}-Kopplung",
     "pairingSubtitle": "Koppele deine {{appName}}-Instanz mit der eines anderen Haushaltsmitglieds für föderierte Anfragen.",
     "pairingManageLinkText": "Gekoppelte Peers verwalten →",
@@ -2554,6 +2585,19 @@
     "toolHint_one": "{{count}} Tool",
     "toolHint_other": "{{count}} Tools",
     "exit": "Kiosk verlassen",
+    "peer": {
+      "state": {
+        "reachable": "erreichbar",
+        "unreachable": "nicht erreichbar",
+        "unknown": "Erreichbarkeit unbekannt"
+      },
+      "recentlyActive": "kürzlich aktiv",
+      "legend": {
+        "reachable": "Instanz erreichbar",
+        "unreachable": "Instanz nicht erreichbar",
+        "unknown": "Instanz: unbekannt"
+      }
+    },
     "subsystem": {
       "knowledge": "Wissen",
       "presence": "Präsenz",

@@ -363,6 +363,14 @@
       "failed": "Il {{appName}} di {{name}} non ha potuto rispondere.",
       "fallback": "Chiedendo al {{appName}} di {{name}}..."
     },
+    "federationProgressInstance": {
+      "waking_up": "Connessione a {{peer}}...",
+      "retrieving": "{{peer}} sta cercando...",
+      "synthesizing": "{{peer}} sta preparando una risposta...",
+      "complete": "{{peer}} ha finito.",
+      "failed": "{{peer}} non ha potuto rispondere.",
+      "fallback": "Chiedendo a {{peer}}..."
+    },
     "exampleWeather": "Com'è il tempo?",
     "exampleLight": "Accendi la luce del soggiorno",
     "exampleMusic": "Riproduci un po' di musica jazz",
@@ -1737,6 +1745,29 @@
     "revokePeerConfirmOther": "Terminare davvero l'abbinamento con {{name}}? È stato creato da {{pairedBy}}; dopo, nessun account di questa istanza potrà più usarlo.",
     "peerRevoked": "Abbinamento con {{name}} revocato.",
     "peerRevokeFailed": "Impossibile revocare l'abbinamento.",
+    "peerReachState": {
+      "reachable": "Raggiungibile",
+      "unreachable": "Non raggiungibile",
+      "unknown": "Raggiungibilità sconosciuta"
+    },
+    "peerReachReason": {
+      "unreachable": "L'istanza non risponde (nessuna connessione o tempo scaduto).",
+      "pin_mismatch": "Il certificato dell'istanza non è più quello memorizzato all'abbinamento.",
+      "refused": "L'istanza rifiuta la verifica firmata (abbinamento revocato dall'altra parte, orologi non allineati o limite di richieste).",
+      "unsupported": "L'istanza non risponde alle verifiche di raggiungibilità (versione precedente o funzione disattivata dall'altra parte).",
+      "invalid_response": "Non è stato possibile ricondurre la risposta alla chiave abbinata.",
+      "no_endpoint": "Per questo abbinamento non è registrato alcun indirizzo.",
+      "not_checked": "Non ancora verificato.",
+      "stale": "Verificato, ma il risultato è vecchio."
+    },
+    "peerReachCheckedAt": "verificato {{when}}",
+    "peerReachCheckNow": "Verifica ora",
+    "peerReachChecking": "Verifica in corso…",
+    "peerReachCheckFailed": "Impossibile verificare la raggiungibilità.",
+    "peerRecentlyActive": "Attivo di recente",
+    "peerRecentlyActiveHelp": "Negli ultimi cinque minuti una vera richiesta è passata in una delle due direzioni.",
+    "peerLastAsked": "Ultima richiesta inviata da qui {{when}}",
+    "peerLastAskedHelp": "Momento dell'ultima richiesta che questa istanza ha inviato all'altra.",
     "pairingTitle": "Abbinamento {{appName}}",
     "pairingSubtitle": "Abbina il tuo {{appName}} con quello di un altro membro della famiglia per query federate.",
     "pairingManageLinkText": "Gestisci peer abbinati →",
@@ -2140,6 +2171,19 @@
     "toolHint_one": "{{count}} strumento",
     "toolHint_other": "{{count}} strumenti",
     "exit": "Esci dal kiosk",
+    "peer": {
+      "state": {
+        "reachable": "raggiungibile",
+        "unreachable": "non raggiungibile",
+        "unknown": "raggiungibilità sconosciuta"
+      },
+      "recentlyActive": "attivo di recente",
+      "legend": {
+        "reachable": "istanza raggiungibile",
+        "unreachable": "istanza non raggiungibile",
+        "unknown": "istanza: sconosciuto"
+      }
+    },
     "subsystem": {
       "knowledge": "Conoscenza",
       "presence": "Presenza",
