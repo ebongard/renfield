@@ -633,6 +633,12 @@ data:
   ROUTING_TRACES_ENABLED: "true"
   WISSEN_WORKSPACE_ENABLED: "true"
   PRESENCE_SWITCH_ENTER_MARGIN_DB: "4"
+  # Placement v2 in SHADOW (#1549): a second room decision that only logs; nothing reads it.
+  # Receiver values are measurements from the walk of 2026-11-13, provisional. cutoff_dbm
+  # mirrors each satellite's own reporting cutoff - change both together.
+  PRESENCE_PLACEMENT_V2_SHADOW_ENABLED: "true"
+  PRESENCE_PLACEMENT_V2_RECEIVERS: '{"sat-fitnessraum": {"offset_db": 0, "in_room_dbm": -53.0, "cutoff_dbm": -80}, "sat-wohnzimmer": {"offset_db": 0, "in_room_dbm": -55.0, "cutoff_dbm": -80}, "sat-kinderbad": {"offset_db": 0, "in_room_dbm": -61.0, "cutoff_dbm": -80}, "sat-kueche": {"offset_db": 0, "in_room_dbm": -47.4, "cutoff_dbm": -100}, "sat-esszimmer": {"offset_db": 0, "in_room_dbm": -76.4, "cutoff_dbm": -100}}'
+  PRESENCE_PLACEMENT_V2_ZONES: '{"open-plan": [25, 17]}'
 
   # === §2 meeting transcription — flip ON for the household, 2026-07-17 ===
   # Frontend + backend + voice-server all shipped dark; this turns the feature on.
