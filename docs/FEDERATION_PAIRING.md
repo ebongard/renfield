@@ -223,11 +223,14 @@ name. A pairing now also carries the far **instance's** own name, shown first:
   next query or ping — no re-pairing.
 - **Accepted only** after the envelope verified against a paired, non-revoked
   key. An attachment that does not verify is dropped and the request stands.
-- **Cleaned before it is stored:** NFKC; control and format characters, blank
-  fillers (U+3164, U+115F, U+1160, U+FFA0, U+2800, U+034F) and variation
-  selectors dropped; at most two combining marks per base character and none
-  without one; whitespace collapsed; 64 characters. A name with no **visible**
-  character left counts as not sent.
+- **Cleaned before it is stored:** NFKC, with Thai and Lao SARA AM (U+0E33,
+  U+0EB3) left as written — NFKC splits them and the nikhahit then lands
+  behind a tone mark; control and format characters, blank fillers (U+3164,
+  U+115F, U+1160, U+FFA0, U+2800, U+034F, U+FFFC, U+1D159) and variation
+  selectors dropped; at most four combining marks per base character (pointed
+  Hebrew takes four, Devanagari three) and none without one; whitespace
+  collapsed; 64 characters. A name without at least one **letter or number**
+  counts as not sent — a lone `.` or a row of dashes is not a name.
 - **Renamed at most once per pairing per 10 minutes**
   (`FEDERATION_INSTANCE_RENAME_MIN_INTERVAL_SECONDS`, default 600 — a choice,
   not a measurement). The far side picks the text and sends it with every
@@ -249,11 +252,15 @@ name. A pairing now also carries the far **instance's** own name, shown first:
   the description is therefore behind its own flag,
   `FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED`, **default off**: without
   it the description is byte for byte the measured text, whatever name is
-  stored. With it, only an allow-list form goes in (NFKC; letters, digits,
-  `_`, space, `.`, `-`; 32 characters; never the display string, never the
-  endpoint-host fallback; nothing usable left → the unnamed variant). The
-  named wording is pinned in `test_peer_tool_description.py` but
-  **unmeasured; measure with `bin/measure-preselect.py` before enabling.**
+  stored. With it, only an allow-list form goes in (NFKC; characters of the
+  Unicode categories Lu, Ll, Lt, Lo and Nd plus `_`, space and `-`; no `.`,
+  so no sentence boundary; no modifier letters, which look like quotes and
+  colons; 32 characters; never the display string, never the endpoint-host
+  fallback; nothing usable left → the unnamed variant). 🛑 The allow-list
+  bounds **form and length, not content** — a plain imperative of 32 letters
+  passes it. That is why the flag is off. The named wording is pinned in
+  `test_peer_tool_description.py` but **unmeasured; measure with
+  `bin/measure-preselect.py` before enabling.**
 - **Migrate before the rollout:** revision `pc20261113_peer_instance_name` adds
   `peer_users.remote_instance_name` and
   `federation_query_log.peer_instance_name_snapshot`
@@ -282,9 +289,16 @@ The route is reachable without a pairing (a signature can only be checked once
 the body is there), so an outsider must not be able to make it hold or write
 anything:
 
-- **Body cap, 4096 bytes, both directions.** A declared `Content-Length` above
-  it is refused unread; a body without one is read only up to the cap. The
-  asking side reads the answer under the same cap.
+- **Body cap, 4096 bytes ON THE WIRE, both directions.** A declared
+  `Content-Length` above it is refused unread; a body without one is read only
+  up to the cap. The asking side reads the answer under the same cap.
+- 🛑 **A compressed body is refused, never inflated.** `Content-Length` counts
+  compressed bytes, and a few kilobytes of gzip inflate to megabytes in one
+  chunk — past any cap counted after decoding. The ping therefore goes out
+  with `Accept-Encoding: identity`, its answer is read raw, and any
+  `Content-Encoding` other than `identity` is no answer (`invalid_response`),
+  a genuine small one included. The route treats a request body the same way
+  (the uniform 400).
 - **Order of the checks: signature → timestamp → pairing → rate bucket →
   nonce.** Everything that writes comes after the pairing lookup: an unpaired
   key leaves no nonce (the nonce store is capped — written earlier, a stream
@@ -316,6 +330,32 @@ or a refresher and an impatient person — send one ping, not several.
 
 🛑 `unsupported` (the far side answers 404: one release behind, or its flag is
 off) is **unknown**, never unreachable. Both sides need the flag for a verdict.
+
+### Known limits
+
+Reviewed on 2026-11-14 and left as they are:
+
+- **ZERO WIDTH JOINER and NON-JOINER are removed from a name**, with every
+  other format character. Scripts that shape with them (Persian, several Indic
+  conjuncts) and emoji sequences built on them lose that shaping; the letters
+  stay.
+- **The prompt form of a name carries no combining marks** (its allow-list has
+  no mark category): a name in a script written with marks is thinned there,
+  or left with nothing nameable — then the unnamed description applies. The
+  display name is not affected.
+- **The prompt allow-list is not an injection filter.** It bounds form and
+  length; what 32 letters and spaces say is the far side's choice.
+- **A replayed ping spends the pairing's rate bucket.** The checks run
+  signature → timestamp → pairing → rate bucket → nonce. A recorded, validly
+  signed ping sent again inside its ±60 s window is therefore refused at the
+  nonce, after it took a token from the bucket of the pairing it was recorded
+  from. Whoever can record a pairing's traffic can so make that pairing's own
+  pings read `refused` while the replays last; it gets no answer, and no
+  other pairing, no query budget and no stored state are touched.
+- **`query_brain/initiate` still records the nonce before it looks the
+  pairing up** (`handle_initiate`), unlike the ping: an unpaired key that signs
+  its own requests can write into the capped nonce store there. Older than
+  this feature and not changed by it; a follow-up.
 
 ---
 

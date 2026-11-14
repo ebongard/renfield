@@ -45,6 +45,7 @@ their value from `verify_name_attachment`.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import unicodedata
 from typing import Any
@@ -73,15 +74,26 @@ _FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
 
 #: Characters that are assigned, are neither control nor format characters --
 #: and still draw NOTHING: Hangul fillers (category Lo, "letters"), the blank
-#: braille pattern (So) and the combining grapheme joiner (Mn). A name made of
+#: braille pattern (So), the combining grapheme joiner (Mn), the musical null
+#: notehead (So) and the object replacement character (So). A name made of
 #: them passes every category test and shows as an empty label.
-_BLANK_CHARS = frozenset("\u115f\u1160\u3164\uffa0\u2800\u034f")
+_BLANK_CHARS = frozenset(
+    "\u115f\u1160\u3164\uffa0\u2800\u034f\ufffc\U0001d159"
+)
 
-#: Combining marks (Mn, Mc, Me) a single base character may carry. Two covers
-#: every stacked diacritic of a living script after NFKC composition; without
-#: a cap a "name" can pile hundreds of marks onto one letter and paint over
-#: the rows around it.
-MAX_COMBINING_MARKS_PER_BASE = 2
+#: Combining marks (Mn, Mc, Me) a single base character may carry. Four: a
+#: Devanagari consonant takes nukta + vowel sign + anusvara (three), pointed
+#: Hebrew takes a dot, a dagesh, a vowel and an accent (four); two cut real
+#: orthography. Without a cap a "name" can pile hundreds of marks onto one
+#: letter and paint over the rows around it -- four cannot.
+MAX_COMBINING_MARKS_PER_BASE = 4
+
+#: THAI and LAO SARA AM. NFKC splits each into nikhahit + sara aa, and the
+#: nikhahit then stands BEHIND a tone mark that was written before the vowel
+#: -- the syllable renders wrongly. They are kept as written: the name is
+#: folded with NFKC in the stretches between them.
+_NFKC_EXEMPT = frozenset("\u0e33\u0eb3")
+_NFKC_EXEMPT_SPLIT = re.compile("([\u0e33\u0eb3])")
 
 _MARK_CATEGORIES = frozenset({"Mn", "Mc", "Me"})
 
@@ -91,28 +103,41 @@ def _is_variation_selector(ch: str) -> bool:
     return 0xFE00 <= code <= 0xFE0F or 0xE0100 <= code <= 0xE01EF or 0x180B <= code <= 0x180D
 
 
+def _fold(raw: str) -> str:
+    """NFKC, except across THAI/LAO SARA AM (see `_NFKC_EXEMPT`)."""
+    return "".join(
+        part if part in _NFKC_EXEMPT else unicodedata.normalize("NFKC", part)
+        for part in _NFKC_EXEMPT_SPLIT.split(raw)
+    )
+
+
 def sanitize_instance_name(raw: Any) -> str | None:
     """Reduce a name from the far side (or from our own setting) to display text.
 
-    NFKC first, so a compatibility form is stored as the character it stands
-    for. Then: control and format characters, blank fillers and variation
-    selectors are dropped; a combining mark is kept only on a base character,
-    and at most `MAX_COMBINING_MARKS_PER_BASE` of them; every whitespace run
-    collapses to one space; the result is trimmed and capped.
+    NFKC first (`_fold`), so a compatibility form is stored as the character
+    it stands for. Then: control and format characters, blank fillers and
+    variation selectors are dropped; a combining mark is kept only on a base
+    character, and at most `MAX_COMBINING_MARKS_PER_BASE` of them; every
+    whitespace run collapses to one space; the result is trimmed and capped.
 
     Letters, digits, punctuation and symbols of any script pass unchanged --
     "x-idra" and "Küche" come out as they went in.
 
     Returns `None` for anything that is not a string, and for a name without a
-    single VISIBLE character (a letter, digit, punctuation mark or symbol):
-    a label nobody can see is no name.
+    single LETTER or NUMBER: a label nobody can see is no name, and neither is
+    a lone "." or a row of dashes.
+
+    Known limitation: ZERO WIDTH JOINER and NON-JOINER are format characters
+    and go with the rest. Scripts that use them for shaping (Persian, several
+    Indic conjuncts) and emoji sequences built on them lose that shaping in a
+    name; the letters themselves stay.
     """
     if not isinstance(raw, str):
         return None
     kept: list[str] = []
     marks_on_base = 0
     has_base = False
-    for ch in unicodedata.normalize("NFKC", raw):
+    for ch in _fold(raw):
         if ch.isspace():
             kept.append(" ")
             has_base = False
@@ -130,7 +155,7 @@ def sanitize_instance_name(raw: Any) -> str | None:
             marks_on_base = 0
         kept.append(ch)
     name = " ".join("".join(kept).split())[:INSTANCE_NAME_MAX_CHARS].strip()
-    if not any(unicodedata.category(ch)[0] in "LNPS" for ch in name):
+    if not any(unicodedata.category(ch)[0] in "LN" for ch in name):
         return None
     return name
 

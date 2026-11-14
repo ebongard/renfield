@@ -193,6 +193,9 @@ class TestSanitising:
         "\u0301\u0308\u0327",     # nothing but combining marks
         "\u3164 \u2800 \ufe0f",   # fillers with spaces between them
         "\U000e0100",             # variation selector supplement
+        "\ufffc",                 # object replacement character -- So, draws nothing
+        "\U0001d159",             # musical symbol null notehead -- So, draws nothing
+        "\ufffc\U0001d159 \u3164",
     ])
     def test_a_name_nobody_can_see_is_no_name(self, raw):
         """🛑 Each of these passes a test on control and format characters and
@@ -204,6 +207,8 @@ class TestSanitising:
     @pytest.mark.parametrize(("raw", "expected"), [
         ("a\u3164b", "ab"),
         ("\u2800Instance\u2800B\u2800", "InstanceB"),
+        ("Far\ufffcInstance", "FarInstance"),      # an object placeholder between letters
+        ("a\U0001d159b \ufffc c", "ab c"),         # null notehead; one standing alone
         ("\u0301abc", "abc"),            # a mark with nothing to sit on
         ("x \u0301y", "x y"),            # a space is no base either
         ("\u2764\ufe0f Haus", "\u2764 Haus"),
@@ -212,13 +217,56 @@ class TestSanitising:
         assert sanitize_instance_name(raw) == expected
 
     @pytest.mark.unit
+    @pytest.mark.parametrize("raw", [".", "...", "-", "- - -", "?!", "\u2764", "\u00a9 \u00ae", "«»"])
+    def test_a_name_without_a_letter_or_a_number_is_no_name(self, raw):
+        """Visible, and still not a name: a row labelled "." tells nobody
+        which instance it is."""
+        assert sanitize_instance_name(raw) is None
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("raw", ["a.", "7", "x-idra", "\u2764 Haus", "B\u00fcro (S\u00fcd)", "\u6771\u4eac"])
+    def test_one_letter_or_number_is_enough(self, raw):
+        assert sanitize_instance_name(raw) == raw
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(("raw", "marks"), [
+        ("\u0921\u093c\u0940\u0902", 3),               # Devanagari: nukta + vowel sign + anusvara
+        ("\u05e9\u05c1\u05bc\u05b8\u0591", 4),         # pointed Hebrew: dot, dagesh, vowel, accent
+        ("Vie\u0323\u0302t", 0),                        # composes to ONE precomposed letter
+    ])
+    def test_real_orthography_keeps_its_marks(self, raw, marks):
+        """🛑 A cap of two cut the third mark of an ordinary Hindi syllable."""
+        import unicodedata
+
+        cleaned = sanitize_instance_name(raw)
+        assert cleaned == unicodedata.normalize("NFKC", raw)
+        assert sum(unicodedata.category(ch).startswith("M") for ch in cleaned) == marks
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("raw", [
+        "\u0e19\u0e49\u0e33",                     # Thai "nam": consonant, tone mark, SARA AM
+        "\u0e99\u0ec9\u0eb3",                     # Lao, the same syllable
+        "\u0e1a\u0e49\u0e32\u0e19 \u0e19\u0e49\u0e33",
+    ])
+    def test_thai_and_lao_sara_am_stay_as_written(self, raw):
+        """🛑 NFKC splits SARA AM into nikhahit + sara aa and leaves the
+        nikhahit BEHIND the tone mark: the syllable renders wrongly. The two
+        characters are exempt; everything around them is still folded."""
+        import unicodedata
+
+        assert unicodedata.normalize("NFKC", raw) != raw, "the trap this test is about"
+        assert sanitize_instance_name(raw) == raw
+        # ... and the fold still happens on either side of one.
+        assert sanitize_instance_name("\uff58\u0e19\u0e49\u0e33\uff59") == "x\u0e19\u0e49\u0e33y"
+
+    @pytest.mark.unit
     def test_combining_marks_are_capped_per_base_character(self):
         """Hundreds of marks on one letter paint over the rows around it."""
         import unicodedata
 
         from services.federation_instance_name import MAX_COMBINING_MARKS_PER_BASE
 
-        assert MAX_COMBINING_MARKS_PER_BASE == 2
+        assert MAX_COMBINING_MARKS_PER_BASE == 4
         cleaned = sanitize_instance_name("Z" + "\u0338" * 300 + "al" + "\u0489" * 300 + "go")
         marks = [ch for ch in cleaned if unicodedata.category(ch).startswith("M")]
         assert "".join(ch for ch in cleaned if ch not in marks) == "Zalgo"

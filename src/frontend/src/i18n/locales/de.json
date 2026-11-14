@@ -2162,7 +2162,6 @@
     },
     "peerReachCheckedAt": "geprüft {{when}}",
     "peerReachCheckNow": "Jetzt prüfen",
-    "peerReachCheckNowFor": "Erreichbarkeit von {{peer}} jetzt prüfen",
     "peerReachChecking": "Prüfe …",
     "peerReachCheckFailed": "Die Erreichbarkeit konnte nicht geprüft werden.",
     "peerRecentlyActive": "Kürzlich aktiv",

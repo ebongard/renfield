@@ -31,31 +31,16 @@ roles at startup. The gate fails closed: a lookup error denies.
   glow/bloom lives ONLY here. Motion (nebula/stars/radar sweep) stays reduced-motion-gated.
 - **No wall-clock decay in the frontend.** Liveness is backend-authoritative: a satellite in the roster IS online; the
   backend pushes `satellite_offline`, a reconnect re-anchors from a fresh snapshot. Federation peers get the
-  `peer_status_changed` delta (#969) and additionally keep a wall-clock freshness backstop in `useKioskModel.ts`
-  (`peerNodeFor`) — a second guard behind the delta, not a substitute for it.
-- **A paired instance is ONE node, on the peers arc — never also a `peer_<id>` node on the tools ring.** Its MCP
-  entry has `connected=True` with no session behind it; shown as a tool it was a permanent false "healthy".
-  Filtered in ONE place, `kiosk_data.kiosk_mcp_status` (by transport, not name prefix) plus the suppressed
-  `tool_health_changed` in `MCPManager._broadcast_tool_health`, so snapshot, deltas and counts agree. A turn that
-  asked the peer still names `peer_<id>` in `turn_activity`; the ARC node pulses on it. Rows on one remote key
-  are ONE node (`ORDER BY id`; id + person of the lowest id, most recently checked reading, `pulse_ids` = every
-  row's `peer_<id>`, `PeerNode.pulseIds`).
-- 🛑 **The peer label is the VERIFIED instance name or the person — never the endpoint host** (a host name is an
-  address; the host fallback lives on the logged-in peers page only). Peer-chosen text is clipped in the view
-  (`peerArc.ts`, 22 chars); the full label only as `<title>` text.
-- **Peer state follows the payload.** `reachability` present (`FEDERATION_REACHABILITY_ENABLED`): the signed
-  round trip decides, three-valued; `last_seen_at` plays no part (a ping does not move it). Absent: the old
-  two-valued rule on `reachable` + `PEER_OFFLINE_MS`, payload byte-identical.
-- 🛑 **Age of a reading = server clock.** `at` (server time of the push) − `checked_at`, plus device time elapsed
-  since receipt; never device wall clock vs. server timestamp. Stale (20 min) → `unknown` / reason `stale`,
-  never unreachable. The diff gate ignores `checked_at`; with the check on an unchanged list is re-affirmed
-  every 10 min, so the backstop fires only on a silent socket.
-- 🛑 **The reachability check is a SANCTIONED EXCEPTION to "never poll"** (approved by the owner 2026-11-14).
-  Reason: whether another instance is reachable cannot be known without asking it. Bounds — do not widen without
-  a new decision: consumer-gated (only while at least one kiosk is connected), every 5 minutes per pairing (60 s
-  refresher tick, probe when the reading is older than 300 s), one small signed request per pairing, a claim
-  per pairing (`SET NX EX 30`) plus the outbound ping budget. It licenses nothing else: every other kiosk data
-  path stays event-push, and the connect snapshot never waits for another instance.
+  `peer_status_changed` delta (#969) and additionally keep a wall-clock freshness backstop (`PEER_OFFLINE_MS`) in
+  `useKioskModel.ts` — a second guard behind the delta, not a substitute for it.
+- 🛑 **A paired instance is ONE node on the peers arc, never also `peer_<id>` on the tools ring** (no session behind
+  that entry: a permanent false "healthy"). Filtered only in `kiosk_data.kiosk_mcp_status` +
+  `MCPManager._broadcast_tool_health`; rows on one remote key are one node. Label = VERIFIED instance name or
+  the person, never the endpoint host.
+- 🛑 **Age of a peer reading = server clock** (`at` − `checked_at`) plus MONOTONIC device time since receipt, never
+  the device's wall clock. Stale → `unknown`, never unreachable; the diff gate ignores `checked_at`.
+- 🛑 **The periodic reachability check is a SANCTIONED EXCEPTION to "never poll"** (owner, 2026-11-14) — reason and
+  bounds in `docs/design/command-center.md` ("Probing is a periodic check"). It licenses nothing else.
 
 ## Health verdicts
 - Primary = `get_status()`, which folds connectivity AND functionality: **degraded** = connected but a bound startup

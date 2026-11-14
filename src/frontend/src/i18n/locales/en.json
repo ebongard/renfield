@@ -2162,7 +2162,6 @@
     },
     "peerReachCheckedAt": "checked {{when}}",
     "peerReachCheckNow": "Check now",
-    "peerReachCheckNowFor": "Check the reachability of {{peer}} now",
     "peerReachChecking": "Checking…",
     "peerReachCheckFailed": "Reachability could not be checked.",
     "peerRecentlyActive": "Recently active",

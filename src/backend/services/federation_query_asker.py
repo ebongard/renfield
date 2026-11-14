@@ -560,16 +560,27 @@ async def _post_capped(
     """POST `payload`; return the status and at most `cap` bytes of the answer.
 
     The body is `None` when the answer is, or declares itself, larger than
-    `cap` -- it is then not read to the end. `client.post` would buffer
-    whatever the far side chooses to send.
+    `cap` -- it is then not read to the end -- and when it is compressed.
+    `client.post` would buffer whatever the far side chooses to send.
+
+    🛑 The cap counts bytes ON THE WIRE. httpx asks for gzip by default and
+    hands out DECODED bytes: a kilobyte of gzip inflates to megabytes in one
+    chunk, after `Content-Length` (the compressed size) passed the check. So
+    the request asks for no encoding, an answer that carries one anyway is no
+    answer, and the body is read raw.
     """
-    response = await client.send(client.build_request("POST", url, json=payload), stream=True)
+    request = client.build_request(
+        "POST", url, json=payload, headers={"Accept-Encoding": "identity"})
+    response = await client.send(request, stream=True)
     try:
+        encoding = response.headers.get("content-encoding", "").strip().lower()
+        if encoding not in ("", "identity"):
+            return response.status_code, None
         declared = response.headers.get("content-length", "")
         if declared.isdigit() and int(declared) > cap:
             return response.status_code, None
         body = bytearray()
-        async for chunk in response.aiter_bytes():
+        async for chunk in response.aiter_raw():
             body += chunk
             if len(body) > cap:
                 return response.status_code, None
@@ -614,7 +625,7 @@ async def _ping_roundtrip(
     if raw is None:
         logger.warning(
             f"Federation ping: answer from {endpoint} exceeds "
-            f"{PING_RESPONSE_MAX_BYTES} bytes -- not read"
+            f"{PING_RESPONSE_MAX_BYTES} bytes or is compressed -- not read"
         )
         return PING_INVALID_RESPONSE
     try:

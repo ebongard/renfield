@@ -108,13 +108,24 @@ const PEER_STATES: readonly PeerReachability[] = ['reachable', 'unreachable', 'u
  *  that has passed on the device since then. Both terms are differences on
  *  ONE clock each, so a device that runs fast or slow reads the same age.
  *
+ *  The device's part is taken on its MONOTONIC clock (`monoNow`,
+ *  `performance.now()`), not on `Date.now()`: a wall clock that is stepped
+ *  while the page is open -- NTP, daylight saving, a manual change -- must
+ *  not age a reading by the size of the step, nor rejuvenate it.
+ *
  *  Without a server stamp (a backend older than this build) there is nothing
- *  to anchor on, and the two clocks are compared directly as before. */
-export function peerAgeMs(iso: string, now: number, clock?: KioskPeerClock | null): number {
+ *  to anchor on, and the two wall clocks are compared directly as before
+ *  (`now`, the only use of it). */
+export function peerAgeMs(
+  iso: string,
+  now: number,
+  clock?: KioskPeerClock | null,
+  monoNow: number = performance.now(),
+): number {
   const at = parseServerMs(iso);
   if (at === null) return NaN;
   if (!clock || clock.serverAt === null) return now - at;
-  return Math.max(0, clock.serverAt - at) + Math.max(0, now - clock.receivedAt);
+  return Math.max(0, clock.serverAt - at) + Math.max(0, monoNow - clock.receivedMono);
 }
 
 /** The arc node of one paired instance -- everything except the localised
@@ -139,7 +150,12 @@ export function peerAgeMs(iso: string, now: number, clock?: KioskPeerClock | nul
  *    had -- the peer queried us recently (`reachable`) and `last_seen_at` is
  *    younger than `PEER_OFFLINE_MS`. Two-valued; it cannot say `unknown`.
  */
-export function peerNodeFor(peer: KioskPeer, now: number, clock?: KioskPeerClock | null): PeerNode {
+export function peerNodeFor(
+  peer: KioskPeer,
+  now: number,
+  clock?: KioskPeerClock | null,
+  monoNow: number = performance.now(),
+): PeerNode {
   const id = String(peer.id);
   const { primary, secondary } = peerLabelParts(peer.instance_name, peer.name);
   const sent = Array.isArray(peer.pulse_ids)
@@ -149,7 +165,7 @@ export function peerNodeFor(peer: KioskPeer, now: number, clock?: KioskPeerClock
   const base = { id, label: primary, sublabel: secondary, pulseIds };
 
   if (typeof peer.reachability !== 'string') {
-    const seenAge = peer.last_seen_at ? peerAgeMs(peer.last_seen_at, now, clock) : NaN;
+    const seenAge = peer.last_seen_at ? peerAgeMs(peer.last_seen_at, now, clock, monoNow) : NaN;
     const fresh = Number.isFinite(seenAge) && seenAge < PEER_OFFLINE_MS;
     return {
       ...base,
@@ -159,7 +175,7 @@ export function peerNodeFor(peer: KioskPeer, now: number, clock?: KioskPeerClock
   }
 
   const known = PEER_STATES.find((state) => state === peer.reachability);
-  const checkedAge = peer.checked_at ? peerAgeMs(peer.checked_at, now, clock) : NaN;
+  const checkedAge = peer.checked_at ? peerAgeMs(peer.checked_at, now, clock, monoNow) : NaN;
   // A verdict with no check behind it was never checked; one whose check is
   // too old to stand behind is stale. Either way the wall says unknown -- and
   // so it does for a state this build does not know.

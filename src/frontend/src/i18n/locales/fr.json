@@ -2175,7 +2175,6 @@
     },
     "peerReachCheckedAt": "vérifié {{when}}",
     "peerReachCheckNow": "Vérifier maintenant",
-    "peerReachCheckNowFor": "Vérifier maintenant l’accessibilité de {{peer}}",
     "peerReachChecking": "Vérification…",
     "peerReachCheckFailed": "Impossible de vérifier la joignabilité.",
     "peerRecentlyActive": "Actif récemment",

@@ -268,10 +268,11 @@ describe('CirclesPeersPage', () => {
       last_asked_at: null,
       recently_active: false,
     };
-    // The button's accessible name says WHICH peer it checks (a page lists
-    // several); its visible text stays the short "check now".
+    // The button's accessible name is its VISIBLE text followed by the peer
+    // it checks (a page lists several); what is visible stays the short
+    // "check now".
     const checkNow = (peer = 'Far Instance') =>
-      screen.getByRole('button', { name: i18n.t('circles.peerReachCheckNowFor', { peer }) });
+      screen.getByRole('button', { name: `${i18n.t('circles.peerReachCheckNow')} ${peer}` });
 
     it('says nothing about reachability when the backend sends none', async () => {
       serve([legacyPeer]);
@@ -406,9 +407,45 @@ describe('CirclesPeersPage', () => {
 
       const status = screen.getByTestId('peer-reach-status-1');
       expect(status).toHaveAttribute('aria-live', 'polite');
+      // State and reason are read as ONE statement, not as two fragments.
+      expect(status).toHaveAttribute('aria-atomic', 'true');
+      // A real box: `display: contents` drops an element from the
+      // accessibility tree in some browsers, and the live region with it.
+      expect(status.className.split(/\s+/)).not.toContain('contents');
       expect(status).toHaveTextContent(i18n.t('circles.peerReachState.reachable'));
       // The button is NOT inside the live region: its "checking…" is not news.
       expect(within(status).queryByRole('button')).not.toBeInTheDocument();
+      // Neither is the relative time: "3 minutes ago" becoming "4 minutes ago"
+      // would be announced on every re-render.
+      const checked = screen.getAllByTestId('peer-reach-checked-1');
+      expect(checked).toHaveLength(1);
+      expect(status).not.toContainElement(checked[0]);
+      expect(status).not.toHaveTextContent(i18n.t('circles.peerMinutesAgo', { n: 3 }));
+    });
+
+    it('gives the button a name that contains what is visible, also while checking', async () => {
+      // Label in name: somebody using voice control says what they SEE. An
+      // aria-label of other words ("Check the reachability of … now") did not
+      // contain "Check now", and stayed the same while the text said "Checking…".
+      serve([reachable]);
+      let answerCheck: () => void = () => {};
+      mockedPost.mockImplementation(() => new Promise((resolve) => {
+        answerCheck = () => resolve(response(reachable.reachability));
+      }));
+      renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+      await screen.findByTestId('peer-reach-1');
+
+      const button = checkNow();
+      expect(button).not.toHaveAttribute('aria-label');
+      expect(button).toHaveAccessibleName(`${i18n.t('circles.peerReachCheckNow')} Far Instance`);
+
+      fireEvent.click(button);
+      await waitFor(() => expect(button).toBeDisabled());
+      expect(button).toHaveTextContent(i18n.t('circles.peerReachChecking'));
+      expect(button).toHaveAccessibleName(`${i18n.t('circles.peerReachChecking')} Far Instance`);
+
+      await act(async () => { answerCheck(); });
+      await waitFor(() => expect(checkNow()).not.toBeDisabled());
     });
 
     it('keeps a fresh reading when a list fetch that was already under way lands after it', async () => {

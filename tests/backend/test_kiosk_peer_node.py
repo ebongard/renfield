@@ -36,7 +36,12 @@ from api.websocket.kiosk_data import (
 )
 from api.websocket.kiosk_handler import build_kiosk_snapshot
 from models.database import FederationQueryLog, PeerUser, Role, User
-from services.federation_query_asker import PING_PIN_MISMATCH, PING_REACHABLE, PING_UNSUPPORTED
+from services.federation_query_asker import (
+    PING_PIN_MISMATCH,
+    PING_REACHABLE,
+    PING_UNREACHABLE,
+    PING_UNSUPPORTED,
+)
 from services.federation_reachability import MemoryReachabilityStore, set_store_for_tests
 from services.mcp_client import (
     MCPManager,
@@ -489,22 +494,83 @@ class TestOneNodePerRemoteIdentity:
         assert entry["last_seen_at"] == twin["high"].last_seen_at.isoformat()
         assert entry["reachable"] is True
 
-    @pytest.mark.parametrize("newer", ["first", "second"])
-    async def test_the_most_recent_check_is_the_one_shown(
-        self, pairings, twin, feature_on, memory_store, newer,
+    @pytest.mark.parametrize("newer", ["low", "high"])
+    @pytest.mark.parametrize("reachable_row", ["low", "high"])
+    async def test_reachable_through_ANY_row_is_reachable_whichever_was_checked_last(
+        self, pairings, twin, feature_on, memory_store, newer, reachable_row,
     ):
-        low, high, now = twin["low"], twin["high"], time.time()
-        await memory_store.save(
-            low.id, PING_PIN_MISMATCH, now - (0 if newer == "first" else 200))
-        await memory_store.save(
-            high.id, PING_REACHABLE, now - (0 if newer == "second" else 200))
-        entry = _group_entry(await compute_peer_status(), low, high)
-        if newer == "first":
-            assert (entry["reachability"], entry["reachability_reason"]) == (
-                "unreachable", "pin_mismatch")
-        else:
-            assert (entry["reachability"], entry["reachability_reason"]) == ("reachable", None)
+        """One far instance, reached through one account's pairing and not
+        through the other's (a stale pin on one row, say): the instance IS
+        reachable. Which row happened to be checked last decides nothing."""
+        now = time.time()
+        for name in ("low", "high"):
+            await memory_store.save(
+                twin[name].id,
+                PING_REACHABLE if name == reachable_row else PING_PIN_MISMATCH,
+                now - (0 if name == newer else 200),
+            )
+        entry = _group_entry(await compute_peer_status(), twin["low"], twin["high"])
+        assert (entry["reachability"], entry["reachability_reason"]) == ("reachable", None)
+        assert entry["reachable"] is True
         assert entry["recently_active"] is True, "the second row was seen two minutes ago"
+
+    async def test_the_time_shown_is_the_latest_REACHABLE_check(
+        self, pairings, twin, feature_on, memory_store,
+    ):
+        now = time.time()
+        await memory_store.save(twin["low"].id, PING_REACHABLE, now - 200)
+        await memory_store.save(twin["high"].id, PING_REACHABLE, now - 50)
+        both = _group_entry(await compute_peer_status(), twin["low"], twin["high"])
+        await memory_store.save(twin["high"].id, PING_PIN_MISMATCH, now)
+        one = _group_entry(await compute_peer_status(), twin["low"], twin["high"])
+        assert both["reachability"] == one["reachability"] == "reachable"
+        assert both["checked_at"] > one["checked_at"], (
+            "the newer check was the UNREACHABLE one; its time is not the reachable verdict's")
+
+    @pytest.mark.parametrize(("low_outcome", "expected"), [
+        (PING_UNSUPPORTED, ("unknown", "unsupported")),
+        (PING_PIN_MISMATCH, ("unreachable", "pin_mismatch")),
+        (None, ("unknown", "not_checked")),
+    ])
+    async def test_without_a_reachable_row_the_LOWEST_id_speaks(
+        self, pairings, twin, feature_on, memory_store, low_outcome, expected,
+    ):
+        """Deterministic, and the same row that gives the node its id and
+        person -- even when the other row was checked later."""
+        now = time.time()
+        if low_outcome is not None:
+            await memory_store.save(twin["low"].id, low_outcome, now - 200)
+        await memory_store.save(twin["high"].id, PING_UNREACHABLE, now)
+        entry = _group_entry(await compute_peer_status(), twin["low"], twin["high"])
+        assert (entry["reachability"], entry["reachability_reason"]) == expected
+
+    async def test_two_rows_that_disagree_do_not_take_turns(
+        self, pairings, twin, feature_on, memory_store, monkeypatch,
+    ):
+        """🛑 The two rows are probed minutes apart, for ever. With "the latest
+        check wins" the node changed state -- and the wall got a push -- every
+        time the other row's turn came. Five rounds, the order of the two
+        checks swapping each round: one state, one push."""
+        pushed: list[dict] = []
+
+        async def _capture(event):
+            pushed.append(event)
+
+        monkeypatch.setattr(kiosk, "broadcast_kiosk_event", _capture)
+        kiosk_data.reset_peer_status_gate()
+        low, high, now = twin["low"], twin["high"], time.time()
+        states = []
+        for round_no in range(5):
+            at = now - 500 + round_no * 100
+            low_first = round_no % 2 == 0
+            await memory_store.save(low.id, PING_PIN_MISMATCH, at - (50 if low_first else 0))
+            await memory_store.save(high.id, PING_REACHABLE, at - (0 if low_first else 50))
+            await kiosk_data.refresh_and_push_peer_status()
+            states.append(_group_entry(await compute_peer_status(), low, high)["reachability"])
+        kiosk_data.reset_peer_status_gate()
+
+        assert states == ["reachable"] * 5
+        assert len(pushed) == 1
 
     async def test_one_checked_row_is_enough(self, pairings, twin, feature_on, memory_store):
         await memory_store.save(twin["high"].id, PING_REACHABLE, time.time())

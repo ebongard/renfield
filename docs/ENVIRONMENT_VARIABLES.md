@@ -3045,12 +3045,16 @@ diesem Personennamen. Der Instanzname steht jetzt davor: „Instance B · alex�
   authentifizierten, nicht widerrufenen Peer und nur bei gültiger Signatur
   (`peer_users.remote_instance_name`). Er ist **Anzeigetext**: nie Kennung, nie
   Suchschlüssel, nie Teil des Servernamens (`peer_<id>` bleibt).
-- **Bereinigung vor dem Speichern:** NFKC-Normalform; Steuer- und
-  Formatzeichen, leere Füllzeichen (U+3164, U+115F, U+1160, U+FFA0, U+2800,
-  U+034F) und Variantenselektoren fallen weg; höchstens zwei kombinierende
-  Zeichen je Grundzeichen, keines ohne Grundzeichen; Leerraum zu einem
-  Leerzeichen; 64 Zeichen. Bleibt kein **sichtbares** Zeichen übrig, gilt der
-  Name als nicht gesendet.
+- **Bereinigung vor dem Speichern:** NFKC-Normalform, wobei thailändisches
+  und laotisches SARA AM (U+0E33, U+0EB3) stehen bleibt, wie es geschrieben
+  wurde; Steuer- und Formatzeichen, leere Füllzeichen (U+3164, U+115F,
+  U+1160, U+FFA0, U+2800, U+034F, U+FFFC, U+1D159) und Variantenselektoren
+  fallen weg; höchstens vier kombinierende Zeichen je Grundzeichen, keines
+  ohne Grundzeichen; Leerraum zu einem Leerzeichen; 64 Zeichen. Ohne
+  mindestens einen **Buchstaben oder eine Ziffer** gilt der Name als nicht
+  gesendet — ein einzelner Punkt ist kein Name. Bekannte Grenze: die
+  Verbinder U+200D/U+200C fallen als Formatzeichen mit weg
+  (`docs/FEDERATION_PAIRING.md` → „Known limits“).
 - **Anzeige:** auf `/settings/circles/peers`, in der Audit-Ansicht und in der
   Chat-Statuszeile Instanzname → Host des gespeicherten Endpunkts →
   Personenname allein. **Der Kiosk zeigt nie einen Host:** dort nur der
@@ -3094,10 +3098,14 @@ Schalter und **standardmäßig aus**: ohne ihn ist die Beschreibung Zeichen für
 Zeichen der gemessene Text, was immer als Name gespeichert ist.
 
 Mit dem Schalter geht nur eine **Positivlisten-Form** des Namens in den Prompt
-(`prompt_safe_instance_name`): NFKC, ausschließlich Buchstaben, Ziffern,
-Unterstrich, Leerzeichen, Punkt und Bindestrich, höchstens 32 Zeichen —
-Anführungszeichen, Doppelpunkte, Klammern und Zeilenumbrüche fallen weg, sie
-werden nicht maskiert. Bleibt nichts Benennbares, gilt die unbenannte
+(`prompt_safe_instance_name`): NFKC, ausschließlich Zeichen der
+Unicode-Kategorien Lu, Ll, Lt, Lo und Nd sowie Unterstrich, Leerzeichen und
+Bindestrich, höchstens 32 Zeichen — Anführungszeichen, Doppelpunkte,
+Klammern, Zeilenumbrüche, der Punkt (keine Satzgrenze) und
+Modifikatorbuchstaben, die wie Anführungszeichen oder Doppelpunkte aussehen,
+fallen weg; sie werden nicht maskiert. 🛑 Die Positivliste begrenzt **Form
+und Länge, nicht den Inhalt**: eine schlichte Aufforderung aus 32 Buchstaben
+besteht sie. Deshalb ist der Schalter aus. Bleibt nichts Benennbares, gilt die unbenannte
 Fassung; der Host-Rückfall der Anzeige zählt hier nie. Die Anzeige behält
 überall den volleren, bereinigten Namen. Die benannte Fassung ist
 festgenagelt, aber **ungemessen** — vor dem Einschalten mit
@@ -3165,12 +3173,17 @@ diese `unsupported` → „unbekannt“, nie „nicht erreichbar“.
 
 Die Route `POST /api/federation/peer/ping` ist ohne Kopplung erreichbar (die
 Signatur lässt sich erst prüfen, wenn der Rumpf da ist). Deshalb: Rumpf
-höchstens 4096 Byte — eine größere `Content-Length` wird ungelesen
-abgewiesen, ein Rumpf ohne Längenangabe nur bis zur Grenze gelesen; geprüft
+höchstens 4096 Byte auf der Leitung — eine größere `Content-Length` wird
+ungelesen abgewiesen, ein Rumpf ohne Längenangabe nur bis zur Grenze gelesen,
+ein komprimierter Rumpf (`Content-Encoding` außer `identity`) gar nicht; geprüft
 wird in der Reihenfolge Signatur → Zeitfenster → Kopplung → Kontingent →
 Nonce, sodass ein ungekoppelter Schlüssel **nichts** hinterlässt (keine Nonce,
 kein Kontingent, keine Zeile). Jede Ablehnung ist dieselbe einheitliche 400.
-Die anfragende Seite liest auch die Antwort nur bis 4096 Byte.
+Die anfragende Seite liest auch die Antwort nur bis 4096 Byte, verlangt sie
+unkomprimiert (`Accept-Encoding: identity`) und wertet eine komprimierte
+Antwort als `invalid_response`, ohne sie zu entpacken. Bekannte Grenze: eine
+wiederholte, gültig signierte Prüfung verbraucht ein Kontingent, bevor die
+Nonce sie abweist (`docs/FEDERATION_PAIRING.md` → „Known limits“).
 
 Eine Prüfung ist keine Anfrage: sie verschiebt `last_seen_at` nicht („Letzte
 Anfrage …“ behält seine Bedeutung), schreibt keine Audit-Zeile und verbraucht

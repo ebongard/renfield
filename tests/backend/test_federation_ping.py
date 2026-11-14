@@ -658,8 +658,10 @@ class TestRouteFeatureOn:
 class _Upload:
     """What `_read_capped` reads off a request: the headers and the stream."""
 
-    def __init__(self, chunks, content_length: str | None = None):
+    def __init__(self, chunks, content_length: str | None = None, encoding: str | None = None):
         self.headers = {} if content_length is None else {"content-length": content_length}
+        if encoding is not None:
+            self.headers["content-encoding"] = encoding
         self._chunks = chunks
         self.read = 0
 
@@ -716,6 +718,32 @@ class TestTheRequestBodyIsCapped:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    @pytest.mark.parametrize("encoding", ["gzip", "deflate", "br", "zstd", "GZIP", "gzip, identity"])
+    async def test_a_compressed_body_is_refused_unread(self, encoding):
+        """The cap counts bytes on the wire. Nothing here inflates a body --
+        and a body that asks to be inflated is not read at all, so a
+        decompressing layer put in front of this route one day cannot turn
+        4 KiB into megabytes."""
+        import gzip
+
+        from api.routes.federation_query import _read_capped
+
+        small = gzip.compress(b"a" * (1024 * 1024))
+        assert len(small) < 4096, "well inside the cap while compressed"
+        upload = _Upload([small], content_length=str(len(small)), encoding=encoding)
+        assert await _read_capped(upload, 4096) is None
+        assert upload.read == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    @pytest.mark.parametrize("encoding", ["identity", "", " Identity "])
+    async def test_identity_is_no_encoding(self, encoding):
+        from api.routes.federation_query import _read_capped
+
+        assert await _read_capped(_Upload([b"{}"], encoding=encoding), 4096) == b"{}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     @pytest.mark.parametrize("declared", [None, "10"])
     async def test_a_body_within_the_cap_comes_back_whole(self, declared):
         from api.routes.federation_query import _read_capped
@@ -750,20 +778,38 @@ class _Client(httpx.AsyncClient):
 
     Real on purpose. The asker reads the answer as a stream and stops at a
     cap; a stand-in with a `post` method of its own would test the stand-in.
+
+    A handler may return a ready-made `httpx.Response(200, json=...)`. Such a
+    response has its body loaded already, which no real transport does: it is
+    handed on as headers plus a body still to be read (`_as_streamed`).
     """
 
     def __init__(self, handler):
         self.posted: list[tuple[str, dict]] = []
+        self.request_headers: list[httpx.Headers] = []
 
         async def _dispatch(request: httpx.Request) -> httpx.Response:
             url, body = str(request.url), json.loads(request.content or b"{}")
             self.posted.append((url, body))
+            self.request_headers.append(request.headers)
             result = handler(url, body)
             if asyncio.iscoroutine(result):
                 result = await result
-            return result
+            return _as_streamed(result)
 
         super().__init__(transport=httpx.MockTransport(_dispatch))
+
+
+async def _stream(raw: bytes):
+    """A body that arrives over the wire: not read until somebody reads it."""
+    yield raw
+
+
+def _as_streamed(response: httpx.Response | None) -> httpx.Response | None:
+    if response is None or not response.is_stream_consumed:
+        return response
+    return httpx.Response(
+        response.status_code, headers=response.headers, content=_stream(response.content))
 
 
 def _pong(far: FederationIdentity, body: dict, **overrides) -> dict:
@@ -981,6 +1027,90 @@ class TestAskerChecksTheAnswer:
             200, headers={"content-length": str(1024 * 1024)}, content=_body()))
         assert await ping_peer(_Peer(far_identity), client=client) == PING_INVALID_RESPONSE
         assert sent["chunks"] == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_the_ping_asks_for_an_uncompressed_answer(
+        self, local_identity, far_identity, asker_remembered,
+    ):
+        """httpx asks for gzip, deflate (and more) by default."""
+        client = _answering(far_identity)
+        assert await ping_peer(_Peer(far_identity), client=client) == PING_REACHABLE
+        assert client.request_headers[0]["accept-encoding"] == "identity"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    @pytest.mark.parametrize("encoding", ["gzip", "deflate"])
+    async def test_a_compressed_answer_is_no_answer_even_a_genuine_small_one(
+        self, local_identity, far_identity, asker_remembered, encoding,
+    ):
+        """🛑 The cap counts bytes on the wire; a compressed answer is counted
+        compressed and handed out INFLATED. We asked for none, so an answer
+        that carries a Content-Encoding is refused outright and UNREAD -- here
+        a correctly signed pong of ordinary size, which a decoding reader
+        reports as "reachable"."""
+        import gzip
+        import zlib
+
+        read: list[int] = []
+
+        async def _recorded(packed: bytes):
+            read.append(len(packed))
+            yield packed
+
+        def _compressed(url, body):
+            raw = json.dumps(_pong(far_identity, body)).encode()
+            packed = gzip.compress(raw) if encoding == "gzip" else zlib.compress(raw)
+            return httpx.Response(
+                200, content=_recorded(packed),
+                headers={"content-encoding": encoding, "content-length": str(len(packed))})
+
+        assert await ping_peer(
+            _Peer(far_identity), client=_Client(_compressed)) == PING_INVALID_RESPONSE
+        assert read == [], "the body of a compressed answer is not read at all"
+        asker_remembered.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_gzip_bomb_is_never_inflated(self, local_identity, far_identity, monkeypatch):
+        """A megabyte of zeros in about a kilobyte of gzip: inside the cap as
+        sent. No decoder may run over it."""
+        import gzip
+
+        bomb = gzip.compress(b"\0" * (1024 * 1024))
+        assert len(bomb) < asker_module.PING_RESPONSE_MAX_BYTES
+
+        def _no_decoding(self, *args, **kwargs):
+            raise AssertionError("the answer was run through a content decoder")
+
+        monkeypatch.setattr(httpx.Response, "aiter_bytes", _no_decoding)
+        monkeypatch.setattr(httpx.Response, "aread", _no_decoding)
+        client = _Client(lambda url, body: httpx.Response(
+            200, content=_stream(bomb),
+            headers={"content-encoding": "gzip", "content-length": str(len(bomb))}))
+        assert await ping_peer(_Peer(far_identity), client=client) == PING_INVALID_RESPONSE
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_genuine_answer_is_read_raw(
+        self, local_identity, far_identity, asker_remembered, monkeypatch,
+    ):
+        """The same guard on the happy path: reachable without the decoding
+        iterator ever being touched."""
+        def _no_decoding(self, *args, **kwargs):
+            raise AssertionError("the answer was run through a content decoder")
+
+        monkeypatch.setattr(httpx.Response, "aiter_bytes", _no_decoding)
+
+        def _streamed(url, body):
+            raw = json.dumps(_pong(far_identity, body)).encode()
+
+            async def _parts():
+                yield raw
+
+            return httpx.Response(200, content=_parts())
+
+        assert await ping_peer(_Peer(far_identity), client=_Client(_streamed)) == PING_REACHABLE
 
     @pytest.mark.asyncio
     @pytest.mark.unit

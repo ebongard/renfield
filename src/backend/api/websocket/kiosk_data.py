@@ -489,7 +489,11 @@ async def compute_peer_status() -> list[dict]:
                         the node keeps its identity on the wall.
       ``instance_name`` the first row with a VERIFIED name.
       ``last_seen_at``  the latest over the group.
-      reading           the most recently checked one (a tie: the lowest id).
+      reading           REACHABLE as soon as any row's stored reading is
+                        (with the time of the latest such check); otherwise
+                        the reading of the lowest id. Never "whichever was
+                        checked last": two rows that disagree would then take
+                        turns every five minutes, and the node would flip.
       ``recently_active`` true when any row is.
       ``pulse_ids``     ONLY for such a group: every row's tool-server name
                         (``peer_<id>``). A turn runs through the asking
@@ -583,14 +587,15 @@ async def compute_peer_status() -> list[dict]:
                 recently_active,
             )
 
-            latest = NOT_CHECKED
-            for m in members:
-                candidate = readings.get(m.id)
-                if candidate is not None and candidate.checked_at is not None and (
-                    latest.checked_at is None or candidate.checked_at > latest.checked_at
-                ):
-                    latest = candidate
-            reading = latest.as_payload()
+            # A fixed precedence, not "the latest check wins". The store
+            # holds unexpired readings only, so "any" means "any current".
+            member_readings = [readings.get(m.id) or NOT_CHECKED for m in members]
+            reachable_ones = [r for r in member_readings if r.state == STATE_REACHABLE]
+            if reachable_ones:
+                chosen = max(reachable_ones, key=lambda r: r.checked_at or 0.0)
+            else:
+                chosen = member_readings[0]
+            reading = chosen.as_payload()
             # ONE definition of "reachable" per payload: with the probe on, the
             # legacy boolean says what the probe says.
             entry["reachable"] = reading["state"] == STATE_REACHABLE

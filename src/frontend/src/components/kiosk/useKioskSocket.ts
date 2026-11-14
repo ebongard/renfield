@@ -146,8 +146,11 @@ export interface KioskPeer {
  *  display never compares its wall clock with a server timestamp. A tablet
  *  running twenty minutes fast or slow reads the same age as one that is right. */
 export interface KioskPeerClock {
-  /** Device clock (`Date.now()`) when the list arrived. */
-  receivedAt: number;
+  /** The device's MONOTONIC clock (`performance.now()`) when the list arrived.
+   *  Not `Date.now()`: the wall clock gets stepped -- an NTP correction, a
+   *  daylight-saving switch, somebody setting the time -- and a step forward
+   *  would age every reading by the size of the step. */
+  receivedMono: number;
   /** The payload's own `at`, as epoch ms; null when the server sent none. */
   serverAt: number | null;
 }
@@ -336,7 +339,7 @@ export function parseServerMs(iso: string | null | undefined): number | null {
 }
 
 function peerClock(at: string | null | undefined): KioskPeerClock {
-  return { receivedAt: Date.now(), serverAt: parseServerMs(at) };
+  return { receivedMono: performance.now(), serverAt: parseServerMs(at) };
 }
 
 function hydrate(prev: KioskLiveModel, msg: SnapshotMessage): KioskLiveModel {

@@ -376,8 +376,12 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
 - **One node per far INSTANCE, not per pairing row.** Two local accounts paired with the same instance are two
   rows on one remote key. `compute_peer_status` reads the rows `ORDER BY id` and groups them by key; the node
   takes its `id` and person from the **lowest-id** row, the first verified instance name in the group, the
-  latest `last_seen_at`, the **most recently checked** reading (tie: lowest id) and `recently_active` if any row
-  is. A group additionally sends `pulse_ids` (every row's `peer_<id>`), and the node (`PeerNode.pulseIds`)
+  latest `last_seen_at`, `recently_active` if any row is, and a reading by a FIXED precedence: **reachable as
+  soon as any row's unexpired reading is** (with the time of the latest reachable check), otherwise the
+  **lowest id's** reading. Not "the most recently checked row wins": two rows that disagree are checked in turn,
+  and the node then changed state — and pushed — every five minutes. A consequence: while the lowest id has no
+  reading, another row's outage does not show; the node reads unknown.
+  A group additionally sends `pulse_ids` (every row's `peer_<id>`), and the node (`PeerNode.pulseIds`)
   pulses on any of them — a turn through the other account's row lights the same node. Single rows send no
   `pulse_ids`; the frontend derives the one id.
 - **Arc layout (`components/kiosk/peerArc.ts`).** Labels are peer-chosen text of up to 64 characters: the view
@@ -395,10 +399,14 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
   byte-identical to before and the wall keeps its old two-valued rule: "queried us within 5 minutes" plus the
   `PEER_OFFLINE_MS` backstop on `last_seen_at`.
 - **The age of a reading is measured on the SERVER's clock.** Snapshot and `peer_status_changed` carry `at`, the
-  server's time at the push. The display takes `at − checked_at` and adds its own elapsed time since receipt —
-  never its wall clock against a server timestamp, which a tablet running 20 minutes fast turned into "every
-  peer unknown". Older than `PEER_CHECK_STALE_MS` (20 min) degrades to **unknown** with a reason of its own,
-  `stale` ("checked, but the result is old"), never to unreachable and never to "not checked yet".
+  server's time at the push. The display takes `at − checked_at` and adds the time elapsed since receipt on its
+  own MONOTONIC clock (`performance.now()`, `KioskPeerClock.receivedMono`) — never its wall clock against a
+  server timestamp, which a tablet running 20 minutes fast turned into "every peer unknown", and not `Date.now()`
+  for the elapsed part either: a wall clock stepped while the page is open (NTP, daylight saving) aged every
+  reading by the step. Older than `PEER_CHECK_STALE_MS` (20 min) degrades to **unknown** with a reason of its
+  own, `stale` ("checked, but the result is old"), never to unreachable and never to "not checked yet". Where
+  `performance.now()` does not advance while a device sleeps, a reading can look younger than it is until the
+  next push re-anchors it (with the check on: at most 10 minutes on a live socket).
 - **What is pushed.** The diff gate leaves `checked_at` out: a check that found the same thing changes nothing a
   person can see and pushes nothing. A reading that expires (15 min TTL) reads `unknown / not_checked` and IS a
   state change. With the check on, an unchanged list is re-affirmed every 10 minutes

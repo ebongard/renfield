@@ -200,6 +200,38 @@ describe('useKioskSocket', () => {
     ]);
   });
 
+  it('anchors a peer list on the MONOTONIC clock, with the server stamp beside it', async () => {
+    // The age of a reachability check is "its age on the server when the list
+    // arrived, plus what has passed on this device since". The second part is
+    // measured on `performance.now()`: a wall clock stepped while the page is
+    // open (NTP, daylight saving) must not age every reading by the step.
+    const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
+    const before = performance.now();
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage({ ...baseSnapshot(), at: '2026-07-04T21:00:00+00:00' });
+    });
+    const first = result.current.live.peersClock!;
+    // `Date.now()` is twelve digits away from this window.
+    expect(first.receivedMono).toBeGreaterThanOrEqual(before);
+    expect(first.receivedMono).toBeLessThanOrEqual(performance.now());
+    expect(first.serverAt).toBe(Date.parse('2026-07-04T21:00:00Z'));
+
+    const between = performance.now();
+    act(() => {
+      latest().fireMessage({
+        type: 'peer_status_changed',
+        at: '2026-07-04T21:05:00+00:00',
+        peers: [{ id: 'p1', name: 'Peer', last_seen_at: '2026-07-04T20:58:00Z', reachable: true }],
+      });
+    });
+    const second = result.current.live.peersClock!;
+    expect(second.receivedMono).toBeGreaterThanOrEqual(between);
+    expect(second.receivedMono).toBeLessThanOrEqual(performance.now());
+    expect(second.serverAt).toBe(Date.parse('2026-07-04T21:05:00Z'));
+  });
+
   it('folds a satellite_state delta onto the matching satellite', async () => {
     const { result } = renderHook(() => useKioskSocket());
     await flushConnect();

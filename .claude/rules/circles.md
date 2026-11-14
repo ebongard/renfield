@@ -58,29 +58,14 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   erhält, steht in deren Zeile — nie aus unserer Stufe ableiten oder so beschriften.
 - 🛑 `linked` = Verknüpfung des AUFRUFERS; fremde Verknüpfungen werden nicht gelesen,
   `remote_user_id` geht an Nicht-Eigentümer leer.
-- 🛑 **Der Instanzname (`remote_instance_name`) ist ANZEIGETEXT**, nie Kennung, Suchschlüssel oder
-  Teil von `peer_<id>`. Er reist als Anhang AUSSERHALB der signierten Nutzlast (mit eigener
-  Signatur über Name + Schlüssel + Umschlag-Signatur) — ein Feld IN der Nutzlast bräche jede
-  Gegenstelle auf älterem Stand. Übernommen erst NACH Umschlag-Signatur und Peer-Nachschlag;
-  ungültiger Anhang = verwerfen, Anfrage gilt. Einziger Schreiber: `federation_instance_name.py`
-  (NFKC, mindestens ein sichtbares Zeichen, höchstens eine Änderung je Kopplung in 10 Minuten;
-  im Protokoll nur ID + Längen).
-- 🛑 **Der Name ist Text der GEGENSEITE — in den Prompt nur mit eigenem Schalter.**
-  `FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED` (aus, ungemessen): ohne ihn ist die
-  Werkzeugbeschreibung der gemessene Text, was immer gespeichert ist; mit ihm nur die
-  Positivlisten-Form (`prompt_safe_instance_name`, 32 Zeichen), nie der Anzeigetext, nie der Host.
-- 🛑 **Ein Ping ist keine Anfrage** (`FEDERATION_REACHABILITY_ENABLED`): `last_seen_at`
-  bleibt „letzte ANFRAGE", keine Prüfprotokoll-Zeile, eigenes Kontingent, Fremden dasselbe
-  einheitliche 400. `unsupported` (Gegenseite antwortet 404) ist UNBEKANNT, nie „nicht erreichbar".
-  Messwerte liegen in Redis mit Ablaufzeit, nie in `peer_users`.
-- 🛑 **Die periodische Prüfung ist eine GENEHMIGTE AUSNAHME von der Kein-Polling-Regel** (Eigentümer,
-  2026-11-14). Grund: ob eine andere Instanz erreichbar ist, lässt sich nur durch Fragen erfahren.
-  Grenzen, nicht ohne neue Entscheidung erweitern: verbrauchergebunden (nur solange ein Kiosk
-  verbunden ist), alle 5 Minuten je Kopplung, EINE kleine signierte Anfrage je Kopplung, Anspruch
-  je Kopplung (`SET NX EX 30`) plus ausgehendes Ping-Kontingent.
-- 🛑 **Die Ping-Route ist ohne Kopplung erreichbar:** Rumpf höchstens 4096 Byte (vor und beim
-  Lesen), Reihenfolge Signatur → Zeitfenster → Kopplung → Kontingent → Nonce — alles, was
-  SCHREIBT, steht hinter dem Kopplungs-Nachschlag. `handle_initiate` hält das noch nicht ein.
+- 🛑 **Der Instanzname (`remote_instance_name`) ist ANZEIGETEXT der GEGENSEITE** — nie Kennung oder Teil von
+  `peer_<id>`; einziger Schreiber `federation_instance_name.py`, erst NACH Signatur und Peer-Nachschlag. In den
+  Prompt nur mit `FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED` (aus): begrenzt Form und Länge, nicht Inhalt.
+- 🛑 **Ein Ping ist keine Anfrage:** `last_seen_at` bleibt „letzte ANFRAGE", keine Prüfprotokoll-Zeile;
+  `unsupported` ist UNBEKANNT. Die Route ist ohne Kopplung erreichbar: alles, was SCHREIBT, steht hinter
+  dem Kopplungs-Nachschlag; Rumpf ≤ 4096 Byte auf der Leitung, komprimiert = abgelehnt (beide Richtungen).
+- 🛑 **Die periodische Erreichbarkeitsprüfung ist eine GENEHMIGTE AUSNAHME von der Kein-Polling-Regel**
+  (Eigentümer, 2026-11-14) — Grund und Grenzen: `docs/FEDERATION_PAIRING.md` §3a, nicht erweitern.
 
 ## Writing source rows
 - Tables: `atoms` (polymorphic registry), `circles` (per-user dimension config), `circle_memberships`,
@@ -130,8 +115,7 @@ engere Behauptung im Bild statt im Wort, und die Farbe liest man zuerst.
 🛑 Der Antwortende fuehrt `peer_display_name` auf dem Pending-Satz MIT — ein Schnappschuss des Zeitpunkts,
 kein Nachschlagen beim Schreiben (die Paarung kann spaeter umbenannt oder widerrufen sein). Zeilen vor dem
 2026-10-29 tragen dort leer; die Ansicht faellt dann auf den Schluessel zurueck, nie auf einen Platzhalter.
-Der Instanzname ist ein ZWEITER Schnappschuss (`peer_instance_name_snapshot`, nullable): alte Zeilen zeigen die
-Person allein — nie aus der heutigen Paarung nachtragen.
+Der Instanzname ist ein ZWEITER Schnappschuss (`peer_instance_name_snapshot`): alte Zeilen zeigen die Person allein.
 🛑 **Ein ABGEBROCHENER Zugriff wird verzeichnet, und zwar als `aborted`, nicht als `unknown` oder `failed`.**
 Die Fragerseite schreibt ihren Vermerk in einem `finally` (`mcp_client.py`); der Antwortende hatte das bis zum
 2026-10-29 NICHT — sein `except CancelledError` warf ohne Vermerk, also verlor ausgerechnet die Seite, die den

@@ -86,7 +86,15 @@ async def _read_capped(request: Request, cap: int) -> bytes | None:
     so an unpaired caller could have this process hold megabytes per request.
     A declared `Content-Length` above the cap is refused before a byte is
     read; a body without one (chunked) is read only up to the cap.
+
+    A body that declares a `Content-Encoding` is refused unread as well. The
+    stream below is the raw body -- nothing here inflates it -- and it has to
+    stay that way: the cap counts bytes on the wire, and a decompressing
+    layer put in front of this route would turn 4 KiB into megabytes.
     """
+    encoding = request.headers.get("content-encoding", "").strip().lower()
+    if encoding not in ("", "identity"):
+        return None
     declared = request.headers.get("content-length")
     if declared is not None and (not declared.isdigit() or int(declared) > cap):
         return None

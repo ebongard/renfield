@@ -201,11 +201,18 @@ describe('the age of a check does not depend on the device clock', () => {
   // The SERVER's clock at the push, and a check it made one minute before.
   const SERVER_AT = NOW;
   const checked = ago(1);
-  /** A display whose own clock is off by `skewMin`, `sinceMin` after receipt. */
+  /** The device's monotonic clock when the list arrived -- an arbitrary
+   *  number, as `performance.now()` is. */
+  const MONO = 987_654;
+  /** A display whose own WALL clock is off by `skewMin`, `sinceMin` after
+   *  receipt. `mono` is what its monotonic clock reads then. */
   const view = (skewMin: number, sinceMin: number) => {
-    const receivedAt = SERVER_AT + skewMin * 60_000;
-    const clock: KioskPeerClock = { receivedAt, serverAt: SERVER_AT };
-    return { clock, now: receivedAt + sinceMin * 60_000 };
+    const clock: KioskPeerClock = { receivedMono: MONO, serverAt: SERVER_AT };
+    return {
+      clock,
+      now: SERVER_AT + (skewMin + sinceMin) * 60_000,
+      mono: MONO + sinceMin * 60_000,
+    };
   };
 
   it.each([
@@ -214,55 +221,88 @@ describe('the age of a check does not depend on the device clock', () => {
     ['25 minutes slow', -25],
     ['a day fast', 24 * 60],
   ])('reads the same age on a tablet whose clock is %s', (_label, skew) => {
-    const { clock, now } = view(skew, 3);
+    const { clock, now, mono } = view(skew, 3);
     // One minute on the server's clock, three on the device's own.
-    expect(peerAgeMs(checked, now, clock)).toBe(4 * 60_000);
-    expect(peerNodeFor(probed({ checked_at: checked }), now, clock).reachability).toBe('reachable');
+    expect(peerAgeMs(checked, now, clock, mono)).toBe(4 * 60_000);
+    expect(peerNodeFor(probed({ checked_at: checked }), now, clock, mono).reachability)
+      .toBe('reachable');
+  });
+
+  it.each([
+    ['forward by three hours (NTP correction, daylight saving)', 180],
+    ['back by three hours', -180],
+  ])('is not moved by a wall clock stepped %s while the page is open', (_label, stepMin) => {
+    // 🛑 Two minutes have passed on the device. Its WALL clock says otherwise.
+    const { clock, mono } = view(0, 2);
+    const steppedNow = SERVER_AT + (2 + stepMin) * 60_000;
+    expect(peerAgeMs(checked, steppedNow, clock, mono)).toBe(3 * 60_000);
+    const node = peerNodeFor(probed({ checked_at: checked }), steppedNow, clock, mono);
+    expect(node.reachability).toBe('reachable');
+    expect(node.reason ?? null).toBeNull();
+  });
+
+  it('still turns stale when the wall clock was stepped BACK over a silent socket', () => {
+    const { clock, mono } = view(0, 21);
+    const steppedNow = SERVER_AT - 180 * 60_000;
+    expect(peerNodeFor(probed({ checked_at: checked }), steppedNow, clock, mono).reason)
+      .toBe('stale');
+  });
+
+  it('reads the monotonic clock by itself when none is handed in', () => {
+    const clock: KioskPeerClock = { receivedMono: performance.now(), serverAt: SERVER_AT };
+    // A wall clock ten hours off, and nothing passed on the device: the age
+    // is the one minute the reading had on the server (plus this test's own
+    // microseconds).
+    const age = peerAgeMs(checked, SERVER_AT + 600 * 60_000, clock);
+    expect(age).toBeGreaterThanOrEqual(60_000);
+    expect(age).toBeLessThan(61_000);
   });
 
   it('does NOT hide a peer behind "unknown" on a tablet running 25 minutes fast', () => {
     // 🛑 The regression: device time minus server time made every check look
     // 26 minutes old, for ever -- and a real outage read "not checked".
-    const { clock, now } = view(25, 0);
+    const { clock, now, mono } = view(25, 0);
     const down = peerNodeFor(
       probed({ reachability: 'unreachable', reachability_reason: 'pin_mismatch', checked_at: checked }),
-      now, clock,
+      now, clock, mono,
     );
     expect(down.reachability).toBe('unreachable');
     expect(down.reason).toBe('pin_mismatch');
   });
 
   it('does NOT keep an old verdict alive on a tablet running 25 minutes slow', () => {
-    const { clock, now } = view(-25, 21);
-    const node = peerNodeFor(probed({ checked_at: checked }), now, clock);
+    const { clock, now, mono } = view(-25, 21);
+    const node = peerNodeFor(probed({ checked_at: checked }), now, clock, mono);
     expect(node.reachability).toBe('unknown');
     expect(node.reason).toBe('stale');
   });
 
   it('turns stale by the passage of time on the device alone (a silent socket)', () => {
-    expect(peerNodeFor(probed({ checked_at: checked }), view(25, 18).now, view(25, 18).clock)
+    const before = view(25, 18);
+    const after = view(25, 19);
+    expect(peerNodeFor(probed({ checked_at: checked }), before.now, before.clock, before.mono)
       .reachability).toBe('reachable');
-    expect(peerNodeFor(probed({ checked_at: checked }), view(25, 19).now, view(25, 19).clock)
+    expect(peerNodeFor(probed({ checked_at: checked }), after.now, after.clock, after.mono)
       .reason).toBe('stale');
   });
 
   it('counts the age the reading already had on the server', () => {
-    const { clock, now } = view(0, 5);
-    // Checked 16 minutes before the push, 5 more on the wall: 21.
-    expect(peerNodeFor(probed({ checked_at: ago(16) }), now, clock).reason).toBe('stale');
+    const { clock, now, mono } = view(0, 5);
+    // Checked 16 minutes before the push, 5 more on the device: 21.
+    expect(peerNodeFor(probed({ checked_at: ago(16) }), now, clock, mono).reason).toBe('stale');
   });
 
   it('applies the same measure to the last-seen backstop with the check off', () => {
     const fast = view(25, 0);
-    expect(peerNodeFor(legacy({ last_seen_at: ago(1) }), fast.now, fast.clock).reachability)
-      .toBe('reachable');
+    expect(peerNodeFor(legacy({ last_seen_at: ago(1) }), fast.now, fast.clock, fast.mono)
+      .reachability).toBe('reachable');
     const slow = view(-25, 11);
-    expect(peerNodeFor(legacy({ last_seen_at: ago(1) }), slow.now, slow.clock).reachability)
-      .toBe('unreachable');
+    expect(peerNodeFor(legacy({ last_seen_at: ago(1) }), slow.now, slow.clock, slow.mono)
+      .reachability).toBe('unreachable');
   });
 
   it('compares the two clocks directly only when the server sent no stamp', () => {
-    const clock: KioskPeerClock = { receivedAt: NOW, serverAt: null };
+    const clock: KioskPeerClock = { receivedMono: MONO, serverAt: null };
     expect(peerAgeMs(ago(2), NOW, clock)).toBe(2 * 60_000);
     expect(peerAgeMs(ago(2), NOW)).toBe(2 * 60_000);
     expect(peerAgeMs('garbage', NOW, clock)).toBeNaN();

@@ -263,21 +263,27 @@ export default function CirclesPeersPage() {
                       data-testid={`peer-reach-${peer.id}`}
                       data-reach-state={reachState}
                     >
-                      {/* The state, its reason and its time change when a check
-                          comes back; a screen reader hears that without the
-                          button's own "checking…" being read into it. */}
+                      {/* The live region: the state and its reason, read as
+                          ONE statement when a check comes back. A real box --
+                          `display: contents` drops an element from the
+                          accessibility tree in some browsers. The relative
+                          time and the button stay OUTSIDE: "2 minutes ago"
+                          turning into "3 minutes ago" is not news, and neither
+                          is the button's own "checking…". */}
                       <span
-                        className="contents"
+                        className="inline-flex flex-wrap items-center gap-x-3 gap-y-1"
                         aria-live="polite"
+                        aria-atomic="true"
                         data-testid={`peer-reach-status-${peer.id}`}
                       >
-                      <span className={`inline-flex items-center gap-1 font-medium ${reachLook.className}`}>
-                        <reachLook.Icon className="w-3.5 h-3.5" aria-hidden="true" />
-                        {t(`circles.peerReachState.${reachState}`)}
+                        <span className={`inline-flex items-center gap-1 font-medium ${reachLook.className}`}>
+                          <reachLook.Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                          {t(`circles.peerReachState.${reachState}`)}
+                        </span>
+                        {reachReason && (
+                          <span className="text-gray-600 dark:text-gray-300">{reachReason}</span>
+                        )}
                       </span>
-                      {reachReason && (
-                        <span className="text-gray-600 dark:text-gray-300">{reachReason}</span>
-                      )}
                       {reach.checked_at && (
                         <span
                           className="text-gray-500 dark:text-gray-400"
@@ -286,21 +292,33 @@ export default function CirclesPeersPage() {
                           {t('circles.peerReachCheckedAt', { when: relativeWhen(reach.checked_at) })}
                         </span>
                       )}
-                      </span>
+                      {/* No aria-label: the accessible name is the button's own
+                          text, so it CONTAINS what is visible (voice control:
+                          "click Check now") and follows it to "Checking…". The
+                          peer it belongs to is appended for screen readers --
+                          a page lists several of these. */}
                       <button
                         type="button"
                         onClick={() => runCheck(peer.id, false)}
                         disabled={checking}
-                        aria-label={t('circles.peerReachCheckNowFor', {
-                          peer: formatPeerLabel(peer.instance_name, peer.remote_display_name),
-                        })}
                         className="inline-flex items-center gap-1 text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50 disabled:no-underline"
                       >
                         <RefreshCw
                           className={`w-3 h-3 ${checking ? 'motion-safe:animate-spin' : ''}`}
                           aria-hidden="true"
                         />
-                        {checking ? t('circles.peerReachChecking') : t('circles.peerReachCheckNow')}
+                        {/* One inline box for both, so the space between them is
+                            a text node in an inline run: as a child of the
+                            flex button it is not rendered, and inside the
+                            sr-only span it is trimmed away when the name is
+                            computed -- "Check nowFar Instance" either way. */}
+                        <span>
+                          {checking ? t('circles.peerReachChecking') : t('circles.peerReachCheckNow')}
+                          {' '}
+                          <span className="sr-only">
+                            {formatPeerLabel(peer.instance_name, peer.remote_display_name)}
+                          </span>
+                        </span>
                       </button>
                     </div>
                   )}

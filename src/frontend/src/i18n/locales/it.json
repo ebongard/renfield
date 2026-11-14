@@ -1762,7 +1762,6 @@
     },
     "peerReachCheckedAt": "verificato {{when}}",
     "peerReachCheckNow": "Verifica ora",
-    "peerReachCheckNowFor": "Verifica ora la raggiungibilità di {{peer}}",
     "peerReachChecking": "Verifica in corso…",
     "peerReachCheckFailed": "Impossibile verificare la raggiungibilità.",
     "peerRecentlyActive": "Attivo di recente",
