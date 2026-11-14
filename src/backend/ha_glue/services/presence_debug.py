@@ -120,7 +120,11 @@ def build_sightings_payload(presence) -> dict[str, Any]:
 
     Per tracked device: redacted key, user, the room the system currently
     places them in + confidence, the per-room filtered RSSI the switch margin
-    compares, and every sighting still in the service's window.
+    compares, and every sighting still in the service's window. With the
+    placement v2 shadow on, additionally ``placement_v2``: the shadow verdict
+    as of this snapshot and its components (the key is absent with it off).
+    While the clock is behind the shadow's last decided report the field
+    carries ``held: true`` and the verdict of that report instead.
     """
     now = time.time()
     payload: dict[str, Any] = {
@@ -134,12 +138,15 @@ def build_sightings_payload(presence) -> dict[str, Any]:
         return payload
 
     payload["satellites"] = _connected_satellites()
+    # Placement v2 shadow (None unless its flag is on): adds one field per
+    # device below. Absent with the flag off, so the payload is unchanged.
+    shadow = getattr(presence, "_placement_shadow", None)
     out = payload["devices"]
     for key, sightings in presence._sightings.items():
         uid = presence._user_for_key(key)
         cur = presence._presence.get(uid) if uid is not None else None
         filtered = cur.room_rssi_filtered if cur else {}
-        out.append({
+        entry = {
             "key": redact_device_key(key),
             "user_id": uid,
             "user_name": presence.get_user_name(uid) if uid is not None else None,
@@ -173,7 +180,12 @@ def build_sightings_payload(presence) -> dict[str, Any]:
                 }
                 for s in sorted(sightings, key=lambda x: x.timestamp)
             ],
-        })
+        }
+        if shadow is not None:
+            # What the shadow decision says right now, with the numbers behind
+            # it. Null when it could not be computed; nothing acts on it.
+            entry["placement_v2"] = shadow.payload_for(presence, key, now)
+        out.append(entry)
     return payload
 
 

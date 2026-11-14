@@ -117,6 +117,25 @@ class HaGlueSettings(BaseSettings):
     presence_switch_enter_margin_db: float = 8.0        # dB the challenger's FILTERED value must beat the current room by to switch (replaces the scan count)
     presence_voice_hold_seconds: float = 60.0           # Seconds a voice/auth sighting pins the room against BLE readings (0 = off: the next BLE scan may move the user at once)
     presence_voice_release_margin_db: float = 10.0      # dB above presence_rssi_threshold a room's FILTERED RSSI needs to take a user out of a voice/auth room the phone was never heard in (0 = off: any reading takes over once the hold ends). RSSI-filter path only.
+    # Placement v2 (stage 1 = shadow only): a second room decision with a reject
+    # option runs beside the legacy one and is LOGGED, never acted on. See
+    # ha_glue/services/presence_placement.py and docs/design/ble-presence-improvement.md.
+    presence_placement_v2_shadow_enabled: bool = False  # Off: the new decision is not imported, not run, not logged
+    # Per-receiver parameters as JSON, keyed by satellite id:
+    #   {"<satellite_id>": {"offset_db": 0, "in_room_dbm": -60, "cutoff_dbm": -80}}
+    # EMPTY by default and on purpose: these are measurements of one receiver in
+    # one room, there is no value that holds for another. A receiver that is not
+    # listed keeps a user "home" but can never place them.
+    presence_placement_v2_receivers: str = ""
+    # Open-plan zones as JSON: {"<zone name>": [<room_id>, <room_id>]}. Empty = every room is its own zone.
+    presence_placement_v2_zones: str = ""
+    # The decision's own numbers. Choices, not measurements. Validated together
+    # with the JSON above when the shadow starts; an invalid value switches the
+    # shadow off with an ERROR instead of stopping the backend.
+    presence_placement_v2_time_constant_seconds: float = 6.0  # Weight of a reading falls to 1/e after this long
+    presence_placement_v2_fresh_seconds: float = 20.0         # A receiver "hears" the device only with a reading this young
+    presence_placement_v2_margin_db: float = 10.0             # dB the claiming zone must lead every receiver outside it
+    presence_placement_v2_hysteresis_db: float = 3.0          # dB the bound and the margin are relaxed by for the incumbent zone
     presence_household_roles: str = "Admin,Familie"     # Roles considered household members for privacy TTS
     presence_webhook_url: str = ""                      # URL to POST presence events (empty = disabled)
     presence_webhook_secret: SecretStr | None = None    # Shared secret for webhook auth (X-Webhook-Secret header)

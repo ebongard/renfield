@@ -1200,6 +1200,37 @@ PRESENCE_VOICE_RELEASE_MARGIN_DB=10.0   # dB über PRESENCE_RSSI_THRESHOLD, die 
 PRESENCE_HOUSEHOLD_ROLES="Admin,Familie" # Rollen die als Haushaltsmitglieder gelten (für Privacy-TTS)
 PRESENCE_ANALYTICS_TIMEZONE="Europe/Berlin" # Lokale Zeitzone für Heatmap-/Prognose-Stunden+Tage (Events werden UTC gespeichert); ungültiger Wert => UTC
 
+# Raumentscheidung v2, Stufe 1 = NUR Schattenbetrieb (docs/design/ble-presence-improvement.md → "Placement v2").
+# Eine zweite Entscheidung mit Ablehnungsoption ("zu Hause, Raum unbekannt") läuft NEBEN der bisherigen auf
+# denselben Meldungen und wird nur protokolliert: kein Präsenzzustand, kein Ereignis, kein Kiosk, kein
+# Privatsphäre-Tor liest sie. Aus = das neue Modul wird weder geladen noch ausgeführt.
+PRESENCE_PLACEMENT_V2_SHADOW_ENABLED=false
+# Kennwerte JE EMPFÄNGER als JSON, Schlüssel = Satelliten-ID. LEER als Vorgabe, und zwar absichtlich: es sind
+# Messwerte eines Empfängers in einem Raum, es gibt keinen Wert, der für einen anderen gilt. Ein nicht
+# aufgeführter Empfänger hält eine Person "zu Hause", kann sie aber NIE einem Raum zuordnen.
+#   offset_db    wird auf den geglätteten Messwert ADDIERT, bevor Empfänger miteinander verglichen werden
+#   in_room_dbm  schwächster geglätteter ROH-Messwert dieses Empfängers, der noch "in seinem Raum" heißt
+#                (auf der eigenen Skala des Empfängers; der Versatz verschiebt diese Grenze nicht)
+#   cutoff_dbm   Pegel, unter dem der Satellit nichts meldet (sein eigenes rssi_threshold); muss unter in_room_dbm liegen
+# Alle drei Felder sind Pflicht, unbekannte Felder werden abgelehnt.
+PRESENCE_PLACEMENT_V2_RECEIVERS=''       # z.B. '{"sat-a": {"offset_db": 0, "in_room_dbm": -60, "cutoff_dbm": -80}}'
+# Offene Raumgruppen als JSON: Zonenname → Raum-IDs (mindestens zwei, jeder Raum in höchstens einer Zone).
+# Eine Zone wird als EINE Einheit entschieden; der nähere Raum ist nur ein Hinweis.
+PRESENCE_PLACEMENT_V2_ZONES=''           # z.B. '{"zone-a": [1, 5]}'
+# Kennzahlen der Entscheidung selbst — Festlegungen, keine Messwerte.
+PRESENCE_PLACEMENT_V2_TIME_CONSTANT_SECONDS=6.0  # Gewicht eines Messwerts fällt nach dieser Zeit auf 1/e (Glättung je Empfänger, zeitbasiert)
+PRESENCE_PLACEMENT_V2_FRESH_SECONDS=20.0         # ein Empfänger "hört" das Gerät nur mit einem Messwert, der höchstens so alt ist
+PRESENCE_PLACEMENT_V2_MARGIN_DB=10.0             # dB Vorsprung der Zone vor jedem Empfänger außerhalb
+PRESENCE_PLACEMENT_V2_HYSTERESIS_DB=3.0          # um so viele dB werden Grenze und Vorsprung für die bisherige Zone gelockert (<= MARGIN_DB)
+# Die Frist "abwesend" ist PRESENCE_STALE_TIMEOUT, das Lebenszeichen-Fenster eines Empfängers
+# DEVICE_HEARTBEAT_TIMEOUT — keine zweite Kopie.
+# Was den Schattenbetrieb mit EINER ERROR-Zeile abschaltet, während das Backend trotzdem startet: ein
+# unbrauchbarer Inhalt der beiden JSON-Zeichenketten (kaputtes JSON, fehlendes oder unbekanntes Feld, keine
+# endliche Zahl, in_room_dbm <= cutoff_dbm, Raum in zwei Zonen) und eine verletzte Regel ZWISCHEN den Zahlen
+# (HYSTERESIS_DB > MARGIN_DB, FRESH_SECONDS > PRESENCE_STALE_TIMEOUT, ein Wert <= 0, nan/inf).
+# Was das NICHT abdeckt: die vier Zahlen sind gewöhnliche Fließkomma-Einstellungen. Ein Wert, der keine Zahl
+# ist (z.B. "zehn"), hält das Backend beim Start an — wie bei jeder anderen Zahl-Einstellung auch.
+
 # Presence Webhooks (Automation-Hooks)
 PRESENCE_WEBHOOK_URL=""                  # URL für Presence-Events (leer = deaktiviert). Unterstützt n8n Webhook-Trigger
 PRESENCE_WEBHOOK_SECRET=""               # Shared Secret als X-Webhook-Secret Header für Webhook-Authentifizierung
