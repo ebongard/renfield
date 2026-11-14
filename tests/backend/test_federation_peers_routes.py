@@ -161,7 +161,6 @@ class TestRevokePeer:
         db = MagicMock()
         r1 = MagicMock()
         r1.scalar_one_or_none = lambda: peer
-        r1.rowcount = 0  # the revoke also deletes the pairing's links
         db.execute = AsyncMock(return_value=r1)
         db.commit = AsyncMock()
 
@@ -233,7 +232,6 @@ class TestRevokePeer:
         db = MagicMock()
         r = MagicMock()
         r.scalar_one_or_none = lambda: peer
-        r.rowcount = 0  # the revoke also deletes the pairing's links
         db.execute = AsyncMock(return_value=r)
         db.commit = AsyncMock()
 
@@ -264,7 +262,6 @@ class TestRevokePeer:
         db = MagicMock()
         r = MagicMock()
         r.scalar_one_or_none = lambda: peer
-        r.rowcount = 0  # the revoke also deletes the pairing's links
         db.execute = AsyncMock(return_value=r)
         db.commit = AsyncMock()
 
@@ -327,7 +324,6 @@ class TestRevokePeer:
         db = MagicMock()
         r = MagicMock()
         r.scalar_one_or_none = lambda: peer
-        r.rowcount = 0  # the revoke also deletes the pairing's links
         db.execute = AsyncMock(return_value=r)
         db.commit = AsyncMock()
 
@@ -359,7 +355,6 @@ class TestRevokePeer:
         db = MagicMock()
         r = MagicMock()
         r.scalar_one_or_none = lambda: peer
-        r.rowcount = 0  # the revoke also deletes the pairing's links
         db.execute = AsyncMock(return_value=r)
         db.commit = AsyncMock()
 

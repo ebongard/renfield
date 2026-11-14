@@ -27,7 +27,7 @@ import secrets
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import FederationUserLink, User
+from models.database import FederationUserLink, PeerUser, User
 
 
 def mint_querier_ref() -> str:
@@ -122,15 +122,61 @@ async def delete_link(db: AsyncSession, *, link_id: int) -> bool:
     return res.rowcount > 0
 
 
-async def delete_links_for_peer(db: AsyncSession, *, peer_id: int) -> int:
-    """Remove every person link of one pairing; returns how many.
+async def delete_links_for_peer(db: AsyncSession, *, peer_id: int) -> list[tuple[int, int | None]]:
+    """Remove every person link of one pairing; returns `(link_id,
+    local_user_id)` of each removed link.
 
-    Called when the pairing is revoked. The pairing row is KEPT and pairing
-    again revives it under the same id -- link rows left behind would come back
-    to life with it, and the far side, which still holds the `querier_ref`,
-    would be served with a person's full reach that nobody consented to anew.
+    The pairing row is KEPT when it is revoked, and pairing again revives it
+    under the same id -- link rows left behind would come back to life with it,
+    and the far side, which still holds the `querier_ref`, would be served with
+    a person's full reach that nobody consented to anew.
     """
-    res = await db.execute(
-        delete(FederationUserLink).where(FederationUserLink.peer_id == peer_id)
+    rows = (await db.execute(
+        delete(FederationUserLink)
+        .where(FederationUserLink.peer_id == peer_id)
+        .returning(FederationUserLink.id, FederationUserLink.local_user_id)
+    )).all()
+    return sorted((row[0], row[1]) for row in rows)
+
+
+async def revoke_links_of_pairing(
+    db: AsyncSession, *, peer: PeerUser, actor_user_id: int, cause: str,
+) -> int:
+    """Delete the pairing's person links and record EACH one; returns how many.
+
+    The one place both ends of a pairing's life go through: its revocation
+    (`revoke_peer`) and the revival of a revoked row (`pairing_service`). The
+    second matters for every pairing revoked before the first existed -- its
+    links were left in place and would otherwise go live again on re-pairing.
+
+    Most of these links belong to accounts other than the one acting, so a
+    count is not a record: one `link_revoked` row per link, in the caller's
+    transaction. Nothing is committed here.
+    """
+    from services.federation_audit import (
+        BASIS_ADMIN,
+        BASIS_OWNER,
+        BASIS_SELF,
+        LINK_REVOKED,
+        record_revocation,
     )
-    return res.rowcount or 0
+
+    removed = await delete_links_for_peer(db, peer_id=peer.id)
+    for link_id, local_user_id in removed:
+        if local_user_id == actor_user_id:
+            basis = BASIS_SELF
+        elif peer.circle_owner_id == actor_user_id:
+            basis = BASIS_OWNER
+        else:
+            basis = BASIS_ADMIN
+        record_revocation(
+            db,
+            action=LINK_REVOKED,
+            basis=basis,
+            actor_user_id=actor_user_id,
+            peer=peer,
+            subject_user_id=local_user_id,
+            link_id=link_id,
+            cause=cause,
+        )
+    return len(removed)

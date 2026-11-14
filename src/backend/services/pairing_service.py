@@ -522,6 +522,17 @@ class PairingService:
 
         now = datetime.now(UTC).replace(tzinfo=None)
         if existing is not None:
+            if existing.revoked_at is not None:
+                # 🛑 A revoked row comes back to life under the SAME id, and
+                # with it every person link still pointing at it. Pairing anew
+                # is not linking anew: the links go, each on record
+                # (`revoke_links_of_pairing`), in this transaction.
+                from services.federation_audit import PAIRING_REVIVED
+                from services.federation_identity_link import revoke_links_of_pairing
+                await revoke_links_of_pairing(
+                    self.db, peer=existing, actor_user_id=owner_user_id,
+                    cause=PAIRING_REVIVED,
+                )
             existing.remote_display_name = remote_display_name
             # Only a verified name replaces a stored one. Pairing again with a
             # far side that sends none (an older version) keeps what the same

@@ -31,7 +31,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from httpx import AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from models.database import FederationQueryLog, FederationUserLink, PeerUser, Role, User
 from services.auth_service import get_current_user, get_user_or_default
@@ -40,6 +40,7 @@ from services.federation_audit import (
     BASIS_OWNER,
     BASIS_SELF,
     LINK_REVOKED,
+    PAIRING_REVIVED,
     PAIRING_REVOKED,
     REVOCATION_DIRECTION,
     prune_old_audit_rows,
@@ -444,9 +445,15 @@ def _assert_ids_only(row: FederationQueryLog) -> dict:
     assert row.answer_excerpt is None
     assert row.error_message is None
     assert FAR_NAME not in row.query_text
+    # Never filed under an account: the foreign key has no delete rule and the
+    # row is never pruned, so it would pin that account for good.
+    assert row.user_id is None
     detail = json.loads(row.query_text)
     for key, value in detail.items():
-        assert key == "action" or isinstance(value, (int, bool)), (key, value)
+        if key in ("action", "cause"):
+            assert value in (PAIRING_REVOKED, LINK_REVOKED, PAIRING_REVIVED), (key, value)
+        else:
+            assert isinstance(value, (int, bool)), (key, value)
     return detail
 
 
@@ -463,10 +470,10 @@ class TestPairingRevocationIsRecorded:
         as_user(admin)
         assert (await async_client.delete(f"{PEERS}/{pairing_id}")).status_code == 204
 
-        (row,) = await _revocations(db_session)
+        link_row, row = await _revocations(db_session)
+        assert link_row.final_status == LINK_REVOKED
         assert row.final_status == PAIRING_REVOKED
         assert row.identity_basis == BASIS_ADMIN
-        assert row.user_id == owner.id            # filed under the affected account
         assert row.peer_user_id == pairing_id
         assert row.peer_pubkey_snapshot == pubkey
         assert before <= row.initiated_at <= datetime.now(UTC).replace(tzinfo=None)
@@ -529,7 +536,6 @@ class TestLinkRevocationIsRecorded:
         (row,) = await _revocations(db_session)
         assert row.final_status == LINK_REVOKED
         assert row.identity_basis == BASIS_ADMIN
-        assert row.user_id == owner.id
         assert row.peer_user_id == pairing.id
         assert _assert_ids_only(row) == {
             "action": LINK_REVOKED,
@@ -551,8 +557,9 @@ class TestLinkRevocationIsRecorded:
         assert (await async_client.delete(f"{USER_LINKS}/{link.id}")).status_code == 200
         (row,) = await _revocations(db_session)
         assert row.identity_basis == BASIS_SELF
-        assert row.user_id == world["admin"].id
-        assert json.loads(row.query_text)["as_admin"] is False
+        detail = _assert_ids_only(row)
+        assert detail["subject_user_id"] == world["admin"].id
+        assert detail["as_admin"] is False
 
     async def test_a_link_without_an_account_is_filed_under_the_pairing_owner(
         self, async_client: AsyncClient, db_session, world, as_user, purged,
@@ -562,7 +569,7 @@ class TestLinkRevocationIsRecorded:
         as_user(world["admin"])
         assert (await async_client.delete(f"{USER_LINKS}/{link.id}")).status_code == 200
         (row,) = await _revocations(db_session)
-        assert row.user_id == world["owner"].id
+        assert _assert_ids_only(row)["subject_user_id"] == world["owner"].id
         assert row.identity_basis == BASIS_ADMIN
 
     async def test_an_unknown_link_is_a_404_and_no_record(
@@ -583,8 +590,8 @@ class TestLinkRevocationIsRecorded:
         (row,) = await _revocations(db_session)
         assert row.final_status == LINK_REVOKED
         assert row.identity_basis == BASIS_SELF
-        assert row.user_id == world["member"].id
         detail = _assert_ids_only(row)
+        assert detail["subject_user_id"] == world["member"].id
         assert detail["actor_user_id"] == world["member"].id
         assert detail["link_id"] == link_id
         assert detail["as_admin"] is False
@@ -618,7 +625,7 @@ class TestARevocationIsNotAQuery:
             FederationQueryLog(
                 direction=REVOCATION_DIRECTION, final_status=PAIRING_REVOKED,
                 identity_basis=BASIS_ADMIN, query_text="{}",
-                peer_display_name_snapshot="", **common,
+                peer_display_name_snapshot="", **{**common, "user_id": None},
             ),
         ])
         await db.commit()
@@ -642,3 +649,178 @@ class TestARevocationIsNotAQuery:
             .group_by(FederationQueryLog.direction)
         )).all()
         assert remaining == [(REVOCATION_DIRECTION, 1)]
+
+
+# ---------------------------------------------------------------------------
+# 3. Review follow-ups (2026-11-14)
+# ---------------------------------------------------------------------------
+
+
+class TestARevocationDoesNotPinAnAccount:
+    async def test_subject_and_actor_can_be_deleted_afterwards(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        """`federation_query_log.user_id` references `users.id` without a
+        delete rule, and revocation rows are never pruned. Filed under the
+        subject (or the actor), one revocation made that account undeletable
+        for good."""
+        member_id, admin_id = world["member"].id, world["admin"].id
+        link = await _link(db_session, world["pairing"], world["member"])
+        as_user(world["admin"])
+        assert (await async_client.delete(f"{USER_LINKS}/{link.id}")).status_code == 200
+        (row,) = await _revocations(db_session)
+        detail = _assert_ids_only(row)
+        assert (detail["subject_user_id"], detail["actor_user_id"]) == (member_id, admin_id)
+
+        for user_id in (member_id, admin_id):       # the subject, then the actor
+            await db_session.execute(delete(User).where(User.id == user_id))
+            await db_session.commit()
+        assert (await db_session.execute(
+            select(func.count()).select_from(User).where(User.id.in_([member_id, admin_id]))
+        )).scalar() == 0
+        # The record outlives both, ids intact.
+        (row,) = await _revocations(db_session)
+        assert json.loads(row.query_text)["subject_user_id"] == member_id
+
+    async def test_the_query_view_tolerates_rows_without_an_account(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        link = await _link(db_session, world["pairing"], world["owner"])
+        as_user(world["owner"])
+        assert (await async_client.delete(f"{LINKS}/{link.id}")).status_code == 204
+        resp = await async_client.get(AUDIT)
+        assert resp.status_code == 200
+        assert resp.json()["entries"] == []
+
+
+class TestEveryLinkRemovedWithAPairingIsOnRecord:
+    async def test_one_record_per_removed_link_naming_whose_it_was(
+        self, async_client: AsyncClient, db_session, world, as_user,
+        visible_to_all, purged,
+    ):
+        """A count says nothing about WHOSE links went."""
+        pairing, owner, member, admin = (
+            world["pairing"], world["owner"], world["member"], world["admin"])
+        mine = await _link(db_session, pairing, admin)
+        theirs = await _link(db_session, pairing, member)
+        owners = await _link(db_session, pairing, owner)
+        expected = {
+            mine.id: (admin.id, BASIS_SELF),
+            theirs.id: (member.id, BASIS_ADMIN),
+            owners.id: (owner.id, BASIS_ADMIN),
+        }
+        pairing_id, owner_id, admin_id = pairing.id, owner.id, admin.id
+
+        as_user(admin)
+        assert (await async_client.delete(f"{PEERS}/{pairing_id}")).status_code == 204
+
+        rows = await _revocations(db_session)
+        link_rows = [r for r in rows if r.final_status == LINK_REVOKED]
+        (pairing_row,) = [r for r in rows if r.final_status == PAIRING_REVOKED]
+        assert json.loads(pairing_row.query_text)["links_removed"] == 3
+        seen = {}
+        for row in link_rows:
+            detail = _assert_ids_only(row)
+            assert detail["cause"] == PAIRING_REVOKED
+            assert detail["actor_user_id"] == admin_id
+            assert detail["owner_user_id"] == owner_id
+            assert detail["peer_id"] == pairing_id == row.peer_user_id
+            assert detail["as_admin"] is (row.identity_basis == BASIS_ADMIN)
+            seen[detail["link_id"]] = (detail["subject_user_id"], row.identity_basis)
+        assert seen == expected
+
+    async def test_the_owner_removing_anothers_link_is_recorded_as_owner(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        await _link(db_session, world["pairing"], world["member"])
+        member_id = world["member"].id
+        as_user(world["owner"])
+        assert (await async_client.delete(f"{PEERS}/{world['pairing_id']}")).status_code == 204
+        link_row, _pairing_row = await _revocations(db_session)
+        assert link_row.identity_basis == BASIS_OWNER
+        assert _assert_ids_only(link_row)["subject_user_id"] == member_id
+
+
+class TestLinksOfAPairingRevokedEarlier:
+    """A pairing revoked BEFORE the cleanup existed still carries its links."""
+
+    async def _revoked_with_a_leftover_link(self, db, world) -> tuple[int, str]:
+        pairing = world["pairing"]
+        link = await _link(db, pairing, world["member"])
+        pairing.revoked_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=5)
+        pairing.granted_tier = 4
+        await db.commit()
+        return link.id, link.querier_ref
+
+    async def test_pairing_again_does_not_bring_the_old_link_back(
+        self, db_session, world, this_instance,
+    ):
+        """`pairing_service` revives the row in place, same id. The far side
+        still holds the old `querier_ref`."""
+        from services.pairing_service import PairingService
+
+        link_id, ref = await self._revoked_with_a_leftover_link(db_session, world)
+        pairing_id, owner_id, member_id = (
+            world["pairing_id"], world["owner"].id, world["member"].id)
+
+        revived = await PairingService(db_session)._upsert_peer_user(
+            owner_user_id=owner_id,
+            remote_pubkey=world["pairing"].remote_pubkey,
+            remote_display_name=FAR_NAME,
+            remote_user_id=555,
+            granted_tier=2,
+            transport_config={},
+        )
+        assert revived.id == pairing_id
+        assert revived.revoked_at is None
+
+        assert await _links(db_session, pairing_id) == []
+        assert await resolve_linked_user(
+            db_session, peer_id=pairing_id, querier_ref=ref,
+        ) is None
+        (row,) = await _revocations(db_session)
+        assert row.final_status == LINK_REVOKED
+        assert row.identity_basis == BASIS_OWNER
+        assert _assert_ids_only(row) == {
+            "action": LINK_REVOKED,
+            "cause": PAIRING_REVIVED,
+            "actor_user_id": owner_id,
+            "as_admin": False,
+            "owner_user_id": owner_id,
+            "peer_id": pairing_id,
+            "subject_user_id": member_id,
+            "link_id": link_id,
+        }
+
+    async def test_pairing_again_over_an_ACTIVE_pairing_keeps_its_links(
+        self, db_session, world, this_instance,
+    ):
+        """Re-pairing a live pairing (a renewed certificate, a new endpoint)
+        ends nobody's consent: the links were live a moment ago."""
+        from services.pairing_service import PairingService
+
+        await _link(db_session, world["pairing"], world["member"])
+        await PairingService(db_session)._upsert_peer_user(
+            owner_user_id=world["owner"].id,
+            remote_pubkey=world["pairing"].remote_pubkey,
+            remote_display_name=FAR_NAME,
+            remote_user_id=555,
+            granted_tier=3,
+            transport_config={},
+        )
+        assert len(await _links(db_session, world["pairing_id"])) == 1
+        assert await _revocations(db_session) == []
+
+    async def test_revoking_it_again_clears_and_records_the_leftover(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        link_id, _ref = await self._revoked_with_a_leftover_link(db_session, world)
+        as_user(world["owner"])
+        assert (await async_client.delete(f"{PEERS}/{world['pairing_id']}")).status_code == 204
+
+        assert await _links(db_session, world["pairing_id"]) == []
+        # The link is on record; the pairing itself was not revoked a second time.
+        (row,) = await _revocations(db_session)
+        assert row.final_status == LINK_REVOKED
+        detail = _assert_ids_only(row)
+        assert (detail["link_id"], detail["cause"]) == (link_id, PAIRING_REVOKED)
