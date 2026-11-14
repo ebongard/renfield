@@ -285,14 +285,13 @@ silero_vad_url: "https://github.com/snakers4/silero-vad/raw/{{ silero_vad_versio
 silero_vad_sha256: "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
 alexa_model_url: "{{ oww_base_url }}/alexa_v0.1.onnx"
 
-# 🛑 EINE Liste, zwei Verwender. Jeder I2S-HAT-Overlay, der beim Wechsel der
-# Soundkarte liegenbleibt, meldet beim Start eine Phantomkarte an und kann die
-# neue Karte an der Anmeldung hindern. Bis 2026-10-13 gab es dafür ZWEI
-# getrennte Listen im Playbook (eine für `2mic-v2`, eine für `xvf3800-usb`),
-# und die zweite war eine Teilmenge der ersten: `seeed-2mic-gpclk-simple` und
-# `-full` fehlten ihr. Genau dieses Overlay trug das Wohnzimmer nach dem
-# Wechsel auf den XVF3800 — der Aufräumschritt hätte es stehen gelassen.
-# Zwei Listen für dieselbe Aufgabe driften; eine tut es nicht.
+# ONE list, two users. Any I2S HAT overlay left behind after a sound-card swap
+# registers a phantom card at boot and can keep the new card from enumerating.
+# Until 2026-10-13 the playbook held TWO separate lists (one for `2mic-v2`, one
+# for `xvf3800-usb`), and the second was a subset of the first: it lacked
+# `seeed-2mic-gpclk-simple` and `-full` - exactly the overlay one satellite
+# carried after its swap to the XVF3800, so the cleanup would have left it in
+# place. The `2mic-v2` task rejects its own overlay from this list.
 stale_i2s_hat_overlays:
   - seeed-2mic-gpclk-simple
   - seeed-2mic-gpclk-full
