@@ -172,12 +172,16 @@ class TestRevokePeer:
         # revoked_at is now set
         assert peer.revoked_at is not None
         assert isinstance(peer.revoked_at, datetime)
-        # 🛑 ONLY the SELECT on the peer row is left. The second `execute`
-        # was a DELETE on `circle_memberships` with
+        # 🛑 NO statement touches `circle_memberships`. Until 2026-10-27 the
+        # second `execute` was a DELETE there with
         # `member_user_id = remote_user_id` -- the defect itself, and on top of
         # that without a `dimension` filter, so it also hit `tenant`/`project`
-        # rows of the same pair.
-        assert db.execute.await_count == 1
+        # rows of the same pair. Since 2026-11-14 the second statement is the
+        # DELETE of this pairing's own person links, and nothing else.
+        statements = [str(call.args[0]) for call in db.execute.await_args_list]
+        assert len(statements) == 2
+        assert statements[1].startswith("DELETE FROM federation_user_links")
+        assert not any("circle_memberships" in s for s in statements)
         # The reach now falls over the row itself: revoked AND reset to the
         # narrowest tier, so a later unblocking does not silently inherit the
         # old grant.

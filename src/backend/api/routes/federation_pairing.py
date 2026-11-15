@@ -575,6 +575,8 @@ async def revoke_peer(
 ):
     """Revoke a paired peer. Side effects:
       - PeerUser.revoked_at := now (the row stays for audit trail)
+      - every person link of the pairing is deleted
+      - one `federation_query_log` row records who revoked whose pairing
       - PeerUser.granted_tier := 4, the narrowest rung, so a later
         re-pairing cannot silently inherit the old grant
       - MCPManager peer registry re-synced so `mcp.peer_<id>.query_brain`
@@ -601,7 +603,43 @@ async def revoke_peer(
         # another user — no existence oracle on peer ids.
         raise HTTPException(status_code=404, detail="Peer not found")
 
+    was_active = peer.revoked_at is None
     peer.revoked_at = datetime.now(UTC).replace(tzinfo=None)
+
+    # 🛑 The person links go with the pairing. The row is kept and pairing
+    # again revives it under the same id; a link left behind would be live
+    # again with it -- the far side still holds the `querier_ref` -- and lend a
+    # person's FULL reach to a pairing nobody linked anew. Same reasoning as
+    # the `granted_tier` reset below, one rung more serious.
+    #
+    # Each removed link gets a record of its own: most belong to accounts
+    # other than the one revoking. And this runs for an ALREADY revoked pairing
+    # too -- one revoked before 2026-11-14 still carries its links, and
+    # revoking it again is how they are cleared.
+    from services.federation_audit import (
+        BASIS_ADMIN,
+        BASIS_OWNER,
+        PAIRING_REVOKED,
+        record_revocation,
+    )
+    from services.federation_identity_link import revoke_links_of_pairing
+    links_removed = await revoke_links_of_pairing(
+        db, peer=peer, actor_user_id=current_user.id, cause=PAIRING_REVOKED,
+    )
+
+    # 🛑 The record is written in THIS transaction: a revocation without its
+    # row, or a row without its revocation, cannot be committed. The PAIRING
+    # row is recorded only for a real revocation -- revoking an already
+    # revoked pairing again changes nothing about the pairing itself.
+    if was_active:
+        record_revocation(
+            db,
+            action=PAIRING_REVOKED,
+            basis=BASIS_OWNER if peer.circle_owner_id == current_user.id else BASIS_ADMIN,
+            actor_user_id=current_user.id,
+            peer=peer,
+            links_removed=links_removed,
+        )
 
     # 🛑 Until 2026-10-27 there was a DELETE on `circle_memberships` here with
     # `member_user_id = peer.remote_user_id`. That was the bug itself -- the

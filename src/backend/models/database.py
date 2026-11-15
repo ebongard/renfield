@@ -3584,7 +3584,15 @@ class FederationQueryLog(Base):
     # No single-column index on user_id — the composite
     # `idx_fed_audit_user_initiated` covers `WHERE user_id = ?` queries
     # via the leading-column rule.
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # 🛑 Nullable since `pc20261114_fed_log_user_null`, for ONE kind of row: a
+    # revocation record (`direction='revoke'`) carries no `user_id`. Those rows
+    # are never pruned, and this foreign key has no delete rule -- filed under
+    # an account they would make it undeletable for good. Query rows always
+    # carry the account (CHECK `ck_fed_query_log_user_or_revoke` below); the
+    # delete rule is deliberately left as it is, so an
+    # account that still has query rows is refused like any other that holds
+    # data (`api/routes/users.py::delete_user`).
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     # Nullable because peer_users can be deleted while audit survives.
     peer_user_id = Column(
@@ -3642,6 +3650,12 @@ class FederationQueryLog(Base):
         Index("idx_fed_audit_user_initiated", "user_id", "initiated_at"),
         # Per-peer filter: "show me everything I've asked Mom".
         Index("idx_fed_audit_user_peer", "user_id", "peer_pubkey_snapshot"),
+        # `user_id` is nullable for revocation rows ONLY. Same name and
+        # expression as in `pc20261114_fed_log_user_null`.
+        CheckConstraint(
+            "direction = 'revoke' OR user_id IS NOT NULL",
+            name="ck_fed_query_log_user_or_revoke",
+        ),
     )
 
     user = relationship("User", foreign_keys=[user_id])

@@ -101,9 +101,10 @@ class TestWriteFederationAudit:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_user_id_none_skips_write(self, monkeypatch):
-        """Auth-disabled deploys (user_id=None) must not write. The
-        FederationQueryLog.user_id column is NOT NULL — an attempted
-        insert would fail, and we can't attribute anonymous rows anyway."""
+        """Auth-disabled deploys (user_id=None) must not write. A query row
+        without an account is refused by the database (CHECK
+        `ck_fed_query_log_user_or_revoke`; only revocation records carry no
+        `user_id`) — and we can't attribute anonymous rows anyway."""
         called = False
 
         class _FakeSession:
