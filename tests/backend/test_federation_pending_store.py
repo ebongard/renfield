@@ -140,6 +140,19 @@ class TestInMemoryStore:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_save_never_brings_a_purged_record_back(self):
+        """`save` updates, `put` creates. A background task still holding
+        the object of a purged request must not re-create it."""
+        store = InMemoryPendingStore()
+        pr = _make_pending("r1")
+        await store.put(pr)
+        assert await store.save(pr) is True
+        await store.delete_many(["r1"])
+        assert await store.save(pr) is False
+        assert await store.get("r1") is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_prune_expired(self):
         store = InMemoryPendingStore()
         # Past TTL — one minute ago, still PROCESSING.
@@ -229,8 +242,10 @@ class FakeRedis:
     async def get(self, key):
         return self._strings.get(key)
 
-    async def set(self, key, value, *, ex=None, nx=False):
+    async def set(self, key, value, *, ex=None, nx=False, xx=False):
         if nx and key in self._strings:
+            return None
+        if xx and key not in self._strings:
             return None
         self._strings[key] = value
         return True
@@ -326,6 +341,16 @@ class TestRedisStore:
         await redis_store.delete_many(["r1"])
         assert await redis_store.get("r1") is None
         assert await redis_store.get("r2") is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_save_never_brings_a_purged_record_back(self, redis_store):
+        pr = _make_pending("r1")
+        await redis_store.put(pr)
+        assert await redis_store.save(pr) is True
+        await redis_store.delete_many(["r1"])
+        assert await redis_store.save(pr) is False
+        assert await redis_store.get("r1") is None
 
     @pytest.mark.asyncio
     @pytest.mark.unit

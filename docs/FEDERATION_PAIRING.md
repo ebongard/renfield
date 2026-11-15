@@ -655,16 +655,24 @@ bucket; the ping path answering 405 / a redirect with reachability off; the
 inbound body read having no deadline; peer endpoints being stored and used
 unchecked.
 
+**A revoked pairing gets no answer.** The pairing is looked up when a request
+is admitted, again by the background task before it retrieves and before it
+stores its result, and again on every poll. The purge on revocation is final:
+the pending store's `save` only updates an existing record, so a task that was
+queued or in flight cannot bring a purged request back. A poll on a revoked
+pairing is answered exactly like a poll for an unknown request. The responder
+records such a query as `aborted`, stating whether data had been read before
+the revocation arrived.
+
 Reviewed on 2026-11-14 and left as they are:
 
-- **A request can outlive the link or pairing it was admitted on, by one
-  retrieval.** A revocation commits and then discards the pending requests of
-  that far side. `handle_retrieve` does not check the link or the pairing
-  again, so a request that resolved its link just before the commit but was
-  stored just after the purge can still be collected once, with the reach it
-  was admitted on. The window is the gap between those two steps; closing it
-  means carrying the link on the pending record and re-checking at retrieve
-  time.
+- **A request can outlive the LINK it was admitted on, by one retrieval.** A
+  link revocation commits and then discards the pending requests of that far
+  side. A request that resolved its link just before the commit but was stored
+  just after the purge can still be collected once, with the reach it was
+  admitted on. The window is the gap between those two steps; closing it means
+  carrying the link on the pending record and re-checking at retrieve time.
+  For a revoked PAIRING this no longer holds, see below.
 - **ZERO WIDTH JOINER and NON-JOINER are removed from a name**, with every
   other format character. Scripts that shape with them (Persian, several Indic
   conjuncts) and emoji sequences built on them lose that shaping; the letters

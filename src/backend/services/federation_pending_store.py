@@ -174,7 +174,7 @@ class PendingStore(Protocol):
 
     async def get(self, request_id: str) -> _PendingRequest | None: ...
     async def put(self, pending: _PendingRequest) -> None: ...
-    async def save(self, pending: _PendingRequest) -> None: ...
+    async def save(self, pending: _PendingRequest) -> bool: ...
     async def list_for_pubkey(self, asker_pubkey: str) -> list[_PendingRequest]: ...
     async def delete_many(self, request_ids: list[str]) -> None: ...
     async def prune_expired(self, now: float | None = None) -> int: ...
@@ -202,10 +202,15 @@ class InMemoryPendingStore:
     async def put(self, pending: _PendingRequest) -> None:
         self._pending[pending.request_id] = pending
 
-    async def save(self, pending: _PendingRequest) -> None:
-        # In-memory mutations are aliased — nothing to do; the caller
-        # has been mutating the same instance we already store.
+    async def save(self, pending: _PendingRequest) -> bool:
+        # 🛑 `save` UPDATES, it never creates -- `put` creates. A record that
+        # is gone was purged (revocation) or pruned, and the background task
+        # that still holds the object must not bring it back: until
+        # 2026-11-15 it did, so a revoked key could poll a COMPLETE answer.
+        if pending.request_id not in self._pending:
+            return False
         self._pending[pending.request_id] = pending
+        return True
 
     async def list_for_pubkey(self, asker_pubkey: str) -> list[_PendingRequest]:
         return [
@@ -312,8 +317,10 @@ class RedisPendingStore:
                         REQUEST_TTL_SECONDS + 5)
             await pipe.execute()
 
-    async def save(self, pending: _PendingRequest) -> None:
+    async def save(self, pending: _PendingRequest) -> bool:
         # Mutations from the bg task — re-serialize and write through.
+        # 🛑 `XX`: only if the key still exists. `save` updates, it never
+        # creates -- a purged record stays purged (see the in-memory `save`).
         # The asker-set entry was already created by put(); we don't
         # touch it here.
         #
@@ -329,10 +336,11 @@ class RedisPendingStore:
         # synthesis timeout — a stuck request can't keep claiming
         # storage indefinitely.
         body = json.dumps(_to_jsonable(pending))
-        await self._r.set(
+        written = await self._r.set(
             self._pending_key(pending.request_id), body,
-            ex=REQUEST_TTL_SECONDS + 5,
+            ex=REQUEST_TTL_SECONDS + 5, xx=True,
         )
+        return bool(written)
 
     async def list_for_pubkey(self, asker_pubkey: str) -> list[_PendingRequest]:
         # `services.redis_client` constructs the client with

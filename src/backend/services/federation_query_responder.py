@@ -166,9 +166,9 @@ async def purge_requests_for_pubkey(asker_pubkey: str) -> int:
 
     Called by `revoke_peer` so a revoked peer cannot poll /retrieve
     and receive an answer for a request they initiated before the
-    revocation. Bg tasks whose pending entry has vanished will find
-    `pending is None` at the top of _run_query and return quietly —
-    no cancellation needed.
+    revocation. A background task that is already running finds the
+    record gone at its next check (`_request_is_still_wanted`) and
+    cannot bring it back: `save` only updates an existing record.
 
     Returns count of discarded requests.
     """
@@ -281,6 +281,55 @@ async def _record_cancelled_access(pending: _PendingRequest) -> None:
         raise
     except Exception as e:  # pragma: no cover -- must never mask the cancellation
         logger.warning(f"Federation: cancellation record not written: {e}")
+
+
+async def _record_revoked_access(pending: _PendingRequest) -> None:
+    """Write the record for a query whose pairing or link was revoked under it.
+
+    `aborted`, like a cancellation, and for the same reason: after the
+    retrieval this is not a failed access but one that happened and was not
+    delivered. `retrieved_count` is the dividing line here as well.
+    """
+    if pending.retrieved_count is None:
+        reason = "Widerrufen vor dem Abruf — es wurden keine Daten gelesen."
+    else:
+        reason = (
+            f"Widerrufen nach dem Abruf — {pending.retrieved_count} Treffer "
+            "gelesen, keine Antwort ausgeliefert."
+        )
+    await _write_responder_audit(pending, success=False, error=reason, aborted=True)
+
+
+async def _pairing_is_active(db: AsyncSession, peer_user_id: int) -> bool:
+    """Is the pairing a pending record was admitted on still not revoked?"""
+    return (await db.execute(
+        select(PeerUser.id).where(
+            PeerUser.id == peer_user_id,
+            PeerUser.revoked_at.is_(None),
+        )
+    )).scalar_one_or_none() is not None
+
+
+async def _request_is_still_wanted(pending: _PendingRequest) -> bool:
+    """May the background task go on working for this request?
+
+    Two independent signals, and either one ends it:
+
+    * the pending record is GONE -- a revocation (pairing or link) purges the
+      records of that far side, and `save` never brings one back;
+    * the pairing is revoked in the database -- the purge runs AFTER the
+      revocation commits, so for a moment the record is still there.
+
+    Opens a short session of its own: the task has no request session.
+    """
+    store = get_pending_store()
+    if await store.get(pending.request_id) is None:
+        return False
+    async with AsyncSessionLocal() as session:
+        if await _pairing_is_active(session, pending.peer_user_id):
+            return True
+    await store.delete_many([pending.request_id])
+    return False
 
 
 def _peer_scope_for(pending: _PendingRequest) -> PeerScope | None:
@@ -539,7 +588,7 @@ class FederationQueryResponder:
 
         request_id = str(uuid.uuid4())
         await _prune_expired(now=now)
-        await get_pending_store().put(_PendingRequest(
+        pending = _PendingRequest(
             request_id=request_id,
             asker_pubkey=req.asker_pubkey,
             peer_user_id=peer.id,
@@ -553,13 +602,14 @@ class FederationQueryResponder:
             # 🛑 A verified name or nothing -- never the endpoint host: this
             # is what the audit row of the access stores for good.
             peer_instance_name=learned_name or stored_instance_name(peer) or "",
-        ))
+        )
+        await get_pending_store().put(pending)
 
         # Schedule the background work. The task is fire-and-forget —
         # asker polls via handle_retrieve. We keep a strong reference
         # in `_background_tasks` so asyncio's GC doesn't collect it
         # mid-run (add_done_callback removes the ref on completion).
-        task = asyncio.create_task(self._run_query(request_id))
+        task = asyncio.create_task(self._run_query(request_id, pending))
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
 
@@ -619,13 +669,29 @@ class FederationQueryResponder:
             )
             return QueryBrainRetrieveResponse(status=STATUS_EXPIRED)
 
+        # 🛑 The pairing is looked up AGAIN. Until 2026-11-15 only `initiate`
+        # checked it, and the purge on revocation was the sole protection of
+        # the poll -- a record stored after the purge, or brought back by the
+        # background task, was handed out to a revoked key. The refusal is
+        # the one an unknown request gets: nothing tells the far side that
+        # there was a request and a revocation.
+        if not await _pairing_is_active(self.db, pending.peer_user_id):
+            await get_pending_store().delete_many([pending.request_id])
+            logger.warning(
+                f"Federation query_brain: poll on a revoked pairing refused "
+                f"(request_id={req.request_id}, peer_id={pending.peer_user_id})"
+            )
+            return QueryBrainRetrieveResponse(status=STATUS_EXPIRED)
+
         return self._serialize_pending(pending)
 
     # -------------------------------------------------------------------------
     # Background work
     # -------------------------------------------------------------------------
 
-    async def _run_query(self, request_id: str) -> None:
+    async def _run_query(
+        self, request_id: str, pending: _PendingRequest | None = None,
+    ) -> None:
         """Execute retrieval + synthesis in the background. Never raises —
         the outer try/except catches everything (including AttributeError
         on a None pending or ImportError inside _retrieve) and transitions
@@ -638,11 +704,23 @@ class FederationQueryResponder:
         runs. Using `self.db` here would hit a closed session every time.
         """
         store = get_pending_store()
-        pending = await store.get(request_id)
+        # `handle_initiate` hands the record over. A task that only knew the
+        # id could not even RECORD a request that was purged while it waited
+        # to start -- the record is the only place its identity is kept.
+        if pending is None:
+            pending = await store.get(request_id)
         if pending is None:
             return
 
         try:
+            # 🛑 A revoked pairing gets no answer -- and no retrieval either,
+            # where that can still be avoided. The task may have waited (event
+            # loop, model server) since `initiate` admitted the request; the
+            # check at its start alone left everything after it unguarded.
+            if not await _request_is_still_wanted(pending):
+                await _record_revoked_access(pending)
+                return
+
             # Transition: retrieving (chunk+KG+memory RRF).
             await self._emit_progress(pending, PROGRESS_LABEL_RETRIEVING)
 
@@ -657,6 +735,12 @@ class FederationQueryResponder:
             # Transition: synthesizing (Ollama call).
             await self._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
             answer = await self._synthesize(pending.query, matches)
+
+            # Retrieval and synthesis take seconds; a revocation in that time
+            # must not be answered. Checked BEFORE the result is stored.
+            if not await _request_is_still_wanted(pending):
+                await _record_revoked_access(pending)
+                return
 
             # Build redacted provenance list for the response.
             provenance = [
@@ -676,7 +760,11 @@ class FederationQueryResponder:
             # status=COMPLETE is guaranteed to see answer/provenance.
             pending.progress_label = PROGRESS_LABEL_COMPLETE
             pending.status = STATUS_COMPLETE
-            await store.save(pending)
+            if not await store.save(pending):
+                # Purged between the check above and this line: `save` does
+                # not create, so nothing can be polled. Record it as it was.
+                await _record_revoked_access(pending)
+                return
             await _write_responder_audit(pending, success=True)
         except asyncio.CancelledError:
             # 🛑 A cancellation is no reason to keep the access quiet.

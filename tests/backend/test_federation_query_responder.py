@@ -122,6 +122,20 @@ def mock_db_with_peer(asker_identity):
 # =============================================================================
 
 
+class _SessionSeeingAnActivePairing:
+    """Stand-in for a session the background task opens itself. Every
+    statement finds a row -- which is all `_pairing_is_active` asks."""
+
+    async def __aenter__(self):
+        session = MagicMock()
+        session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=lambda: 1))
+        return session
+
+    async def __aexit__(self, *a):
+        return False
+
+
 def _sign_initiate(
     asker: FederationIdentity,
     query: str = "what is mom's recipe?",
@@ -493,17 +507,10 @@ class TestBackgroundTaskSession:
         factory_calls = 0
         _real_factory = fqr.AsyncSessionLocal
 
-        class _TrackedSession:
-            """Minimal async-ctx-mgr stand-in for AsyncSession."""
-            async def __aenter__(self):
-                return MagicMock()
-            async def __aexit__(self, *a):
-                return False
-
         def factory():
             nonlocal factory_calls
             factory_calls += 1
-            return _TrackedSession()
+            return _SessionSeeingAnActivePairing()
 
         monkeypatch.setattr(fqr, "AsyncSessionLocal", factory)
 
@@ -527,7 +534,9 @@ class TestBackgroundTaskSession:
 
         await responder._run_query(pending.request_id)
 
-        assert factory_calls == 1, (
+        # One for the retrieval, and one per look at whether the pairing is
+        # still active (before the work and before the result is stored).
+        assert factory_calls == 3, (
             "bg task did not open its own session via AsyncSessionLocal — "
             "the request-scoped session from handle_initiate would already "
             "be closed. CRITICAL regression."
@@ -539,7 +548,7 @@ class TestBackgroundTaskSession:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_run_query_outer_try_catches_everything(
-        self, responder_identity, asker_identity,
+        self, responder_identity, asker_identity, monkeypatch,
     ):
         """If _retrieve raises any Exception (ImportError, KeyError,
         anything), the outer try/except must still mark the pending
@@ -556,6 +565,9 @@ class TestBackgroundTaskSession:
             initiated_at=time.time(),
         )
         await get_pending_store().put(pending)
+
+        from services import federation_query_responder as fqr
+        monkeypatch.setattr(fqr, "AsyncSessionLocal", _SessionSeeingAnActivePairing)
 
         responder = FederationQueryResponder(db=MagicMock())
         responder._retrieve = AsyncMock(side_effect=RuntimeError("boom"))
