@@ -222,6 +222,29 @@ def _filter_available_roles(
     return filtered
 
 
+def render_peer_rule(
+    file: str, key: str, lang: str, *, role: str | None, names: list[str] | None,
+) -> str:
+    """A peer rule from the prompt catalog, ready to append to a role list.
+
+    "" when no pairing is registered (`names is None`) or no role can reach
+    one -- the caller's prompt then stays what it was. `<key>_named` is used
+    when there are names to list, `<key>` otherwise. One renderer for the
+    router and the cross-MCP planner, so both quote a name the same way.
+    """
+    if names is None or role is None:
+        return ""
+    if names:
+        rule = prompt_manager.get(
+            file, f"{key}_named", lang=lang, role=role,
+            instances=", ".join(f"„{name}“" for name in names),
+        )
+    else:
+        rule = prompt_manager.get(file, key, lang=lang, role=role)
+    rule = rule.strip()
+    return f"\n\n{rule}" if rule else ""
+
+
 class AgentRouter:
     """Routes user messages to specialized agent roles via LLM classification."""
 
@@ -357,7 +380,7 @@ class AgentRouter:
                     lines.append(f"  > {name}/{si_name}: {si_text}")
         return "\n".join(lines)
 
-    def _federation_role_name(self) -> str | None:
+    def federation_role_name(self) -> str | None:
         """The role a question to a paired instance is sent to, or `None`.
 
         Taken from the configuration, never a literal: the first role (by
@@ -393,24 +416,15 @@ class AgentRouter:
 
         🛑 The instance names are text the FAR side chooses. They arrive here
         only through `paired_instance_prompt_names`: allow-listed, verified,
-        and only when the operator opened prompts to them. Without names the
+        and only when the operator opened the ROUTING prompts to them
+        (`federation_peer_name_in_router_prompt_enabled`). Without names the
         rule still covers "frag <jemand>s Renfield" and "die andere Instanz".
         """
-        names = paired_instance_prompt_names(getattr(self, "_mcp_manager", None))
-        if names is None:
-            return ""
-        role = self._federation_role_name()
-        if role is None:
-            return ""
-        if names:
-            rule = prompt_manager.get(
-                "router", "peer_rule_named", lang=lang, role=role,
-                instances=", ".join(f"„{name}“" for name in names),
-            )
-        else:
-            rule = prompt_manager.get("router", "peer_rule", lang=lang, role=role)
-        rule = rule.strip()
-        return f"\n\n{rule}" if rule else ""
+        return render_peer_rule(
+            "router", "peer_rule", lang,
+            role=self.federation_role_name(),
+            names=paired_instance_prompt_names(getattr(self, "_mcp_manager", None)),
+        )
 
     async def classify_with_context(
         self,

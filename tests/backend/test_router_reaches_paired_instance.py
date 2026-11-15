@@ -124,8 +124,9 @@ def _own_router_endpoint(monkeypatch):
 
 @pytest.fixture
 def names_allowed(monkeypatch):
-    """The operator of THIS instance opened prompts to peers' names."""
-    monkeypatch.setattr(settings, "federation_peer_name_in_tool_description_enabled", True)
+    """The operator of THIS instance opened the ROUTING prompts to peers'
+    names -- and only those: the tool description keeps its own switch."""
+    monkeypatch.setattr(settings, "federation_peer_name_in_router_prompt_enabled", True)
 
 
 async def _prompt(router: AgentRouter, message: str = MESSAGE, lang: str = "de") -> str:
@@ -162,10 +163,12 @@ class TestWithoutAPairingThePromptIsUnchanged:
         assert await _prompt(router, lang=lang) == _prompt_before_the_rule(router, lang=lang)
 
     @pytest.mark.parametrize("flag", [False, True])
-    async def test_the_name_switch_alone_changes_nothing(self, monkeypatch, flag):
-        """The switch opens prompts to a NAME; it is not a pairing."""
+    async def test_the_name_switches_alone_change_nothing(self, monkeypatch, flag):
+        """A switch opens a prompt to a NAME; it is not a pairing."""
         monkeypatch.setattr(
             settings, "federation_peer_name_in_tool_description_enabled", flag)
+        monkeypatch.setattr(
+            settings, "federation_peer_name_in_router_prompt_enabled", flag)
         router = AgentRouter(ROLES, mcp_manager=await _manager())
         assert await _prompt(router) == _prompt_before_the_rule(router)
 
@@ -296,14 +299,14 @@ class TestWhichRoleTheRuleNames:
 
     def test_the_role_with_the_federation_switch(self):
         router = AgentRouter(ROLES)
-        assert router._federation_role_name() == "documents"
+        assert router.federation_role_name() == "documents"
 
     def test_by_NAME_not_by_the_order_in_the_file(self):
         roles = {
             "zeta": AgentRole(name="zeta", description={}, mcp_servers=["a"], federation=True),
             "alpha": AgentRole(name="alpha", description={}, mcp_servers=["b"], federation=True),
         }
-        assert self._router(roles)._federation_role_name() == "alpha"
+        assert self._router(roles).federation_role_name() == "alpha"
 
     def test_without_the_switch_the_role_that_filters_no_server(self):
         """`general` (`mcp_servers: null`) is offered every tool, peers
@@ -313,7 +316,7 @@ class TestWhichRoleTheRuleNames:
             "documents": AgentRole(name="documents", description={}, mcp_servers=["paperless"]),
             "general": AgentRole(name="general", description={}, mcp_servers=None),
         }
-        assert self._router(roles)._federation_role_name() == "general"
+        assert self._router(roles).federation_role_name() == "general"
 
     def test_a_role_without_an_agent_loop_never(self):
         """`conversation` carries `mcp_servers = None` too -- and no loop."""
@@ -321,7 +324,7 @@ class TestWhichRoleTheRuleNames:
             "conversation": AgentRole(
                 name="conversation", description={}, has_agent_loop=False, federation=True),
         }
-        assert self._router(roles)._federation_role_name() is None
+        assert self._router(roles).federation_role_name() is None
 
     async def test_no_role_can_reach_the_peer_then_no_rule(self):
         """Negative control on the pairing condition: a pairing alone is not
@@ -360,10 +363,35 @@ HOSTILE_NAMES = [
 @pytest.mark.unit
 class TestTheNameInTheRule:
 
+    @pytest.mark.parametrize("description_flag", [False, True])
+    @pytest.mark.parametrize("router_flag", [False, True])
+    async def test_the_two_switches_are_independent(
+        self, monkeypatch, description_flag, router_flag,
+    ):
+        """🛑 All four combinations. The router prompt is built for every
+        routed turn of every account -- a wider reach than a tool
+        description -- so opening the description does NOT open the router,
+        and opening the router does not rewrite the description."""
+        monkeypatch.setattr(
+            settings, "federation_peer_name_in_tool_description_enabled", description_flag)
+        monkeypatch.setattr(
+            settings, "federation_peer_name_in_router_prompt_enabled", router_flag)
+        manager = await _manager(_row(3, instance="Nordhaus"))
+        router = AgentRouter(ROLES, mcp_manager=manager)
+
+        rule = router._peer_rule("de")
+        description = manager._tool_index["mcp.peer_3.query_brain"].description
+        assert ("„Nordhaus“" in rule) is router_flag
+        assert ("Nordhaus" in await _prompt(router, message="Hallo")) is router_flag
+        assert ("„Nordhaus“" in description) is description_flag
+        assert paired_instance_prompt_names(manager) == (["Nordhaus"] if router_flag else [])
+        # Either way the rule itself is there: the pairing decides that.
+        assert "GEKOPPELTE INSTANZEN" in rule
+
     async def test_switch_off_no_name_enters_the_prompt(self):
         """Off is the config default. Whatever name is stored, the name-free
         variant ships."""
-        assert settings.federation_peer_name_in_tool_description_enabled is False
+        assert settings.federation_peer_name_in_router_prompt_enabled is False
         manager = await _manager(_row(3, instance="Nordhaus"))
         assert paired_instance_prompt_names(manager) == []
         router = AgentRouter(ROLES, mcp_manager=manager)
@@ -434,9 +462,12 @@ class TestTheNameInTheRule:
         assert rule.count("\n") == _named_rule_newlines()
         assert hostile not in rule
 
-    async def test_the_tool_description_and_the_rule_take_the_SAME_name(self, names_allowed):
-        """One decision, two prompts: what the description says and what the
-        router is told cannot drift apart."""
+    async def test_the_tool_description_and_the_rule_take_the_SAME_form(
+        self, names_allowed, monkeypatch,
+    ):
+        """Two switches, one allow-list: with both on, what the description
+        says and what the router is told is the same string."""
+        monkeypatch.setattr(settings, "federation_peer_name_in_tool_description_enabled", True)
         manager = await _manager(_row(3, instance="Nord-Haus 2"))
         description = manager._tool_index["mcp.peer_3.query_brain"].description
         assert "„Nord-Haus 2“" in description
@@ -478,7 +509,7 @@ class TestTheShippedRoleCanCallThePeer:
         the role file that ships, through the real tool filter."""
         manager = await _manager(_row(3))
         router = AgentRouter(_shipped_roles(), mcp_manager=manager)
-        role = router.roles[router._federation_role_name()]
+        role = router.roles[router.federation_role_name()]
 
         registry = AgentToolRegistry(_init_only=True)
         registry._register_mcp_tools(
@@ -499,7 +530,7 @@ class TestTheShippedRoleCanCallThePeer:
 
     async def test_the_rule_names_a_role_of_the_shipped_file(self):
         router = AgentRouter(_shipped_roles(), mcp_manager=await _manager(_row(3)))
-        name = router._federation_role_name()
+        name = router.federation_role_name()
         assert name in router.roles
         assert f" {name} " in router._peer_rule("de")
         assert f" {name} " in router._peer_rule("en")
@@ -579,3 +610,163 @@ class TestAgainstTheRealPairingTable:
 
         assert paired_instance_prompt_names(manager) is None
         assert await _prompt(router) == _prompt_before_the_rule(router)
+
+
+# --------------------------------------------------------------------------
+# the cross-MCP planner
+# --------------------------------------------------------------------------
+
+PLANNER_ROLES = {
+    "roles": {
+        **ROLES["roles"],
+        "smart_home": {
+            "description": {"de": "Licht schalten", "en": "Switch lights"},
+            "mcp_servers": ["homeassistant"],
+            "prompt_key": "agent_prompt",
+        },
+    }
+}
+
+TWO_TOPICS = "Frag Nordhaus, welche Termine morgen anstehen und wer zuhause ist"
+
+
+@pytest.fixture
+def planner_on_the_handed_client(monkeypatch):
+    """The planner talks to the client it is handed, untyped."""
+    monkeypatch.setattr(settings, "llm_openai_base_url", "")
+    monkeypatch.setattr(settings, "ollama_model", "test-model")
+
+
+async def _planner(*rows):
+    from services.orchestrator import QueryOrchestrator
+
+    manager = await _manager(*rows)
+    manager._servers["homeassistant"] = MCPServerState(
+        config=MCPServerConfig(name="homeassistant", transport=MCPTransportType.STDIO),
+    )
+    manager._servers["homeassistant"].connected = True
+    router = AgentRouter(PLANNER_ROLES, mcp_manager=manager)
+    return QueryOrchestrator(router, manager)
+
+
+async def _plan(orchestrator, message: str, answer: str = "null", lang: str = "de"):
+    """(what the planner returned, the prompt it was sent)."""
+    ollama = _ollama(answer)
+    result = await orchestrator.detect_multi_domain(message, ollama, lang=lang)
+    return result, ollama.client.chat.call_args.kwargs["messages"][0]["content"]
+
+
+def _planner_prompt_before_the_rule(orchestrator, message: str, lang: str = "de") -> str:
+    """The planner prompt as it was built BEFORE the rule -- restated here."""
+    roles = orchestrator.router.roles
+    lines = [
+        f"- {name}: {roles[name].description.get(lang)}"
+        for name in sorted(roles) if roles[name].has_agent_loop
+    ]
+    return prompt_manager.get(
+        "agent", "orchestrator_detect_prompt", lang=lang,
+        message=message, role_descriptions="\n".join(lines),
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("planner_on_the_handed_client")
+class TestThePlannerKeepsAQuestionToAnInstanceWhole:
+    """🛑 The router's rule made a new path reachable. Before it, a question
+    to an instance was `conversation` and never met the planner. With it,
+    "frag <Instanz>, welche Termine anstehen und wer zuhause ist" reaches the
+    planner, which saw two topics: the second sub-query went to a role
+    without the federation switch, was answered from THIS house, and the
+    synthesis presented it as the far instance's answer.
+
+    What a unit test can hold is the PROMPT. That the planner model follows
+    the rule is a measurement nobody has made yet."""
+
+    @pytest.mark.parametrize("lang", ["de", "en"])
+    async def test_without_a_pairing_the_planner_prompt_is_unchanged(self, lang):
+        orchestrator = await _planner()
+        _, prompt = await _plan(orchestrator, TWO_TOPICS, lang=lang)
+        assert prompt == _planner_prompt_before_the_rule(orchestrator, TWO_TOPICS, lang)
+
+    @pytest.mark.parametrize("lang,marker", [
+        ("de", "GEKOPPELTE INSTANZEN"), ("en", "PAIRED INSTANCES"),
+    ])
+    async def test_with_a_pairing_the_rule_is_added_and_nothing_else(self, lang, marker):
+        orchestrator = await _planner(_row(3))
+        rule = orchestrator._peer_rule(lang, {"documents", "general", "presence", "smart_home"})
+        _, prompt = await _plan(orchestrator, TWO_TOPICS, lang=lang)
+
+        assert marker in rule
+        assert prompt.count(rule) == 1
+        assert prompt.replace(rule, "") == _planner_prompt_before_the_rule(
+            orchestrator, TWO_TOPICS, lang)
+
+    @pytest.mark.parametrize("lang,one_task,never_spread", [
+        ("de", "EINER Teilaufgabe fuer documents", "NIE auf andere Domaenen"),
+        ("en", "ONE sub-task for documents", "NEVER spread"),
+    ])
+    @pytest.mark.parametrize("instance", [None, "Nordhaus"])
+    async def test_the_rule_says_ONE_task_for_the_federation_role(
+        self, names_allowed, lang, one_task, never_spread, instance,
+    ):
+        """What prevents the split, as far as a prompt can: everything asked
+        of the far instance is one sub-task for the role that reaches it,
+        and its topics are never handed to other domains."""
+        orchestrator = await _planner(_row(3, instance=instance))
+        _, prompt = await _plan(orchestrator, TWO_TOPICS, lang=lang)
+        rule = orchestrator._peer_rule(lang, {"documents"})
+        assert one_task in rule and never_spread in rule
+        assert "{" not in rule and "}" not in rule
+        for other in ("presence", "smart_home", "general"):
+            assert other not in rule
+        # Behind the domain list, before the planner's own rules.
+        assert prompt.index("- smart_home:") < prompt.index(rule.strip())
+
+    async def test_a_single_plan_for_the_peer_question_is_not_a_split(self):
+        """The planner answering "one domain" leaves the turn with the role
+        the router chose -- the federation role, which can ask."""
+        orchestrator = await _planner(_row(3))
+        result, _ = await _plan(orchestrator, TWO_TOPICS, answer="null")
+        assert result is None
+
+    async def test_an_ordinary_two_domain_request_is_STILL_split(self):
+        """🛑 Negative control on the rule's reach: a pairing being registered
+        must not stop the planner from splitting what has nothing to do with
+        it. The plan comes back as the model gave it."""
+        orchestrator = await _planner(_row(3))
+        plan = (
+            '[{"role": "smart_home", "query": "Licht einschalten"},'
+            ' {"role": "documents", "query": "Rechnung suchen"}]'
+        )
+        message = "Mach das Licht an und such die Rechnung vom Stromanbieter"
+        result, prompt = await _plan(orchestrator, message, answer=plan)
+        assert [sq["role"] for sq in result] == ["smart_home", "documents"]
+        # ...and the planner's own splitting rule and examples are untouched.
+        before = _planner_prompt_before_the_rule(orchestrator, message)
+        assert prompt.replace(orchestrator._peer_rule("de", {"documents"}), "") == before
+
+    @pytest.mark.parametrize("description_flag", [False, True])
+    @pytest.mark.parametrize("router_flag", [False, True])
+    async def test_a_name_enters_only_with_the_ROUTING_switch(
+        self, monkeypatch, description_flag, router_flag,
+    ):
+        monkeypatch.setattr(
+            settings, "federation_peer_name_in_tool_description_enabled", description_flag)
+        monkeypatch.setattr(
+            settings, "federation_peer_name_in_router_prompt_enabled", router_flag)
+        orchestrator = await _planner(_row(3, instance="Nordhaus"))
+        _, prompt = await _plan(orchestrator, "Mach das Licht an")
+        assert ("„Nordhaus“" in prompt) is router_flag
+
+    async def test_a_federation_role_the_planner_may_not_use_gets_no_rule(self):
+        """A rule naming a role the planner cannot plan with would produce a
+        sub-query that is thrown away."""
+        orchestrator = await _planner(_row(3))
+        assert orchestrator._peer_rule("de", {"smart_home", "presence"}) == ""
+
+    async def test_a_stand_in_manager_is_not_a_pairing(self):
+        """`test_orchestrator.py` hands the planner MagicMocks throughout."""
+        from services.orchestrator import QueryOrchestrator
+
+        orchestrator = QueryOrchestrator(MagicMock(), MagicMock())
+        assert orchestrator._peer_rule("de", {"documents"}) == ""

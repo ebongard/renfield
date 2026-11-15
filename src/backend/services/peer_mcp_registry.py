@@ -176,15 +176,22 @@ def _description_for(peer: PeerUser) -> str:
     )
 
 
-def _prompt_instance_name(peer: PeerUser) -> str:
+def _prompt_instance_name(peer: PeerUser, *, routing: bool = False) -> str:
     """The far instance's name as it may enter a prompt, or "".
 
-    The ONE place that decides it, for the tool description and for the
-    router's rule alike: the operator's switch, a VERIFIED name, and the
-    allow-list form of it. Whoever needs the name in a third prompt takes it
-    from here and inherits all three.
+    The ONE place that decides it: the operator's switch for THAT prompt, a
+    VERIFIED name, and the allow-list form of it. Two switches, because the
+    reach differs -- the tool description biases the pre-selection inside an
+    agent turn, the routing prompts (router, planner) are built for every
+    routed turn of every account. Neither implies the other. Whoever needs
+    the name in a further prompt takes it from here.
     """
-    if not settings.federation_peer_name_in_tool_description_enabled:
+    allowed = (
+        settings.federation_peer_name_in_router_prompt_enabled
+        if routing
+        else settings.federation_peer_name_in_tool_description_enabled
+    )
+    if not allowed:
         return ""
     return prompt_safe_instance_name(stored_instance_name(peer))
 
@@ -193,10 +200,10 @@ def paired_instance_prompt_names(manager: MCPManager | None) -> list[str] | None
     """What the router may know about the pairings of this instance.
 
     `None`  no active pairing is registered -- the caller adds nothing.
-    a list  at least one is; the list holds the names that may enter a prompt
-            (see `_prompt_instance_name`), sorted and without duplicates, and
-            is EMPTY when the switch is off or no peer has told a verified
-            name yet.
+    a list  at least one is; the list holds the names that may enter a
+            ROUTING prompt (`_prompt_instance_name(routing=True)`), sorted and
+            without duplicates, and is EMPTY when that switch is off or no
+            peer has told a verified name yet.
 
     Read from the registered servers, not from the database: the router asks
     on every turn, and `sync_peers` already runs on every pairing, revocation
@@ -216,7 +223,7 @@ def paired_instance_prompt_names(manager: MCPManager | None) -> list[str] | None
     ]
     if not peers:
         return None
-    return sorted({c.peer_prompt_name for c in peers if c.peer_prompt_name})
+    return sorted({c.peer_router_name for c in peers if c.peer_router_name})
 
 
 #: Longest instance name the description takes. Shorter than the 64 the
@@ -302,7 +309,7 @@ def _build_federation_config(peer: PeerUser) -> MCPServerConfig:
         enabled=True,
         streaming=True,
         peer_user_id=peer.id,
-        peer_prompt_name=_prompt_instance_name(peer),
+        peer_router_name=_prompt_instance_name(peer, routing=True),
     )
 
 
