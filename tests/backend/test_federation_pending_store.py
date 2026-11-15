@@ -379,6 +379,8 @@ class TestRedisErrorTranslation:
         class BrokenStore:
             async def record_nonce(self, *a, **k):
                 raise RedisConnectionError("simulated outage")
+            async def nonce_seen(self, *a, **k):
+                raise RedisConnectionError("simulated outage")
             async def get(self, *a, **k): raise RedisConnectionError()
             async def put(self, *a, **k): raise RedisConnectionError()
             async def save(self, *a, **k): raise RedisConnectionError()
@@ -411,8 +413,15 @@ class TestRedisErrorTranslation:
         sig = asker.sign(_canonical_bytes(unsigned)).hex()
         req = QueryBrainInitiateRequest(**unsigned, signature=sig)
 
-        from unittest.mock import MagicMock
-        responder = FederationQueryResponder(db=MagicMock())
+        # Since 2026-11-14 the pairing is looked up BEFORE the store is
+        # touched, so the request has to come from a paired key to reach it.
+        from unittest.mock import AsyncMock, MagicMock
+        peer = MagicMock(id=1, remote_pubkey=asker.public_key_hex(), revoked_at=None)
+        result = MagicMock()
+        result.scalars = lambda: MagicMock(all=lambda: [peer])
+        db = MagicMock()
+        db.execute = AsyncMock(return_value=result)
+        responder = FederationQueryResponder(db=db)
 
         # Must surface as the uniform federation error, NOT a raw
         # ConnectionError that would become a 500 at the route layer.

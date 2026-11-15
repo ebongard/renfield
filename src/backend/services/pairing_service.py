@@ -56,6 +56,7 @@ from models.database import (
     User,
 )
 from services.federation_cert_pin import probe_peer_cert_fingerprint
+from services.federation_endpoint_guard import EndpointRefused, check_peer_endpoints
 from services.federation_identity import canonical_bytes, get_federation_identity
 from services.federation_instance_name import (
     ATTACHMENT_FIELDS,
@@ -203,6 +204,24 @@ def _clear_nonce_cache_for_tests() -> None:
 _TOFU_PROBE_TIMEOUT_SECONDS = 2.0
 
 
+async def _refuse_unacceptable_endpoints(endpoints: list[Any] | None) -> None:
+    """Refuse the far side's endpoint list unless every entry is acceptable.
+
+    🛑 Runs BEFORE `_with_tofu_fingerprint` and before the row is written: the
+    endpoints come from the far side, the TOFU probe below opens a TLS
+    connection to the first of them, and every later query and ping goes
+    there. Until 2026-11-14 whatever the far side signed was probed and
+    stored. The rules live in `services/federation_endpoint_guard.py`.
+
+    Raised as a plain `PairingError`: the route answers with the uniform
+    "Pairing handshake failed", the reason is in the log.
+    """
+    try:
+        await check_peer_endpoints(endpoints)
+    except EndpointRefused as e:
+        raise PairingError(f"Peer endpoint refused: {e}") from e
+
+
 async def _with_tofu_fingerprint(endpoints: list[Any] | None) -> dict:
     """
     Build a `transport_config` dict from the peer's advertised endpoints,
@@ -348,6 +367,8 @@ class PairingService:
         if not (0 <= my_tier_for_you <= 4):
             raise PairingError("Tier must be between 0 and 4")
 
+        await _refuse_unacceptable_endpoints(offer.offered_endpoints)
+
         # Persist the initiator as our peer + as a member of our circle at the chosen tier.
         # F5e — TOFU-capture the initiator's TLS fingerprint at pair time
         # so subsequent queries to them are pinned automatically. Best-
@@ -422,6 +443,9 @@ class PairingService:
         """
         # Signature verification first — non-mutating, catches forgeries.
         self._verify_response(response)
+
+        # Non-mutating as well, so it stands before the nonce is consumed.
+        await _refuse_unacceptable_endpoints(response.accepted_endpoints)
 
         # Only now consume the nonce (single-use, user-bound).
         if not _pop_cached_nonce(response.nonce, current_user.id):

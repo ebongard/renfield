@@ -167,7 +167,7 @@ class FederationQueryAsker:
         closed via `async with` and any in-flight request is cancelled
         by asyncio cooperative cancellation.
         """
-        endpoint = _select_endpoint(peer)
+        endpoint = await _usable_endpoint(peer)
         if endpoint is None:
             yield _final_error("Peer has no usable transport endpoint")
             return
@@ -499,7 +499,7 @@ async def ping_peer(peer: PeerUser, client: httpx.AsyncClient | None = None) -> 
     `client` is injectable for tests; production opens a short-lived one with
     the same pinning policy as a query.
     """
-    endpoint = _select_endpoint(peer)
+    endpoint = await _usable_endpoint(peer)
     if endpoint is None:
         return PING_NO_ENDPOINT
 
@@ -719,6 +719,31 @@ def _select_endpoint(peer: PeerUser) -> str | None:
     if isinstance(first, dict):
         return first.get("url") or first.get("endpoint_url")
     return None
+
+
+async def _usable_endpoint(peer: PeerUser) -> str | None:
+    """The peer's endpoint if a request may be SENT there, else `None`.
+
+    🛑 Every outbound federation request -- query, ping, and the certificate
+    probe that precedes both -- takes its target from here, never from
+    `_select_endpoint` directly. The stored endpoint was supplied by the far
+    side; `federation_endpoint_guard` checks it at pairing, and again here
+    because a row may predate that check and a name can be re-pointed later.
+    A refused endpoint reads like a missing one: there is no address this
+    instance is willing to ask.
+    """
+    endpoint = _select_endpoint(peer)
+    if endpoint is None:
+        return None
+    from services.federation_endpoint_guard import endpoint_refusal
+
+    reason = await endpoint_refusal(endpoint)
+    if reason:
+        logger.warning(
+            f"Federation: endpoint of peer {peer.id} refused as a request target: {reason}"
+        )
+        return None
+    return endpoint
 
 
 def _join(base: str, path: str) -> str:

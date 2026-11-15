@@ -1420,6 +1420,21 @@ class Settings(BaseSettings):
     # token.
     federation_ping_rate_per_minute: int = Field(default=12, ge=1, le=120)
 
+    # Overall deadline (seconds) for reading ONE inbound body on the
+    # peer-authenticated routes (`/api/federation/peer/*`). The caller is
+    # still unauthenticated while its body arrives; the byte cap alone does
+    # not stop it from sending those bytes one at a time and holding the
+    # connection. On expiry: the uniform refusal.
+    federation_inbound_read_timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
+
+    # Plain `http://` peer endpoints. Default off: an endpoint must be
+    # `https://`, at pairing and before every outbound federation request --
+    # the envelope signature protects integrity, not the confidentiality of
+    # the question and the answer. Switch on only where both instances talk
+    # over a network that is trusted as a whole (same cluster, overlay VPN).
+    # See `services/federation_endpoint_guard.py`.
+    federation_allow_http_endpoints: bool = False
+
     # This instance's OWN reachable URL, advertised to a peer during pairing so
     # the peer's PeerUser.transport_config gets a usable endpoint (without it, a
     # UI pairing yields transport_config.endpoints=[] → _select_endpoint→None →

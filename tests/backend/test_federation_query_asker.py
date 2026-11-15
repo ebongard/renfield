@@ -79,7 +79,7 @@ def mock_peer(responder_identity):
     peer.remote_pubkey = responder_identity.public_key_hex()
     peer.remote_display_name = "Mom"
     peer.transport_config = {
-        "endpoints": ["http://mom.local:8000"],
+        "endpoints": ["https://mom.local:8000"],
     }
     return peer
 
@@ -599,7 +599,7 @@ class TestEdgeCases:
         peer = MagicMock()
         peer.remote_pubkey = responder_identity.public_key_hex()
         peer.remote_display_name = "Mom"
-        peer.transport_config = {"endpoints": ["http://mom.local:8000"]}
+        peer.transport_config = {"endpoints": ["https://mom.local:8000"]}
 
         asker = FederationQueryAsker()  # owned client path
         it = asker.query_peer(peer, "q")

@@ -433,13 +433,17 @@ class TestAStrangerLeavesNothingBehind:
         self, local_identity, far_identity, nonce_writes,
     ):
         """Control for the spy: for a paired key the nonce IS written, and the
-        second use of it is a replay."""
+        second use of it is a replay.
+
+        Written ONCE: since 2026-11-14 the replay is refused by a read-only
+        look at the store, before the rate bucket, and no longer by a second
+        write attempt."""
         responder = FederationQueryResponder(db=_db_returning([_paired_row(far_identity)]))
         req = _signed_ping(far_identity)
         await responder.handle_ping(req)
         with pytest.raises(FederationQueryError, match="replay"):
             await responder.handle_ping(req)
-        assert nonce_writes.await_count == 2
+        assert nonce_writes.await_count == 1
 
 
 class TestThePingTeachesTheName:
@@ -768,7 +772,7 @@ class _Peer:
         self.remote_instance_name = None
         self.transport_config = (
             transport_config if transport_config is not None
-            else {"endpoints": ["http://far.test:8000"]}
+            else {"endpoints": ["https://far.test:8000"]}
         )
 
 
@@ -844,7 +848,7 @@ class TestAskerOutcomes:
         client = _answering(far_identity)
         assert await ping_peer(_Peer(far_identity), client=client) == PING_REACHABLE
         url, body = client.posted[0]
-        assert url == "http://far.test:8000/api/federation/peer/ping"
+        assert url == "https://far.test:8000/api/federation/peer/ping"
         assert set(body) == PING_KEYS, "no name, no extra keys"
         assert FederationIdentity.verify(
             local_identity.public_key_bytes(), bytes.fromhex(body["signature"]),

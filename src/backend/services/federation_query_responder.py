@@ -11,8 +11,10 @@ Lifecycle:
     handle_initiate()
         │ verify signature over canonical(asker_pubkey, query, nonce, ts)
         │ verify ±60s timestamp window
-        │ verify nonce not already seen (replay defence)
         │ verify peer_users row exists + not revoked
+        │ refuse a nonce already seen (read-only peek, spends nothing)
+        │ take a token from the pairing's rate bucket
+        │ record the nonce (replay defence, the atomic claim)
         │ look up asker's local user_id + max_visible_tier
         │ mint request_id (UUID4)
         │ enqueue background task
@@ -55,6 +57,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -309,6 +312,51 @@ async def _record_nonce(nonce: str, now: float) -> bool:
     return await get_pending_store().record_nonce(nonce, now)
 
 
+async def _nonce_seen(nonce: str, now: float) -> bool:
+    """Read-only: has this nonce been recorded already? Writes nothing."""
+    return await get_pending_store().nonce_seen(nonce, now)
+
+
+async def _admit_paired_envelope(
+    *,
+    asker_pubkey: str,
+    nonce: str,
+    now: float,
+    acquire_token: Callable[[str], Awaitable[bool]],
+    replay_error: str,
+    rate_error: str,
+) -> None:
+    """Replay peek, rate bucket, nonce record -- for a PAIRED key only.
+
+    🛑 Callers run this AFTER signature, timestamp and the pairing lookup, and
+    both envelope kinds (query, ping) share it so the two halves cannot drift
+    apart again. The order inside is the point:
+
+      1. Peek (read-only). A replay of a recorded envelope is refused here,
+         BEFORE the bucket: whoever can record a pairing's traffic could
+         otherwise spend that pairing's budget with replays and starve its
+         real requests. The peek writes nothing, so it opens no way to fill
+         the capped nonce store, and it tells the caller nothing new: only an
+         envelope that verified for a paired key gets this far, and the
+         refusal is the same uniform one as every other.
+      2. Bucket. Only a fresh nonce of a paired key spends a token.
+      3. Record (the atomic claim). Only a paired key within its budget
+         writes into the nonce store -- an unpaired key never does.
+
+    What remains: two copies of the SAME fresh envelope racing each other can
+    both pass the peek; the second then loses at the record and has spent one
+    token. That needs the replay to arrive within the handling of the
+    original and costs at most one token per original -- it cannot be
+    repeated against a recorded envelope.
+    """
+    if await _nonce_seen(nonce, now=now):
+        raise FederationQueryError(replay_error)
+    if not await acquire_token(asker_pubkey):
+        raise FederationQueryError(rate_error)
+    if not await _record_nonce(nonce, now=now):
+        raise FederationQueryError(replay_error)
+
+
 # =============================================================================
 # Responder service
 # =============================================================================
@@ -367,21 +415,26 @@ class FederationQueryResponder:
                 "Timestamp outside ±60s window (clock skew or replay)"
             )
 
-        if not await _record_nonce(req.nonce, now=now):
-            raise FederationQueryError("Nonce already seen (replay detected)")
+        # 🛑 The pairing is looked up BEFORE anything is written. Until
+        # 2026-11-14 the nonce was recorded and a rate bucket created first, so
+        # a key nobody paired with, signing its own requests, could fill the
+        # capped nonce store (pushing real peers' nonces out of it, and with
+        # them the replay protection) and grow the bucket registry by one
+        # entry per key. Same order as the ping now: signature, timestamp,
+        # pairing, rate bucket, nonce. An unpaired request leaves nothing.
+        #
+        # `last_seen_at` is NOT moved here: it means "last real request", and
+        # a replay or a request over budget is refused below. It is touched
+        # once the request is admitted.
+        peer = await self._lookup_peer(req.asker_pubkey, touch_last_seen=False)
 
-        # F5b — inbound rate limit keyed by asker_pubkey. Checked AFTER
-        # signature + timestamp + nonce so an unauthenticated flood
-        # can't probe the limiter state by pubkey. A valid signature
-        # is required to land in the rate-limit bucket at all, so the
-        # bucket's state is private to each authenticated peer.
         from services.federation_rate_limits import acquire_responder_token
-        if not await acquire_responder_token(req.asker_pubkey):
-            logger.warning(
-                f"Federation responder rate limit hit for asker "
-                f"{req.asker_pubkey[:12]}…"
-            )
-            raise FederationQueryError("Rate limit exceeded for this asker")
+        await _admit_paired_envelope(
+            asker_pubkey=req.asker_pubkey, nonce=req.nonce, now=now,
+            acquire_token=acquire_responder_token,
+            replay_error="Nonce already seen (replay detected)",
+            rate_error="Rate limit exceeded for this asker",
+        )
 
         # F5a — depth + cycle hardening. Checked AFTER signature
         # verification because the fields are part of the canonical
@@ -421,7 +474,7 @@ class FederationQueryResponder:
             )
             raise FederationQueryError("Malformed path: asker_pubkey missing")
 
-        peer = await self._lookup_peer(req.asker_pubkey)
+        await self._touch_last_seen(peer)
         # The envelope verified and the key belongs to a non-revoked pairing:
         # only now may the name it carries be believed.
         learned_name = await self._learn_instance_name(
@@ -831,7 +884,8 @@ class FederationQueryResponder:
         """Answer a paired peer's "are you there, and do you still know me?".
 
         Checked in this order: signature, ±60s window, non-revoked pairing,
-        rate limit, nonce replay -- and refused at any of them with the same
+        then `_admit_paired_envelope` (replay peek, rate limit, nonce record)
+        -- and refused at any of them with the same
         `FederationQueryError`, which the route turns into the same uniform
         400. An unpaired or revoked caller therefore learns nothing here that
         a refused query would not tell it.
@@ -870,16 +924,15 @@ class FederationQueryResponder:
 
         peer = await self._lookup_peer(req.asker_pubkey, touch_last_seen=False)
 
-        # The bucket comes AFTER the pairing lookup: only a paired key gets
-        # one. A stranger with a fresh key per request therefore cannot grow
-        # the bucket registry, and is refused above with the same error anyway.
+        # Only a paired key gets a bucket or writes a nonce: a stranger with a
+        # fresh key per request is refused above and leaves nothing behind.
         from services.federation_rate_limits import acquire_ping_responder_token
-        if not await acquire_ping_responder_token(req.asker_pubkey):
-            raise FederationQueryError("Ping rate limit exceeded for this asker")
-
-        # Last of the checks, and only for a paired key within its budget.
-        if not await _record_nonce(req.nonce, now=now):
-            raise FederationQueryError("Ping nonce already seen (replay detected)")
+        await _admit_paired_envelope(
+            asker_pubkey=req.asker_pubkey, nonce=req.nonce, now=now,
+            acquire_token=acquire_ping_responder_token,
+            replay_error="Ping nonce already seen (replay detected)",
+            rate_error="Ping rate limit exceeded for this asker",
+        )
 
         await self._learn_instance_name(
             peer,
@@ -997,8 +1050,12 @@ class FederationQueryResponder:
             )
             raise FederationQueryError("Unknown or revoked peer")
         peer = candidates[0]
-        if not touch_last_seen:
-            return peer
+        if touch_last_seen:
+            await self._touch_last_seen(peer)
+        return peer
+
+    async def _touch_last_seen(self, peer: PeerUser) -> None:
+        """Record "the far side just sent a real request". Never fatal."""
         try:
             peer.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
             await self.db.commit()
@@ -1008,7 +1065,6 @@ class FederationQueryResponder:
                 f"(peer_id={peer.id}, non-fatal): {e}"
             )
             await self.db.rollback()
-        return peer
 
     # 🛑 `_resolve_asker_tier` was REMOVED on 2026-10-27 (F-ID-3). It looked up a
     # `CircleMembership` via `member_user_id = peer.remote_user_id` -- a foreign

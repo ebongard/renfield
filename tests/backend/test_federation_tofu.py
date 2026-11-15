@@ -389,8 +389,15 @@ class TestPairingServiceTofuIntegration:
         self, tmp_path, monkeypatch,
     ):
         """When the responder advertises only http:// endpoints, pairing
-        still succeeds but the transport_config omits tls_fingerprint."""
+        still succeeds but the transport_config omits tls_fingerprint.
+
+        Since 2026-11-14 an http:// endpoint is accepted only where the
+        operator allows it (`FEDERATION_ALLOW_HTTP_ENDPOINTS`); the statement
+        about the pin is unchanged."""
         import time
+
+        from utils.config import settings
+        monkeypatch.setattr(settings, "federation_allow_http_endpoints", True)
 
         from services.federation_identity import (
             FederationIdentity,
