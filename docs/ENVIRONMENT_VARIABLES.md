@@ -3103,10 +3103,16 @@ Werkzeug-Vorauswahl. Der Router-Prompt wird für **jeden** gerouteten Zug
 Keiner der beiden Schalter schließt den anderen ein.
 
 - **Aus (Standard):** die namenlose Regel. Der Router erkennt „frag
-  \<jemand\>s Renfield …" und „frag die andere Instanz …"; ein bloßer
-  Instanzname („frag Nordhaus …") wird nicht zuverlässig erkannt (gemessen
-  2026-11-15: 4 von 7 solcher Fälle trafen trotzdem, drei gingen an eine
-  hiesige Rolle).
+  \<jemand\>s Renfield …" und „frag die andere Instanz …" (gemessen
+  2026-11-15, Stand `f6010447`: 24/24); ein bloßer Instanzname („frag
+  Nordhaus …") wird nicht zuverlässig erkannt (5 von 7 solcher Fälle trafen
+  trotzdem, zwei gingen an eine hiesige Rolle).
+- 🛑 **Vorerst aus lassen.** Die benannte Regel ist bei Anwesenheitsfragen
+  SCHWÄCHER als die namenlose: „frag \<jemand\>s Renfield, wer bei ihm
+  zuhause ist" trifft namenlos 3/3 und bleibt benannt 3/3 bei `presence` —
+  es antwortet dann DIESES Haus. Gesamt benannt 39/45. Erst einschalten,
+  wenn der benannte Text überarbeitet und mit `bin/measure-router.py` neu
+  gemessen ist (Tabelle: `docs/FEDERATION_PAIRING.md` §1).
 - **An:** die Regel nennt die verifizierten Namen in derselben
   Positivlisten-Form wie die Werkzeugbeschreibung (32 Zeichen).
 - 🛑 **Was das Einschalten öffnet:** nennt sich eine Gegenstelle wie ein

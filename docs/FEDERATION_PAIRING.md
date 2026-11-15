@@ -195,30 +195,38 @@ it is a rule of its own and not part of a role description.
   router picked the federation role would be wrong the other way: the router
   returns a role, not its reason, and an ordinary document question on that
   role must still be split. Only the model that reads the message can tell.
-- **Measured** (2026-11-15, `bin/measure-router.py`, `qwen3:8b`, 35 cases ×
-  3 variants × 3 repetitions, interleaved; rule wording of commit
-  `400451fc`). Peer-addressed turns reaching a role that can ask:
+- **Measured** (2026-11-15, `bin/measure-router.py`, `qwen3:8b`, the rule
+  wording of commit `f6010447`; 41 cases × 3 repetitions per variant,
+  interleaved, 375 calls). Peer-addressed turns reaching a role that can ask:
 
   | | no pairing | name-free rule | named rule |
   |---|---|---|---|
-  | peer-addressed | 0/39 | 18/18 scored; bare instance names 12/21 | 36/39 |
-  | controls | 57/66 | 60/66 | 60/66 |
+  | peer-addressed | 0/45 | 24/24 scored; bare instance names 15/21 | 39/45 |
+  | controls | 69/78 | 72/78 | 72/78 |
 
-  No control regressed. Relay, broadcast, "frag mich …", smart home,
-  research, media and routine stayed where they were in all three. One
-  control **moved**: "Welche Dokumente gibt es zum Thema Heizung?" went from
-  `general` to `documents` with the rule present — inside its expected set,
-  but the rule's mere presence shifted a turn that addresses no instance. Two
-  controls miss in every variant (not caused by the rule). The one miss with
-  names: "frag \<instance\>, wer gerade zuhause ist" stayed with `presence`
-  3/3, i.e. the user would get the LOCAL house.
-- 🛑 **The wording was changed after that run and is unmeasured again.** The
-  sentence "even a question about presence, devices, appointments or
-  documents does NOT belong to the category of its topic: those answer from
-  THIS house" was added to both router variants to win exactly that case.
-  The numbers above do not describe the shipped text until the bench is
-  re-run. The planner's rule has never been measured: the bench covers the
-  router call only.
+  No control regressed. Relay, broadcast, "Wer ist gerade zuhause?", the four
+  "frag \<Person\>, ob …" controls, "frag mich …", smart home, research,
+  media and routine stayed where they were in all three. One control
+  **moved**: "Welche Dokumente gibt es zum Thema Heizung?" went from `general`
+  to `documents` with the rule present — inside its expected set, but the
+  rule's mere presence shifted a turn that addresses no instance. Two
+  controls miss in every variant (not caused by the rule). CLASH sent both
+  marked cases ("frag \<Name\>, ob …" with an instance of that name) to the
+  federation role 3/3, as described above. An earlier wording (commit
+  `400451fc`) was measured too; it lacked the sentence about a topic's
+  category and scored 18/18 name-free and 36/39 named.
+- 🛑 **The NAMED variant is weaker on presence questions than the name-free
+  one.** "frag \<jemand\>s Renfield, wer bei ihm gerade zuhause ist" reaches
+  the federation role 3/3 with the name-free rule and stays with `presence`
+  3/3 with the named rule; "frag \<instance\>, wer gerade zuhause ist" stays
+  with `presence` 3/3 in both. A turn that stays with `presence` is answered
+  from THIS house. Together with the name clash above, this is a reason to
+  leave `FEDERATION_PEER_NAME_IN_ROUTER_PROMPT_ENABLED` off until the named
+  text has been reworked and measured again. The name-free rule's remaining
+  misses are bare instance names it cannot know ("Was weiss \<instance\>
+  ueber …" → `knowledge`, the presence question above).
+- The planner's rule has never been measured: the bench covers the router
+  call only.
 - **Measure before changing a word**: the model follows example strings, which
   is why the rules use placeholders only.
 - **Not covered — what still decides a turn before the router model:**
