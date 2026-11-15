@@ -1401,7 +1401,21 @@ class Settings(BaseSettings):
     # text byte for byte, whatever name is stored. On = an allow-list form of
     # the name (letters, digits, "_", space, ".", "-"; 32 characters) is set
     # into it. 🛑 UNMEASURED: run `bin/measure-preselect.py` before enabling.
+    # Covers the tool description ONLY -- the routing prompts have their own
+    # switch below.
     federation_peer_name_in_tool_description_enabled: bool = False
+    # Whether a paired peer's instance name may appear in the ROUTING prompts:
+    # the router's peer rule (`agent_router._peer_rule`) and the cross-MCP
+    # planner's (`orchestrator`). Default off, and independent of the switch
+    # above. 🛑 A wider reach than a tool description: the router prompt is
+    # built for EVERY routed turn of EVERY account, the description only
+    # biases the pre-selection inside an agent turn. And a far side that
+    # names itself like a household member attracts "frag <Name>, ..." --
+    # the question then leaves the instance. Off = the name-free rule ("frag
+    # <jemand>s Renfield", "die andere Instanz"); a bare instance name is not
+    # recognised. Same allow-list form (32 characters). 🛑 UNMEASURED: run
+    # `bin/measure-router.py` before enabling.
+    federation_peer_name_in_router_prompt_enabled: bool = False
     # A peer may change the name we store for it at most once per this many
     # seconds; an earlier change is ignored until the interval has passed.
     federation_instance_rename_min_interval_seconds: int = Field(default=600, ge=0, le=86400)

@@ -122,6 +122,168 @@ UTC, no tool registered. All three mutating routes (`pair/accept`,
 `pair/complete`, `revoke`) now go through `_resync_peer_registry`, and
 `TestPeerRegistryResync` fails if a fourth one forgets.
 
+### How a question reaches the peer
+
+Five layers sit between a chat message and `query_brain`, and each one can
+lose the question on its own:
+
+1. **Router** (`agent_router.classify`, one call to the intent model) picks a
+   role. While at least one pairing is registered, the router prompt carries
+   one extra rule behind the category list (`prompts/router.yaml`:
+   `peer_rule` / `peer_rule_named`): a message that wants a paired instance or
+   a person's Renfield to be **asked** goes to the federation role, whatever
+   the question is about. The role is read from the configuration — the first
+   role by name with `federation: true` (today `documents`), else a role with
+   `mcp_servers: null` — never a literal.
+2. **Planner** (`orchestrator.detect_multi_domain`, the main model; runs for
+   every turn that is not `conversation`/`knowledge` while
+   `AGENT_ORCHESTRATOR_ENABLED` is on) may split the turn into sub-queries
+   for several roles. It builds its own role list, so it carries its own rule
+   (`prompts/agent.yaml`: `orchestrator_peer_rule` / `…_named`), again only
+   while a pairing is registered: everything that is to be asked of another
+   instance stays in ONE sub-task for the federation role.
+3. **Role filter** (`agent_tools.py`): the role must be offered the peer's
+   tool — `federation: true`, see `.claude/rules/internal-tools.md`.
+4. **Tool pre-selection** (`_preselect_tools`): a further model call that reads
+   the tool **description**; neither rule reaches it.
+5. **Agent**: chooses among the pre-selected tools.
+
+Why the rule exists (measured on the household, 2026-11-15): "Frag
+\<instance\>, welche Dokumente es dort zum Thema X gibt" was classified as
+`conversation` — a role without tools, so no pre-selection, no agent loop, no
+federated call, and a plain answer. No role description mentioned asking
+another instance; only the topic "documents" could attract such a question to
+the one role that reaches a peer. Asking another instance is not a topic, so
+it is a rule of its own and not part of a role description.
+
+- **Without a pairing the router prompt is byte for byte unchanged** (the rule
+  is appended to the category block, the template is untouched). Checked
+  against `origin/main` and held by `test_router_reaches_paired_instance.py`.
+- **Live, not at start-up:** the router asks the peer registry on every turn,
+  so a pairing made or revoked while the backend runs takes effect at once.
+- **Not per account.** Every local account can use every active pairing, and
+  the router prompt is shown to nobody; a rule narrower than the tool would
+  leave the other accounts with the gap it closes.
+  `FEDERATION_PEERS_VISIBLE_TO_ALL` concerns the peers page only.
+- **Names:** both rules list instance names only under
+  `FEDERATION_PEER_NAME_IN_ROUTER_PROMPT_ENABLED` (default off) and only in
+  the allow-list form (§3a). That switch is **separate** from the one for the
+  tool description, in both directions: the router prompt is built for every
+  routed turn of every account, a tool description only biases the
+  pre-selection inside an agent turn. One function decides both
+  (`peer_mcp_registry._prompt_instance_name`). Without names the rules still
+  cover "frag \<jemand\>s Renfield" and "die andere Instanz"; a bare
+  instance name ("frag Nordhaus …") is recognised reliably only with the
+  switch on.
+- 🛑 **An instance named like a person.** With names on, "frag \<Name\>, ob
+  sie heute Zeit hat" goes to the far instance when a pairing carries that
+  name — the question leaves this instance. The far side chooses its name, so
+  this is also what the switch opens to a peer that wants it. No wording can
+  tell a person from an instance of the same name, and there is deliberately
+  no keyword logic in code. The bench plays the case as variant CLASH,
+  unscored. Asking a person who is **not** an instance ("frag \<Person\>,
+  ob …") is a scored control.
+- **Not diverted:** telling a *person* something ("sag ihm/ihr …") stays with
+  `presence`, and "frag mich …" is not a question to an instance; the router
+  rule says both, and names no role but its target.
+- **Why the planner has the rule, not a skip.** The router's rule made a new
+  path reachable: before it such a question was `conversation` and never met
+  the planner. "Frag \<instance\>, welche Termine anstehen und wer zuhause
+  ist" would be split by topic, the presence sub-query would run on a role
+  without the federation switch, be answered from THIS house, and be
+  synthesised as the far instance's answer. Skipping the planner whenever the
+  router picked the federation role would be wrong the other way: the router
+  returns a role, not its reason, and an ordinary document question on that
+  role must still be split. Only the model that reads the message can tell.
+- **Measured** (2026-11-15, `bin/measure-router.py`, `qwen3:8b`, the rule
+  wording of commit `f6010447`; 41 cases × 3 repetitions per variant,
+  interleaved, 375 calls). Peer-addressed turns reaching a role that can ask:
+
+  | | no pairing | name-free rule | named rule |
+  |---|---|---|---|
+  | peer-addressed | 0/45 | 24/24 scored; bare instance names 15/21 | 39/45 |
+  | controls | 69/78 | 72/78 | 72/78 |
+
+  No control regressed. Relay, broadcast, "Wer ist gerade zuhause?", the four
+  "frag \<Person\>, ob …" controls, "frag mich …", smart home, research,
+  media and routine stayed where they were in all three. One control
+  **moved**: "Welche Dokumente gibt es zum Thema Heizung?" went from `general`
+  to `documents` with the rule present — inside its expected set, but the
+  rule's mere presence shifted a turn that addresses no instance. Two
+  controls miss in every variant (not caused by the rule). CLASH sent both
+  marked cases ("frag \<Name\>, ob …" with an instance of that name) to the
+  federation role 3/3, as described above. An earlier wording (commit
+  `400451fc`) was measured too; it lacked the sentence about a topic's
+  category and scored 18/18 name-free and 36/39 named.
+- 🛑 **The NAMED variant is weaker on presence questions than the name-free
+  one.** "frag \<jemand\>s Renfield, wer bei ihm gerade zuhause ist" reaches
+  the federation role 3/3 with the name-free rule and stays with `presence`
+  3/3 with the named rule; "frag \<instance\>, wer gerade zuhause ist" stays
+  with `presence` 3/3 in both. A turn that stays with `presence` is answered
+  from THIS house. Together with the name clash above, this is a reason to
+  leave `FEDERATION_PEER_NAME_IN_ROUTER_PROMPT_ENABLED` off until the named
+  text has been reworked and measured again. The name-free rule's remaining
+  misses are bare instance names it cannot know ("Was weiss \<instance\>
+  ueber …" → `knowledge`, the presence question above).
+- **The planner's rule, measured** (2026-11-15, `bin/measure-planner.py`,
+  the main model on llama-server, rule wording of commit `608e3ca2`; 17 cases
+  × 3 variants × 3 repetitions, interleaved, 153 calls, 0 errors). A
+  multi-topic question to an instance counts as right when it is NOT spread
+  over roles that cannot ask — no plan, or every sub-task for the federation
+  role:
+
+  | | no pairing | name-free rule | named rule |
+  |---|---|---|---|
+  | multi-topic question to an instance | 0/30 | 15/15 scored; bare instance names 12/15 | 30/30 |
+  | ordinary two-domain request, must be split | 15/15 | 15/15 | 15/15 |
+  | single domain, must stay whole | 6/6 | 6/6 | 6/6 |
+
+  Without the rule the planner split **every** such question by topic
+  (presence, smart_home, documents, research, media) — the confidently wrong
+  answer described above was the regular case, not a corner. With the rule
+  it keeps them whole, and what should be split still is. One of the 30 named
+  answers was a plan of two sub-tasks, both for the federation role; that
+  counts.
+- **Residual, name-free rule:** a question that names the instance only by
+  its bare name can still be split, because without
+  `FEDERATION_PEER_NAME_IN_ROUTER_PROMPT_ENABLED` the planner does not know
+  the name: "Was weiss \<instance\> ueber die naechste Wartung und ueber das
+  Wetter am Wochenende?" came back as `documents` + `research` 3/3. The named
+  rule closes that for the planner — while the named ROUTER rule has the
+  presence weakness above, and both hang on the one switch.
+- **Measure before changing a word**: the model follows example strings, which
+  is why the rules use placeholders only.
+- **Not covered — what still decides a turn before the router model:**
+  - *Role hint* (palette, "Korrigieren & neu beantworten"): takes the hinted
+    role as is.
+  - *Entity-id route*: a recognised entity id routes to its domain at once.
+  - *Continuity*: a short follow-up (score ≥ 0.6) stays in the active domain
+    — "und was ist mit dem Mietvertrag?" after a peer question stays on the
+    federation role only because that role was the active domain; after a
+    smart-home turn it stays there.
+  - *Semantic fast path*: an embedding match against the roles' example
+    utterances returns a role without the model seeing the rule. A
+    peer-addressed message that resembles an utterance of another role is
+    routed there.
+  None of these knows the rule; the bench bypasses all of them and measures
+  the model call alone.
+- **Not covered after the router:** the planner follows its rule only as far
+  as a model follows a prompt; there is **no deterministic backstop** against
+  a split. Tool pre-selection and the agent's choice between the peer's tool
+  and local document tools are measured separately
+  (`bin/measure-preselect.py`), not for these turns.
+- **Considered and rejected: a backstop in code.** In `chat_handler`, after
+  the planner returns two or more sub-queries: if a pairing is registered and
+  any sub-query targets the federation role, drop the plan and run the single
+  role the router chose. Rejected on the measurement — the planner kept every
+  scored peer question whole, so the backstop would buy nothing there — and
+  on its cost: the federation role is `documents`, so while a pairing exists
+  every genuine "documents + something else" request would stop being split
+  and one half would go undone. It would also not have caught a plan spread
+  entirely over roles that cannot ask, nor a turn the router already sent
+  elsewhere. Reconsider only if a re-measurement shows the planner splitting
+  peer questions with the rule in place.
+
 ---
 
 ## 2. What the tier does (and what's still deferred)
@@ -347,7 +509,11 @@ name. A pairing now also carries the far **instance's** own name, shown first:
   bounds **form and length, not content** — a plain imperative of 32 letters
   passes it. That is why the flag is off. The named wording is pinned in
   `test_peer_tool_description.py` but **unmeasured; measure with
-  `bin/measure-preselect.py` before enabling.**
+  `bin/measure-preselect.py` before enabling.** This flag covers the tool
+  description only. The names in the **router's and the planner's** peer rule
+  (§1, "How a question reaches the peer") are behind a second switch,
+  `FEDERATION_PEER_NAME_IN_ROUTER_PROMPT_ENABLED`, default off — same
+  allow-list form, wider reach.
 - **Migrate before the rollout:** revision `pc20261113_peer_instance_name` adds
   `peer_users.remote_instance_name` and
   `federation_query_log.peer_instance_name_snapshot`

@@ -240,6 +240,45 @@ class QueryOrchestrator:
         self._eligible_roles_cache = eligible
         return eligible
 
+    def _peer_rule(self, lang: str, eligible_names: set[str]) -> str:
+        """The planner's rule for a question addressed to a paired instance.
+
+        "" without a registered pairing -- the planner prompt is then byte
+        for byte what it was.
+
+        🛑 Why the planner needs it too. The router's peer rule sends "frag
+        <Instanz>, welche Termine anstehen und wer zuhause ist" to the
+        federation role; the planner then saw two topics and split them into
+        two sub-queries. The second went to a role WITHOUT the federation
+        switch, was answered from THIS house, and the synthesis presented it
+        as the far instance's answer. What is asked of another instance is
+        one sub-task for the role that reaches it, however many topics it
+        names.
+
+        🛑 Why here and not "skip the planner": the router returns a role,
+        not its reason -- a turn on the federation role may just as well be
+        an ordinary document question that SHOULD be split. Only the model
+        that reads the message can tell, and the planner is that model.
+        """
+        from services.agent_router import render_peer_rule
+        from services.peer_mcp_registry import paired_instance_prompt_names
+
+        names = paired_instance_prompt_names(self.mcp_manager)
+        if names is None:
+            return ""
+        role = self.router.federation_role_name()
+        # 🛑 Not a reachable case today, and NOT a decision that a peer
+        # question may then be split unguarded: the federation role always
+        # has an agent loop, and every role with one is eligible. The branch
+        # only keeps a rule from naming a role the plan parser would throw
+        # away. Should eligibility ever be narrowed (a hook, a config), this
+        # is the line where the planner loses its guard -- handle it then.
+        if role not in eligible_names:
+            return ""
+        return render_peer_rule(
+            "agent", "orchestrator_peer_rule", lang, role=role, names=names,
+        )
+
     async def detect_multi_domain(
         self,
         message: str,
@@ -265,7 +304,7 @@ class QueryOrchestrator:
             desc = role.description.get(lang, role.description.get("de", ""))
             role_lines.append(f"- {role.name}: {desc}")
 
-        role_descriptions = "\n".join(role_lines)
+        role_descriptions = "\n".join(role_lines) + self._peer_rule(lang, eligible_names)
         detect_prompt = prompt_manager.get(
             "agent", "orchestrator_detect_prompt", lang=lang,
             message=message, role_descriptions=role_descriptions,

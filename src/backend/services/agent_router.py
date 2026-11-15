@@ -27,7 +27,7 @@ from loguru import logger
 # list of strings and an intent is `mcp.peer_<id>.<tool>`. So match on the
 # prefix -- but on the ONE definition `peer_mcp_registry` keeps for it, never
 # on a literal.
-from services.peer_mcp_registry import FEDERATION_SERVER_PREFIX
+from services.peer_mcp_registry import FEDERATION_SERVER_PREFIX, paired_instance_prompt_names
 
 # Anti-dashboard guard: ``my_dashboard`` is the personal-overview
 # sub_intent. Messages that request a deliverable (status report,
@@ -222,6 +222,29 @@ def _filter_available_roles(
     return filtered
 
 
+def render_peer_rule(
+    file: str, key: str, lang: str, *, role: str | None, names: list[str] | None,
+) -> str:
+    """A peer rule from the prompt catalog, ready to append to a role list.
+
+    "" when no pairing is registered (`names is None`) or no role can reach
+    one -- the caller's prompt then stays what it was. `<key>_named` is used
+    when there are names to list, `<key>` otherwise. One renderer for the
+    router and the cross-MCP planner, so both quote a name the same way.
+    """
+    if names is None or role is None:
+        return ""
+    if names:
+        rule = prompt_manager.get(
+            file, f"{key}_named", lang=lang, role=role,
+            instances=", ".join(f"„{name}“" for name in names),
+        )
+    else:
+        rule = prompt_manager.get(file, key, lang=lang, role=role)
+    rule = rule.strip()
+    return f"\n\n{rule}" if rule else ""
+
+
 class AgentRouter:
     """Routes user messages to specialized agent roles via LLM classification."""
 
@@ -240,6 +263,9 @@ class AgentRouter:
             connected_servers = mcp_manager.get_connected_server_names()
 
         self.roles = _filter_available_roles(all_roles, connected_servers)
+        # Kept for the pairings alone: they come and go while the process
+        # runs, so `_peer_rule` asks on every turn instead of at start-up.
+        self._mcp_manager = mcp_manager
         self._semantic_router = None
         logger.info(
             f"AgentRouter initialized: {len(self.roles)} roles available "
@@ -353,6 +379,52 @@ class AgentRouter:
                     si_text = si_desc.get(lang, si_desc.get("de", si_name))
                     lines.append(f"  > {name}/{si_name}: {si_text}")
         return "\n".join(lines)
+
+    def federation_role_name(self) -> str | None:
+        """The role a question to a paired instance is sent to, or `None`.
+
+        Taken from the configuration, never a literal: the first role (by
+        name, so independent of the YAML order -- the same choice
+        `role_for_intent` makes for a peer intent) that carries
+        `federation: true`. Without one, a role that filters no servers at
+        all (`mcp_servers: null`) sees the peer too.
+        """
+        loops = sorted(
+            (name, role) for name, role in self.roles.items() if role.has_agent_loop
+        )
+        for name, role in loops:
+            if role.federation:
+                return name
+        for name, role in loops:
+            if role.mcp_servers is None:
+                return name
+        return None
+
+    def _peer_rule(self, lang: str = "de") -> str:
+        """The router's rule for a question addressed to a paired instance.
+
+        "" unless a pairing is registered AND a role can reach it -- the
+        prompt is then byte for byte what it was before this rule existed.
+
+        🛑 Why a rule and not a role description: asking another instance is
+        not a topic. Until 2026-11-15 only the description of `documents`
+        could attract such a question, so "frag <Instanz>, welche Dokumente
+        ..." was classified as `conversation` on the live household -- a role
+        without tools, hence no pre-selection, no agent loop and no federated
+        call. Whether a question reached the peer depended on what it was
+        about.
+
+        🛑 The instance names are text the FAR side chooses. They arrive here
+        only through `paired_instance_prompt_names`: allow-listed, verified,
+        and only when the operator opened the ROUTING prompts to them
+        (`federation_peer_name_in_router_prompt_enabled`). Without names the
+        rule still covers "frag <jemand>s Renfield" and "die andere Instanz".
+        """
+        return render_peer_rule(
+            "router", "peer_rule", lang,
+            role=self.federation_role_name(),
+            names=paired_instance_prompt_names(getattr(self, "_mcp_manager", None)),
+        )
 
     async def classify_with_context(
         self,
@@ -569,7 +641,9 @@ class AgentRouter:
                 logger.warning(f"Semantic router failed, falling back to LLM: {e}")
 
         # Build role descriptions for the prompt
-        role_descriptions = self._build_role_descriptions(lang)
+        # The peer rule rides behind the categories, not in the template: with
+        # no pairing it is "" and the prompt is unchanged to the byte.
+        role_descriptions = self._build_role_descriptions(lang) + self._peer_rule(lang)
 
         # Build optional history context
         history_context = ""

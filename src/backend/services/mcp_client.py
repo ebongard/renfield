@@ -969,6 +969,10 @@ class MCPServerConfig:
     # request time (so revocation is picked up without needing a registry
     # refresh). Unset for non-federation servers.
     peer_user_id: int | None = None
+    # Federation-transport only: the far instance's name as it may enter the
+    # ROUTING prompts, or "" (switch off, no verified name, nothing nameable).
+    # Written by `peer_mcp_registry` alone, which decides all three.
+    peer_router_name: str = ""
 
 
 @dataclass

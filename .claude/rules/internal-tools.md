@@ -78,3 +78,4 @@ verlässt und ob das Werkzeug den Vorauswahl-Prompt belastet (Föderationswerkze
 🛑 Drei Stellen lesen `role.mcp_servers`, nicht eine: `agent_tools.py` (Filter), `agent_router._filter_available_roles`
 (Verfügbarkeit — `connected_set` enthält Peers) und `agent_router.role_for_intent` (die „Korrigieren"-Zuordnung, die
 für Peer-Intents nie eine Rolle fand). Wer nur den Filter anfasst, lässt zwei stille Lücken stehen.
+🛑 Router UND Planer tragen dafür eine eigene Peer-Regel (nur bei Kopplung); Wortlaut nur nach `bin/measure-router.py` ändern — `docs/FEDERATION_PAIRING.md` §1.

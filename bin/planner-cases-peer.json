@@ -1,0 +1,21 @@
+[
+  {"task": "Frag Nordhaus, welche Termine morgen anstehen und wer zuhause ist", "kind": "peer", "needs_name": true},
+  {"task": "frag nordhaus nach dem Mietvertrag und wie warm es dort im Buero ist", "kind": "peer", "needs_name": true},
+  {"task": "Frag das Suedhaus, ob das Licht im Flur an ist, wer da ist und ob die Rechnung vom Stromanbieter angekommen ist", "kind": "peer", "needs_name": true},
+  {"task": "Was weiss Nordhaus ueber die naechste Wartung und ueber das Wetter am Wochenende?", "kind": "peer", "needs_name": true},
+  {"task": "Ask Nordhaus which documents exist about the heating and who is at home there", "kind": "peer", "needs_name": true, "lang": "en"},
+  {"task": "Frag die andere Instanz, welche Dokumente es zur Heizung gibt und wie warm es dort ist", "kind": "peer"},
+  {"task": "frag die andere Instanz, wer dort zuhause ist und welche Musik gerade laeuft", "kind": "peer"},
+  {"task": "Frag Alex' Renfield, wann der Schornsteinfeger kommt und ob das Licht im Keller noch brennt", "kind": "peer"},
+  {"task": "frag Kims Renfield nach dem Rezept, nach den Terminen der Woche und wer gerade da ist", "kind": "peer"},
+  {"task": "Ask Sam's Renfield whether the invoice has arrived and who is at home", "kind": "peer", "lang": "en"},
+
+  {"task": "Mach das Licht im Wohnzimmer an und spiel etwas Jazz", "kind": "split", "roles": ["smart_home", "media"]},
+  {"task": "Wie wird das Wetter morgen und such die Rechnung vom Stromanbieter", "kind": "split", "roles": ["research", "documents"]},
+  {"task": "Schalte die Heizung im Buero aus und sag mir, wer zuhause ist", "kind": "split", "roles": ["smart_home", "presence"]},
+  {"task": "Scanne das Dokument und mach danach das Licht im Flur aus", "kind": "split", "roles": ["documents", "smart_home"]},
+  {"task": "Turn on the light in the living room and play some jazz", "kind": "split", "roles": ["smart_home", "media"], "lang": "en"},
+
+  {"task": "Mach das Licht im Wohnzimmer an", "kind": "single"},
+  {"task": "Welche Dokumente gibt es zum Thema Heizung?", "kind": "single"}
+]

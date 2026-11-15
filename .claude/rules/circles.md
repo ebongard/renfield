@@ -64,7 +64,7 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   Neukoppeln einer WIDERRUFENEN (die Zeile lebt unter derselben `id` wieder auf); ein deaktiviertes Konto wird nicht bedient. `docs/FEDERATION_PAIRING.md` §3b.
 - 🛑 **Der Instanzname (`remote_instance_name`) ist ANZEIGETEXT der GEGENSEITE** — nie Kennung oder Teil von
   `peer_<id>`; einziger Schreiber `federation_instance_name.py`, erst NACH Signatur und Peer-Nachschlag. In den
-  Prompt nur mit `FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED` (aus): begrenzt Form und Länge, nicht Inhalt.
+  Prompt nur mit eigenem Schalter je Prompt (`…_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED`, `…_IN_ROUTER_PROMPT_ENABLED`; beide aus): begrenzt Form und Länge, nicht Inhalt.
 - 🛑 **Ein Ping ist keine Anfrage:** `last_seen_at` bleibt „letzte ANFRAGE", keine Prüfprotokoll-Zeile;
   `unsupported` ist UNBEKANNT. Die Route ist ohne Kopplung erreichbar: alles, was SCHREIBT, steht hinter
   dem Kopplungs-Nachschlag; Rumpf ≤ 4096 Byte auf der Leitung, komprimiert = abgelehnt (beide Richtungen).
