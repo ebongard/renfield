@@ -626,7 +626,9 @@ de:
   # {role_descriptions} ONLY while a pairing is registered (orchestrator.py).
   # Without it the planner split such a question by topic, and a sub-agent
   # without the federation switch answered from THIS house.
-  # 🛑 Placeholders, no sample sentences. Unmeasured.
+  # 🛑 Placeholders, no sample sentences. Measure with bin/measure-planner.py.
+  # 🛑 Refers to the planner's rules by what they SAY, never by number: a
+  # renumbering of orchestrator_detect_prompt would silently break it.
   # Available variables: {role}; `..._named` also {instances}
   orchestrator_peer_rule: |
     GEKOPPELTE INSTANZEN: Mit diesem Renfield sind andere Renfield-Instanzen gekoppelt, und nur {role} erreicht sie.
@@ -635,7 +637,7 @@ de:
     gefragt werden soll, zusammen in EINER Teilaufgabe fuer {role} — im Wortlaut der Anfrage und
     auch dann, wenn die Frage mehrere Themen nennt (Dokumente, Termine, Anwesenheit, Geraete).
     Verteile solche Themen NIE auf andere Domaenen: die wuerden aus DIESEM Haus antworten.
-    Besteht die Anfrage nur aus der Frage an die andere Instanz, reicht eine einzige Domaene (Regel 2).
+    Besteht die Anfrage nur aus der Frage an die andere Instanz, ist sie eine Anfrage, fuer die eine einzige Domaene ausreicht.
 
   orchestrator_peer_rule_named: |
     GEKOPPELTE INSTANZEN: Mit diesem Renfield sind andere Renfield-Instanzen gekoppelt. Sie heissen: {instances}. Nur {role} erreicht sie.
@@ -644,7 +646,7 @@ de:
     gefragt werden soll, zusammen in EINER Teilaufgabe fuer {role} — im Wortlaut der Anfrage und
     auch dann, wenn die Frage mehrere Themen nennt (Dokumente, Termine, Anwesenheit, Geraete).
     Verteile solche Themen NIE auf andere Domaenen: die wuerden aus DIESEM Haus antworten.
-    Besteht die Anfrage nur aus der Frage an die andere Instanz, reicht eine einzige Domaene (Regel 2).
+    Besteht die Anfrage nur aus der Frage an die andere Instanz, ist sie eine Anfrage, fuer die eine einzige Domaene ausreicht.
 
   orchestrator_synthesize_prompt: |
     Kombiniere diese Teilergebnisse zu einer natuerlichen Antwort auf die urspruengliche Frage.
@@ -1256,7 +1258,7 @@ en:
     there stays together in ONE sub-task for {role} — in the words of the request, and
     even when the question names several topics (files, appointments, who is at home, devices).
     NEVER spread such topics over other domains: those would answer from THIS house.
-    If the request consists only of the question to the other instance, a single domain suffices (rule 2).
+    If the request consists only of the question to the other instance, it is a request for which a single domain suffices.
 
   orchestrator_peer_rule_named: |
     PAIRED INSTANCES: Other Renfield instances are paired with this Renfield. Their names: {instances}. Only {role} reaches them.
@@ -1265,7 +1267,7 @@ en:
     there stays together in ONE sub-task for {role} — in the words of the request, and
     even when the question names several topics (files, appointments, who is at home, devices).
     NEVER spread such topics over other domains: those would answer from THIS house.
-    If the request consists only of the question to the other instance, a single domain suffices (rule 2).
+    If the request consists only of the question to the other instance, it is a request for which a single domain suffices.
 
   orchestrator_synthesize_prompt: |
     Combine these partial results into a natural answer to the original question.

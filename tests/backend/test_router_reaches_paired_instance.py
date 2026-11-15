@@ -758,9 +758,31 @@ class TestThePlannerKeepsAQuestionToAnInstanceWhole:
         _, prompt = await _plan(orchestrator, "Mach das Licht an")
         assert ("„Nordhaus“" in prompt) is router_flag
 
+    @pytest.mark.parametrize("lang", ["de", "en"])
+    @pytest.mark.parametrize("instance", [None, "Nordhaus"])
+    async def test_the_rule_cites_no_planner_rule_BY_NUMBER(
+        self, names_allowed, lang, instance,
+    ):
+        """The planner's own rules are a numbered list. A reference like
+        "(Regel 2)" breaks silently the day someone renumbers them -- the
+        rule says what it means instead. With a name without digits in it,
+        the rule holds no digit at all."""
+        import re
+
+        orchestrator = await _planner(_row(3, instance=instance))
+        rule = orchestrator._peer_rule(lang, {"documents"})
+        assert not re.search(r"(?i)\b(regel|rule)\s*\d", rule)
+        assert not re.search(r"\d", rule)
+
     async def test_a_federation_role_the_planner_may_not_use_gets_no_rule(self):
         """A rule naming a role the planner cannot plan with would produce a
-        sub-query that is thrown away."""
+        sub-query that is thrown away.
+
+        🛑 This pins a GUARD, not a design decision for a reachable case. It
+        cannot happen today: the federation role always has an agent loop and
+        every such role is eligible. If eligibility is ever narrowed, "no
+        rule" means the planner may split a peer question unguarded -- that
+        would have to be solved then, not read off this test as intended."""
         orchestrator = await _planner(_row(3))
         assert orchestrator._peer_rule("de", {"smart_home", "presence"}) == ""
 

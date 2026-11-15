@@ -267,6 +267,12 @@ class QueryOrchestrator:
         if names is None:
             return ""
         role = self.router.federation_role_name()
+        # 🛑 Not a reachable case today, and NOT a decision that a peer
+        # question may then be split unguarded: the federation role always
+        # has an agent loop, and every role with one is eligible. The branch
+        # only keeps a rule from naming a role the plan parser would throw
+        # away. Should eligibility ever be narrowed (a hook, a config), this
+        # is the line where the planner loses its guard -- handle it then.
         if role not in eligible_names:
             return ""
         return render_peer_rule(
