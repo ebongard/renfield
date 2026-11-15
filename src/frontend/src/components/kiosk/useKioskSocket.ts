@@ -123,7 +123,7 @@ export interface KioskPeer {
   last_seen_at: string | null;
   /** Probe off: "queried us recently". Probe on: mirrors `reachability`. */
   reachable: boolean;
-  /** The far INSTANCE's label (verified name, else its endpoint host). */
+  /** The far INSTANCE's VERIFIED name -- never its endpoint host. */
   instance_name?: string;
   /** Result of the last signed round trip. Present = the probe is on. */
   reachability?: 'reachable' | 'unreachable' | 'unknown' | (string & {});
@@ -635,7 +635,8 @@ async function kioskWsUrl(): Promise<string> {
  * stamp is marked distrusted (the readings show as stale at once) and the
  * socket is opened anew: the hub's protocol has no "send me a snapshot"
  * message, a fresh connection is how a client asks. No timer, no polling --
- * one reconnect per wake-up. A tab that was merely in the background, with
+ * one reconnect per wake-up, held to the same 8 s "backend unreachable"
+ * grace as any other drop. A tab that was merely in the background, with
  * both clocks seen running over the hidden period, is left alone.
  */
 export function useKioskSocket(): KioskSocketState {
@@ -749,8 +750,12 @@ export function useKioskSocket(): KioskSocketState {
 
     // Ask the hub for the current state the only way its protocol knows: a
     // new connection, which it answers with a snapshot. The old socket is let
-    // go silently -- its `onclose` must neither start a second reconnect nor
-    // arm the "backend unreachable" timer for a drop we caused ourselves.
+    // go silently -- its `onclose` must not start a second reconnect.
+    // From here on there is no socket, so the "backend unreachable" timer runs
+    // exactly as after a drop: the new socket's `onopen` disarms it, and a
+    // token request that hangs or a connect that fails flips the wall after
+    // the usual grace instead of leaving the last board up with nothing
+    // behind it.
     // Several wake-up events in a row (`visibilitychange` and `pageshow` come
     // together) still open ONE socket: each attempt supersedes the one before
     // it (`connectSeqRef`).
@@ -766,6 +771,7 @@ export function useKioskSocket(): KioskSocketState {
         wsRef.current = null;
       }
       attemptRef.current = 0;
+      armSustainedTimer();
       void connect();
     };
 

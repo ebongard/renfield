@@ -589,16 +589,18 @@ describe('useKioskSocket', () => {
       expect(first.readyState).toBe(MockWebSocket.CLOSED);
       expect(first.onclose).toBeNull();
       expect(first.onmessage).toBeNull();
-      act(() => { vi.advanceTimersByTime(60_000); });
-      await flushConnect();
-      expect(MockWebSocket.instances).toHaveLength(2);
-      expect(result.current.backendUnreachable).toBe(false);
 
       // The fresh snapshot brings a stamp of its own, trusted again.
       act(() => {
         latest().fireOpen();
         latest().fireMessage({ ...probedSnapshot(), at: '2026-11-14T10:30:00+00:00' });
       });
+      // The reconnect we caused ourselves was answered in time: no second
+      // socket, and the wall never read "backend unreachable".
+      act(() => { vi.advanceTimersByTime(60_000); });
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(2);
+      expect(result.current.backendUnreachable).toBe(false);
       expect(result.current.live.peersClock?.distrusted).toBeUndefined();
       expect(result.current.live.peersClock?.receivedMono).toBe(mono);
       expect(result.current.live.peersClock?.serverAt).toBe(Date.parse('2026-11-14T10:30:00Z'));
@@ -713,6 +715,23 @@ describe('useKioskSocket', () => {
       await flushConnect();
       expect(MockWebSocket.instances).toHaveLength(2);
       expect(latest().url).toContain('fresh-token');
+    });
+
+    it('reads "backend unreachable" after the usual grace when the resync gets no socket', async () => {
+      // The token request hangs: without a deadline of its own the wall would
+      // keep its last board, with no socket behind it, until that request
+      // times out.
+      fakeTimersOnly();
+      const { result } = await hydrated();
+      vi.mocked(fetchWsToken).mockImplementation(() => new Promise<string>(() => {}));
+      act(() => { window.dispatchEvent(new Event('online')); });
+      await flushConnect();
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(result.current.backendUnreachable).toBe(false);
+      act(() => { vi.advanceTimersByTime(7_900); });
+      expect(result.current.backendUnreachable).toBe(false);
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(result.current.backendUnreachable).toBe(true);
     });
 
     it('stops listening when the display is unmounted', async () => {
