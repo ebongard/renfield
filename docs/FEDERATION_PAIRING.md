@@ -225,8 +225,32 @@ it is a rule of its own and not part of a role description.
   text has been reworked and measured again. The name-free rule's remaining
   misses are bare instance names it cannot know ("Was weiss \<instance\>
   ueber …" → `knowledge`, the presence question above).
-- The planner's rule has never been measured: the bench covers the router
-  call only.
+- **The planner's rule, measured** (2026-11-15, `bin/measure-planner.py`,
+  the main model on llama-server, rule wording of commit `608e3ca2`; 17 cases
+  × 3 variants × 3 repetitions, interleaved, 153 calls, 0 errors). A
+  multi-topic question to an instance counts as right when it is NOT spread
+  over roles that cannot ask — no plan, or every sub-task for the federation
+  role:
+
+  | | no pairing | name-free rule | named rule |
+  |---|---|---|---|
+  | multi-topic question to an instance | 0/30 | 15/15 scored; bare instance names 12/15 | 30/30 |
+  | ordinary two-domain request, must be split | 15/15 | 15/15 | 15/15 |
+  | single domain, must stay whole | 6/6 | 6/6 | 6/6 |
+
+  Without the rule the planner split **every** such question by topic
+  (presence, smart_home, documents, research, media) — the confidently wrong
+  answer described above was the regular case, not a corner. With the rule
+  it keeps them whole, and what should be split still is. One of the 30 named
+  answers was a plan of two sub-tasks, both for the federation role; that
+  counts.
+- **Residual, name-free rule:** a question that names the instance only by
+  its bare name can still be split, because without
+  `FEDERATION_PEER_NAME_IN_ROUTER_PROMPT_ENABLED` the planner does not know
+  the name: "Was weiss \<instance\> ueber die naechste Wartung und ueber das
+  Wetter am Wochenende?" came back as `documents` + `research` 3/3. The named
+  rule closes that for the planner — while the named ROUTER rule has the
+  presence weakness above, and both hang on the one switch.
 - **Measure before changing a word**: the model follows example strings, which
   is why the rules use placeholders only.
 - **Not covered — what still decides a turn before the router model:**
@@ -244,10 +268,21 @@ it is a rule of its own and not part of a role description.
   None of these knows the rule; the bench bypasses all of them and measures
   the model call alone.
 - **Not covered after the router:** the planner follows its rule only as far
-  as a model follows a prompt; there is no deterministic backstop against a
-  split. Tool pre-selection and the agent's choice between the peer's tool
+  as a model follows a prompt; there is **no deterministic backstop** against
+  a split. Tool pre-selection and the agent's choice between the peer's tool
   and local document tools are measured separately
   (`bin/measure-preselect.py`), not for these turns.
+- **Considered and rejected: a backstop in code.** In `chat_handler`, after
+  the planner returns two or more sub-queries: if a pairing is registered and
+  any sub-query targets the federation role, drop the plan and run the single
+  role the router chose. Rejected on the measurement — the planner kept every
+  scored peer question whole, so the backstop would buy nothing there — and
+  on its cost: the federation role is `documents`, so while a pairing exists
+  every genuine "documents + something else" request would stop being split
+  and one half would go undone. It would also not have caught a plan spread
+  entirely over roles that cannot ask, nor a turn the router already sent
+  elsewhere. Reconsider only if a re-measurement shows the planner splitting
+  peer questions with the rule in place.
 
 ---
 
