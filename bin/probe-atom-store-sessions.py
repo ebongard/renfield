@@ -42,8 +42,7 @@ async def regime(name, *, warm, own_session):
         sessions = SourceSessions(AsyncSessionLocal)
 
         async def leg(i):
-            async with sessions.session() as s:
-                return await one_query(s, i)
+            return await one_query(sessions.reader(), i)
         results = await asyncio.gather(*(leg(i) for i in range(N)),
                                        return_exceptions=True)
     else:

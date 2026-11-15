@@ -512,6 +512,13 @@ class Settings(BaseSettings):
     responder TTL is 60s and synthesis must fit inside that along with
     retrieval and the poll-reply round trip. The Field constraint enforces
     this, not just the comment."""
+    atom_fanout_source_timeout: float = Field(default=20.0, ge=0.1, le=29.0)
+    """Deadline for ONE source of an atom fan-out that runs on own sessions
+    (today: the federated retrieval). A source over it is cancelled and
+    counted as crashed; the others still make the answer. The sources run
+    side by side, so this is also the bound of the fan-out. Upper bound 29s:
+    together with `federation_synthesis_timeout` (default 30) it has to stay
+    inside the responder TTL of 60s."""
 
     # Agent Advanced
     agent_history_limit: int = Field(default=20, ge=1, le=100)       # Max history steps in agent loop

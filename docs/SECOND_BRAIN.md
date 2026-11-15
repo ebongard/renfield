@@ -75,25 +75,33 @@ am 2026-10-29 gegen echtes Postgres (`bin/probe-atom-store-sessions.py`), acht A
 
 Daraus folgen zwei Betriebsarten, die der AUFRUFER über den Konstruktor wählt:
 
-- **Föderiert** (`federation_query_responder._retrieve`): die Sitzung ist frisch, also bekommt jede Quelle
-  eine **eigene** (`PolymorphicAtomStore(session, source_sessions=…)`). Bis zum 2026-11-15 fächerte dieser
-  Pfad auf der einen kalten Sitzung — live stand bei jeder eingehenden Anfrage „2/8 sources delivered,
-  3 crashed", und die Antwort an die Gegenseite war fast leer. Vorwärmen wäre keine Reparatur gewesen: es
-  beseitigt die Meldung, indem es die Nebenläufigkeit beseitigt.
+- **Föderiert** (`federation_query_responder._retrieve`): die Sitzung ist frisch, also fasst keine Quelle sie
+  an (`PolymorphicAtomStore(session, source_sessions=…)`). Jede Quelle bekommt einen `SourceReader`; jede
+  einzelne ANWEISUNG darauf läuft in einer eigenen Sitzung, die genau so lange lebt wie die Anweisung. Bis
+  zum 2026-11-15 fächerte dieser Pfad auf der einen kalten Sitzung — live stand bei jeder eingehenden Anfrage
+  „2/8 sources delivered, 3 crashed", und die Antwort an die Gegenseite war fast leer. Vorwärmen wäre keine
+  Reparatur gewesen: es beseitigt die Meldung, indem es die Nebenläufigkeit beseitigt.
 - **Lokal** (`GET /api/atoms`): unverändert eine Sitzung, reihum. Sie ist warm, weil die
   Anmelde-Abhängigkeit dieselbe Sitzung vor dem Routenrumpf benutzt hat. Bewusst nicht umgestellt: die
   SQL-Zeit ist dort nicht der bestimmende Anteil, acht Verbindungen je Suche wären es im Pool aber sehr wohl.
 
-🛑 **Eigene Sitzungen sind gedeckelt:** höchstens `SOURCE_SESSION_LIMIT` (8) zugleich im ganzen Prozess,
-gleichgültig wie viele Anfragen eingehen — 8 von 30 Pool-Verbindungen (`db_pool_size` 10 + `db_max_overflow`
-20). Die Schranke gilt nur, weil der Responder EINE `SourceSessions`-Instanz für alle Abrufe hält.
+🛑 **Gedeckelt ist die Anweisung, nicht die Quelle:** höchstens `SOURCE_SESSION_LIMIT` (8) Anweisungen —
+und damit Verbindungen — zugleich im ganzen Prozess, gleichgültig wie viele Anfragen eingehen: 8 von 30
+Pool-Verbindungen (`db_pool_size` 10 + `db_max_overflow` 20). Zwischen zwei Anweisungen hält eine Quelle
+nichts. Das ist der Punkt, weil fünf der acht Quellen dazwischen einen Modellserver fragen (`kg` vor der
+ersten Anweisung ein LLM, Lesefrist 300 s): hielte die Quelle ihren Platz über den ganzen Aufruf, belegten
+wartende Modellaufrufe alle Plätze ohne eine einzige Verbindung, und das SQL jeder anderen Anfrage stünde
+dahinter an. Die Schranke gilt nur, weil der Responder EINE `SourceSessions`-Instanz für alle Abrufe hält.
+Dazu hat jede Quelle dort eine Frist (`ATOM_FANOUT_SOURCE_TIMEOUT`, 20 s): wer sie überschreitet, wird
+abgebrochen und als abgestürzt gezählt, die übrigen tragen die Antwort.
 
 🛑 **Auf eigenen Sitzungen ist der Abruf ein reiner Lesevorgang.** Zwei Quellen schreiben sonst, und beide
 sind dort ausdrücklich abgeschaltet: der Zugriffszähler der Erinnerungen (`access_count`, `last_accessed_at`;
 `track_access=False`) und das Schattenprotokoll der Fertigkeiten (`record_shadow_log=False`) — letzteres
 legte bei einer gemappten Anfrage Kuratorzeilen unter dem verknüpften lokalen Konto an. Eine Quelle ohne
 Transaktion des Aufrufers hat niemanden, der über ihren Schreibvorgang entscheidet, und die Frage einer
-Gegenseite ist kein Zug einer lokalen Person. Der Geltungsbereich (`asker_id`,
+Gegenseite ist kein Zug einer lokalen Person. Der `SourceReader` kann gar nicht schreiben (kein `add`,
+`flush`, `commit`) — eine Quelle, die es versucht, fällt sichtbar aus. Der Geltungsbereich (`asker_id`,
 `PeerScope`) ist in beiden Betriebsarten derselbe — eine eigene Sitzung ändert, über welche Verbindung eine
 Quelle liest, nie, was sie lesen darf. `query` protokolliert je Durchlauf eine Zeile (geliefert / leer /
 abgestürzt, Dauer, Pfad).

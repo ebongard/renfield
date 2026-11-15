@@ -52,15 +52,18 @@ ASCII query flow:
         |     Pre-warming is not the fix: it removes the error message by
         |     removing the concurrency.
         |
-        |   * `source_sessions=SourceSessions(...)` -- every source gets a
-        |     session OF ITS OWN (regime C), closed when the source returns,
-        |     crashes or is cancelled. The federated responder uses this.
-        |     At most `SOURCE_SESSION_LIMIT` such sessions are open in the
-        |     process at any time, however many fan-outs run -- see
-        |     `SourceSessions` for the pool arithmetic.
+        |   * `source_sessions=SourceSessions(...)` -- no source touches
+        |     `self.db` (regime C). The federated responder uses this. Each
+        |     source is handed a `SourceReader`; every statement on it runs
+        |     on a session of its own that lives exactly as long as the
+        |     statement. While a source waits for a model server it holds
+        |     nothing. At most `SOURCE_SESSION_LIMIT` statements -- and so
+        |     connections -- are on the database at any time, however many
+        |     fan-outs run; see `SourceSessions`. Every source also has a
+        |     deadline there (`atom_fanout_source_timeout`).
         |
-        |   A source on a session of its own has NO caller transaction to lean
-        |   on, so each call tree was checked for writes (2026-11-15):
+        |   A source in regime C has NO caller transaction to lean on, so
+        |   each call tree was checked for writes (2026-11-15):
         |
         |     rag, kg, lexical_chunks, lexical_memories, document_fact, note
         |         read only; return plain dicts, no ORM instances.
@@ -82,7 +85,10 @@ ASCII query flow:
         |         is not a local person's turn and must not write curator
         |         rows under a local account.
         |
-        |   None of them uses SET LOCAL, an advisory lock or a savepoint.
+        |   With both switched off the fan-out in regime C is a pure read,
+        |   and `SourceReader` enforces it: it has no `add`, `flush` or
+        |   `commit`. None of the sources uses SET LOCAL, an advisory lock
+        |   or a savepoint.
         |   Graph expansion runs AFTER the fan-out, alone, on `self.db`.
         |
         |   🛑 How many sources CAN report a failure is not the same as eight.
@@ -117,8 +123,7 @@ from __future__ import annotations
 import asyncio
 import time
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -138,35 +143,57 @@ from services.circle_sql import PeerScope
 from utils.config import settings
 from utils.log_safety import error_text_without_content
 
-#: How many source sessions may be open in this process at the same time,
-#: across ALL fan-outs. Eight = one fan-out runs fully parallel; a second one
-#: arriving meanwhile shares the same eight slots instead of taking eight more.
+#: How many statements of read-only fan-outs may be on the database at the
+#: same time in this process -- and with that, how many connections all of
+#: them hold together. Eight = one fan-out runs its SQL fully parallel; a
+#: second one arriving meanwhile shares the same eight slots instead of taking
+#: eight more.
 SOURCE_SESSION_LIMIT = 8
 
 
 class SourceSessions:
-    """Hands every source of a fan-out a session of its own -- bounded.
+    """Database access for the sources of a read-only fan-out -- bounded.
 
     One instance per process and session factory (the federated responder
     keeps one at module level); the bound only holds across fan-outs that
     share the instance.
 
+    🛑 THE SLOT COVERS ONE STATEMENT, NOT ONE SOURCE. A source is handed a
+    `SourceReader`, and every `execute` on it takes a slot, opens a session,
+    runs the statement, buffers the result, closes the session and gives the
+    slot back. Between two statements a source holds NOTHING -- no slot, no
+    session, no connection, no open transaction.
+
+    That is the point, because the sources do not only query. All of them
+    but the two lexical ones and `document_fact` call a model server in
+    between: `kg` asks an LLM for entity names BEFORE its first statement
+    (read timeout 300 s) and embeds between statements, `rag` reranks
+    between its search and its parent lookup, `memory`, `skill` and `note`
+    embed first. The first version of this class held the slot for the whole
+    source call. Eight sources waiting on a busy model server then held all
+    eight slots without one connection among them, and every SQL source of
+    every other inbound query queued behind them -- one slow model call
+    delayed everybody, where before the change it delayed its own query.
+    A deadline would only have bounded that; this removes it. It needs no
+    knowledge of where a source happens to call its model, and a source
+    that grows a new model call cannot bring the coupling back.
+
+    Why one statement per session is no loss: the fan-out is a pure read,
+    and Postgres' READ COMMITTED gives every statement a snapshot of its own
+    anyway -- two statements of one source never shared a view of the data.
+    No source uses SET LOCAL, an advisory lock, a savepoint or a temp table
+    (checked 2026-11-15), so nothing lives on the connection between them.
+
     Pool arithmetic (`services/database.py`, `utils/config.py`): a backend
     process owns `db_pool_size + db_max_overflow` = 10 + 20 = 30 connections
-    (no override in `k8s/`), and the workers bring pools of their own to the
-    same server, whose `max_connections` the manifests leave at the Postgres
-    default of 100. A session
-    takes a connection on its first statement, so an unbounded regime C costs
-    8 connections per retrieval: four overlapping retrievals would want 32
-    and every other request would wait on the pool. With the slots, all
-    fan-outs TOGETHER hold at most `limit` connections -- 8 of 30 -- and
-    never more, whatever the number of inbound queries. A source waiting for
-    a slot holds nothing: no session, no connection, no lock.
-
-    A slot is held for the whole source call, embedding request included.
-    That is stricter than needed (the connection is only taken at the first
-    statement) and deliberately so: the bound is then a property of this
-    class alone and does not depend on where a source happens to query.
+    by default. Checked on 2026-11-15: the manifests in this repository's
+    `k8s/` override neither, nor `max_connections` (Postgres default 100,
+    shared with the workers' own pools); the second instance's manifests
+    live in another repository and were not checked. All read-only fan-outs
+    TOGETHER hold at most `limit` connections -- 8 of 30 -- whatever the
+    number of inbound queries, and only while a statement runs. The price
+    is a pool checkout per statement (pre-ping and the checkin hook
+    included) instead of one per source.
     """
 
     def __init__(
@@ -194,14 +221,52 @@ class SourceSessions:
             slots = self._slots[loop] = asyncio.Semaphore(self._limit)
         return slots
 
-    @asynccontextmanager
-    async def session(self) -> AsyncIterator[AsyncSession]:
-        """A fresh session inside a slot. Closed on return, error and
-        cancellation alike -- `async with` on the session does that, and the
-        slot is released after it."""
+    def reader(self) -> SourceReader:
+        """What ONE source is handed in place of a session."""
+        return SourceReader(self)
+
+    @property
+    def bind(self) -> Any:
+        """The engine behind the factory -- the sources ask it for the
+        dialect. A session that is never used takes no connection."""
+        return getattr(self._factory(), "bind", None)
+
+    async def execute(self, statement: Any, params: Any = None, **kwargs: Any) -> Any:
+        """Run ONE statement inside a slot, on a session that lives exactly
+        as long as the statement.
+
+        The session is closed on return, error and cancellation alike
+        (`async with`), and the slot is released after it. The result is
+        frozen first: its rows are in memory, so it stays readable after the
+        connection has gone back to the pool.
+        """
         async with self._slots_for_this_loop():
             async with self._factory() as session:
-                yield session
+                result = await session.execute(statement, params, **kwargs)
+                return result.freeze()()
+
+
+class SourceReader:
+    """The read-only stand-in for a session that a source of a fan-out on
+    `SourceSessions` works with.
+
+    It has `execute` and `bind` and NOTHING ELSE -- no `add`, no `flush`, no
+    `commit`. That is deliberate: the fan-out on own sessions is a pure
+    read, and a source that tries to write there fails loudly (it shows up
+    as crashed in the summary line) instead of writing on a connection
+    nobody decides about. A source that has a write needs an explicit
+    switch for it, as `track_access` and `record_shadow_log` are.
+    """
+
+    def __init__(self, sessions: SourceSessions):
+        self._sessions = sessions
+
+    @property
+    def bind(self) -> Any:
+        return self._sessions.bind
+
+    async def execute(self, statement: Any, params: Any = None, **kwargs: Any) -> Any:
+        return await self._sessions.execute(statement, params, **kwargs)
 
 
 class PolymorphicAtomStore:
@@ -225,13 +290,21 @@ class PolymorphicAtomStore:
         self._source_sessions = source_sessions
 
     async def _run_source(
-        self, call: Callable[[AsyncSession], Awaitable[Any]]
+        self, call: Callable[[Any], Awaitable[Any]]
     ) -> Any:
-        """Run one source of the fan-out on the session its regime gives it."""
+        """Run one source of the fan-out on what its regime gives it.
+
+        On own sessions every source also gets a DEADLINE
+        (`atom_fanout_source_timeout`). A slow model server holds no slot
+        (see `SourceSessions`), but it would still hold THIS fan-out: the kg
+        source alone can wait 300 s for its LLM, long after the far side
+        stopped polling. A source over its deadline is cancelled and counted
+        as crashed (`TimeoutError`); the others still make the answer.
+        """
         if self._source_sessions is None:
             return await call(self.db)
-        async with self._source_sessions.session() as session:
-            return await call(session)
+        async with asyncio.timeout(settings.atom_fanout_source_timeout):
+            return await call(self._source_sessions.reader())
 
     async def query(
         self,
@@ -293,11 +366,12 @@ class PolymorphicAtomStore:
         # "skill".
         writes_allowed = self._source_sessions is None
 
-        # 🛑 Every source is built from the session it is HANDED, and from
-        # nothing else. The scope -- `asker_id`, `peer` -- is closed over here,
-        # once, for both regimes: a session of its own changes which connection
-        # a source reads on, never what it is allowed to read.
-        def rag(s: AsyncSession):
+        # 🛑 Every source is built from what it is HANDED (`s`: the caller's
+        # session, or a `SourceReader`), and from nothing else. The scope --
+        # `asker_id`, `peer` -- is closed over here, once, for both regimes:
+        # the regime changes which connection a source reads on, never what
+        # it is allowed to read.
+        def rag(s: Any):
             return RAGRetrieval(s).search(
                 query_text, top_k=candidate_k, user_id=asker_id, peer=peer
             )
@@ -306,12 +380,12 @@ class PolymorphicAtomStore:
         # each kg_node/kg_edge carries its source id so the detail drawer can
         # render the entity + edit its tier. The agent path still uses the
         # string form (get_relevant_context) elsewhere.
-        def kg(s: AsyncSession):
+        def kg(s: Any):
             return KGRetrieval(s).get_relevant_atoms(
                 query_text, user_id=asker_id, peer=peer
             )
 
-        def memory(s: AsyncSession):
+        def memory(s: Any):
             return MemoryRetrieval(s).retrieve(
                 query_text, user_id=asker_id, limit=candidate_k, peer=peer,
                 track_access=writes_allowed,
@@ -326,12 +400,12 @@ class PolymorphicAtomStore:
         # vector + lexical lists get an RRF boost from both contributions
         # — exactly the "this is both semantic AND keyword match"
         # behaviour we want.
-        def lexical_chunks(s: AsyncSession):
+        def lexical_chunks(s: Any):
             return LexicalRetrieval(s).search_chunks_lexical(
                 query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
             )
 
-        def lexical_memories(s: AsyncSession):
+        def lexical_memories(s: Any):
             return LexicalRetrieval(s).search_memories_lexical(
                 query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
             )
@@ -340,7 +414,7 @@ class PolymorphicAtomStore:
         # (Steuernummer, issuer, obligation) surface in /brain search via the
         # same RRF fusion. Keyword/identifier retrieval, not vector (facts are
         # short structured strings; the parent chunk is already embedded).
-        def document_fact(s: AsyncSession):
+        def document_fact(s: Any):
             return DocumentFactRetrieval(s).search(
                 query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
             )
@@ -348,7 +422,7 @@ class PolymorphicAtomStore:
         # Self-learning Phase 1: procedural skills are atoms too. Gated on
         # skills_enabled so the fusion is unchanged for deployments that
         # haven't opted in.
-        def skill(s: AsyncSession):
+        def skill(s: Any):
             return SkillService(s).find_similar(
                 query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
                 record_shadow_log=writes_allowed,
@@ -356,7 +430,7 @@ class PolymorphicAtomStore:
 
         # Phase 4B: hand-authored notes are atoms too (FTS keyword retrieval; a
         # note's parent has no separate embedding). Gated on notes_enabled.
-        def note(s: AsyncSession):
+        def note(s: Any):
             return NoteRetrieval(s).search(
                 query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
             )
@@ -387,8 +461,9 @@ class PolymorphicAtomStore:
         # by the _wrap_* helpers, and any actual programmer error now bubbles to FastAPI.
         #
         # One crashing source does not take the others down, and in regime C
-        # it cannot even disturb them: its session is its own. A cancellation
-        # of this task cancels all eight; each closes its session on the way.
+        # it cannot even disturb them: they share no session. A cancellation
+        # of this task cancels all eight; a statement in flight closes its
+        # session on the way.
         _t0 = time.perf_counter()
         (
             rag_results, kg_atoms, memory_results,

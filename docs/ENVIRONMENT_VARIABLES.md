@@ -3160,6 +3160,13 @@ FEDERATION_PING_RATE_PER_MINUTE=12
 # Default: 10
 FEDERATION_INBOUND_READ_TIMEOUT_SECONDS=10
 
+# Frist in Sekunden für EINE Quelle des Atom-Abrufs, wenn er auf eigenen
+# Sitzungen läuft (heute: der föderierte Abruf). Eine Quelle darüber wird
+# abgebrochen und als abgestürzt gezählt; die übrigen tragen die Antwort.
+# Zusammen mit FEDERATION_SYNTHESIS_TIMEOUT unter 60 s halten (0.1-29)
+# Default: 20
+ATOM_FANOUT_SOURCE_TIMEOUT=20
+
 # Peer-Adressen mit http:// zulassen (sonst nur https://)
 # Default: false
 FEDERATION_ALLOW_HTTP_ENDPOINTS=false

@@ -88,9 +88,10 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
 - `services/polymorphic_atom_store.py` = cross-source RRF; it emits per-entity `kg_node` + per-relation `kg_edge`
   atoms (`KGRetrieval.get_relevant_atoms`), while the agent's string context (`get_relevant_context`) is unchanged.
 - 🛑 A caller that opens a FRESH session and queries the store at once passes `source_sessions` (one bounded,
-  process-wide `SourceSessions`): eight sources on one cold session crash all but one. On own sessions the
-  fan-out is a PURE READ — no `access_count` bump, no skill shadow log; a new source that writes needs its own
-  explicit switch. The scope (`asker_id`, `peer`) is identical in both regimes.
+  process-wide `SourceSessions`): eight sources on one cold session crash all but one. There the slot (and the
+  session) covers ONE STATEMENT, never a source call — sources call model servers in between and must hold
+  nothing meanwhile. The fan-out is then a PURE READ (`SourceReader` cannot write; `track_access`,
+  `record_shadow_log` off — a new writing source needs its own switch). Scope (`asker_id`, `peer`) is identical.
 
 ## Extraction WRITES are ownership-gated separately from retrieval
 `_apply_update_v2` / `_apply_delete_v2` and the v1 contradiction path take the row to mutate from an LLM-supplied
