@@ -63,6 +63,8 @@ LEGACY_KEYS = {
     "paired_at", "last_seen_at", "circle_tier",
 }
 REACHABILITY_KEYS = {"reachability", "last_asked_at", "recently_active"}
+#: A row with an instance label carries the label and what kind it is.
+LABEL_KEYS = {"instance_name", "instance_name_verified"}
 
 
 # =============================================================================
@@ -625,15 +627,18 @@ class TestPeersListFeatureOff:
         }
         assert ping.calls == []
 
-    async def test_a_label_adds_exactly_one_key(
+    async def test_a_label_adds_exactly_the_label_and_its_kind(
         self, async_client: AsyncClient, world, as_user, feature_off, owner_only,
     ):
         as_user(world["owner"])
         resp = await async_client.get(PEERS)
         named, hosted = _by_id(resp, world["named"]), _by_id(resp, world["hosted"])
-        assert set(named) == set(hosted) == LEGACY_KEYS | {"instance_name"}
+        assert set(named) == set(hosted) == LEGACY_KEYS | LABEL_KEYS
         assert named["instance_name"] == "Instance B", "the verified name beats the host"
         assert hosted["instance_name"] == "other.example.org"
+        # ... and the row says which of the two it carries.
+        assert named["instance_name_verified"] is True
+        assert hosted["instance_name_verified"] is False
         assert named["remote_display_name"] == "evdb", "the person's name stays where it was"
 
     async def test_check_now_does_not_exist(
@@ -655,7 +660,7 @@ class TestPeersListFeatureOn:
         resp = await async_client.get(PEERS)
         assert set(_by_id(resp, world["plain"])) == LEGACY_KEYS | REACHABILITY_KEYS
         assert set(_by_id(resp, world["named"])) == (
-            LEGACY_KEYS | REACHABILITY_KEYS | {"instance_name"})
+            LEGACY_KEYS | REACHABILITY_KEYS | LABEL_KEYS)
         row = _by_id(resp, world["plain"])
         assert row["reachability"] == {
             "state": "unknown", "reason": "not_checked", "checked_at": None}

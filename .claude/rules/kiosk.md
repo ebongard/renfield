@@ -38,7 +38,8 @@ roles at startup. The gate fails closed: a lookup error denies.
   `MCPManager._broadcast_tool_health`; rows on one remote key are one node. Label = VERIFIED instance name or
   the person, never the endpoint host.
 - 🛑 **Age of a peer reading = server clock** (`at` − `checked_at`) plus MONOTONIC device time since receipt, never
-  the device's wall clock. Stale → `unknown`, never unreachable; the diff gate ignores `checked_at`.
+  the device's wall clock. Stale → `unknown`, never unreachable; the diff gate ignores `checked_at`. A wake-up
+  (visible after a stalled monotonic clock / bfcache `pageshow` / `online`) distrusts the stamp → `stale` + ONE reconnect.
 - 🛑 **The periodic reachability check is a SANCTIONED EXCEPTION to "never poll"** (owner, 2026-11-14) — reason and
   bounds in `docs/design/command-center.md` ("Probing is a periodic check"). It licenses nothing else.
 

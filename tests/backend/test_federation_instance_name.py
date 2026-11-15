@@ -750,6 +750,35 @@ class TestResponderLearnsTheName:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_without_a_verified_name_the_audit_snapshot_holds_no_host(
+        self, local_identity, far_identity, remembered,
+    ):
+        """🛑 The pending record's instance name becomes the audit row's
+        snapshot column, kept for good. A pairing that has only an endpoint
+        gets no instance part there -- an endpoint host is an address."""
+        row = _paired_row(far_identity)
+        row.transport_config = {"endpoints": ["https://far.example.org:8443"]}
+        responder = FederationQueryResponder(db=_db_returning([row]))
+        responder._run_query = AsyncMock()
+        resp = await responder.handle_initiate(_initiate(far_identity))
+        pending = await get_pending_store().get(resp.request_id)
+        assert pending.peer_instance_name == ""
+        assert pending.peer_display_name == "evdb"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_stored_name_is_the_snapshot_when_the_request_brings_none(
+        self, local_identity, far_identity, remembered,
+    ):
+        row = _paired_row(far_identity, "Instance B")
+        row.transport_config = {"endpoints": ["https://far.example.org:8443"]}
+        responder = FederationQueryResponder(db=_db_returning([row]))
+        responder._run_query = AsyncMock()
+        resp = await responder.handle_initiate(_initiate(far_identity))
+        assert (await get_pending_store().get(resp.request_id)).peer_instance_name == "Instance B"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_a_name_already_stored_writes_nothing(self, local_identity, far_identity, remembered):
         """The request path of every query: no UPDATE unless the name changed."""
         responder = FederationQueryResponder(

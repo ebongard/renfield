@@ -2164,6 +2164,8 @@
     "peerReachCheckNow": "Check now",
     "peerReachChecking": "Checking…",
     "peerReachCheckFailed": "Reachability could not be checked.",
+    "peerInstanceNamePending": "instance name not yet known",
+    "peerInstanceNamePendingHelp": "The other instance sends its name with the first signed exchange – for example when you check its reachability.",
     "peerRecentlyActive": "Recently active",
     "peerRecentlyActiveHelp": "A real request went one way or the other within the last five minutes.",
     "peerLastAsked": "Last asked from here {{when}}",

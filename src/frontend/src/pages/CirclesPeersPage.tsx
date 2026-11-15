@@ -22,7 +22,7 @@ import {
 } from '../api/resources/federation';
 import { extractApiError } from '../utils/axios';
 import { formatDate, toLocalDate } from '../utils/datetime';
-import { formatPeerLabel, peerLabelParts } from '../utils/peerLabel';
+import { formatPeerLabel, headlineInstanceName, peerLabelParts } from '../utils/peerLabel';
 
 /** How each reachability state looks: a symbol AND a colour (never colour
  *  alone), in the semantic colours of DESIGN.md -- success = turquoise,
@@ -38,6 +38,16 @@ type ReachState = keyof typeof REACH_LOOK;
 /** A state this build does not know is UNKNOWN -- never "unreachable". */
 function reachStateOf(state: string): ReachState {
   return state === 'reachable' || state === 'unreachable' ? state : 'unknown';
+}
+
+/** The instance part a pairing's label is headed by -- never an endpoint host
+ *  the backend marked as such (`headlineInstanceName`). */
+function instanceNameOf(peer: FederationPeer): string | null {
+  return headlineInstanceName(peer.instance_name, peer.instance_name_verified);
+}
+
+function linkInstanceNameOf(link: IdentityLink): string | null {
+  return headlineInstanceName(link.peer_instance_name, link.peer_instance_name_verified);
 }
 
 export default function CirclesPeersPage() {
@@ -134,7 +144,7 @@ export default function CirclesPeersPage() {
     const ok = await confirm({
       title: t('circles.revokeLinkTitle'),
       message: t('circles.revokeLinkConfirm', {
-        name: formatPeerLabel(link.peer_instance_name, link.peer_display_name),
+        name: formatPeerLabel(linkInstanceNameOf(link), link.peer_display_name),
       }),
       confirmLabel: t('common.delete'),
       variant: 'danger',
@@ -153,7 +163,7 @@ export default function CirclesPeersPage() {
     // "your shared information", which would be wrong here.
     const foreign = peer.owned_by_me === false;
     // Whoever revokes must see WHICH pairing: the full label, instance and person.
-    const name = formatPeerLabel(peer.instance_name, peer.remote_display_name);
+    const name = formatPeerLabel(instanceNameOf(peer), peer.remote_display_name);
     const ok = await confirm({
       title: t('circles.revokePeerTitle'),
       message: foreign
@@ -224,7 +234,11 @@ export default function CirclesPeersPage() {
             const tierLabel = t(`circles.tier.${Math.max(0, Math.min(4, Number(peer.circle_tier) || 0))}`);
             // Instance first, person second; the person alone when the far
             // instance has no label -- then the row reads as it always did.
-            const label = peerLabelParts(peer.instance_name, peer.remote_display_name);
+            const label = peerLabelParts(instanceNameOf(peer), peer.remote_display_name);
+            // The far instance has not sent its name yet (a pairing older than
+            // the name, before its first signed exchange): the person heads the
+            // row and a hint says why -- the endpoint host is not a headline.
+            const namePending = peer.instance_name_verified === false;
             // In running text the peer is called by its primary name; the
             // heading right above carries the full label.
             const name = label.primary;
@@ -253,6 +267,15 @@ export default function CirclesPeersPage() {
                         data-testid={`peer-person-${peer.id}`}
                       >
                         · {label.secondary}
+                      </span>
+                    )}
+                    {namePending && (
+                      <span
+                        className="text-sm text-gray-500 dark:text-gray-400"
+                        title={t('circles.peerInstanceNamePendingHelp')}
+                        data-testid={`peer-name-pending-${peer.id}`}
+                      >
+                        · {t('circles.peerInstanceNamePending')}
                       </span>
                     )}
                     <TierBadge tier={peer.circle_tier} />
@@ -316,7 +339,7 @@ export default function CirclesPeersPage() {
                           {checking ? t('circles.peerReachChecking') : t('circles.peerReachCheckNow')}
                           {' '}
                           <span className="sr-only">
-                            {formatPeerLabel(peer.instance_name, peer.remote_display_name)}
+                            {formatPeerLabel(instanceNameOf(peer), peer.remote_display_name)}
                           </span>
                         </span>
                       </button>
@@ -458,7 +481,7 @@ export default function CirclesPeersPage() {
               <li key={link.id} className="atom-row flex-col sm:flex-row">
                 <div className="flex-1 min-w-0">
                   <span className="font-medium text-gray-900 dark:text-white truncate">
-                    {formatPeerLabel(link.peer_instance_name, link.peer_display_name)}
+                    {formatPeerLabel(linkInstanceNameOf(link), link.peer_display_name)}
                   </span>
                   <div className="text-xs text-gray-500 dark:text-gray-400">
                     {t('circles.linkCreatedAt', {
@@ -485,7 +508,7 @@ export default function CirclesPeersPage() {
         isOpen={linkPeer !== null}
         peerId={linkPeer ? linkPeer.id : null}
         /* Running text ("your account at <peer>"): the primary name. */
-        peerName={linkPeer ? peerLabelParts(linkPeer.instance_name, linkPeer.remote_display_name).primary : undefined}
+        peerName={linkPeer ? peerLabelParts(instanceNameOf(linkPeer), linkPeer.remote_display_name).primary : undefined}
         onClose={() => setLinkPeer(null)}
         onLinked={() => { setSuccess(t('circles.linkSuccess')); linksQuery.refetch(); }}
       />

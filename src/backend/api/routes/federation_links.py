@@ -26,7 +26,7 @@ from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.federation_audit import BASIS_SELF, LINK_REVOKED, record_revocation
 from services.federation_identity_link import delete_link
-from services.federation_instance_name import peer_instance_label
+from services.federation_instance_name import peer_instance_label, stored_instance_name
 from services.link_handshake_service import (
     LinkConfirmation,
     LinkHandshakeError,
@@ -63,6 +63,9 @@ class LinkResponse(BaseModel):
     #: The INSTANCE part of the peer's label (verified name, else endpoint
     #: host). Omitted from the response when there is none.
     peer_instance_name: str | None = None
+    #: Set together with `peer_instance_name`: True = the name the far
+    #: instance sent, False = only the host of its stored endpoint.
+    peer_instance_name_verified: bool | None = None
 
 
 def _reject(e: LinkHandshakeError, user_id: int) -> HTTPException:
@@ -176,6 +179,7 @@ async def list_my_links(
             peer_display_name=peer.remote_display_name,
             created_at=link.created_at.isoformat() if link.created_at else "",
             peer_instance_name=peer_instance_label(peer),
+            peer_instance_name_verified=_label_verified(peer),
         )
         for link, peer in rows
     ]
@@ -236,4 +240,13 @@ async def _to_response(db: AsyncSession, link: FederationUserLink) -> LinkRespon
         peer_display_name=peer.remote_display_name,
         created_at=link.created_at.isoformat() if link.created_at else "",
         peer_instance_name=peer_instance_label(peer),
+        peer_instance_name_verified=_label_verified(peer),
     )
+
+
+def _label_verified(peer: PeerUser) -> bool | None:
+    """Whether the label of `peer` is a verified name; `None` without a label
+    (the key is then left out, like the label itself)."""
+    if not peer_instance_label(peer):
+        return None
+    return bool(stored_instance_name(peer))

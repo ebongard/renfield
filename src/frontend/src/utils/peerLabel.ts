@@ -37,3 +37,20 @@ export function formatPeerLabel(
   const { primary, secondary } = peerLabelParts(instanceName, personName);
   return secondary ? `${primary}${PEER_LABEL_SEPARATOR}${secondary}` : primary;
 }
+
+/**
+ * The instance name a label may be HEADED by.
+ *
+ * `verified === false` says the text is not a name the far instance sent but
+ * the host of its stored endpoint -- an address, not a name. It does not head
+ * a row: the person does, as before the instance name existed, until the
+ * first signed exchange delivers the name. Without a statement (`undefined` /
+ * `null`, a backend that does not say) the text is taken as it came.
+ */
+export function headlineInstanceName(
+  instanceName: string | null | undefined,
+  verified?: boolean | null,
+): string | null {
+  if (verified === false) return null;
+  return instanceName ?? null;
+}

@@ -145,7 +145,9 @@ export function peerAgeMs(
  *    backstop is on the AGE of `checked_at` instead (`peerAgeMs`), and it
  *    degrades to `unknown`, never to `unreachable`: a reading nobody refreshed
  *    is not a finding about the far side. Its reason is `stale` -- "checked,
- *    but the result is old" -- which is not the same as never checked.
+ *    but the result is old" -- which is not the same as never checked. A
+ *    reading whose age is not to be trusted after a wake-up reads the same,
+ *    until the fresh snapshot the wake-up asked for replaces it.
  *  - absent (check off, or an older backend): the rule the wall has always
  *    had -- the peer queried us recently (`reachable`) and `last_seen_at` is
  *    younger than `PEER_OFFLINE_MS`. Two-valued; it cannot say `unknown`.
@@ -181,7 +183,11 @@ export function peerNodeFor(
   // so it does for a state this build does not know.
   const verdict = known === 'reachable' || known === 'unreachable';
   const unchecked = verdict && !Number.isFinite(checkedAge);
-  const stale = verdict && Number.isFinite(checkedAge) && checkedAge >= PEER_CHECK_STALE_MS;
+  // ... and so is one whose age cannot be stood behind: the device may have
+  // slept since the list arrived (`KioskPeerClock.distrusted`), and where the
+  // monotonic clock stands still during sleep the age reads too young.
+  const stale = verdict && Number.isFinite(checkedAge)
+    && (checkedAge >= PEER_CHECK_STALE_MS || clock?.distrusted === true);
   return {
     ...base,
     reachability: !known || unchecked || stale ? 'unknown' : known,

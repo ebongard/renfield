@@ -33,6 +33,13 @@ export interface FederationPeer {
    */
   instance_name?: string | null;
   /**
+   * Whether `instance_name` is the name the far instance SENT (verified) or
+   * only the host of its stored endpoint. `false` = the host: the row then
+   * does not put it in its headline. Absent (a backend that does not say) =
+   * the label is shown as it came.
+   */
+  instance_name_verified?: boolean | null;
+  /**
    * The three fields below exist only while the instance runs the signed
    * reachability check (`FEDERATION_REACHABILITY_ENABLED`). Absent = no
    * statement about reachability at all, which is not the same as "unknown".
@@ -160,8 +167,9 @@ async function checkPeerRequest(peerId: number): Promise<PeerReachability> {
  * "Check now": one signed round trip to a paired instance, on demand.
  *
  * The result is written straight into the cached peer list -- the server
- * stored the same reading, so the row is current without a second request,
- * and `last_seen_at` & co. stay exactly what the list last said.
+ * stored the same reading, so the row's state is current without a second
+ * request. Only an answer that came back `reachable` reads the list again:
+ * the far instance may have sent its name with it.
  */
 export function useCheckFederationPeer() {
   const queryClient = useQueryClient();
@@ -173,10 +181,22 @@ export function useCheckFederationPeer() {
         // response was computed before this check ran; landing afterwards it
         // would put `checked_at: null` back over the fresh reading -- and the
         // page, having checked this row once already, would not ask again.
+        const refreshOwed =
+          queryClient.getQueryState(keys.federation.peers())?.isInvalidated === true;
         await queryClient.cancelQueries({ queryKey: keys.federation.peers() });
         queryClient.setQueryData<FederationPeer[]>(keys.federation.peers(), (peers) =>
           peers?.map((peer) => (peer.id === peerId ? { ...peer, reachability } : peer)),
         );
+        // A signed answer is the one moment the far instance's NAME can have
+        // arrived or changed, and the check's response does not carry it: the
+        // list is read once more, so the label follows without a reload. This
+        // fetch starts AFTER the check, so it holds the reading written above.
+        // `refreshOwed` covers a refresh that this very call cancelled (another
+        // row's check asked for it) -- this row may give no reason to ask again.
+        if (refreshOwed || reachability.state === 'reachable') {
+          void queryClient.invalidateQueries({ queryKey: keys.federation.peers() });
+          void queryClient.invalidateQueries({ queryKey: keys.federation.links() });
+        }
       },
     },
     'circles.peerReachCheckFailed',
@@ -196,6 +216,8 @@ export interface IdentityLink {
   peer_display_name: string;
   /** The instance part of the peer's label; absent when there is none. */
   peer_instance_name?: string | null;
+  /** As `FederationPeer.instance_name_verified`. */
+  peer_instance_name_verified?: boolean | null;
   created_at: string;
 }
 

@@ -298,6 +298,11 @@ def peer_instance_label(peer: Any) -> str | None:
 
     The verified name; while there is none, the host of the stored endpoint;
     else `None`, and the caller shows the person's name alone as before.
+
+    🛑 For the peers page ONLY (pairing list and person links), and only next
+    to a `*_verified` flag that lets the UI keep a host out of a headline.
+    Anything that is shown elsewhere or STORED -- kiosk, chat status line,
+    audit snapshot, tool description -- takes `stored_instance_name`.
     """
     return stored_instance_name(peer) or endpoint_host(peer)
 

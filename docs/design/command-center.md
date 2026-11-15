@@ -369,8 +369,8 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
   and labels the tool node generically (the old backend still lists `peer_<id>` among the servers); it ends with
   the backend rollout.
 - **The arc node carries everything.** Label = the far instance's **verified** name with the person who paired
-  beneath it; the person alone when no verified name is stored. 🛑 **Never the endpoint host** — the peers page
-  falls back to it behind a login, the wall does not: the kiosk payload is content-free and a host name is an
+  beneath it; the person alone when no verified name is stored. 🛑 **Never the endpoint host** — only the
+  peers-page data carries it, flagged as unverified and kept out of the row's headline; the wall does not: the kiosk payload is content-free and a host name is an
   address. A turn that asked the peer still names `peer_<id>` in `turn_activity.subsystems`; the arc node
   lights and runs the same expanding ring a tool node does.
 - **One node per far INSTANCE, not per pairing row.** Two local accounts paired with the same instance are two
@@ -405,8 +405,17 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
   for the elapsed part either: a wall clock stepped while the page is open (NTP, daylight saving) aged every
   reading by the step. Older than `PEER_CHECK_STALE_MS` (20 min) degrades to **unknown** with a reason of its
   own, `stale` ("checked, but the result is old"), never to unreachable and never to "not checked yet". Where
-  `performance.now()` does not advance while a device sleeps, a reading can look younger than it is until the
-  next push re-anchors it (with the check on: at most 10 minutes on a live socket).
+  `performance.now()` does not advance while a device sleeps, a reading would look younger than it is: so a
+  **wake-up** distrusts the stamp (`KioskPeerClock.distrusted`) — every verdict reads unknown / `stale` at once —
+  and `useKioskSocket` opens the socket anew, which the hub answers with a snapshot (its protocol has no "send me
+  a snapshot" message; one reconnect per wake-up, no timer, no polling). A wake-up is: `visibilitychange` to
+  visible when the wall clock ran ahead of the monotonic one by more than 2 s over the hidden period (or the
+  hidden moment was not seen) — a tab that was merely in the background is left alone; a `pageshow` out of the
+  back/forward cache; `online`. The old socket is let go without its `onclose`, so the drop we caused
+  starts no second reconnect; the 8 s "backend unreachable" timer is armed as after any drop and disarmed by
+  the new socket's `onopen` — a token request that hangs does not leave the last board up with no socket. Not covered: a device that wakes without
+  any of the three events (then the next push re-anchors, at most 10 minutes on a live socket), and the
+  two-valued rule with the check off, which cannot say unknown.
 - **What is pushed.** The diff gate leaves `checked_at` out: a check that found the same thing changes nothing a
   person can see and pushes nothing. A reading that expires (15 min TTL) reads `unknown / not_checked` and IS a
   state change. With the check on, an unchanged list is re-affirmed every 10 minutes

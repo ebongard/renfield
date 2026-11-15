@@ -2177,6 +2177,8 @@
     "peerReachCheckNow": "Vérifier maintenant",
     "peerReachChecking": "Vérification…",
     "peerReachCheckFailed": "Impossible de vérifier la joignabilité.",
+    "peerInstanceNamePending": "nom de l'instance pas encore connu",
+    "peerInstanceNamePendingHelp": "L'autre instance communique son nom lors du premier échange signé, par exemple lors d'une vérification de sa joignabilité.",
     "peerRecentlyActive": "Actif récemment",
     "peerRecentlyActiveHelp": "Une vraie requête a circulé dans un sens ou dans l'autre au cours des cinq dernières minutes.",
     "peerLastAsked": "Dernière requête envoyée d'ici {{when}}",

@@ -75,7 +75,6 @@ from services.federation_identity import (
     get_federation_identity,
 )
 from services.federation_instance_name import (
-    peer_instance_label,
     remember_remote_instance_name,
     sign_name_attachment,
     stored_instance_name,
@@ -544,7 +543,9 @@ class FederationQueryResponder:
             peer_owner_id=peer_owner_id,
             mapped=mapped,
             peer_display_name=peer.remote_display_name or "",
-            peer_instance_name=learned_name or peer_instance_label(peer) or "",
+            # 🛑 A verified name or nothing -- never the endpoint host: this
+            # is what the audit row of the access stores for good.
+            peer_instance_name=learned_name or stored_instance_name(peer) or "",
         ))
 
         # Schedule the background work. The task is fire-and-forget —

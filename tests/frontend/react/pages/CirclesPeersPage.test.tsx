@@ -53,6 +53,21 @@ function serve(peers: FederationPeer[], links: IdentityLink[] = []) {
   });
 }
 
+/** A server that remembers: once a check has been sent, the list (and the
+ *  person links) answer with what the check left behind. */
+function serveAfterCheck(
+  before: FederationPeer[],
+  after: FederationPeer[],
+  links: (checked: boolean) => IdentityLink[] = () => [],
+) {
+  mockedGet.mockImplementation((url: string) => {
+    const checked = mockedPost.mock.calls.length > 0;
+    if (url === '/api/federation/peers') return Promise.resolve(response({ peers: checked ? after : before }));
+    if (url === '/api/federation/links/mine') return Promise.resolve(response(links(checked)));
+    return Promise.reject(new Error(`unexpected GET ${url}`));
+  });
+}
+
 const PUBKEY = 'ab'.repeat(32);
 
 const daysAgo = (n: number): string =>
@@ -249,6 +264,86 @@ describe('CirclesPeersPage', () => {
       );
     });
 
+    describe('before the far instance has sent its name', () => {
+      // A pairing older than the instance name: until the first signed
+      // exchange the backend has only the host of the stored endpoint, and
+      // says so with `instance_name_verified: false`.
+      const pending: FederationPeer = {
+        ...foreignPeer,
+        remote_display_name: 'alex',
+        instance_name: 'peer.example',
+        instance_name_verified: false,
+      };
+
+      it('heads the row with the person and says the name is not known yet -- no host', async () => {
+        serve([pending]);
+        renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+
+        expect(await screen.findByText('alex')).toBeInTheDocument();
+        expect(screen.getByTestId('peer-name-pending-1')).toHaveTextContent(
+          i18n.t('circles.peerInstanceNamePending'),
+        );
+        expect(screen.getByTestId('peer-name-pending-1')).toHaveAttribute(
+          'title', i18n.t('circles.peerInstanceNamePendingHelp'),
+        );
+        // The person is the headline, so it is not repeated as the second part.
+        expect(screen.queryByTestId('peer-person-1')).not.toBeInTheDocument();
+        // The running text calls the peer by the person too.
+        expect(screen.getByTestId('peer-ask-hint-1')).toHaveTextContent(
+          i18n.t('circles.peerAskUnlinked', { name: 'alex' }),
+        );
+        // The host is nowhere on the page: not in text, not in an attribute.
+        expect(document.body.innerHTML).not.toContain('peer.example');
+      });
+
+      it('keeps the host out of the revoke dialog and the "check now" button', async () => {
+        serve([{
+          ...pending,
+          owned_by_me: true,
+          can_revoke: true,
+          reachability: { state: 'reachable', reason: null, checked_at: minutesAgo(3) },
+        }]);
+        renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+
+        expect(
+          await screen.findByRole('button', { name: `${i18n.t('circles.peerReachCheckNow')} alex` }),
+        ).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: i18n.t('circles.revokePeer') }));
+        const dialog = await screen.findByRole('dialog');
+        expect(dialog).toHaveTextContent(i18n.t('circles.revokePeerConfirm', { name: 'alex' }));
+        expect(document.body.innerHTML).not.toContain('peer.example');
+      });
+
+      it('keeps the host out of a person link as well', async () => {
+        serve([legacyPeer], [{
+          id: 7, peer_id: 1, peer_display_name: 'robin',
+          peer_instance_name: 'peer.example', peer_instance_name_verified: false,
+          created_at: daysAgo(2),
+        }]);
+        renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+
+        expect(await screen.findByText('robin')).toBeInTheDocument();
+        expect(document.body.innerHTML).not.toContain('peer.example');
+      });
+
+      it('shows a verified name as the headline, without the hint', async () => {
+        serve([{ ...pending, instance_name: 'Instance B', instance_name_verified: true }]);
+        renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+
+        expect(await screen.findByText('Instance B')).toBeInTheDocument();
+        expect(screen.getByTestId('peer-person-1')).toHaveTextContent('· alex');
+        expect(screen.queryByTestId('peer-name-pending-1')).not.toBeInTheDocument();
+      });
+
+      it('takes the label as it came from a backend that does not say (no hint)', async () => {
+        serve([{ ...legacyPeer, remote_display_name: 'alex', instance_name: 'Instance B' }]);
+        renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+
+        expect(await screen.findByText('Instance B')).toBeInTheDocument();
+        expect(screen.queryByTestId('peer-name-pending-1')).not.toBeInTheDocument();
+      });
+    });
+
     it('labels a person link with the instance too', async () => {
       serve([legacyPeer], [
         { id: 7, peer_id: 1, peer_display_name: 'alex', peer_instance_name: 'Instance B', created_at: daysAgo(2) },
@@ -352,10 +447,14 @@ describe('CirclesPeersPage', () => {
     it('checks a row nobody has checked ONCE when the page shows it', async () => {
       // Without a connected wall display nothing keeps the readings current,
       // so the page would otherwise open on "not checked" for every row.
-      serve([unchecked, { ...reachable, id: 2 }]);
-      mockedPost.mockResolvedValue(
-        response({ state: 'reachable', reason: null, checked_at: minutesAgo(0) }),
+      // As the server does: the reading a check stored is what the list says
+      // from then on (a reachable answer reads the list once more).
+      const stored = { state: 'reachable', reason: null, checked_at: minutesAgo(0) };
+      serveAfterCheck(
+        [unchecked, { ...reachable, id: 2 }],
+        [{ ...unchecked, reachability: stored }, { ...reachable, id: 2 }],
       );
+      mockedPost.mockResolvedValue(response(stored));
       renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
 
       await waitFor(() => {
@@ -364,6 +463,117 @@ describe('CirclesPeersPage', () => {
       // Only the unchecked row, and only once -- the row with a reading is
       // left to its "check now" button.
       expect(mockedPost.mock.calls).toEqual([['/api/federation/peers/1/check']]);
+    });
+
+    describe('the name a check delivers', () => {
+      const nameless = {
+        remote_display_name: 'alex',
+        instance_name: 'peer.example',
+        instance_name_verified: false,
+      };
+      const named = { remote_display_name: 'alex', instance_name: 'Instance B', instance_name_verified: true };
+      const stored = { state: 'reachable', reason: null, checked_at: minutesAgo(0) };
+      const listCalls = () =>
+        mockedGet.mock.calls.filter(([url]) => url === '/api/federation/peers').length;
+
+      it('appears in place after the check the page starts by itself', async () => {
+        serveAfterCheck(
+          [{ ...unchecked, ...nameless }],
+          [{ ...unchecked, ...named, reachability: stored }],
+        );
+        let answerCheck: () => void = () => {};
+        mockedPost.mockImplementation(() => new Promise((resolve) => {
+          answerCheck = () => resolve(response(stored));
+        }));
+        renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+
+        // While the check is under way the row has no name to show.
+        expect(await screen.findByTestId('peer-name-pending-1')).toBeInTheDocument();
+        await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(1));
+        await act(async () => { answerCheck(); });
+        expect(await screen.findByText('Instance B')).toBeInTheDocument();
+        expect(screen.getByTestId('peer-person-1')).toHaveTextContent('· alex');
+        expect(screen.queryByTestId('peer-name-pending-1')).not.toBeInTheDocument();
+        expect(screen.getByTestId('peer-reach-1')).toHaveAttribute('data-reach-state', 'reachable');
+        // One check, one extra read of the list -- and no second check after it.
+        expect(mockedPost).toHaveBeenCalledTimes(1);
+        expect(listCalls()).toBe(2);
+      });
+
+      it('appears in place after "check now"', async () => {
+        serveAfterCheck(
+          [{ ...reachable, ...nameless }],
+          [{ ...reachable, ...named, reachability: stored }],
+        );
+        mockedPost.mockResolvedValue(response(stored));
+        renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+
+        fireEvent.click(await screen.findByRole('button', {
+          name: `${i18n.t('circles.peerReachCheckNow')} alex`,
+        }));
+        expect(await screen.findByText('Instance B')).toBeInTheDocument();
+        expect(screen.queryByTestId('peer-name-pending-1')).not.toBeInTheDocument();
+      });
+
+      it('refreshes a person link with it', async () => {
+        const linksFor = (verified: boolean): IdentityLink[] => [{
+          id: 7, peer_id: 1, peer_display_name: 'alex', created_at: daysAgo(2),
+          peer_instance_name: verified ? 'Instance B' : 'peer.example',
+          peer_instance_name_verified: verified,
+        }];
+        serveAfterCheck(
+          [{ ...reachable, ...nameless }],
+          [{ ...reachable, ...named, reachability: stored }],
+          linksFor,
+        );
+        mockedPost.mockResolvedValue(response(stored));
+        renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+
+        fireEvent.click(await screen.findByRole('button', {
+          name: `${i18n.t('circles.peerReachCheckNow')} alex`,
+        }));
+        // The row's button carries the same words for screen readers; the
+        // link's own line is the one that is not visually hidden.
+        await waitFor(() => {
+          const visible = screen.queryAllByText('Instance B · alex')
+            .filter((el) => !el.classList.contains('sr-only'));
+          expect(visible).toHaveLength(1);
+        });
+      });
+
+      it('is not lost when another row answers while the list is being read again', async () => {
+        // Row 1 answers reachable -> the list is read again. Row 2 answers
+        // "unreachable" while that read is under way: writing its reading
+        // cancels the read, and row 2 itself gives no reason for another one.
+        const rowTwo = { ...reachable, id: 2, remote_display_name: 'robin' };
+        const down = { state: 'unreachable', reason: 'unreachable', checked_at: minutesAgo(0) };
+        let calls = 0;
+        mockedGet.mockImplementation((url: string) => {
+          if (url === '/api/federation/links/mine') return Promise.resolve(response([]));
+          if (url !== '/api/federation/peers') return Promise.reject(new Error(`unexpected GET ${url}`));
+          calls += 1;
+          if (calls === 1) return Promise.resolve(response({ peers: [{ ...reachable, ...nameless }, rowTwo] }));
+          // The read row 1 asked for never lands; the one after it does.
+          if (calls === 2) return new Promise(() => {});
+          return Promise.resolve(response({
+            peers: [{ ...reachable, ...named, reachability: stored }, { ...rowTwo, reachability: down }],
+          }));
+        });
+        mockedPost.mockImplementation((url: string) =>
+          Promise.resolve(response(url.includes('/peers/1/') ? stored : down)));
+        renderWithRouter(<CirclesPeersPage />, { route: '/settings/circles/peers' });
+
+        fireEvent.click(await screen.findByRole('button', {
+          name: `${i18n.t('circles.peerReachCheckNow')} alex`,
+        }));
+        await waitFor(() => expect(calls).toBe(2));
+        fireEvent.click(screen.getByRole('button', {
+          name: `${i18n.t('circles.peerReachCheckNow')} robin`,
+        }));
+
+        expect(await screen.findByText('Instance B')).toBeInTheDocument();
+        expect(screen.getByTestId('peer-reach-2')).toHaveAttribute('data-reach-state', 'unreachable');
+      });
     });
 
     it('does not ask again when that first check comes back without a reading', async () => {
@@ -570,6 +780,7 @@ describe('CirclesPeersPage', () => {
       'peerReachReason.no_endpoint', 'peerReachReason.not_checked',
       'peerReachCheckedAt', 'peerReachCheckNow', 'peerReachChecking', 'peerReachCheckFailed',
       'peerRecentlyActive', 'peerRecentlyActiveHelp', 'peerLastAsked', 'peerLastAskedHelp',
+      'peerInstanceNamePending', 'peerInstanceNamePendingHelp',
     ];
     const elsewhere = [
       'kiosk.peer.state.reachable', 'kiosk.peer.state.unreachable', 'kiosk.peer.state.unknown',

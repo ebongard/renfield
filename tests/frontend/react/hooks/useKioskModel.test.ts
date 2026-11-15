@@ -171,6 +171,56 @@ describe('peerNodeFor — check on', () => {
     expect(peerNodeFor(probed({ checked_at: ago(19) }), NOW).reachability).toBe('reachable');
   });
 
+  describe('after a wake-up (the stamp is distrusted)', () => {
+    // The device may have slept since the list arrived; where its monotonic
+    // clock stood still, the age below reads one minute and is really more.
+    const distrusted: KioskPeerClock = { receivedMono: 1_000, serverAt: NOW, distrusted: true };
+    const trusted: KioskPeerClock = { receivedMono: 1_000, serverAt: NOW };
+
+    it('shows a verdict as stale -- unknown, never unreachable', () => {
+      const node = peerNodeFor(probed(), NOW, distrusted, 1_000);
+      expect(node.reachability).toBe('unknown');
+      expect(node.reason).toBe('stale');
+      const down = peerNodeFor(
+        probed({ reachability: 'unreachable', reachability_reason: 'unreachable' }),
+        NOW, distrusted, 1_000,
+      );
+      expect(down.reachability).toBe('unknown');
+      expect(down.reason).toBe('stale');
+      // The same reading on a trusted stamp stands.
+      expect(peerNodeFor(probed(), NOW, trusted, 1_000).reachability).toBe('reachable');
+    });
+
+    it('keeps what was never a verdict as it came', () => {
+      const unchecked = peerNodeFor(
+        probed({ reachability: 'unknown', reachability_reason: 'not_checked', checked_at: null }),
+        NOW, distrusted, 1_000,
+      );
+      expect(unchecked.reason).toBe('not_checked');
+      const unsupported = peerNodeFor(
+        probed({ reachability: 'unknown', reachability_reason: 'unsupported' }),
+        NOW, distrusted, 1_000,
+      );
+      expect(unsupported.reason).toBe('unsupported');
+      expect(peerNodeFor(probed({ checked_at: null }), NOW, distrusted, 1_000).reason)
+        .toBe('not_checked');
+    });
+
+    it('keeps label, pulse ids and recent activity', () => {
+      const node = peerNodeFor(
+        probed({ instance_name: 'Instance B', recently_active: true }), NOW, distrusted, 1_000,
+      );
+      expect(node.label).toBe('Instance B');
+      expect(node.sublabel).toBe('alex');
+      expect(node.pulseIds).toEqual(['peer_3']);
+      expect(node.recentlyActive).toBe(true);
+    });
+
+    it('leaves the two-valued rule alone while the check is off (it cannot say unknown)', () => {
+      expect(peerNodeFor(legacy(), NOW, distrusted, 1_000).reachability).toBe('reachable');
+    });
+  });
+
   it('does not stand behind a verdict without a check time', () => {
     const node = peerNodeFor(probed({ checked_at: null }), NOW);
     expect(node.reachability).toBe('unknown');

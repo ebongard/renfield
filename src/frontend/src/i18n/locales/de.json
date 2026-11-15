@@ -2164,6 +2164,8 @@
     "peerReachCheckNow": "Jetzt prüfen",
     "peerReachChecking": "Prüfe …",
     "peerReachCheckFailed": "Die Erreichbarkeit konnte nicht geprüft werden.",
+    "peerInstanceNamePending": "Name der Instanz noch nicht bekannt",
+    "peerInstanceNamePendingHelp": "Die andere Instanz nennt ihren Namen beim ersten signierten Austausch – zum Beispiel, wenn du die Erreichbarkeit prüfst.",
     "peerRecentlyActive": "Kürzlich aktiv",
     "peerRecentlyActiveHelp": "In den letzten fünf Minuten lief eine echte Anfrage in eine der beiden Richtungen.",
     "peerLastAsked": "Zuletzt von hier gefragt {{when}}",
