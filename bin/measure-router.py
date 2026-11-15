@@ -9,8 +9,22 @@ bench one layer earlier: which ROLE does a message get.
 What it compares
 ----------------
     BEFORE  no pairing registered -- the prompt from before the peer rule
-    AFTER   a pairing, no name allowed into prompts (`peer_rule`)
-    NAMED   a pairing, names allowed (`peer_rule_named`, --instances)
+    AFTER   a pairing, no name allowed into the router prompt (`peer_rule`)
+    NAMED   a pairing, names allowed (`peer_rule_named`, --instances;
+            FEDERATION_PEER_NAME_IN_ROUTER_PROMPT_ENABLED)
+    CLASH   like NAMED, plus an instance that is called like a PERSON
+            (--clash). Played only for the cases marked `"clash": true` and
+            not scored: it shows where "frag <Name>, ob ..." goes when the
+            name is both. Nothing in the rule can tell the two apart.
+
+🛑 What it does NOT measure
+---------------------------
+Only the LLM classify layer. In production a turn passes the role hint, the
+entity-id route, the continuity score and the SEMANTIC fast path BEFORE this
+call -- each of them can decide the turn without the model ever seeing the
+rule -- and the cross-MCP planner, the tool pre-selection and the agent
+AFTER it. A 100 % here is not "the question reaches the peer"; it is "when
+the router model is asked, it names a role that can ask".
 
 Nothing is reconstructed: the prompt is built by the real `AgentRouter` from
 the real `config/agent_roles.yaml` and `prompts/router.yaml`, sent with the
@@ -77,12 +91,21 @@ async def _router(roles_config: dict, *, paired: bool, names: list[str]):
     result.scalars.return_value.all.return_value = rows
     db = AsyncMock()
     db.execute = AsyncMock(return_value=result)
-    settings.federation_peer_name_in_tool_description_enabled = bool(names)
+    # The routing switch -- the tool-description switch is a different one
+    # and does not open the router prompt.
+    settings.federation_peer_name_in_router_prompt_enabled = bool(names)
     await sync_peers(manager, db)
     return AgentRouter(roles_config, mcp_manager=manager)
 
 
-def _hit(expect, role: str, peer_roles: set[str]) -> bool:
+def _hit(case: dict, role: str, peer_roles: set[str], rule_role: str | None) -> bool:
+    """`expect`: one of these roles (`@peer` = any role that can ask a peer).
+    `expect_not_rule`: anything but the role the peer rule names -- for a
+    message that asks a PERSON, where several roles are acceptable and only
+    being pulled to the far instance is wrong."""
+    if case.get("expect_not_rule"):
+        return role not in (rule_role, "FALLBACK")
+    expect = case["expect"]
     if expect == PEER:
         return role in peer_roles
     return role in (expect if isinstance(expect, list) else [expect])
@@ -96,6 +119,8 @@ async def main() -> int:
     ap.add_argument("--roles", default=str(ROOT / "config" / "agent_roles.yaml"))
     ap.add_argument("--instances", default="Nordhaus,Suedhaus",
                     help="names the NAMED variant lists; must match the cases")
+    ap.add_argument("--clash", default="Kim",
+                    help="a person's name the CLASH variant adds as an instance name")
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--seed", type=int, default=20261115)
     ap.add_argument("--dry-run", action="store_true")
@@ -114,7 +139,9 @@ async def main() -> int:
         "BEFORE": await _router(roles_config, paired=False, names=[]),
         "AFTER": await _router(roles_config, paired=True, names=[]),
         "NAMED": await _router(roles_config, paired=True, names=names),
+        "CLASH": await _router(roles_config, paired=True, names=[*names, args.clash]),
     }
+    rule_role = routers["NAMED"].federation_role_name()
     peer_roles = {
         name for name, role in routers["NAMED"].roles.items()
         if role.has_agent_loop and (role.federation or role.mcp_servers is None)
@@ -136,6 +163,7 @@ async def main() -> int:
     jobs = [
         (label, index, rep)
         for label in routers for index in range(len(cases)) for rep in range(args.reps)
+        if label != "CLASH" or cases[index].get("clash")
     ]
     random.Random(args.seed).shuffle(jobs)
     seen: dict[tuple[str, int], Counter] = defaultdict(Counter)
@@ -149,27 +177,40 @@ async def main() -> int:
 
     totals: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
     print(f"model={settings.agent_router_model or settings.ollama_intent_model} "
-          f"reps={args.reps} peer-capable roles={sorted(peer_roles)}\n")
+          f"reps={args.reps} peer-capable roles={sorted(peer_roles)} rule names={rule_role}")
+    print("LLM CLASSIFY LAYER ONLY -- not end to end: production runs the semantic "
+          "fast path (and role hint, entity id, continuity) before it, the planner, "
+          "the tool pre-selection and the agent after it.\n")
     print(f"{'kind':8} {'expect':24} " + " ".join(f"{label:28}" for label in routers) + " task")
     for index, case in enumerate(cases):
-        kind = "peer" if case["expect"] == PEER else "control"
+        kind = "peer" if case.get("expect") == PEER else "control"
         cells = []
         for label in routers:
             counts = seen[(label, index)]
-            hits = sum(c for role, c in counts.items() if _hit(case["expect"], role, peer_roles))
-            # The name-free variant cannot know a bare instance name.
-            scored = not (label == "AFTER" and case.get("needs_name"))
+            if not counts:
+                cells.append("-".ljust(28))
+                continue
+            hits = sum(c for role, c in counts.items() if _hit(case, role, peer_roles, rule_role))
+            # The name-free variant cannot know a bare instance name, and
+            # CLASH has no right answer.
+            scored = label != "CLASH" and not (label == "AFTER" and case.get("needs_name"))
             if scored:
                 totals[(label, kind)][0] += hits
                 totals[(label, kind)][1] += args.reps
             got = ",".join(f"{role}x{c}" for role, c in counts.most_common())
             cells.append(f"{hits}/{args.reps}{'' if scored else '*'} {got}"[:28].ljust(28))
-        expect = case["expect"] if isinstance(case["expect"], str) else "|".join(case["expect"])
+        expect = (
+            f"not {rule_role} (rule)" if case.get("expect_not_rule")
+            else case["expect"] if isinstance(case["expect"], str)
+            else "|".join(case["expect"])
+        )
         print(f"{kind:8} {expect[:24]:24} " + " ".join(cells) + f" {case['task']}")
-    print("\n* not scored: the name-free rule cannot know a bare instance name")
+    print("\n* not scored: the name-free rule cannot know a bare instance name; "
+          "CLASH (an instance named like a person) has no right answer")
     for kind in ("peer", "control"):
         print(f"{kind:8} " + "  ".join(
-            f"{label} {totals[(label, kind)][0]}/{totals[(label, kind)][1]}" for label in routers))
+            f"{label} {totals[(label, kind)][0]}/{totals[(label, kind)][1]}"
+            for label in routers if label != "CLASH"))
     return 0
 
 
