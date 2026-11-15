@@ -2892,8 +2892,11 @@ class MCPManager:
         peer_display_snapshot = peer.remote_display_name
         # The instance part of the label, snapshotted with the rest: what the
         # person saw when they asked, not what the pairing says later.
-        from services.federation_instance_name import peer_instance_label
-        peer_instance_snapshot = peer_instance_label(peer)
+        # 🛑 The VERIFIED name only, never the endpoint-host fallback: this
+        # value heads the chat status line and is STORED in the audit row for
+        # good. Without a verified name there is no instance part (NULL).
+        from services.federation_instance_name import stored_instance_name
+        peer_instance_snapshot = stored_instance_name(peer)
         peer_id_snapshot = peer.id
 
         asker = FederationQueryAsker()

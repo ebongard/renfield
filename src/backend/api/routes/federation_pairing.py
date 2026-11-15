@@ -32,7 +32,7 @@ from models.database import FederationUserLink, PeerUser, User
 from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.federation_identity import get_federation_identity
-from services.federation_instance_name import peer_instance_label
+from services.federation_instance_name import peer_instance_label, stored_instance_name
 from services.pairing_service import (
     AlreadyPairedElsewhere,
     PairingError,
@@ -221,6 +221,10 @@ class PeerDetailResponse(BaseModel):
     #: neither exists; the UI then shows `remote_display_name` alone, as before.
     #: Display text, never a key.
     instance_name: str | None = None
+    #: Set together with `instance_name`: True = the name the far instance
+    #: sent, False = only the host of its stored endpoint. The UI does not
+    #: head a row with a host.
+    instance_name_verified: bool | None = None
 
     # Additive, set ONLY while `federation_reachability_enabled` is on.
     #: Result of the last signed round trip: `{state, reason, checked_at}`.
@@ -418,6 +422,7 @@ def _peer_detail(peer: PeerUser) -> PeerDetailResponse:
     label = peer_instance_label(peer)
     if label:
         detail.instance_name = label
+        detail.instance_name_verified = bool(stored_instance_name(peer))
     return detail
 
 
