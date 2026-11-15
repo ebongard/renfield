@@ -22,6 +22,7 @@ from __future__ import annotations
 from loguru import logger
 
 from models.database import MEMORY_CATEGORIES
+from utils.log_safety import error_text_without_content
 
 MEMORY_LIST_DEFAULT_LIMIT = 100
 MEMORY_LIST_MAX_LIMIT = 200
@@ -119,7 +120,7 @@ async def list_my_memories(params: dict, user_id: int | None = None) -> dict:
             },
         }
     except Exception as e:
-        logger.error(f"Error in list_my_memories: {e}")
+        logger.error(f"Error in list_my_memories: {error_text_without_content(e)}")
         return {
             "success": False,
             "message": f"Memory list error: {e!s}",

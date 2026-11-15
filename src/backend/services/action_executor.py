@@ -7,6 +7,8 @@ conversation) have dedicated handlers here.
 """
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 # Identity the SERVER supplies to `internal.*` / `knowledge.*` handlers. The
 # parameter dict of those intents is LLM-built; a key from this set inside it
 # is either a hallucination or an attempt to act as someone else, so it is
@@ -480,7 +482,7 @@ class ActionExecutor:
                 }
 
         except Exception as e:
-            logger.error(f"❌ Error executing knowledge action: {e}")
+            logger.error(f"❌ Error executing knowledge action: {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Fehler bei der Wissensdatenbank-Suche: {e!s}",

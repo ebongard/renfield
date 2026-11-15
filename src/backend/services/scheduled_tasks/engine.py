@@ -40,6 +40,7 @@ from models.database import (
 from services import ops_alert
 from services.scheduled_tasks.registry import get_handler
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # NOTE: AsyncSessionLocal + the engine are imported at CALL time inside each
 # function (not bound at module import) so a test can monkeypatch
@@ -274,7 +275,7 @@ async def _bounded_run(app: FastAPI, task_id: int) -> None:
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        logger.warning(f"scheduled-task runner (id={task_id}) crashed: {type(e).__name__}: {e}")
+        logger.warning(f"scheduled-task runner (id={task_id}) crashed: {type(e).__name__}: {error_text_without_content(e)}")
     finally:
         _inflight.discard(task_id)
 
@@ -539,4 +540,4 @@ async def _record_run_safe(session, task_id: int, task_name: str, **kw) -> None:
         await _record_run(session, task_id, **kw)
     except Exception as e:
         await session.rollback()
-        logger.warning(f"scheduled-task run-history record failed for '{task_name}': {e}")
+        logger.warning(f"scheduled-task run-history record failed for '{task_name}': {error_text_without_content(e)}")

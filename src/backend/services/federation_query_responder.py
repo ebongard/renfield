@@ -113,6 +113,7 @@ from services.mcp_streaming import (
 from services.pairing_service import _canonical_bytes
 from services.polymorphic_atom_store import SourceSessions
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Max progress transitions per request (traffic-analysis defence).
 MAX_PROGRESS_UPDATES = 4
@@ -280,7 +281,7 @@ async def _record_cancelled_access(pending: _PendingRequest) -> None:
     except asyncio.CancelledError:
         raise
     except Exception as e:  # pragma: no cover -- must never mask the cancellation
-        logger.warning(f"Federation: cancellation record not written: {e}")
+        logger.warning(f"Federation: cancellation record not written: {error_text_without_content(e)}")
 
 
 async def _record_revoked_access(pending: _PendingRequest) -> None:
@@ -449,7 +450,7 @@ class FederationQueryResponder:
         try:
             return await self._handle_initiate(req)
         except RedisError as e:
-            logger.error(f"Federation pending-store unavailable on initiate: {e}")
+            logger.error(f"Federation pending-store unavailable on initiate: {error_text_without_content(e)}")
             raise FederationQueryError("Federation store unavailable") from e
 
     async def _handle_initiate(
@@ -633,7 +634,7 @@ class FederationQueryResponder:
         try:
             return await self._handle_retrieve(req)
         except RedisError as e:
-            logger.error(f"Federation pending-store unavailable on retrieve: {e}")
+            logger.error(f"Federation pending-store unavailable on retrieve: {error_text_without_content(e)}")
             raise FederationQueryError("Federation store unavailable") from e
 
     async def _handle_retrieve(
@@ -789,9 +790,16 @@ class FederationQueryResponder:
         except Exception as e:
             logger.error(
                 f"Federation query_brain: background work failed "
-                f"(request_id={request_id}): {e}"
+                f"(request_id={request_id}): {error_text_without_content(e)}"
             )
-            pending.error_message = str(e)
+            # 🛑 The text goes into the pending record AND, for good, into the
+            # audit row. A database error here (graph expansion runs on this
+            # task's session) would carry `[SQL: ...] [parameters: ...]` --
+            # the far side's question and local rows -- so it is cut like
+            # every log line. The far side never sees it: a FAILED poll
+            # carries no message.
+            reason = f"{type(e).__name__}: {error_text_without_content(e)}"
+            pending.error_message = reason
             # Fill in answered_at on failure too so _serialize_pending's
             # `int(pending.answered_at or time.time())` reports the
             # actual failure moment instead of the poll moment.
@@ -799,7 +807,7 @@ class FederationQueryResponder:
             pending.progress_label = PROGRESS_LABEL_FAILED
             pending.status = STATUS_FAILED
             await store.save(pending)
-            await _write_responder_audit(pending, success=False, error=str(e))
+            await _write_responder_audit(pending, success=False, error=reason)
 
     async def _retrieve(
         self,
@@ -1012,7 +1020,7 @@ class FederationQueryResponder:
         try:
             return await self._handle_ping(req)
         except RedisError as e:
-            logger.error(f"Federation pending-store unavailable on ping: {e}")
+            logger.error(f"Federation pending-store unavailable on ping: {error_text_without_content(e)}")
             raise FederationQueryError("Federation store unavailable") from e
 
     async def _handle_ping(self, req: PeerPingRequest) -> PeerPingResponse:
@@ -1166,7 +1174,7 @@ class FederationQueryResponder:
         except Exception as e:
             logger.warning(
                 f"Federation query_brain: last_seen_at update failed "
-                f"(peer_id={peer.id}, non-fatal): {e}"
+                f"(peer_id={peer.id}, non-fatal): {error_text_without_content(e)}"
             )
             await self.db.rollback()
 

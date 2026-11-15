@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import RoutingTrace
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Mirrors the String(64) columns; a longer role/sub-intent name is cut, not refused.
 _NAME_MAX = 64
@@ -62,7 +63,7 @@ async def record_routing_trace(
             ))
             await db.commit()
     except Exception as e:
-        logger.warning(f"Routing trace not recorded: {e}")
+        logger.warning(f"Routing trace not recorded: {error_text_without_content(e)}")
 
 
 async def list_traces(

@@ -440,4 +440,4 @@ async def _refresh_tool_description() -> None:
 
         await resync_bound_manager()
     except Exception as e:
-        logger.warning(f"Federation: peer registry resync after a name change failed: {e}")
+        logger.warning(f"Federation: peer registry resync after a name change failed: {error_text_without_content(e)}")

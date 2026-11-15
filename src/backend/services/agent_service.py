@@ -1965,7 +1965,7 @@ class AgentService:
                     tool_corrections = service.format_agent_corrections(similar, lang=lang)
                     logger.info(f"📝 {len(similar)} tool correction(s) injected into agent prompt")
         except Exception as e:
-            logger.warning(f"⚠️ Agent tool correction lookup failed: {e}")
+            logger.warning(f"⚠️ Agent tool correction lookup failed: {error_text_without_content(e)}")
 
         # Load tool-health warnings (self-learning Phase 3). Per-user
         # rolling outcome counters; warns the LLM about tools currently
@@ -2015,7 +2015,7 @@ class AgentService:
                                 f"injected into agent prompt"
                             )
                 except Exception as e:
-                    logger.warning(f"⚠️ Tool-health warning lookup failed: {e}")
+                    logger.warning(f"⚠️ Tool-health warning lookup failed: {error_text_without_content(e)}")
             context._tool_health_cache = tool_health_warnings
 
         # Load procedural skills (self-learning Phase 1). Cached on
@@ -2055,7 +2055,7 @@ class AgentService:
                                 f"into agent prompt"
                             )
                 except Exception as e:
-                    logger.warning(f"⚠️ Skill injection lookup failed: {e}")
+                    logger.warning(f"⚠️ Skill injection lookup failed: {error_text_without_content(e)}")
             context._learned_skills_cache = learned_skills
 
         # Pre-render the three self-learning blocks into one placeholder
@@ -2271,7 +2271,7 @@ class AgentService:
                         session_id=session_id,
                     ))
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to schedule post-turn skill task: {e}")
+                    logger.warning(f"⚠️ Failed to schedule post-turn skill task: {error_text_without_content(e)}")
 
     async def _run_impl(
         self,
@@ -3412,7 +3412,7 @@ async def _post_turn_skill_bookkeeping(
                     except Exception as e:
                         logger.warning(f"⚠️ Skill outcome recording failed (id={sid}): {e}")
         except Exception as e:
-            logger.warning(f"⚠️ Skill outcome session failed: {e}")
+            logger.warning(f"⚠️ Skill outcome session failed: {error_text_without_content(e)}")
 
     # Tool-outcome tracking — independently gated. Best-effort per-tool
     # counters keyed by (user_id, tool_name); an anonymous turn (user_id
@@ -3424,7 +3424,7 @@ async def _post_turn_skill_bookkeeping(
                 t_outcome = ToolOutcomeService(db)
                 await t_outcome.record_from_steps(user_id=user_id, steps=steps)
         except Exception as e:
-            logger.warning(f"⚠️ Tool-outcome recording failed: {e}")
+            logger.warning(f"⚠️ Tool-outcome recording failed: {error_text_without_content(e)}")
 
     # Skill auto-extraction: gated on skills_enabled + skill_extract_enabled
     # + turn_success + owner present (extraction must have an owner to
@@ -3455,7 +3455,7 @@ async def _post_turn_skill_bookkeeping(
                     )
                     extracted_skill_id = new_skill.id
         except Exception as e:
-            logger.warning(f"⚠️ Skill auto-extraction failed: {e}")
+            logger.warning(f"⚠️ Skill auto-extraction failed: {error_text_without_content(e)}")
 
     # Trajectory capture. Independently gated on trajectory_capture_enabled.
     if settings.trajectory_capture_enabled:
@@ -3501,4 +3501,4 @@ async def _post_turn_skill_bookkeeping(
                     extracted_skill_id=extracted_skill_id,
                 )
         except Exception as e:
-            logger.warning(f"⚠️ Trajectory capture failed: {e}")
+            logger.warning(f"⚠️ Trajectory capture failed: {error_text_without_content(e)}")

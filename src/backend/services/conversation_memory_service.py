@@ -493,7 +493,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                 except Exception:
                     pass
             logger.warning(
-                f"v2 shadow: log-row write failed (swallowed): {type(e).__name__}: {e}"
+                f"v2 shadow: log-row write failed (swallowed): {type(e).__name__}: {error_text_without_content(e)}"
             )
 
     async def _extract_and_save_v1_impl(
@@ -706,7 +706,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             await self.db.rollback()
             logger.warning(
                 f"Memory KG bridge failed for memory #{getattr(memory, 'id', '?')} "
-                f"subject={subject!r}: {e}"
+                f"subject={subject!r}: {error_text_without_content(e)}"
             )
 
     async def _resolve_subject_entity_id(
@@ -2301,7 +2301,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             try:
                 similar = await self._find_similar_memories(embedding, user_id)
             except Exception as e:
-                logger.warning(f"Contradiction resolution: similar search failed: {e}")
+                logger.warning(f"Contradiction resolution: similar search failed: {error_text_without_content(e)}")
 
         # No similar memories -> just save (ADD)
         if not similar:

@@ -78,6 +78,7 @@ from services.pdf_split_errors import (
     SplitTransientError,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Re-export (canonical tuple lives in models.database, import-light for the
 # worker's flag-independent guard).
@@ -645,7 +646,7 @@ async def maybe_split_at_ingest(
     except SplitTransientError:
         raise
     except Exception as e:
-        logger.warning(f"pdf-split: detection failed for doc {doc_id}: {e}")
+        logger.warning(f"pdf-split: detection failed for doc {doc_id}: {error_text_without_content(e)}")
         return False
 
     outcome = await act_on_verdict(db, doc, verdict, user_id, force_review=resplit)

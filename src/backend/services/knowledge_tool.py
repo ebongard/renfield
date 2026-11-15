@@ -22,6 +22,7 @@ from typing import Any
 from loguru import logger
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Tool definition — registered with the agent tool registry by
 # `services/agent_tools.py::_register_internal_tools()`. The name
@@ -93,7 +94,7 @@ async def _retrieve_facts(
             doc_meta = await _visible_document_meta(db, doc_ids, user_id_int)
         except Exception as e:
             logger.warning(
-                f"knowledge_search: fact source-title lookup failed (ignored): {e}"
+                f"knowledge_search: fact source-title lookup failed (ignored): {error_text_without_content(e)}"
             )
     return facts, doc_meta
 
@@ -294,7 +295,7 @@ async def knowledge_search(params: dict, *, user_id: int | None = None) -> dict:
             "data": {"query": query, "results_count": 0},
         }
     except Exception as e:
-        logger.error(f"Error in knowledge_search: {e}")
+        logger.error(f"Error in knowledge_search: {error_text_without_content(e)}")
         return {
             "success": False,
             "message": f"Knowledge base search error: {e!s}",

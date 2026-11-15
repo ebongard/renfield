@@ -54,6 +54,8 @@ except ImportError:
 # logs each line as ERROR with full traceback. Downgrade to DEBUG.
 import logging as _logging
 
+from utils.log_safety import error_text_without_content
+
 
 class _MCPStdioNoiseFilter(_logging.Filter):
     """Demote 'Failed to parse JSONRPC message' from ERROR to DEBUG."""
@@ -2047,7 +2049,7 @@ class MCPManager:
             )
         except Exception as e:
             state.record_probe_outcome(False, f"{type(e).__name__}: {e}"[:200])
-            logger.warning(f"mcp_health: probe '{namespaced}' raised: {e}")
+            logger.warning(f"mcp_health: probe '{namespaced}' raised: {error_text_without_content(e)}")
             return {"ok": False, "detail": state.last_probe_detail, "skipped": False}
 
         if not result.get("success"):

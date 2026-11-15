@@ -129,7 +129,7 @@ async def emit_documents_changed(
         target = None if not settings.auth_enabled else owner
         await publish_user_event(redis, target, EVENT_DOCUMENTS_CHANGED, reason)
     except Exception as exc:
-        logger.warning(f"user-events: emit_documents_changed({reason}) failed: {exc}")
+        logger.warning(f"user-events: emit_documents_changed({reason}) failed: {error_text_without_content(exc)}")
 
 
 async def resolve_document_owner(db: Any, document: Any) -> int | None:

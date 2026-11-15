@@ -22,6 +22,7 @@ from loguru import logger
 from models.database import SCHEDULE_KIND_INTERVAL
 from services.scheduled_tasks.registry import register_handler
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -393,7 +394,7 @@ async def _skill_curator_handler(app: FastAPI, params: dict) -> str | None:
             async with AsyncSessionLocal() as per_user_db:
                 await SkillCuratorService(per_user_db).run_for_user(uid)
         except Exception as e:
-            logger.warning(f"Skill curator failed for user {uid}: {e}")
+            logger.warning(f"Skill curator failed for user {uid}: {error_text_without_content(e)}")
     return f"users={len(user_ids)}" if user_ids else None
 
 
@@ -412,7 +413,7 @@ async def _kg_reconciler_handler(app: FastAPI, params: dict) -> str | None:
             async with AsyncSessionLocal() as per_user_db:
                 await KgReconcilerService(per_user_db).run_for_user(uid)
         except Exception as e:
-            logger.warning(f"KG reconciler failed for user {uid}: {e}")
+            logger.warning(f"KG reconciler failed for user {uid}: {error_text_without_content(e)}")
     return f"users={len(user_ids)}" if user_ids else None
 
 
@@ -435,7 +436,7 @@ async def _document_dedupe_handler(app: FastAPI, params: dict) -> str | None:
                 report = await DocumentDedupeService(per_user_db).run_for_user(uid)
                 proposed += report.proposed
         except Exception as e:
-            logger.warning(f"Document dedupe failed for user {uid}: {e}")
+            logger.warning(f"Document dedupe failed for user {uid}: {error_text_without_content(e)}")
     return f"users={len(user_ids)} proposed={proposed}" if user_ids else None
 
 

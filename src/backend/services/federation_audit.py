@@ -176,7 +176,7 @@ async def write_federation_audit(
     except Exception as e:
         logger.warning(
             f"Federation audit write failed (peer={peer_pubkey_snapshot[:12]}…, "
-            f"status={final_status}): {e}"
+            f"status={final_status}): {error_text_without_content(e)}"
         )
 
 

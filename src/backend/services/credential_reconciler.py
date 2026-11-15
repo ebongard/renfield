@@ -33,6 +33,7 @@ from models.database import (
 from services.database import AsyncSessionLocal
 from services.ingest_common import get_ingest_token, set_ingest_token
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 
 async def _reconcile_ingest_tokens() -> list[str]:
@@ -76,7 +77,7 @@ async def reconcile_credentials() -> list[str]:
     try:
         actions += await _reconcile_ingest_tokens()
     except Exception as e:
-        logger.warning(f"credential-reconciler: ingest-token pass failed: {e}")
+        logger.warning(f"credential-reconciler: ingest-token pass failed: {error_text_without_content(e)}")
     if actions:
         logger.info(f"✅ credential-reconciler healed {len(actions)} token(s): {actions}")
     return actions

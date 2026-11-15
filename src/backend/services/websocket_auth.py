@@ -13,6 +13,7 @@ from fastapi import Query, WebSocket
 from loguru import logger
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 
 class WSTokenStore:
@@ -236,7 +237,7 @@ async def authenticate_websocket(
             async with AsyncSessionLocal() as db:
                 satellite_id = await authorize_handshake(db, token, client_ip)
         except Exception as e:
-            logger.error(f"Satellite handshake auth errored (fail-closed): {e}")
+            logger.error(f"Satellite handshake auth errored (fail-closed): {error_text_without_content(e)}")
             return None
         if satellite_id is None:
             return None
@@ -322,7 +323,7 @@ async def authenticate_websocket(
             async with AsyncSessionLocal() as db:
                 user = await get_user_by_id(db, user_id_int)
         except Exception as e:
-            logger.warning(f"WebSocket JWT user lookup failed: {e}")
+            logger.warning(f"WebSocket JWT user lookup failed: {error_text_without_content(e)}")
             return None
 
         if user is None:

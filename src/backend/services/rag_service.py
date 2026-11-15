@@ -73,6 +73,7 @@ from services.document_processing_history import (
 from services.document_processor import DocumentProcessor
 from utils.config import settings
 from utils.llm_client import get_embed_client
+from utils.log_safety import error_text_without_content
 
 if TYPE_CHECKING:  # pragma: no cover - imports only needed for type hints
     from services.progress import DocumentProgress
@@ -640,7 +641,7 @@ class RAGService(AtomOwnerResolverMixin):
                     doc.status = DOC_STATUS_FAILED
                     doc.error_message = str(e)
                     await self.db.commit()
-                    logger.error(f"Error while indexing: {e}")
+                    logger.error(f"Error while indexing: {error_text_without_content(e)}")
                     raise
         except _ProcessorFailed:
             # Legacy contract preserved: handled Docling failure → return None.

@@ -42,6 +42,7 @@ from services.pdf_splitter import (
 )
 from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
+from utils.log_safety import error_text_without_content
 
 
 async def _hand_back_single(db, doc: Document, user_id: int | None) -> None:
@@ -73,7 +74,7 @@ async def _hand_back_single(db, doc: Document, user_id: int | None) -> None:
             await db.commit()
         except Exception as re_e:
             logger.error(
-                f"pdf-split[slow]: hand-back revert failed for doc {doc.id}: {re_e}"
+                f"pdf-split[slow]: hand-back revert failed for doc {doc.id}: {error_text_without_content(re_e)}"
             )
         from services.pdf_split_errors import SplitTransientError
 

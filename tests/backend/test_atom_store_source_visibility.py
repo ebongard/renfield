@@ -120,17 +120,75 @@ def _count(**overrides):
 
 def _raw_db_error_logs(tree) -> list[int]:
     """Line numbers where an `except ... as <name>` handler around a `try`
-    that calls `.execute(...)` formats `<name>` raw into a LOGGER call.
+    that REACHES THE DATABASE formats `<name>` raw into a LOGGER call.
 
     Only logger calls: a tool result handed back to the asking user's own
-    agent is a different question (what the model sees), not a log leak."""
+    agent is a different question (what the model sees), not a log leak.
+
+    🛑 "Reaches the database" was `.execute(...)` written out inside the `try`
+    until 2026-11-15. That missed the responder's own background task: its
+    `try` opens a session and calls `self._retrieve(...)`, the query sits two
+    calls further down, and the handler put the raw exception into the log
+    AND into the audit row. A `try` now counts when its body
+
+      * calls `.execute(...)`, `.commit(...)` or `.flush(...)`, or
+      * opens a session (`async with <...Session...>(...)`), or
+      * calls a function or method of the SAME module that does any of this,
+        directly or through further functions of that module.
+
+    Calls into other modules are not followed -- that would need the whole
+    program. The session rule covers the usual shape of that case: whoever
+    works on a session of their own opens it inside the `try`.
+    """
     import ast
 
     levels = {"debug", "info", "warning", "error", "exception", "critical"}
+    db_calls = {"execute", "commit", "flush"}
 
-    def has_execute(node) -> bool:
-        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                   and n.func.attr == "execute" for n in ast.walk(node))
+    functions: dict[str, list] = {}
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.setdefault(n.name, []).append(n)
+
+    def touches_db(node) -> bool:
+        for n in ast.walk(node):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr in db_calls):
+                return True
+            if isinstance(n, ast.AsyncWith):
+                for item in n.items:
+                    ctx = item.context_expr
+                    if isinstance(ctx, ast.Call):
+                        callee = getattr(ctx.func, "id", getattr(ctx.func, "attr", ""))
+                        if "session" in callee.lower():
+                            return True
+        return False
+
+    def module_calls(node) -> set[str]:
+        called = set()
+        for n in ast.walk(node):
+            if not isinstance(n, ast.Call):
+                continue
+            f = n.func
+            if isinstance(f, ast.Name) and f.id in functions:
+                called.add(f.id)
+            elif (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
+                  and f.value.id in ("self", "cls") and f.attr in functions):
+                called.add(f.attr)
+        return called
+
+    reaching = {name for name, defs in functions.items()
+                if any(touches_db(d) for d in defs)}
+    grew = True
+    while grew:
+        grew = False
+        for name, defs in functions.items():
+            if name not in reaching and any(module_calls(d) & reaching for d in defs):
+                reaching.add(name)
+                grew = True
+
+    def reaches_db(node) -> bool:
+        return touches_db(node) or bool(module_calls(node) & reaching)
 
     def is_log(call) -> bool:
         f = call.func
@@ -139,7 +197,7 @@ def _raw_db_error_logs(tree) -> list[int]:
 
     lines = []
     for try_node in (n for n in ast.walk(tree) if isinstance(n, ast.Try)):
-        if not any(has_execute(a) for a in try_node.body):
+        if not any(reaches_db(a) for a in try_node.body):
             continue
         for handler in try_node.handlers:
             if not handler.name:
@@ -151,7 +209,7 @@ def _raw_db_error_logs(tree) -> list[int]:
                     if isinstance(n, ast.FormattedValue)
                     and isinstance(n.value, ast.Name)
                     and n.value.id == handler.name)
-    return sorted(lines)
+    return sorted(set(lines))
 
 
 class TestItTellsCrashApartFromEmpty:
@@ -341,11 +399,12 @@ class TestTheGuardAgainstContentInTheLog:
         user query included.
 
         What is checked: every `except ... as <name>` handler whose `try`
-        body contains a `.execute(...)` -- there and only there can a SQL
-        tail arise, and only there does the cut help -- must not put
-        `<name>` raw into a log call. An embedding or LLM error carries no
-        `[SQL:` tail; the guard would be theatre there. (Closing THAT gap
-        needs a different guard, not the same one in more places.)
+        body reaches the database (see `_raw_db_error_logs` for what that
+        means) -- there and only there can a SQL tail arise, and only there
+        does the cut help -- must not put `<name>` raw into a log call. An
+        embedding or LLM error carries no `[SQL:` tail; the guard would be
+        theatre there. (Closing THAT gap needs a different guard, not the
+        same one in more places.)
 
         🛑 The scope is ALL of `services/`. Until 2026-10-30 it was a hard
         list of seven retrieval modules whose comment claimed it was
@@ -394,6 +453,73 @@ class TestTheGuardAgainstContentInTheLog:
             "        logger.warning(f'not a query: {e}')\n"
         )
         assert _raw_db_error_logs(ast.parse(source)) == [5]
+
+    def test_the_sweep_sees_a_query_that_is_REACHED_not_written_out(self):
+        """🛑 The shape that got past the first guard: the handler sits in a
+        function that never says `.execute` itself. Each case below is one
+        way a `try` reaches the database; the last two are the negative
+        controls -- a helper that touches nothing, and a call into another
+        module, which is deliberately not followed."""
+        import ast
+
+        source = (
+            "class R:\n"
+            "    async def _retrieve(self, session):\n"
+            "        return await session.execute('q')\n"
+            "    async def _middle(self, session):\n"
+            "        return await self._retrieve(session)\n"
+            "    async def via_two_calls(self, session):\n"
+            "        try:\n"
+            "            await self._middle(session)\n"
+            "        except Exception as e:\n"
+            "            logger.error(f'two calls down: {e}')\n"          # 10
+            "    async def via_own_session(self):\n"
+            "        try:\n"
+            "            async with AsyncSessionLocal() as session:\n"
+            "                await other_module.work(session)\n"
+            "        except Exception as e:\n"
+            "            logger.error(f'own session: {e!r}')\n"           # 16
+            "    async def via_commit(self, peer):\n"
+            "        try:\n"
+            "            peer.seen = 1\n"
+            "            await self.db.commit()\n"
+            "        except Exception as e:\n"
+            "            logger.warning(f'commit: {e}')\n"                # 22
+            "    async def harmless_helper(self):\n"
+            "        return 1\n"
+            "    async def no_database(self):\n"
+            "        try:\n"
+            "            await self.harmless_helper()\n"
+            "        except Exception as e:\n"
+            "            logger.warning(f'nothing to cut: {e}')\n"
+            "    async def another_module(self):\n"
+            "        try:\n"
+            "            await other_module.work()\n"
+            "        except Exception as e:\n"
+            "            logger.warning(f'not followed: {e}')\n"
+        )
+        assert _raw_db_error_logs(ast.parse(source)) == [10, 16, 22]
+
+    def test_the_responder_task_is_inside_the_sweep(self):
+        """The function this widening was made for is actually reached by it
+        -- on its BODY: with its handler put back to the raw form the sweep
+        reports it."""
+        import ast
+        import pathlib as _pl
+
+        path = (_pl.Path(__file__).resolve().parents[2]
+                / "src/backend/services/federation_query_responder.py")
+        tree = ast.parse(path.read_text())
+        (task,) = [n for n in ast.walk(tree)
+                   if isinstance(n, ast.AsyncFunctionDef) and n.name == "_run_query"]
+        assert _raw_db_error_logs(tree) == []
+
+        handler = next(h for t in ast.walk(task) if isinstance(t, ast.Try)
+                       for h in t.handlers if h.name == "e")
+        raw = ast.parse("logger.error(f'failed: {e}')").body[0]
+        handler.body.insert(0, ast.copy_location(raw, handler.body[0]))
+        ast.fix_missing_locations(tree)
+        assert _raw_db_error_logs(tree) != []
 
 
 class TestTheSummaryLine:

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import REMINDER_CANCELLED, REMINDER_FIRED, REMINDER_PENDING, Reminder
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 
 def naive_utc_to_local(dt_naive_utc: datetime) -> datetime:
@@ -325,4 +326,4 @@ async def check_due_reminders():
                             f"⚠️ Reminder #{reminder.id} stays claimed, will not retry: {release_error}"
                         )
     except Exception as e:
-        logger.warning(f"⚠️ Reminder check failed: {e}")
+        logger.warning(f"⚠️ Reminder check failed: {error_text_without_content(e)}")

@@ -520,7 +520,7 @@ async def _direct_upload(
         except Exception as exc:
             # Tracking-row persistence must not block the user's upload
             # success path — it's purely a learning-loop concern.
-            logger.warning(f"Upload-tracking persist failed: {exc}")
+            logger.warning(f"Upload-tracking persist failed: {error_text_without_content(exc)}")
 
     # Poll Paperless's task endpoint to learn the REAL ingestion outcome.
     #

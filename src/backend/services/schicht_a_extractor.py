@@ -1123,7 +1123,7 @@ async def schicht_a_post_document_ingest_hook(
                     doc.generated_title = title
                     await db.commit()
             except Exception as e:
-                logger.warning(f"Schicht A: title synthesis failed for doc {document_id}: {e}")
+                logger.warning(f"Schicht A: title synthesis failed for doc {document_id}: {error_text_without_content(e)}")
 
             # #881: rename the archived folder-ingest copy in the share's
             # processed/ dir to the freshly-synthesized human title so the SMB
@@ -1170,6 +1170,6 @@ async def schicht_a_post_document_ingest_hook(
                     doc.document_date = ddate
                     await db.commit()
             except Exception as e:
-                logger.warning(f"Schicht A: document_date derivation failed for doc {document_id}: {e}")
+                logger.warning(f"Schicht A: document_date derivation failed for doc {document_id}: {error_text_without_content(e)}")
     except Exception as e:
         logger.warning(f"Schicht A post_document_ingest hook failed: {error_text_without_content(e)}")

@@ -11,6 +11,8 @@ import re
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 
 class ComplexityDetector:
     """Detects whether a user query requires the multi-step Agent Loop."""
@@ -124,7 +126,7 @@ class ComplexityDetector:
                     )
                     return override
         except Exception as e:
-            logger.warning(f"⚠️ Complexity feedback check failed: {e}")
+            logger.warning(f"⚠️ Complexity feedback check failed: {error_text_without_content(e)}")
 
         return cls.needs_agent(message)
 

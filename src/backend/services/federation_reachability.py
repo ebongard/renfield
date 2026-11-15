@@ -282,7 +282,7 @@ async def read_reachability(peer_ids: list[int]) -> dict[int, Reading]:
     try:
         stored = await get_store().load(peer_ids)
     except Exception as e:
-        logger.debug(f"Federation reachability: read failed: {e!r}")
+        logger.debug(f"Federation reachability: read failed: {type(e).__name__}: {error_text_without_content(e)}")
         stored = {}
     return {
         peer_id: reading_for(*stored[peer_id]) if peer_id in stored else NOT_CHECKED
@@ -332,7 +332,7 @@ async def probe_peer(peer: Any, *, force: bool = False) -> Reading:
     except Exception as e:
         # A fault of OURS is no finding about the far side: record nothing
         # rather than paint a pairing red because of a bug on this end.
-        logger.warning(f"Federation reachability: probe of peer {peer.id} failed locally: {e!r}")
+        logger.warning(f"Federation reachability: probe of peer {peer.id} failed locally: {type(e).__name__}: {error_text_without_content(e)}")
         return current
 
     checked_at = time.time()

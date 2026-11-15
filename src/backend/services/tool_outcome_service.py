@@ -54,6 +54,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ToolOutcomeStat
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 from utils.prompt_scrub import scrub_for_prompt
 
 
@@ -255,7 +256,7 @@ class ToolOutcomeService:
             )
         except Exception as e:
             logger.warning(
-                f"⚠️ ToolOutcomeService.record failed for {tool_name!r}: {e}"
+                f"⚠️ ToolOutcomeService.record failed for {tool_name!r}: {error_text_without_content(e)}"
             )
 
     @classmethod

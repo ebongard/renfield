@@ -197,7 +197,7 @@ async def simba_ingest_post_hook(
             # Benign: a concurrent hook already filed the pending proposal
             # (partial-unique uq_simba_ingest_proposals_pending_doc).
             await db.rollback()
-            logger.info(f"simba-ingest: proposal already pending for doc {document_id}: {e}")
+            logger.info(f"simba-ingest: proposal already pending for doc {document_id}: {error_text_without_content(e)}")
         except Exception as e:
             # Real failure (FK/connection/serialization) — this hook is the ONLY
             # path that surfaces the PDF for Simba review, so a silent drop means
@@ -205,7 +205,7 @@ async def simba_ingest_post_hook(
             await db.rollback()
             logger.warning(
                 f"simba-ingest: proposal insert FAILED for doc {document_id} "
-                f"(will NOT surface for Simba review): {e}"
+                f"(will NOT surface for Simba review): {error_text_without_content(e)}"
             )
 
 

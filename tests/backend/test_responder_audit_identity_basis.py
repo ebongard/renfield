@@ -434,3 +434,58 @@ class TestTheCancellationBranchIsACTUALLYWired:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+class TestAFailureTextCarriesNoQuery:
+    """🛑 What a failed query writes down is kept for good.
+
+    `_run_query` put `str(e)` into the log line, the pending record and the
+    audit row. Graph expansion runs on that task's session, so the exception
+    can be SQLAlchemy's -- and its message ends in `[SQL: ...] [parameters:
+    ...]`: the far side's question and local values, in a row that never
+    expires.
+    """
+
+    @pytest.mark.asyncio
+    async def test_log_record_and_audit_row_are_cut_before_the_sql_tail(
+        self, written, monkeypatch
+    ):
+        from loguru import logger as _l
+        from sqlalchemy.exc import ProgrammingError
+
+        from services import federation_query_responder as fqr
+
+        p = _pending(mapped=True, asker_local_user_id=107)
+        store = AsyncMock()
+        store.get = AsyncMock(return_value=p)
+        store.save = AsyncMock(return_value=True)
+        monkeypatch.setattr(fqr, "get_pending_store", lambda: store)
+        monkeypatch.setattr(fqr, "_request_is_still_wanted", AsyncMock(return_value=True))
+        monkeypatch.setattr(fqr, "AsyncSessionLocal", lambda: AsyncMock())
+
+        responder = fqr.FederationQueryResponder(db=AsyncMock())
+        monkeypatch.setattr(responder, "_emit_progress", AsyncMock())
+        broken = ProgrammingError(
+            "SELECT name FROM kg_entities WHERE name = %(n)s",
+            {"n": "a very private name"},
+            Exception("relation does not exist"),
+        )
+        assert "a very private name" in str(broken), "the control: the raw text carries it"
+        monkeypatch.setattr(responder, "_retrieve", AsyncMock(side_effect=broken))
+
+        lines: list[str] = []
+        sink = _l.add(lambda m: lines.append(m.record["message"]), level="DEBUG",
+                      format="{message}")
+        try:
+            await responder._run_query(p.request_id)
+        finally:
+            _l.remove(sink)
+
+        recorded = written.await_args.kwargs["final_item"]["message"]
+        for text_ in [*lines, p.error_message, recorded]:
+            assert "a very private name" not in text_, text_
+            assert "[SQL:" not in text_ and "kg_entities" not in text_, text_
+        # Not emptied either: the reason is still placeable.
+        assert "relation does not exist" in recorded
+        assert "ProgrammingError" in recorded
+        assert any("background work failed" in line for line in lines)

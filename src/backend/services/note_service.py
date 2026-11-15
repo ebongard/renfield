@@ -19,6 +19,7 @@ from models.database import ATOM_TYPE_NOTE, Note
 from services.atom_owner import AtomOwnerResolverMixin
 from services.atom_service import AtomService
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 
 class NoteTitleConflict(Exception):
@@ -87,7 +88,7 @@ async def embed_note_by_id(note_id: int) -> None:
             note.embedding = resp.embedding
             await db.commit()
     except Exception as e:
-        logger.warning(f"note {note_id}: background embedding failed (FTS still covers it): {e}")
+        logger.warning(f"note {note_id}: background embedding failed (FTS still covers it): {error_text_without_content(e)}")
 
 
 class _NoteOwnerResolver(AtomOwnerResolverMixin):

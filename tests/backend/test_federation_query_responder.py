@@ -577,7 +577,7 @@ class TestBackgroundTaskSession:
 
         pending_after = await get_pending_store().get(pending.request_id)
         assert pending_after.status == STATUS_FAILED
-        assert pending_after.error_message == "boom"
+        assert pending_after.error_message == "RuntimeError: boom"
         assert pending_after.answered_at is not None  # set on failure per fix
 
 
