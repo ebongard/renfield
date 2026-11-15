@@ -89,7 +89,8 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   atoms (`KGRetrieval.get_relevant_atoms`), while the agent's string context (`get_relevant_context`) is unchanged.
 - 🛑 A caller that opens a FRESH session and queries the store at once passes `source_sessions` (one bounded,
   process-wide `SourceSessions`): eight sources on one cold session crash all but one. On own sessions the
-  fan-out is a pure read (no `access_count` bump); the scope (`asker_id`, `peer`) is identical in both regimes.
+  fan-out is a PURE READ — no `access_count` bump, no skill shadow log; a new source that writes needs its own
+  explicit switch. The scope (`asker_id`, `peer`) is identical in both regimes.
 
 ## Extraction WRITES are ownership-gated separately from retrieval
 `_apply_update_v2` / `_apply_delete_v2` and the v1 contradiction path take the row to mutate from an LLM-supplied

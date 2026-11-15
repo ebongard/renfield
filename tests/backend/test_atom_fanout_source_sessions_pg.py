@@ -39,7 +39,17 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from models.database import EMBEDDING_DIMENSION, ConversationMemory, Role, User
+from models.database import (
+    EMBEDDING_DIMENSION,
+    SKILL_SOURCE_USER_CREATED,
+    SKILL_STATUS_APPROVED,
+    SKILL_STATUS_DRAFT,
+    ConversationMemory,
+    ProceduralSkill,
+    Role,
+    SkillWouldHaveInjectedLog,
+    User,
+)
 from services.circle_sql import PeerScope
 from services.federation_pending_store import _PendingRequest
 from utils.config import settings
@@ -432,11 +442,12 @@ class TestEverySourceIsHandedItsScope:
             assert call["kwargs"]["peer"] is peer, source
             assert call["args"] == ("what",), source
 
-    async def test_a_session_of_its_own_changes_nothing_but_the_memory_write(
+    async def test_a_session_of_its_own_changes_nothing_but_the_two_writes(
         self, recorded_sources
     ):
-        """Both regimes, argument by argument. The single permitted difference
-        is `track_access` of the memory source."""
+        """Both regimes, argument by argument. The only permitted differences
+        are the two write switches: `track_access` of the memory source and
+        `record_shadow_log` of the skill source."""
         peer = PeerScope(owner_id=7, tier=2)
         await self._run(own_sessions=False, peer=peer)
         shared = {c["source"]: dict(c["kwargs"]) for c in recorded_sources}
@@ -446,6 +457,8 @@ class TestEverySourceIsHandedItsScope:
 
         assert shared["memory"].pop("track_access") is True
         assert own["memory"].pop("track_access") is False
+        assert shared["skill"].pop("record_shadow_log") is True
+        assert own["skill"].pop("record_shadow_log") is False
         assert own == shared
 
     async def test_every_source_gets_a_DIFFERENT_session_and_it_is_closed(
@@ -664,6 +677,123 @@ class TestTheAccessCountContract:
                 _TOKEN, asker_id=two_owners["first"], max_visible_tier=0, top_k=10)
             await db.commit()
         assert (await _access_counts(pooled_engine.engine, two_owners["ids"]))[own_id] == 1
+
+
+# --------------------------------------------------------------------------- #
+# 4b. The skill shadow log
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+async def skills(async_engine, two_owners) -> dict:
+    """Skills of the first owner: one APPROVED (without it `find_similar`
+    returns before it reaches the database) and two DRAFTS the draft gate
+    holds back -- exactly what the shadow log exists to record. One draft
+    sits on tier 2, so a peer granted tier 2 can see it as well."""
+    from services.skill_service import SkillService
+
+    maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+
+    def skill(title: str, status: str, tier: int) -> ProceduralSkill:
+        return ProceduralSkill(
+            user_id=two_owners["first"], title=title, body_md=f"{_TOKEN} {title}",
+            source=SKILL_SOURCE_USER_CREATED, status=status, circle_tier=tier,
+            embedding=_VEC,
+        )
+
+    async with maker() as seed:
+        rows = {
+            "approved": skill("approved skill", SKILL_STATUS_APPROVED, 2),
+            "draft_self": skill("draft self", SKILL_STATUS_DRAFT, 0),
+            "draft_household": skill("draft household", SKILL_STATUS_DRAFT, 2),
+        }
+        seed.add_all(rows.values())
+        await seed.commit()
+        ids = {name: row.id for name, row in rows.items()}
+    SkillService.invalidate_has_skills_cache()
+    yield ids
+    SkillService.invalidate_has_skills_cache()
+
+
+async def _shadow_rows(engine) -> list[tuple[int, int | None]]:
+    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with maker() as check:
+        return [tuple(r) for r in (await check.execute(
+            select(SkillWouldHaveInjectedLog.skill_id, SkillWouldHaveInjectedLog.user_id)
+            .order_by(SkillWouldHaveInjectedLog.skill_id)
+        )).all()]
+
+
+def _skill_ids(matches) -> set[int]:
+    return {m.atom.payload["skill_id"] for m in matches if "skill_id" in m.atom.payload}
+
+
+class TestAFederatedQuestionWritesNoShadowLog:
+    """🛑 "Pure read" has to be true for ALL eight sources. The skill source
+    wrote: a mapped question inserted would-have-injected rows under the
+    linked local account, and a peer-scoped one ran a shadow query that
+    failed on every call (its bindings lacked the peer's)."""
+
+    async def test_a_mapped_question_writes_nothing_under_the_linked_account(
+        self, responder, two_owners, skills, async_engine
+    ):
+        matches, lines = await _retrieve_cold(responder, _mapped_request(two_owners["first"]))
+
+        # The source got past its early return and did its real work ...
+        assert skills["approved"] in _skill_ids(matches), lines.records
+        # ... and left nothing behind.
+        assert await _shadow_rows(async_engine) == []
+        assert not [m for _, m in lines.records if "Shadow-log" in m]
+        assert lines.summary()[3] == 0
+
+    async def test_a_peer_scoped_question_writes_nothing_and_fails_nothing(
+        self, responder, two_owners, skills, async_engine
+    ):
+        matches, lines = await _retrieve_cold(
+            responder, _fallback_request(two_owners["first"], 2))
+
+        assert skills["approved"] in _skill_ids(matches), lines.records
+        assert await _shadow_rows(async_engine) == []
+        assert not [m for _, m in lines.records if "Shadow-log" in m], lines.records
+        assert lines.summary()[3] == 0
+
+    async def test_the_local_path_still_logs_what_the_draft_gate_held_back(
+        self, two_owners, skills, async_engine
+    ):
+        """Negative control, and the unchanged contract of the local path:
+        the same data, asked locally by its owner, IS logged -- under the
+        asking account."""
+        from services.polymorphic_atom_store import PolymorphicAtomStore
+
+        maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+        async with maker() as db:
+            await db.execute(text("SELECT 1"))          # warm, as `get_db` hands it over
+            matches = await PolymorphicAtomStore(db).query(
+                _TOKEN, asker_id=two_owners["first"], max_visible_tier=0, top_k=10)
+
+        assert skills["approved"] in _skill_ids(matches)
+        first = two_owners["first"]
+        assert await _shadow_rows(async_engine) == sorted(
+            [(skills["draft_self"], first), (skills["draft_household"], first)])
+
+    async def test_a_peer_scoped_call_never_logs_even_when_asked_to(
+        self, two_owners, skills, async_engine
+    ):
+        """There is no asking local account on a peer-scoped call -- nobody a
+        row could be logged under. Before, this ran a shadow query whose
+        bindings lacked the peer's and failed on every call."""
+        from services.skill_service import SkillService
+
+        maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+        with _Lines() as lines:
+            async with maker() as db:
+                found = await SkillService(db).find_similar(
+                    _TOKEN, asker_id=0, top_k=5, record_shadow_log=True,
+                    peer=PeerScope(owner_id=two_owners["first"], tier=2))
+
+        assert [f["id"] for f in found] == [skills["approved"]]
+        assert await _shadow_rows(async_engine) == []
+        assert not [m for _, m in lines.records if "Shadow-log" in m], lines.records
 
 
 # --------------------------------------------------------------------------- #

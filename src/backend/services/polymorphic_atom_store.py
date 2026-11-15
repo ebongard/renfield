@@ -77,8 +77,10 @@ ASCII query flow:
         |         `find_similar` writes the shadow log and COMMITS on its
         |         session (`skill_shadow_log_enabled`, default on). On a shared
         |         session that commit also decides for whatever the other
-        |         sources have flushed; on its own session it commits exactly
-        |         its own rows.
+        |         sources have flushed. In regime C it is switched off
+        |         (`record_shadow_log=False`): a paired instance's question
+        |         is not a local person's turn and must not write curator
+        |         rows under a local account.
         |
         |   None of them uses SET LOCAL, an advisory lock or a savepoint.
         |   Graph expansion runs AFTER the fan-out, alone, on `self.db`.
@@ -284,10 +286,12 @@ class PolymorphicAtomStore:
         candidate_k = top_k * 3  # over-fetch for RRF fusion across sources
 
         # A source on a session of its own has no caller transaction that
-        # could decide about its writes. The one write in the fan-out is the
-        # memory access bump; there it is switched off, so the fan-out is a
-        # pure read and holds no row locks (module docstring, "memory").
-        track_memory_access = self._source_sessions is None
+        # could decide about its writes, so there the fan-out is a PURE READ.
+        # It has two writes, and both are switched off explicitly: the memory
+        # access bump (row locks) and the skill shadow log (rows inserted and
+        # committed under the asking account). Module docstring, "memory" and
+        # "skill".
+        writes_allowed = self._source_sessions is None
 
         # 🛑 Every source is built from the session it is HANDED, and from
         # nothing else. The scope -- `asker_id`, `peer` -- is closed over here,
@@ -310,7 +314,7 @@ class PolymorphicAtomStore:
         def memory(s: AsyncSession):
             return MemoryRetrieval(s).retrieve(
                 query_text, user_id=asker_id, limit=candidate_k, peer=peer,
-                track_access=track_memory_access,
+                track_access=writes_allowed,
             )
 
         # Lexical retrievers — keyword / name fallback for queries the
@@ -347,6 +351,7 @@ class PolymorphicAtomStore:
         def skill(s: AsyncSession):
             return SkillService(s).find_similar(
                 query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+                record_shadow_log=writes_allowed,
             )
 
         # Phase 4B: hand-authored notes are atoms too (FTS keyword retrieval; a

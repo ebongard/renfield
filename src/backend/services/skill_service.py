@@ -353,8 +353,18 @@ class SkillService:
         top_k: int | None = None,
         threshold: float | None = None,
         peer: PeerScope | None = None,
+        record_shadow_log: bool = True,
     ) -> list[dict]:
         """Return top-K active skills closest to the message.
+
+        `record_shadow_log` (default True) controls the WRITE side: the
+        would-have-injected log, inserted and COMMITTED on this session.
+        False makes the call a pure read. The federated retrieval passes
+        False: a paired instance's question is not a turn of a local person,
+        and until 2026-11-15 it nevertheless wrote curator rows under the
+        linked local account (and, peer-scoped, ran a shadow query that
+        failed on every call). The caller says so explicitly. A peer-scoped
+        call never logs in any case (see below).
 
         Visibility filter (matches the AUTH_ENABLED=true contract):
           - asker's own skills (user_id = asker_id), OR
@@ -536,7 +546,10 @@ class SkillService:
         # similarity threshold. The log feeds the AdminCuratorPage's
         # "recall delta" panel and the eventual decision on whether to
         # auto-promote certain draft sources.
-        if settings.skill_shadow_log_enabled:
+        # 🛑 Never on a peer-scoped call, whatever the caller passed: there is
+        # no asking LOCAL account there (`asker_id` is a placeholder), so a
+        # row would have nobody to be logged under.
+        if settings.skill_shadow_log_enabled and record_shadow_log and peer is None:
             try:
                 await self._log_would_have_injected(
                     embedding_str=embedding_str,
@@ -562,7 +575,11 @@ class SkillService:
         threshold: float,
         approved_ids: set[int],
     ) -> None:
-        """Run the relaxed shadow query and log the suppressed candidates."""
+        """Run the relaxed shadow query and log the suppressed candidates.
+
+        Only for a call WITHOUT a peer scope (`find_similar` sees to that):
+        the bindings below do not include the peer's.
+        """
         shadow_rows = (await self.db.execute(sql, {
             "embedding": embedding_str,
             # All non-approved buckets — anything that would have been

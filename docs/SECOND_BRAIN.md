@@ -88,10 +88,12 @@ Daraus folgen zwei Betriebsarten, die der AUFRUFER über den Konstruktor wählt:
 gleichgültig wie viele Anfragen eingehen — 8 von 30 Pool-Verbindungen (`db_pool_size` 10 + `db_max_overflow`
 20). Die Schranke gilt nur, weil der Responder EINE `SourceSessions`-Instanz für alle Abrufe hält.
 
-🛑 **Auf eigenen Sitzungen ist der Abruf ein reiner Lesevorgang.** Der Zugriffszähler der Erinnerungen
-(`access_count`, `last_accessed_at`) wird dort nicht geschrieben (`track_access=False`): eine Quelle ohne
+🛑 **Auf eigenen Sitzungen ist der Abruf ein reiner Lesevorgang.** Zwei Quellen schreiben sonst, und beide
+sind dort ausdrücklich abgeschaltet: der Zugriffszähler der Erinnerungen (`access_count`, `last_accessed_at`;
+`track_access=False`) und das Schattenprotokoll der Fertigkeiten (`record_shadow_log=False`) — letzteres
+legte bei einer gemappten Anfrage Kuratorzeilen unter dem verknüpften lokalen Konto an. Eine Quelle ohne
 Transaktion des Aufrufers hat niemanden, der über ihren Schreibvorgang entscheidet, und die Frage einer
-Gegenseite soll die Rangfolge lokaler Erinnerungen nicht verschieben. Der Geltungsbereich (`asker_id`,
+Gegenseite ist kein Zug einer lokalen Person. Der Geltungsbereich (`asker_id`,
 `PeerScope`) ist in beiden Betriebsarten derselbe — eine eigene Sitzung ändert, über welche Verbindung eine
 Quelle liest, nie, was sie lesen darf. `query` protokolliert je Durchlauf eine Zeile (geliefert / leer /
 abgestürzt, Dauer, Pfad).
