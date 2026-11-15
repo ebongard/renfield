@@ -317,20 +317,22 @@ name. A pairing now also carries the far **instance's** own name, shown first:
   with the pairing id and the two lengths, never the name.
 - 🛑 **Display text only.** Never an identifier, never a lookup key, never part
   of a server or tool name — `peer_<id>` and the pubkey remain the only keys.
-- **Shown as** instance name → host of the stored endpoint → the person alone,
-  on the peers page, the audit view and the chat status line. **The kiosk never
-  shows a host:** the verified instance name, else the person alone — its
-  payload is content-free and a host name is an address. On the peers page
-  the host is a stand-in, not a headline: where the list says the label is
-  not a verified name (`instance_name_verified: false`), the row is headed by
-  the person with the hint "instance name not yet known", and the host is not
-  shown. 🛑 The list does not send that field yet — until it does, the page
-  cannot tell a host from a name and shows the label as it comes. A check that
-  comes back `reachable` reads the list once more, so the name it delivered
-  replaces the hint in place. The audit view shows
-  the name the **row recorded** when it was written
-  (`federation_query_log.peer_instance_name_snapshot`); rows from before carry
-  none and show the person alone.
+- **Shown as** the verified instance name, else the person alone — on the
+  kiosk, in the chat status line, in the audit view and in the tool
+  description. 🛑 **An endpoint host is an address, not a name:** it heads no
+  label and is never stored. Only the peers-page data still carries it
+  (`peer_instance_label`: `instance_name` on a pairing, `peer_instance_name`
+  on a person link), always next to `instance_name_verified` /
+  `peer_instance_name_verified`. Where that says `false`, the row is headed
+  by the person with the hint "instance name not yet known" and the host is
+  not shown. A check that comes back `reachable` reads the list once more, so
+  the name it delivered replaces the hint in place. The audit view shows the
+  name the **row recorded** when it was written
+  (`federation_query_log.peer_instance_name_snapshot`) — a verified name or
+  NULL; rows from before the instance name carry none and show the person
+  alone. **Rows written between the instance-name release and this change may
+  hold an endpoint host in that column; they are not rewritten** (no data
+  migration) and keep showing it.
 - 🛑 **The name is NOT in the agent's prompt unless this instance says so.** A
   paired peer chooses its name and can change it without local consent, and a
   tool description is part of the local agent's prompt. The named variant of
@@ -563,7 +565,8 @@ Reviewed on 2026-11-14 and left as they are:
 | Peers page / kiosk: **reachability unknown**, reason "does not answer reachability checks" | The far side is one release behind or has `FEDERATION_REACHABILITY_ENABLED` off | Switch it on there too (§3a). The pairing itself may be fine. |
 | **Unreachable**, reason "certificate is no longer the one remembered" | The far side's TLS certificate was renewed; the pin from pairing is stale | Queries fail the same way. Re-pair, or refresh the pin — waiting does not help. |
 | **Unreachable**, reason "rejects the signed check" | Pairing revoked on the far side, clocks more than a minute apart, or its ping budget is spent | Check the far side's peers page and both clocks. |
-| A peer is shown under a host name | It has not sent a name yet, or sets none | Set `FEDERATION_INSTANCE_NAME` there; the label follows with the next query or ping — on the open peers page as soon as a check comes back reachable. |
+| Peers page: **"instance name not yet known"** | The far side has not sent a name yet (pairing older than the name, no signed exchange since) | Press "check now"; the label follows as soon as a check comes back reachable. |
+| A peer is shown under a host name | The far side sets no `FEDERATION_INSTANCE_NAME` and sends the host of its advertised URL as its name — or it is an audit row from before the host fallback was removed | Set `FEDERATION_INSTANCE_NAME` there; the label follows with the next query or ping. Old audit rows keep what they recorded. |
 
 ---
 
