@@ -3084,12 +3084,38 @@ eine **Festlegung**, kein Messwert.
 
 ```bash
 # Den Instanznamen der Gegenstelle in die Werkzeugbeschreibung schreiben,
-# die das Modell liest -- und in die Regel des Routers fuer Fragen an eine
-# gekoppelte Instanz (ein Schalter fuer jeden Prompt, in den der Name gelangt)
+# die das Modell liest (NUR dort -- die Routing-Prompts haben einen eigenen
+# Schalter, siehe unten)
 # Default: false -- UNGEMESSEN; vor dem Einschalten mit
 # bin/measure-preselect.py messen
 FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED=false
+
+# Den Instanznamen der Gegenstelle in die ROUTING-Prompts schreiben: in die
+# Peer-Regel des Routers und in die des Planers (Cross-MCP-Orchestrator)
+# Default: false -- vor dem Einschalten mit bin/measure-router.py messen
+FEDERATION_PEER_NAME_IN_ROUTER_PROMPT_ENABLED=false
 ```
+
+**Zwei Schalter, weil die Reichweite verschieden ist.** Die
+Werkzeugbeschreibung wirkt nur innerhalb eines Agentenzugs auf die
+Werkzeug-Vorauswahl. Der Router-Prompt wird für **jeden** gerouteten Zug
+**jedes** Kontos gebaut; ein Name dort steht also in jedem Zug vor dem Modell.
+Keiner der beiden Schalter schließt den anderen ein.
+
+- **Aus (Standard):** die namenlose Regel. Der Router erkennt „frag
+  \<jemand\>s Renfield …" und „frag die andere Instanz …"; ein bloßer
+  Instanzname („frag Nordhaus …") wird nicht zuverlässig erkannt (gemessen
+  2026-11-15: 4 von 7 solcher Fälle trafen trotzdem, drei gingen an eine
+  hiesige Rolle).
+- **An:** die Regel nennt die verifizierten Namen in derselben
+  Positivlisten-Form wie die Werkzeugbeschreibung (32 Zeichen).
+- 🛑 **Was das Einschalten öffnet:** nennt sich eine Gegenstelle wie ein
+  Haushaltsmitglied, zieht sie „frag \<Name\>, ob …" an sich — die Frage
+  verlässt dann die Instanz. Der Regeltext kann eine Person und eine gleichnamige
+  Instanz nicht unterscheiden. `bin/measure-router.py` spielt den Fall als
+  Variante CLASH durch (ohne Wertung).
+- Gelesen beim Abgleich der Kopplungen (`sync_peers`), also beim Start und bei
+  jedem Koppeln, Widerrufen oder übernommenen Namenswechsel.
 
 🛑 **Ein gekoppelter Peer bestimmt seinen Namen selbst und kann ihn ohne
 Zustimmung dieser Instanz ändern.** Eine Werkzeugbeschreibung ist Teil des
