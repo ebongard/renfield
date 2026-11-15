@@ -58,6 +58,7 @@ from services.federation_query_asker import (
     ping_peer,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # --- the three states a status light can show --------------------------------
 STATE_REACHABLE = "reachable"
@@ -369,7 +370,7 @@ async def probe_due_peers() -> None:
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        logger.debug(f"Federation reachability: probe round incomplete: {e!r}")
+        logger.debug(f"Federation reachability: probe round incomplete: {type(e).__name__}: {error_text_without_content(e)}")
 
 
 # =============================================================================
