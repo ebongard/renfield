@@ -159,11 +159,7 @@ def _description_for(peer: PeerUser) -> str:
     the flag is off, and stays off until somebody decided it for their peers.
     """
     person = _short_name(peer.remote_display_name)
-    instance = (
-        prompt_safe_instance_name(stored_instance_name(peer))
-        if settings.federation_peer_name_in_tool_description_enabled
-        else ""
-    )
+    instance = _prompt_instance_name(peer)
     opening = (
         f"Ask the Renfield instance „{instance}“ (paired by {person})"
         if instance
@@ -178,6 +174,49 @@ def _description_for(peer: PeerUser) -> str:
         f"suchen“. NOT for scanning paper: in „scanne nach "
         f"<Ziel>“ <Ziel> is a filing target, not an instance."
     )
+
+
+def _prompt_instance_name(peer: PeerUser) -> str:
+    """The far instance's name as it may enter a prompt, or "".
+
+    The ONE place that decides it, for the tool description and for the
+    router's rule alike: the operator's switch, a VERIFIED name, and the
+    allow-list form of it. Whoever needs the name in a third prompt takes it
+    from here and inherits all three.
+    """
+    if not settings.federation_peer_name_in_tool_description_enabled:
+        return ""
+    return prompt_safe_instance_name(stored_instance_name(peer))
+
+
+def paired_instance_prompt_names(manager: MCPManager | None) -> list[str] | None:
+    """What the router may know about the pairings of this instance.
+
+    `None`  no active pairing is registered -- the caller adds nothing.
+    a list  at least one is; the list holds the names that may enter a prompt
+            (see `_prompt_instance_name`), sorted and without duplicates, and
+            is EMPTY when the switch is off or no peer has told a verified
+            name yet.
+
+    Read from the registered servers, not from the database: the router asks
+    on every turn, and `sync_peers` already runs on every pairing, revocation
+    and accepted rename. Recognised by transport, like everywhere else.
+
+    Not per account. Every local account can USE every active pairing (the
+    asking side never checked the owner), and the router's prompt is shown to
+    nobody -- a rule narrower than the tool would leave the other accounts
+    with exactly the gap the rule closes.
+    """
+    servers = getattr(manager, "_servers", None)
+    if not isinstance(servers, dict):
+        return None
+    peers = [
+        state.config for state in servers.values()
+        if state.config.transport == MCPTransportType.FEDERATION
+    ]
+    if not peers:
+        return None
+    return sorted({c.peer_prompt_name for c in peers if c.peer_prompt_name})
 
 
 #: Longest instance name the description takes. Shorter than the 64 the
@@ -263,6 +302,7 @@ def _build_federation_config(peer: PeerUser) -> MCPServerConfig:
         enabled=True,
         streaming=True,
         peer_user_id=peer.id,
+        peer_prompt_name=_prompt_instance_name(peer),
     )
 
 
