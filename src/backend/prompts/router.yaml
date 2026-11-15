@@ -31,6 +31,33 @@ de:
     Letzte Nachrichten:
     {history_lines}
 
+  # Rule for a question ADDRESSED TO A PAIRED INSTANCE. Appended to
+  # {role_descriptions} ONLY while a pairing is registered -- without one the
+  # prompt is byte for byte the one above. Two variants: `peer_rule` names no
+  # instance; `peer_rule_named` lists the names the operator allowed into
+  # prompts (FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED).
+  # 🛑 Placeholders, no sample sentences: the model follows example STRINGS.
+  # Measure every change with bin/measure-router.py.
+  # Available variables: {role}; `peer_rule_named` also {instances}
+  peer_rule: |
+    GEKOPPELTE INSTANZEN: Mit diesem Renfield sind andere Renfield-Instanzen gekoppelt.
+    Verlangt die Nachricht, das RENFIELD einer Person oder eine andere INSTANZ zu fragen
+    ("frag <jemand>s Renfield ...", "frag die andere Instanz ...", "was weiss <jemand>s Renfield ueber ..."),
+    ist das IMMER {role} — gleichgueltig, worum es in der Frage geht (Dokumente, Termine,
+    Anwesenheit, Geraete, Wissen): nur {role} erreicht eine andere Instanz.
+    Das gilt NICHT, wenn einer PERSON etwas gesagt oder ausgerichtet werden soll, und NICHT,
+    wenn der Nutzer selbst gefragt oder erinnert werden will ("frag mich ...").
+
+  peer_rule_named: |
+    GEKOPPELTE INSTANZEN: Mit diesem Renfield sind andere Renfield-Instanzen gekoppelt. Sie heissen: {instances}.
+    Verlangt die Nachricht, eine dieser Instanzen oder das RENFIELD einer Person zu fragen
+    ("frag <Instanz> ...", "frag <jemand>s Renfield ...", "frag die andere Instanz ...", "was weiss <Instanz> ueber ..."),
+    ist das IMMER {role} — gleichgueltig, worum es in der Frage geht (Dokumente, Termine,
+    Anwesenheit, Geraete, Wissen): nur {role} erreicht eine andere Instanz.
+    Wie der Name der Instanz geschrieben ist (gross, klein, mit oder ohne Bindestrich), spielt keine Rolle.
+    Das gilt NICHT, wenn einer PERSON etwas gesagt oder ausgerichtet werden soll, und NICHT,
+    wenn der Nutzer selbst gefragt oder erinnert werden will ("frag mich ...").
+
 en:
   # Router classification prompt
   # Available variables: {message}, {history_context}, {role_descriptions}
@@ -59,6 +86,27 @@ en:
   history_context_template: |
     Recent messages:
     {history_lines}
+
+  # Rule for a question ADDRESSED TO A PAIRED INSTANCE -- see the German half.
+  # Available variables: {role}; `peer_rule_named` also {instances}
+  peer_rule: |
+    PAIRED INSTANCES: Other Renfield instances are paired with this Renfield.
+    When the message wants a person's RENFIELD or another INSTANCE to be asked
+    ("ask <someone>'s Renfield ...", "ask the other instance ...", "what does <someone>'s Renfield know about ..."),
+    this is ALWAYS {role} — whatever the question is about (files, appointments,
+    who is at home, devices, knowledge): only {role} reaches another instance.
+    This does NOT apply when a PERSON is to be told or sent a message, and NOT
+    when the user wants to be asked or reminded themselves ("ask me ...").
+
+  peer_rule_named: |
+    PAIRED INSTANCES: Other Renfield instances are paired with this Renfield. Their names: {instances}.
+    When the message wants one of these instances or a person's RENFIELD to be asked
+    ("ask <instance> ...", "ask <someone>'s Renfield ...", "ask the other instance ...", "what does <instance> know about ..."),
+    this is ALWAYS {role} — whatever the question is about (files, appointments,
+    who is at home, devices, knowledge): only {role} reaches another instance.
+    How the instance's name is written (upper case, lower case, with or without a hyphen) does not matter.
+    This does NOT apply when a PERSON is to be told or sent a message, and NOT
+    when the user wants to be asked or reminded themselves ("ask me ...").
 
 # LLM options for router classification (fast, deterministic)
 llm_options:
