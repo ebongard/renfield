@@ -111,10 +111,17 @@ from services.mcp_streaming import (
     PROGRESS_LABEL_SYNTHESIZING,
 )
 from services.pairing_service import _canonical_bytes
+from services.polymorphic_atom_store import SourceSessions
 from utils.config import settings
 
 # Max progress transitions per request (traffic-analysis defence).
 MAX_PROGRESS_UPDATES = 4
+
+# One instance for the whole process: the bound on concurrently open source
+# sessions (`SourceSessions`) only holds across retrievals that share it. The
+# factory is looked up at call time, not bound here, so it is always the same
+# name `_run_query` opens its own session from.
+_SOURCE_SESSIONS = SourceSessions(lambda: AsyncSessionLocal())
 
 
 # =============================================================================
@@ -717,7 +724,15 @@ class FederationQueryResponder:
         task opens its own session (see _run_query docstring).
         """
         from services.polymorphic_atom_store import PolymorphicAtomStore
-        store = PolymorphicAtomStore(session)
+
+        # 🛑 `session` is FRESH (see `_run_query`), and the store fans out at
+        # once. Eight sources on one cold session is the defect that ran live
+        # until 2026-11-15: all of them try to provision the same connection,
+        # one wins, the rest end in `InvalidRequestError` -- "2/8 sources
+        # delivered, 3 crashed" on every inbound query. So every source gets a
+        # session of its own; `session` itself serves only what runs after the
+        # fan-out (graph expansion).
+        store = PolymorphicAtomStore(session, source_sessions=_SOURCE_SESSIONS)
         return await store.query(
             query_text=pending.query,
             asker_id=pending.asker_local_user_id or 0,

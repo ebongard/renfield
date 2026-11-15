@@ -608,8 +608,8 @@ class TestEnforceCirclesOnRetrieve:
         captured = {}
 
         class _FakeStore:
-            def __init__(self, session):
-                pass
+            def __init__(self, session, *, source_sessions=None):
+                captured["source_sessions"] = source_sessions
 
             async def query(self, query_text, *, asker_id, max_visible_tier, top_k,
                             peer=None, federated=False):
@@ -663,6 +663,10 @@ class TestEnforceCirclesOnRetrieve:
         # and cold against warm is the whole difference (measured: 1 of 8
         # sources against 8 of 8).
         assert captured["federated"] is True
+        # 🛑 The session handed to `_retrieve` is fresh, so the fan-out must
+        # NOT share it: every source gets a session of its own, from the one
+        # process-wide `SourceSessions` (which is what bounds them).
+        assert captured["source_sessions"] is fqr._SOURCE_SESSIONS
         # The id is 0 (the placeholder), and that has no effect: in the
         # peer-scoped branch `circles_filter_params` no longer creates an
         # `:asker_id` binding at all.

@@ -261,6 +261,12 @@ async def query_atoms(
     if top_k < 1 or top_k > 100:
         raise HTTPException(status_code=400, detail="top_k must be between 1 and 100")
 
+    # No `source_sessions`: the eight sources share `db`, one after the other.
+    # That is only correct because `db` is WARM here -- the auth dependencies
+    # (`get_current_user`, or `get_user_or_default` with auth off) have queried
+    # this same request session before this body runs and left its transaction
+    # open. A caller with a fresh session must pass `source_sessions` (see the
+    # store's module docstring; the federated responder does).
     store = PolymorphicAtomStore(db)
     # asker_id drives the actual per-source circle filter. max_visible_tier is
     # currently not consulted by query() (the reach is computed per-owner inside

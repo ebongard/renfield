@@ -20,6 +20,10 @@ document retrieval and the knowledge graph.
 This file tests VISIBILITY (step 1), not the fix. Without it the effect of
 step 2 would not be provable in production.
 
+Step 2 landed on 2026-11-15: the federated path gives every source a session of
+its own. That is tested against real Postgres in
+`test_atom_fanout_source_sessions_pg.py`; this file stays the test of the line.
+
 🛑 The first version was taken apart in review, and two of the findings were
 HERE:
 

@@ -12,51 +12,85 @@ ASCII query flow:
         |
         +-- Build per-asker AccessContext (dimensions + memberships) once.
         |
-        +-- Fan-out over EIGHT sources (asyncio.gather), all on `self.db`:
-        |     +-- RAGRetrieval(db).search(text, top_k=top_k*3) -> kb_chunks
-        |     +-- KGRetrieval(db).get_relevant_atoms(text, asker)
-        |     +-- MemoryRetrieval(db).retrieve(text, asker_id)
-        |     +-- LexicalRetrieval(db).search_chunks_lexical / _memories_lexical
-        |     +-- SkillService(db).find_similar          (flag-gated)
-        |     +-- DocumentFactRetrieval(db).search
-        |     +-- NoteRetrieval(db).search               (flag-gated)
+        +-- Fan-out over EIGHT sources (asyncio.gather):
+        |     +-- RAGRetrieval(s).search(text, top_k=top_k*3) -> kb_chunks
+        |     +-- KGRetrieval(s).get_relevant_atoms(text, asker)
+        |     +-- MemoryRetrieval(s).retrieve(text, asker_id)
+        |     +-- LexicalRetrieval(s).search_chunks_lexical / _memories_lexical
+        |     +-- SkillService(s).find_similar          (flag-gated)
+        |     +-- DocumentFactRetrieval(s).search
+        |     +-- NoteRetrieval(s).search               (flag-gated)
         |
-        |   🛑 NOT parallel, and this docstring claimed the opposite until
-        |   2026-10-29. An `AsyncSession` holds ONE connection; eight
-        |   concurrent queries on it are not supported by SQLAlchemy. Measured
-        |   against real Postgres with the project's own session factory,
-        |   eight queries at ~50 ms PURE SQL time, three runs, stable
-        |   (`bin/probe-atom-store-sessions.py`):
+        |   WHICH SESSION `s` IS decides whether this is parallel. An
+        |   `AsyncSession` holds ONE connection; concurrent queries on it are
+        |   not supported by SQLAlchemy. Measured against real Postgres with
+        |   the project's own session factory, eight queries at ~50 ms PURE
+        |   SQL time, three runs, stable (`bin/probe-atom-store-sessions.py`):
         |
-        |       one session, COLD           1 of 8 delivered     52 ms
-        |       one session, pre-warmed     8 of 8              408 ms  (serial)
-        |       one session per source      8 of 8               56 ms
+        |       A) one session, COLD           1 of 8 delivered     52 ms
+        |       B) one session, pre-warmed     8 of 8              408 ms  (serial)
+        |       C) one session per source      8 of 8               56 ms
         |
         |   🛑 These numbers are NOT the duration in the log line. The line times
         |   the whole fan-out, embedding calls to Ollama/llama-server included,
-        |   and those dominate it. You will not find "408 vs 56 ms" there --
-        |   the probe isolates SQL time, the line does not.
+        |   and those dominate it. The probe isolates SQL time, the line does
+        |   not.
         |
-        |   The federated path (`federation_query_responder._retrieve`) opens a
-        |   fresh session and fans out immediately -> 1 of 8. The local path
-        |   gets a warm session from `get_db` -> 8 of 8, but SERIALLY.
-        |   Pre-warming is therefore not a fix: it removes the error message by
-        |   removing the concurrency.
+        |   There are two regimes, chosen by the CALLER through the
+        |   constructor:
         |
-        |   The fix is one session per source (regime C). Before that, each
-        |   source's call tree needs checking for writes:
-        |   `MemoryRetrieval.retrieve` bumps `access_count` and deliberately
-        |   uses `flush()`, not `commit()`, because the caller's transaction
-        |   should decide -- a session of its own would break that contract.
+        |   * `source_sessions=None` -- every source runs on `self.db`. That
+        |     is regime B and only correct on a WARM session. Warm means: a
+        |     transaction is OPEN, so the connection is already there -- a
+        |     commit or rollback makes the session cold again. The one caller
+        |     is `GET /api/atoms`: its auth dependency has queried the same
+        |     request session before the route body runs, without committing
+        |     (`get_current_user` / `get_user_or_default`). A caller with a
+        |     fresh session MUST NOT use this regime -- that is regime A, and
+        |     it is what the federated path did until 2026-11-15 (live: "2/8
+        |     sources delivered, 3 crashed" on every inbound query).
+        |     Pre-warming is not the fix: it removes the error message by
+        |     removing the concurrency.
+        |
+        |   * `source_sessions=SourceSessions(...)` -- every source gets a
+        |     session OF ITS OWN (regime C), closed when the source returns,
+        |     crashes or is cancelled. The federated responder uses this.
+        |     At most `SOURCE_SESSION_LIMIT` such sessions are open in the
+        |     process at any time, however many fan-outs run -- see
+        |     `SourceSessions` for the pool arithmetic.
+        |
+        |   A source on a session of its own has NO caller transaction to lean
+        |   on, so each call tree was checked for writes (2026-11-15):
+        |
+        |     rag, kg, lexical_chunks, lexical_memories, document_fact, note
+        |         read only; return plain dicts, no ORM instances.
+        |     memory
+        |         `retrieve` bumps `access_count` and only `flush()`es -- "the
+        |         caller's transaction decides". Neither caller of this store
+        |         commits, so in the fan-out the bump was never durable by
+        |         design; it only held row locks until the session closed. In
+        |         regime C it is switched off (`track_access=False`): the
+        |         fan-out is a PURE READ there, no row locks across sessions,
+        |         and a peer's question does not shift the recency ranking of
+        |         local memories.
+        |     skill
+        |         `find_similar` writes the shadow log and COMMITS on its
+        |         session (`skill_shadow_log_enabled`, default on). On a shared
+        |         session that commit also decides for whatever the other
+        |         sources have flushed; on its own session it commits exactly
+        |         its own rows.
+        |
+        |   None of them uses SET LOCAL, an advisory lock or a savepoint.
+        |   Graph expansion runs AFTER the fan-out, alone, on `self.db`.
         |
         |   🛑 How many sources CAN report a failure is not the same as eight.
         |   `lexical_chunks`, `lexical_memories` and `note` re-raise to the
         |   fan-out (since 2026-10-29; they have no caller outside it), and so
-        |   do `rag` and `skill`. `memory`, `document_fact` and `kg` catch it
-        |   THEMSELVES and return empty -- they show up in the line as "empty",
-        |   not as "crashed". Those are the three with external callers, and
-        |   converting them is an open decision. Anyone reading the number off
-        |   that line needs to know this.
+        |   do `rag` and `skill`. `memory`, `document_fact` and `kg` catch
+        |   some failures THEMSELVES and return empty -- they show up in the
+        |   line as "empty", not as "crashed". Those are the three with
+        |   external callers, and converting them is an open decision. Anyone
+        |   reading the number off that line needs to know this.
         |
         +-- Wrap each source result list as AtomMatch[] with rank assigned.
         |
@@ -80,7 +114,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Sequence
+import weakref
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -100,14 +136,100 @@ from services.circle_sql import PeerScope
 from utils.config import settings
 from utils.log_safety import error_text_without_content
 
+#: How many source sessions may be open in this process at the same time,
+#: across ALL fan-outs. Eight = one fan-out runs fully parallel; a second one
+#: arriving meanwhile shares the same eight slots instead of taking eight more.
+SOURCE_SESSION_LIMIT = 8
+
+
+class SourceSessions:
+    """Hands every source of a fan-out a session of its own -- bounded.
+
+    One instance per process and session factory (the federated responder
+    keeps one at module level); the bound only holds across fan-outs that
+    share the instance.
+
+    Pool arithmetic (`services/database.py`, `utils/config.py`): a backend
+    process owns `db_pool_size + db_max_overflow` = 10 + 20 = 30 connections
+    (no override in `k8s/`), and the workers bring pools of their own to the
+    same server, whose `max_connections` the manifests leave at the Postgres
+    default of 100. A session
+    takes a connection on its first statement, so an unbounded regime C costs
+    8 connections per retrieval: four overlapping retrievals would want 32
+    and every other request would wait on the pool. With the slots, all
+    fan-outs TOGETHER hold at most `limit` connections -- 8 of 30 -- and
+    never more, whatever the number of inbound queries. A source waiting for
+    a slot holds nothing: no session, no connection, no lock.
+
+    A slot is held for the whole source call, embedding request included.
+    That is stricter than needed (the connection is only taken at the first
+    statement) and deliberately so: the bound is then a property of this
+    class alone and does not depend on where a source happens to query.
+    """
+
+    def __init__(
+        self,
+        factory: Callable[[], Any],
+        *,
+        limit: int = SOURCE_SESSION_LIMIT,
+    ):
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        self._factory = factory
+        self._limit = limit
+        # An `asyncio.Semaphore` belongs to the event loop it first waited on,
+        # and this object lives as long as the process. One semaphore per
+        # loop keeps it usable from any loop that comes later; keyed weakly so
+        # a closed loop frees its entry.
+        self._slots: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop, asyncio.Semaphore
+        ] = weakref.WeakKeyDictionary()
+
+    def _slots_for_this_loop(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        slots = self._slots.get(loop)
+        if slots is None:
+            slots = self._slots[loop] = asyncio.Semaphore(self._limit)
+        return slots
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[AsyncSession]:
+        """A fresh session inside a slot. Closed on return, error and
+        cancellation alike -- `async with` on the session does that, and the
+        slot is released after it."""
+        async with self._slots_for_this_loop():
+            async with self._factory() as session:
+                yield session
+
 
 class PolymorphicAtomStore:
     """v1 AtomStore implementation. Fans out to the Lane-A retrieval modules."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        source_sessions: SourceSessions | None = None,
+    ):
+        """``source_sessions`` selects the fan-out regime (module docstring).
+
+        ``None``: all sources share ``db`` -- only for a caller whose session
+        has already run a statement. A caller that opens a fresh session and
+        queries at once passes a ``SourceSessions``.
+        """
         self.db = db
         self.resolver = CircleResolver(db)
         self.atom_service = AtomService(db, self.resolver)
+        self._source_sessions = source_sessions
+
+    async def _run_source(
+        self, call: Callable[[AsyncSession], Awaitable[Any]]
+    ) -> Any:
+        """Run one source of the fan-out on the session its regime gives it."""
+        if self._source_sessions is None:
+            return await call(self.db)
+        async with self._source_sessions.session() as session:
+            return await call(session)
 
     async def query(
         self,
@@ -161,19 +283,36 @@ class PolymorphicAtomStore:
 
         candidate_k = top_k * 3  # over-fetch for RRF fusion across sources
 
-        rag_task = RAGRetrieval(self.db).search(
-            query_text, top_k=candidate_k, user_id=asker_id, peer=peer
-        )
+        # A source on a session of its own has no caller transaction that
+        # could decide about its writes. The one write in the fan-out is the
+        # memory access bump; there it is switched off, so the fan-out is a
+        # pure read and holds no row locks (module docstring, "memory").
+        track_memory_access = self._source_sessions is None
+
+        # 🛑 Every source is built from the session it is HANDED, and from
+        # nothing else. The scope -- `asker_id`, `peer` -- is closed over here,
+        # once, for both regimes: a session of its own changes which connection
+        # a source reads on, never what it is allowed to read.
+        def rag(s: AsyncSession):
+            return RAGRetrieval(s).search(
+                query_text, top_k=candidate_k, user_id=asker_id, peer=peer
+            )
+
         # Structured per-entity/-relation KG atoms (not the aggregated string):
         # each kg_node/kg_edge carries its source id so the detail drawer can
         # render the entity + edit its tier. The agent path still uses the
         # string form (get_relevant_context) elsewhere.
-        kg_task = KGRetrieval(self.db).get_relevant_atoms(
-            query_text, user_id=asker_id, peer=peer
-        )
-        memory_task = MemoryRetrieval(self.db).retrieve(
-            query_text, user_id=asker_id, limit=candidate_k, peer=peer
-        )
+        def kg(s: AsyncSession):
+            return KGRetrieval(s).get_relevant_atoms(
+                query_text, user_id=asker_id, peer=peer
+            )
+
+        def memory(s: AsyncSession):
+            return MemoryRetrieval(s).retrieve(
+                query_text, user_id=asker_id, limit=candidate_k, peer=peer,
+                track_access=track_memory_access,
+            )
+
         # Lexical retrievers — keyword / name fallback for queries the
         # vector path mis-ranks (single tokens like "Jutta", short
         # German questions whose embedding sits below
@@ -183,69 +322,78 @@ class PolymorphicAtomStore:
         # vector + lexical lists get an RRF boost from both contributions
         # — exactly the "this is both semantic AND keyword match"
         # behaviour we want.
-        lex = LexicalRetrieval(self.db)
-        lexical_chunks_task = lex.search_chunks_lexical(
-            query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
-        )
-        lexical_memories_task = lex.search_memories_lexical(
-            query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
-        )
+        def lexical_chunks(s: AsyncSession):
+            return LexicalRetrieval(s).search_chunks_lexical(
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+            )
+
+        def lexical_memories(s: AsyncSession):
+            return LexicalRetrieval(s).search_memories_lexical(
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+            )
+
         # Schicht A document facts — a sixth source so structured facts
         # (Steuernummer, issuer, obligation) surface in /brain search via the
         # same RRF fusion. Keyword/identifier retrieval, not vector (facts are
         # short structured strings; the parent chunk is already embedded).
-        document_fact_task = DocumentFactRetrieval(self.db).search(
-            query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
-        )
-        # Self-learning Phase 1: procedural skills are atoms too — give
-        # them a fourth source for the unified /brain search. Gated on
-        # skills_enabled so the existing three-source RRF behavior is
-        # unchanged for deployments that haven't opted in.
+        def document_fact(s: AsyncSession):
+            return DocumentFactRetrieval(s).search(
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+            )
+
+        # Self-learning Phase 1: procedural skills are atoms too. Gated on
+        # skills_enabled so the fusion is unchanged for deployments that
+        # haven't opted in.
+        def skill(s: AsyncSession):
+            return SkillService(s).find_similar(
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+            )
+
+        # Phase 4B: hand-authored notes are atoms too (FTS keyword retrieval; a
+        # note's parent has no separate embedding). Gated on notes_enabled.
+        def note(s: AsyncSession):
+            return NoteRetrieval(s).search(
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+            )
+
         # Which sources were not asked AT ALL. They must not count as
         # "empty" -- otherwise an instance with `NOTES_ENABLED=false` looks
-        # like a permanent partial outage.
+        # like a permanent partial outage. They take no session and no slot.
         off: set[str] = set()
-
-        if settings.skills_enabled:
-            skill_task = SkillService(self.db).find_similar(
-                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
-            )
-        else:
+        if not settings.skills_enabled:
             off.add("skill")
-
-            async def _empty():
-                return []
-            skill_task = _empty()
-
-        # Phase 4B: hand-authored notes are atoms too — an eighth source so notes
-        # surface in /brain via the same RRF fusion (FTS keyword retrieval; a
-        # note's parent has no separate embedding). Gated on notes_enabled so the
-        # existing seven-source behavior is unchanged when off.
-        if settings.notes_enabled:
-            note_task = NoteRetrieval(self.db).search(
-                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
-            )
-        else:
+        if not settings.notes_enabled:
             off.add("note")
 
-            async def _empty_notes():
-                return []
-            note_task = _empty_notes()
+        async def _not_asked() -> list:
+            return []
+
+        calls = [
+            ("rag", rag), ("kg", kg), ("memory", memory),
+            ("lexical_chunks", lexical_chunks),
+            ("lexical_memories", lexical_memories),
+            ("skill", skill), ("document_fact", document_fact), ("note", note),
+        ]
 
         # Per PR #402 review SHOULD-FIX #9: gather(return_exceptions=True) does NOT raise,
         # so the previous try/except wrapper around it was dead code that swallowed
         # programmer errors (e.g., import failure on the lazy-imported retrieval modules).
         # Removing the wrapper — exceptions in retrieval modules are converted to []
         # by the _wrap_* helpers, and any actual programmer error now bubbles to FastAPI.
+        #
+        # One crashing source does not take the others down, and in regime C
+        # it cannot even disturb them: its session is its own. A cancellation
+        # of this task cancels all eight; each closes its session on the way.
         _t0 = time.perf_counter()
         (
             rag_results, kg_atoms, memory_results,
-            lexical_chunks, lexical_memories, skill_results, document_fact_results,
-            note_results,
+            lexical_chunks_results, lexical_memories_results, skill_results,
+            document_fact_results, note_results,
         ) = await asyncio.gather(
-            rag_task, kg_task, memory_task,
-            lexical_chunks_task, lexical_memories_task, skill_task, document_fact_task,
-            note_task,
+            *(
+                _not_asked() if name in off else self._run_source(call)
+                for name, call in calls
+            ),
             return_exceptions=True,
         )
 
@@ -267,8 +415,8 @@ class PolymorphicAtomStore:
                 ("rag", rag_results, _wrap_rag_results),
                 ("kg", kg_atoms, _wrap_kg_atoms),
                 ("memory", memory_results, _wrap_memory_results),
-                ("lexical_chunks", lexical_chunks, _wrap_rag_results),
-                ("lexical_memories", lexical_memories, _wrap_memory_results),
+                ("lexical_chunks", lexical_chunks_results, _wrap_rag_results),
+                ("lexical_memories", lexical_memories_results, _wrap_memory_results),
                 ("skill", skill_results, _wrap_skill_results),
                 ("document_fact", document_fact_results, _wrap_document_fact_results),
                 ("note", note_results, _wrap_note_results),
