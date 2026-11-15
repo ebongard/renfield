@@ -3084,7 +3084,8 @@ eine **Festlegung**, kein Messwert.
 
 ```bash
 # Den Instanznamen der Gegenstelle in die Werkzeugbeschreibung schreiben,
-# die das Modell liest
+# die das Modell liest -- und in die Regel des Routers fuer Fragen an eine
+# gekoppelte Instanz (ein Schalter fuer jeden Prompt, in den der Name gelangt)
 # Default: false -- UNGEMESSEN; vor dem Einschalten mit
 # bin/measure-preselect.py messen
 FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED=false

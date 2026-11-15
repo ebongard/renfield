@@ -1401,6 +1401,8 @@ class Settings(BaseSettings):
     # text byte for byte, whatever name is stored. On = an allow-list form of
     # the name (letters, digits, "_", space, ".", "-"; 32 characters) is set
     # into it. 🛑 UNMEASURED: run `bin/measure-preselect.py` before enabling.
+    # The same switch governs the names in the ROUTER's peer rule
+    # (`agent_router._peer_rule`): one decision for every prompt.
     federation_peer_name_in_tool_description_enabled: bool = False
     # A peer may change the name we store for it at most once per this many
     # seconds; an earlier change is ignored until the interval has passed.

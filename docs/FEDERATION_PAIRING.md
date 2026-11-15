@@ -122,6 +122,60 @@ UTC, no tool registered. All three mutating routes (`pair/accept`,
 `pair/complete`, `revoke`) now go through `_resync_peer_registry`, and
 `TestPeerRegistryResync` fails if a fourth one forgets.
 
+### How a question reaches the peer
+
+Four layers sit between a chat message and `query_brain`, and each one can
+lose the question on its own:
+
+1. **Router** (`agent_router.classify`, one call to the intent model) picks a
+   role. While at least one pairing is registered, the router prompt carries
+   one extra rule behind the category list (`prompts/router.yaml`:
+   `peer_rule` / `peer_rule_named`): a message that wants a paired instance or
+   a person's Renfield to be **asked** goes to the federation role, whatever
+   the question is about. The role is read from the configuration — the first
+   role by name with `federation: true` (today `documents`), else a role with
+   `mcp_servers: null` — never a literal.
+2. **Role filter** (`agent_tools.py`): the role must be offered the peer's
+   tool — `federation: true`, see `.claude/rules/internal-tools.md`.
+3. **Tool pre-selection** (`_preselect_tools`): a second model call that reads
+   the tool **description**; the router's rule does not reach it.
+4. **Agent**: chooses among the pre-selected tools.
+
+Why the rule exists (measured on the household, 2026-11-15): "Frag
+\<instance\>, welche Dokumente es dort zum Thema X gibt" was classified as
+`conversation` — a role without tools, so no pre-selection, no agent loop, no
+federated call, and a plain answer. No role description mentioned asking
+another instance; only the topic "documents" could attract such a question to
+the one role that reaches a peer. Asking another instance is not a topic, so
+it is a rule of its own and not part of a role description.
+
+- **Without a pairing the router prompt is byte for byte unchanged** (the rule
+  is appended to the category block, the template is untouched). Checked
+  against `origin/main` and held by `test_router_reaches_paired_instance.py`.
+- **Live, not at start-up:** the router asks the peer registry on every turn,
+  so a pairing made or revoked while the backend runs takes effect at once.
+- **Not per account.** Every local account can use every active pairing, and
+  the router prompt is shown to nobody; a rule narrower than the tool would
+  leave the other accounts with the gap it closes.
+  `FEDERATION_PEERS_VISIBLE_TO_ALL` concerns the peers page only.
+- **Names:** the rule lists instance names only under
+  `FEDERATION_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED` and only in the
+  allow-list form (§3a) — the same single decision as for the tool
+  description (`peer_mcp_registry._prompt_instance_name`). Without names the
+  rule still covers "frag \<jemand\>s Renfield" and "die andere Instanz"; a
+  bare instance name ("frag Nordhaus …") can only be recognised with the flag.
+- **Not diverted:** telling a *person* something ("sag ihm/ihr …") stays with
+  `presence`, and "frag mich …" is not a question to an instance; the rule
+  says both, and names no role but its target.
+- 🛑 **Unmeasured.** The rule's wording has not been run against the router
+  model. `bin/measure-router.py` (cases: `bin/router-cases-peer.json`) builds
+  the real prompt in three variants — no pairing, name-free, named — and
+  plays them interleaved; it needs an endpoint serving the intent model that
+  may be loaded. Measure before changing a word of the rule: the model
+  follows example strings, which is why the rule uses placeholders only.
+- **Not covered:** the semantic fast path runs before the LLM router and can
+  still decide a turn on similarity alone; the continuity layer likewise.
+
 ---
 
 ## 2. What the tier does (and what's still deferred)
@@ -347,7 +401,10 @@ name. A pairing now also carries the far **instance's** own name, shown first:
   bounds **form and length, not content** — a plain imperative of 32 letters
   passes it. That is why the flag is off. The named wording is pinned in
   `test_peer_tool_description.py` but **unmeasured; measure with
-  `bin/measure-preselect.py` before enabling.**
+  `bin/measure-preselect.py` before enabling.** The same flag, and the same
+  form, also govern the names in the **router's** peer rule (§1, "How a
+  question reaches the peer") — one switch for every prompt a peer's name can
+  enter.
 - **Migrate before the rollout:** revision `pc20261113_peer_instance_name` adds
   `peer_users.remote_instance_name` and
   `federation_query_log.peer_instance_name_snapshot`
