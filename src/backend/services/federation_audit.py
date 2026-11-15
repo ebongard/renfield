@@ -136,8 +136,9 @@ async def write_federation_audit(
 
     user_id=None skips the write entirely — single-user / auth-disabled
     deploys don't have a meaningful asker identity to attribute, and
-    the `user_id` column on the table is NOT NULL by design (scoping
-    audit rows unambiguously).
+    a QUERY row must name its account: the database refuses one without
+    (CHECK `ck_fed_query_log_user_or_revoke`; only a revocation record
+    carries no `user_id`).
     """
     if user_id is None:
         # Auth-disabled / single-user deploys: no asker identity to pin

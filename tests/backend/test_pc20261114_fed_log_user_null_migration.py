@@ -136,6 +136,25 @@ async def _delete_rules(conn, schema) -> list[str]:
     return [r[0] for r in rows]
 
 
+async def _check(conn, schema) -> str | None:
+    """The definition of the CHECK on the log in this schema, if it is there."""
+    return (await conn.execute(text(
+        "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c"
+        " JOIN pg_class t ON t.oid = c.conrelid"
+        " JOIN pg_namespace n ON n.oid = t.relnamespace"
+        " WHERE c.contype = 'c' AND c.conname = 'ck_fed_query_log_user_or_revoke'"
+        "   AND t.relname = 'federation_query_log' AND n.nspname = :s"
+    ), {"s": schema})).scalar()
+
+
+async def _insert_query_without_account(conn) -> None:
+    await conn.exec_driver_sql(
+        "INSERT INTO federation_query_log (user_id, direction, query_text)"
+        " VALUES (NULL, 'asked', 'nobody asked this')"
+    )
+    await conn.commit()
+
+
 async def _rows(conn) -> list[tuple]:
     return [tuple(r) for r in (await conn.execute(text(
         "SELECT user_id, direction, query_text FROM federation_query_log ORDER BY id"
@@ -154,6 +173,7 @@ async def test_round_trip_keeps_every_row_and_the_foreign_key(schema_conn):
     conn, schema = schema_conn
     await _pre_migration_tables(conn)
     assert await _nullable(conn, schema) == "NO"
+    assert await _check(conn, schema) is None
     assert await _delete_rules(conn, schema) == ["a"]
     with pytest.raises(IntegrityError):
         await _insert_revocation(conn)
@@ -162,6 +182,12 @@ async def test_round_trip_keeps_every_row_and_the_foreign_key(schema_conn):
     # --- forward ---------------------------------------------------------
     await _run(conn, "upgrade")
     assert await _nullable(conn, schema) == "YES"
+    definition = await _check(conn, schema)
+    assert definition is not None and "revoke" in definition and "user_id IS NOT NULL" in definition
+    # The CHECK took the place of the NOT NULL for every row that is a query.
+    with pytest.raises(IntegrityError, match="ck_fed_query_log_user_or_revoke"):
+        await _insert_query_without_account(conn)
+    await conn.rollback()
     # Only the NOT NULL went: same foreign key, same (absent) delete rule.
     assert await _delete_rules(conn, schema) == ["a"]
     assert await _rows(conn) == [(1, "asked", "an old question")]
@@ -172,12 +198,14 @@ async def test_round_trip_keeps_every_row_and_the_foreign_key(schema_conn):
     # --- reverse, with nothing in the way ---------------------------------
     await _run(conn, "downgrade")
     assert await _nullable(conn, schema) == "NO"
+    assert await _check(conn, schema) is None
     assert await _delete_rules(conn, schema) == ["a"]
     assert await _rows(conn) == [(1, "asked", "an old question")]
 
     # --- forward again ---------------------------------------------------
     await _run(conn, "upgrade")
     assert await _nullable(conn, schema) == "YES"
+    assert await _check(conn, schema) is not None
     assert await _rows(conn) == [(1, "asked", "an old question")]
     await _insert_revocation(conn)
     assert await _rows(conn) == [(1, "asked", "an old question"), (None, "revoke", "{}")]
@@ -197,7 +225,9 @@ async def test_downgrade_refuses_while_rows_without_an_account_exist(schema_conn
     with pytest.raises(RuntimeError, match=r"1 row\(s\).*carry no user_id"):
         await _run(conn, "downgrade")
     await conn.rollback()
+    # Refused BEFORE anything changed: nullable and CHECK both still there.
     assert await _nullable(conn, schema) == "YES"
+    assert await _check(conn, schema) is not None
     assert len(await _rows(conn)) == 2
 
     # The way the message names: remove them deliberately, then go back.
@@ -205,6 +235,7 @@ async def test_downgrade_refuses_while_rows_without_an_account_exist(schema_conn
     await conn.commit()
     await _run(conn, "downgrade")
     assert await _nullable(conn, schema) == "NO"
+    assert await _check(conn, schema) is None
     assert await _rows(conn) == [(1, "asked", "an old question")]
 
 
@@ -216,7 +247,25 @@ async def test_upgrade_over_a_nullable_column_is_a_no_op(schema_conn):
     await _insert_revocation(conn)
     await _run(conn, "upgrade")
     assert await _nullable(conn, schema) == "YES"
+    assert await _check(conn, schema) is not None
     assert len(await _rows(conn)) == 2
+
+
+async def test_a_half_applied_state_heals(schema_conn):
+    """Nullable already, CHECK missing: the upgrade adds what is missing; and
+    a leftover CHECK on a NOT NULL column is taken back by the downgrade."""
+    conn, schema = schema_conn
+    await _pre_migration_tables(conn)
+    await conn.exec_driver_sql("ALTER TABLE federation_query_log ALTER COLUMN user_id DROP NOT NULL")
+    await conn.commit()
+    await _run(conn, "upgrade")
+    assert await _check(conn, schema) is not None
+
+    await conn.exec_driver_sql("ALTER TABLE federation_query_log ALTER COLUMN user_id SET NOT NULL")
+    await conn.commit()
+    await _run(conn, "downgrade")
+    assert await _check(conn, schema) is None
+    assert await _nullable(conn, schema) == "NO"
 
 
 async def test_downgrade_over_a_not_null_column_is_a_no_op(schema_conn):
@@ -251,6 +300,16 @@ async def test_migration_and_model_agree(schema_conn):
     assert await _nullable(conn, schema) == "YES"
     (fk,) = column.foreign_keys
     assert fk.ondelete is None
+
+    # Same CHECK, by name and by what the database makes of the expression.
+    from sqlalchemy import CheckConstraint
+    from sqlalchemy.schema import CreateTable
+
+    mig = _load_migration()
+    (check,) = [c for c in FederationQueryLog.__table__.constraints if isinstance(c, CheckConstraint)]
+    assert check.name == mig.CHECK_NAME
+    assert str(check.sqltext) == mig.CHECK_SQL
+    assert mig.CHECK_NAME in str(CreateTable(FederationQueryLog.__table__))
 
 
 def test_revision_chain():

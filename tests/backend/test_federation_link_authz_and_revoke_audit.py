@@ -32,6 +32,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from httpx import AsyncClient
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 
 from models.database import FederationQueryLog, FederationUserLink, PeerUser, Role, User
 from services.auth_service import get_current_user, get_user_or_default
@@ -681,6 +682,51 @@ class TestARevocationDoesNotPinAnAccount:
         # The record outlives both, ids intact.
         (row,) = await _revocations(db_session)
         assert json.loads(row.query_text)["subject_user_id"] == member_id
+
+    async def test_the_real_route_deletes_subject_and_actor_afterwards(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        """Through `DELETE /api/users/{id}`, which lets the database decide
+        and answers 409 when a row still references the account.
+
+        Nothing here looks at the record before the deletes: with the row
+        filed under an account again, the DELETE itself has to be what fails.
+        """
+        manager = await _user(db_session, "link-manager", ["admin", "users.manage"])
+        member_id, admin_id = world["member"].id, world["admin"].id
+        link = await _link(db_session, world["pairing"], world["member"])
+        as_user(world["admin"])
+        assert (await async_client.delete(f"{USER_LINKS}/{link.id}")).status_code == 200
+
+        as_user(manager)
+        resp = await async_client.delete(f"/api/users/{member_id}")      # the subject
+        assert resp.status_code == 200, resp.text
+        resp = await async_client.delete(f"/api/users/{admin_id}")       # the actor
+        assert resp.status_code == 200, resp.text
+        assert (await db_session.execute(
+            select(func.count()).select_from(User).where(User.id.in_([member_id, admin_id]))
+        )).scalar() == 0
+        (row,) = await _revocations(db_session)
+        detail = json.loads(row.query_text)
+        assert (detail["subject_user_id"], detail["actor_user_id"]) == (member_id, admin_id)
+
+    async def test_a_query_row_without_an_account_is_refused_by_the_database(
+        self, db_session, world,
+    ):
+        """Only a revocation record may go without `user_id`."""
+        common = {
+            "peer_user_id": world["pairing_id"],
+            "peer_pubkey_snapshot": world["pairing"].remote_pubkey,
+            "peer_display_name_snapshot": "", "query_text": "{}",
+            "final_status": "success",
+        }
+        for direction in ("asked", "answered"):
+            db_session.add(FederationQueryLog(direction=direction, user_id=None, **common))
+            with pytest.raises(IntegrityError, match="ck_fed_query_log_user_or_revoke"):
+                await db_session.commit()
+            await db_session.rollback()
+        db_session.add(FederationQueryLog(direction=REVOCATION_DIRECTION, user_id=None, **common))
+        await db_session.commit()
 
     async def test_the_query_view_tolerates_rows_without_an_account(
         self, async_client: AsyncClient, db_session, world, as_user, purged,

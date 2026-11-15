@@ -260,12 +260,16 @@ them yet; they are read in the database.
   — the affected or the acting one — a single revocation would make that
   account undeletable for good. The accounts are named in the JSON.
 - 🛑 **Migrate before the rollout:** revision `pc20261114_fed_log_user_null`
-  drops the NOT NULL on `federation_query_log.user_id`
+  drops the NOT NULL on `federation_query_log.user_id` and puts a CHECK in
+  its place (`direction = 'revoke' OR user_id IS NOT NULL`): a query row
+  without an account stays impossible in the database
   (`bin/deploy-production.sh … --migrate`, each instance). A new pod on an
-  unmigrated database cannot write the record, and since record and
-  revocation share one transaction, **every revoke fails** until the
-  migration ran. The foreign key and its delete rule are unchanged. The
-  downgrade refuses while rows without a `user_id` exist.
+  unmigrated database cannot write the record, and since the record shares
+  the transaction of what it records, until the migration ran **every
+  revoke of a pairing or a link fails, and so does pairing again with a
+  revoked pairing that still carries links** (pairing again without such
+  leftovers writes no record and works). The foreign key and its delete rule
+  are unchanged. The downgrade refuses while rows without a `user_id` exist.
 
 ---
 

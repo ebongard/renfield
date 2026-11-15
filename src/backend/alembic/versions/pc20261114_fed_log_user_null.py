@@ -1,4 +1,4 @@
-"""federation_query_log.user_id becomes nullable.
+"""federation_query_log.user_id becomes nullable -- for revocation rows only.
 
 A revocation record (``direction='revoke'``: a pairing or a person link was
 revoked) carries no ``user_id``. Those rows are never pruned, and the column's
@@ -6,17 +6,22 @@ foreign key onto ``users.id`` has no delete rule -- a row filed under an
 account would make that account undeletable for good. The accounts concerned
 are named in the row's ``query_text`` (JSON of ids) instead.
 
-Only the NOT NULL goes. The foreign key and its (absent) delete rule stay:
-query rows keep their account, and an account that still has query rows is
-refused on delete like any other that holds data.
+The NOT NULL goes, and a CHECK takes its place for every other row:
+``direction = 'revoke' OR user_id IS NOT NULL``. A query row without an
+account stays impossible in the database, not merely unwritten by the code.
 
-No backfill, nothing derived: every existing row keeps its ``user_id``.
+The foreign key and its (absent) delete rule stay: query rows keep their
+account, and an account that still has query rows is refused on delete like
+any other that holds data.
+
+No backfill, nothing derived: every existing row keeps its ``user_id`` and
+satisfies the CHECK as it stands.
 
 The way back is NOT always open, and says so. ``SET NOT NULL`` cannot hold
 while rows without a ``user_id`` exist, and which account such a row "belonged
 to" is not something the column ever recorded. The downgrade therefore refuses
-while there are any, naming the count; deleting an audit trail is a decision
-for a person, not for a migration.
+while there are any -- before it changes anything -- naming the count;
+deleting an audit trail is a decision for a person, not for a migration.
 
 Revision ID: pc20261114_fed_log_user_null
 Revises: pc20261113_peer_instance_name
@@ -32,6 +37,10 @@ depends_on: None = None
 
 TABLE = "federation_query_log"
 COLUMN = "user_id"
+#: Same name and expression as on the model (`FederationQueryLog`): a fresh
+#: install gets the constraint from there, an existing one from here.
+CHECK_NAME = "ck_fed_query_log_user_or_revoke"
+CHECK_SQL = "direction = 'revoke' OR user_id IS NOT NULL"
 
 
 def _is_nullable() -> bool | None:
@@ -46,6 +55,17 @@ def _is_nullable() -> bool | None:
     return None if value is None else value == "YES"
 
 
+def _has_check() -> bool:
+    """Is the CHECK on the table of THIS schema?"""
+    return bool(op.get_bind().execute(sa.text(
+        "SELECT EXISTS (SELECT 1 FROM pg_constraint c"
+        " JOIN pg_class t ON t.oid = c.conrelid"
+        " JOIN pg_namespace n ON n.oid = t.relnamespace"
+        " WHERE c.contype = 'c' AND c.conname = :name"
+        "   AND t.relname = :t AND n.nspname = current_schema())"
+    ), {"name": CHECK_NAME, "t": TABLE}).scalar())
+
+
 def upgrade() -> None:
     nullable = _is_nullable()
     if nullable is None:
@@ -56,26 +76,33 @@ def upgrade() -> None:
             f"{revision}: {TABLE}.{COLUMN} is missing in the current schema; "
             "refusing to alter a table of that name elsewhere on the search path"
         )
+    # The CHECK first: at no point is the column nullable without it. Both
+    # steps are skipped on a fresh install, where the baseline built the table
+    # from the current model.
+    if not _has_check():
+        op.create_check_constraint(CHECK_NAME, TABLE, CHECK_SQL)
     if not nullable:
-        # A fresh install is already nullable: the baseline builds the table
-        # from the current model.
         op.alter_column(TABLE, COLUMN, existing_type=sa.Integer(), nullable=True)
 
 
 def downgrade() -> None:
     nullable = _is_nullable()
-    if not nullable:
-        # Not ours, or already NOT NULL: nothing to take back.
+    if nullable is None:
+        # Not ours: nothing to take back.
         return
-    orphans = op.get_bind().execute(sa.text(
-        f"SELECT count(*) FROM {TABLE} WHERE {COLUMN} IS NULL"
-    )).scalar()
-    if orphans:
-        raise RuntimeError(
-            f"{revision}: {orphans} row(s) in {TABLE} carry no {COLUMN} "
-            "(revocation records). NOT NULL cannot be restored while they exist, "
-            "and no account can be derived for them. Export and delete them "
-            f"deliberately (DELETE FROM {TABLE} WHERE {COLUMN} IS NULL), then "
-            "run the downgrade again."
-        )
-    op.alter_column(TABLE, COLUMN, existing_type=sa.Integer(), nullable=False)
+    if nullable:
+        orphans = op.get_bind().execute(sa.text(
+            f"SELECT count(*) FROM {TABLE} WHERE {COLUMN} IS NULL"
+        )).scalar()
+        if orphans:
+            raise RuntimeError(
+                f"{revision}: {orphans} row(s) in {TABLE} carry no {COLUMN} "
+                "(revocation records). NOT NULL cannot be restored while they exist, "
+                "and no account can be derived for them. Export and delete them "
+                f"deliberately (DELETE FROM {TABLE} WHERE {COLUMN} IS NULL), then "
+                "run the downgrade again."
+            )
+        # NOT NULL back first, the CHECK after: never nullable without one.
+        op.alter_column(TABLE, COLUMN, existing_type=sa.Integer(), nullable=False)
+    if _has_check():
+        op.drop_constraint(CHECK_NAME, TABLE, type_="check")
