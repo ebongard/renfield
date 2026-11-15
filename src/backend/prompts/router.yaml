@@ -43,8 +43,9 @@ de:
     GEKOPPELTE INSTANZEN: Mit diesem Renfield sind andere Renfield-Instanzen gekoppelt.
     Verlangt die Nachricht, das RENFIELD einer Person oder eine andere INSTANZ zu fragen
     ("frag <jemand>s Renfield ...", "frag die andere Instanz ...", "was weiss <jemand>s Renfield ueber ..."),
-    ist das IMMER {role} — gleichgueltig, worum es in der Frage geht (Dokumente, Termine,
-    Anwesenheit, Geraete, Wissen): nur {role} erreicht eine andere Instanz.
+    ist das IMMER {role} — gleichgueltig, worum es in der Frage geht. Auch eine Frage nach
+    Anwesenheit, Geraeten, Terminen oder Dokumenten gehoert dann NICHT in die Kategorie ihres Themas:
+    jene Kategorien antworten aus DIESEM Haus, nur {role} erreicht die andere Instanz.
     Das gilt NICHT, wenn einer PERSON etwas gesagt oder ausgerichtet werden soll, und NICHT,
     wenn der Nutzer selbst gefragt oder erinnert werden will ("frag mich ...").
 
@@ -52,8 +53,9 @@ de:
     GEKOPPELTE INSTANZEN: Mit diesem Renfield sind andere Renfield-Instanzen gekoppelt. Sie heissen: {instances}.
     Verlangt die Nachricht, eine dieser Instanzen oder das RENFIELD einer Person zu fragen
     ("frag <Instanz> ...", "frag <jemand>s Renfield ...", "frag die andere Instanz ...", "was weiss <Instanz> ueber ..."),
-    ist das IMMER {role} — gleichgueltig, worum es in der Frage geht (Dokumente, Termine,
-    Anwesenheit, Geraete, Wissen): nur {role} erreicht eine andere Instanz.
+    ist das IMMER {role} — gleichgueltig, worum es in der Frage geht. Auch eine Frage nach
+    Anwesenheit, Geraeten, Terminen oder Dokumenten gehoert dann NICHT in die Kategorie ihres Themas:
+    jene Kategorien antworten aus DIESEM Haus, nur {role} erreicht die andere Instanz.
     Wie der Name der Instanz geschrieben ist (gross, klein, mit oder ohne Bindestrich), spielt keine Rolle.
     Das gilt NICHT, wenn einer PERSON etwas gesagt oder ausgerichtet werden soll, und NICHT,
     wenn der Nutzer selbst gefragt oder erinnert werden will ("frag mich ...").
@@ -93,8 +95,9 @@ en:
     PAIRED INSTANCES: Other Renfield instances are paired with this Renfield.
     When the message wants a person's RENFIELD or another INSTANCE to be asked
     ("ask <someone>'s Renfield ...", "ask the other instance ...", "what does <someone>'s Renfield know about ..."),
-    this is ALWAYS {role} — whatever the question is about (files, appointments,
-    who is at home, devices, knowledge): only {role} reaches another instance.
+    this is ALWAYS {role} — whatever the question is about. Even a question about who is at home,
+    devices, appointments or files then does NOT belong to the category of its topic:
+    those categories answer from THIS house, only {role} reaches the other instance.
     This does NOT apply when a PERSON is to be told or sent a message, and NOT
     when the user wants to be asked or reminded themselves ("ask me ...").
 
@@ -102,8 +105,9 @@ en:
     PAIRED INSTANCES: Other Renfield instances are paired with this Renfield. Their names: {instances}.
     When the message wants one of these instances or a person's RENFIELD to be asked
     ("ask <instance> ...", "ask <someone>'s Renfield ...", "ask the other instance ...", "what does <instance> know about ..."),
-    this is ALWAYS {role} — whatever the question is about (files, appointments,
-    who is at home, devices, knowledge): only {role} reaches another instance.
+    this is ALWAYS {role} — whatever the question is about. Even a question about who is at home,
+    devices, appointments or files then does NOT belong to the category of its topic:
+    those categories answer from THIS house, only {role} reaches the other instance.
     How the instance's name is written (upper case, lower case, with or without a hyphen) does not matter.
     This does NOT apply when a PERSON is to be told or sent a message, and NOT
     when the user wants to be asked or reminded themselves ("ask me ...").
