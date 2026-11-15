@@ -455,7 +455,9 @@ class TestAdvertisedEndpointResolution:
         # did. The fixture was brought along, not the intent -- `from-setting`
         # may stay unresolvable, because the configured default is
         # deliberately NOT checked.
-        provided = [{"url": "http://localhost:8000"}]
+        # Since 2026-11-14 the input must also be an acceptable endpoint
+        # (https, not this machine): an IP literal resolves everywhere.
+        provided = [{"url": "https://10.0.0.7:8443"}]
         assert await _resolve_advertised_endpoints(provided) == provided
 
     @pytest.mark.unit
@@ -464,10 +466,10 @@ class TestAdvertisedEndpointResolution:
         from utils.config import settings
         monkeypatch.setattr(
             settings, "federation_advertised_url",
-            "http://backend.renfield.svc.cluster.local:8000",
+            "https://backend.renfield.svc.cluster.local:8443",
         )
         assert await _resolve_advertised_endpoints([]) == [
-            {"url": "http://backend.renfield.svc.cluster.local:8000"}
+            {"url": "https://backend.renfield.svc.cluster.local:8443"}
         ]
 
     @pytest.mark.unit
@@ -484,9 +486,9 @@ class TestAdvertisedEndpointResolution:
         # to the setting.
         from api.routes.federation_pairing import _resolve_advertised_endpoints
         from utils.config import settings
-        monkeypatch.setattr(settings, "federation_advertised_url", "http://fallback:8000")
-        assert await _resolve_advertised_endpoints([{"url": "  "}]) == [{"url": "http://fallback:8000"}]
-        assert await _resolve_advertised_endpoints([{}]) == [{"url": "http://fallback:8000"}]
+        monkeypatch.setattr(settings, "federation_advertised_url", "https://fallback:8443")
+        assert await _resolve_advertised_endpoints([{"url": "  "}]) == [{"url": "https://fallback:8443"}]
+        assert await _resolve_advertised_endpoints([{}]) == [{"url": "https://fallback:8443"}]
         # And when there's no setting either → empty (not a garbage endpoint).
         monkeypatch.setattr(settings, "federation_advertised_url", "")
         assert await _resolve_advertised_endpoints([{"url": ""}]) == []

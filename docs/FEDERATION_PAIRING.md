@@ -37,11 +37,13 @@ instances these are **already done** — this section is for any new instance.
 
    | instance | value |
    |---|---|
-   | household (`renfield` ns) | `http://backend.renfield.svc.cluster.local:8000` |
-   | xidra (`renfield-xidra` ns) | `http://backend.renfield-xidra.svc.cluster.local:8000` |
+   | reached over the LAN | `https://<name>.local` |
+   | reached over the internet | `https://<public name>` |
+   | same cluster, in-cluster service DNS | `http://backend.<ns>.svc.cluster.local:8000` — **only** with `FEDERATION_ALLOW_HTTP_ENDPOINTS=true` on both instances |
 
-   Same-cluster instances use internal service DNS (as above). Cross-internet
-   federation uses a public `https://…` URL instead. Without this the pairing
+   The value must pass the endpoint rules in §3b: `https://`, no credentials,
+   no query, no fragment. Plain `http://` is refused by default, here (the
+   offer is not created) and on the far side. Without an advertised URL the pairing
    still completes but the *first query* dies with **"Peer has no usable transport
    endpoint"** (`_select_endpoint` returned `None`).
 
@@ -356,8 +358,10 @@ The ping: `{version, asker_pubkey, nonce, timestamp, signature}`, signed over
 `{"kind": "ping", …}`. It is answered only to a paired, non-revoked key, inside
 a ±60 s window, once per nonce, and under a budget of its own
 (`FEDERATION_PING_RATE_PER_MINUTE`, both sides). Everything else gets the same
-uniform 400 a stranger's query gets; with the flag off the route answers 404
-whatever is posted. The answer `{version, status: "ok", nonce, answered_at,
+uniform 400 a stranger's query gets; with the flag off the path answers 404
+whatever is sent to it — any method, with or without a trailing slash — and is
+absent from the published OpenAPI schema, exactly like a version that does
+not have it. The answer `{version, status: "ok", nonce, answered_at,
 responder_pubkey, responder_signature}` is checked like a query's — paired key,
 signature, **our** nonce — so a recorded answer cannot be replayed.
 
@@ -375,10 +379,24 @@ anything:
   `Content-Encoding` other than `identity` is no answer (`invalid_response`),
   a genuine small one included. The route treats a request body the same way
   (the uniform 400).
+- **One deadline for the whole body, `FEDERATION_INBOUND_READ_TIMEOUT_SECONDS`
+  (default 10 s).** The cap bounds bytes, not time: a caller sending one byte
+  every few seconds stays inside any cap. The deadline covers the whole read,
+  not each chunk, and applies to all three peer routes (`ping`,
+  `query_brain/initiate`, `query_brain/retrieve`); the two query routes are
+  capped at 64 KiB by the same reader. On expiry: the uniform 400.
 - **Order of the checks: signature → timestamp → pairing → rate bucket →
-  nonce.** Everything that writes comes after the pairing lookup: an unpaired
-  key leaves no nonce (the nonce store is capped — written earlier, a stream
-  of unpaired pings could push real nonces out of it), no bucket and no row.
+  nonce — for the ping AND for `query_brain/initiate`.** Everything that
+  writes comes after the pairing lookup: an unpaired key leaves no nonce (the
+  nonce store is capped — written earlier, a stream of unpaired requests
+  could push real nonces out of it), no bucket and no row.
+- **A replay does not spend the pairing's budget.** Between the pairing
+  lookup and the bucket stands a read-only look at the nonce store: an
+  envelope whose nonce is already recorded is refused there, before a token
+  is taken. The look writes nothing (so it cannot be used to fill the store)
+  and runs only for an envelope that verified for a paired key (so it tells a
+  stranger nothing). Recording the nonce stays the atomic claim and stays
+  last.
 
 A ping is not a request: it does not move `last_seen_at`, writes no audit row
 and spends no query budget.
@@ -407,7 +425,60 @@ or a refresher and an impatient person — send one ping, not several.
 🛑 `unsupported` (the far side answers 404: one release behind, or its flag is
 off) is **unknown**, never unreachable. Both sides need the flag for a verdict.
 
+## 3b. Which endpoint a peer may have
+
+A peer's endpoint comes from the far side. It is signed — by the very party
+the adversary-peer model is about — and this instance later sends requests to
+it on its own: the TLS probe at pairing, every query, a ping every few
+minutes. `services/federation_endpoint_guard.py` decides what is acceptable,
+at two moments:
+
+| when | what happens on a refusal |
+|---|---|
+| **pairing** (`/pair/accept`, `/pair/complete`), before the TLS probe and before the row is written | the uniform "Pairing handshake failed"; the reason is in the backend log (`Peer endpoint refused: …`). On `complete` the offer's nonce is not consumed. |
+| **before every outbound request** (query, ping, and the certificate probe in front of both) | nothing is sent; the query fails with "Peer has no usable transport endpoint", the ping reads `no_endpoint`. Logged as `endpoint of peer <id> refused as a request target`. |
+| **what this instance advertises** (`/pair/offer`, `/pair/accept`; the UI override and `FEDERATION_ADVERTISED_URL`) | 400 with a readable reason — form only, so the far side's refusal is not the first anyone hears of it. |
+
+The rules:
+
+- **`https://` only.** Plain `http://` is refused unless
+  `FEDERATION_ALLOW_HTTP_ENDPOINTS=true` (default off). The envelope signature
+  protects integrity, not the confidentiality of the question and the answer,
+  and without TLS there is no certificate pin. Switch it on — on **both**
+  instances — only where they talk over a network trusted as a whole (same
+  cluster, overlay VPN). 🛑 A pairing stored with an `http://` endpoint before
+  this rule existed stops being asked until the switch is on or it is re-paired
+  over https.
+- **No credentials, no query, no fragment**, no whitespace or backslash, at
+  most 512 characters, a valid port, at most 8 entries per pairing message.
+- **The host is a DNS name or an IP literal.** Numeric forms a C resolver
+  reads as an address but that are no plain literal (`127.1`, `2130706433`,
+  `0x7f.0.0.1`) are refused.
+- **Never this machine or the link:** loopback (`127.0.0.0/8`, `::1`,
+  `localhost`, `*.localhost`), link-local (`169.254.0.0/16` — the cloud
+  metadata address — and `fe80::/10`), the IPv6 metadata address
+  `fd00:ec2::254`, unspecified and the rest of `0.0.0.0/8`, multicast,
+  reserved, deprecated site-local `fec0::/10`; also when wrapped in an
+  IPv4-mapped, IPv4-compatible, 6to4 or NAT64 address. Checked on a literal,
+  **and on every address a name resolves to** — the far side owns its DNS.
+- 🛑 **A lookup that does not finish refuses.** Only a definite "no such name"
+  (`EAI_NONAME`) passes unresolved — nothing can be sent there. A lookup that
+  times out (3 s), fails temporarily (`EAI_AGAIN`) or fails any other way
+  refuses the endpoint: a name server that answers late would otherwise pass
+  the check every time, and the HTTP client then resolves the name afresh with
+  a longer timeout. The price: during a DNS outage a pairing reads "no usable
+  endpoint" (`no_endpoint`) instead of `unreachable`, and pairing with a peer
+  whose name cannot be looked up right now fails.
+- **Allowed on purpose:** private LAN ranges, `.local` names, single-label
+  names. Household instances pair across a LAN.
+
 ### Known limits
+
+Fixed on 2026-11-14 and no longer limits: `query_brain/initiate` recording a
+nonce before the pairing lookup; a replayed ping spending the pairing's rate
+bucket; the ping path answering 405 / a redirect with reachability off; the
+inbound body read having no deadline; peer endpoints being stored and used
+unchecked.
 
 Reviewed on 2026-11-14 and left as they are:
 
@@ -429,17 +500,36 @@ Reviewed on 2026-11-14 and left as they are:
   display name is not affected.
 - **The prompt allow-list is not an injection filter.** It bounds form and
   length; what 32 letters and spaces say is the far side's choice.
-- **A replayed ping spends the pairing's rate bucket.** The checks run
-  signature → timestamp → pairing → rate bucket → nonce. A recorded, validly
-  signed ping sent again inside its ±60 s window is therefore refused at the
-  nonce, after it took a token from the bucket of the pairing it was recorded
-  from. Whoever can record a pairing's traffic can so make that pairing's own
-  pings read `refused` while the replays last; it gets no answer, and no
-  other pairing, no query budget and no stored state are touched.
-- **`query_brain/initiate` still records the nonce before it looks the
-  pairing up** (`handle_initiate`), unlike the ping: an unpaired key that signs
-  its own requests can write into the capped nonce store there. Older than
-  this feature and not changed by it; a follow-up.
+- **With reachability ON, a stranger can tell that it is on.** A refused ping
+  is a 400, a path that does not exist a 404, and a GET on the ping path a 405.
+  That difference is what lets the asking side tell `refused` (the pairing was
+  revoked there, the clocks disagree, the budget is spent — red) from
+  `unsupported` (older version or switched off — unknown), and a revoked
+  pairing is the first thing a check has to find. Answering 404 to everything
+  that is not a valid paired ping would hide the flag from a stranger and turn
+  every revoked pairing into "unknown". What a stranger can NOT tell apart is
+  "switched off" from "a version without the ping".
+- **The flag is also readable from timing.** With reachability on, the route
+  waits for a body (up to the read deadline) before it refuses; switched off,
+  it answers at once.
+- **`/openapi.json` and `/docs` are served by the backend** and list every
+  other route of the running version. Hiding the ping path from the schema
+  closes that for the ping only; whether the schema is reachable from outside
+  is a question for the ingress.
+- **Two copies of one fresh envelope racing each other** can both pass the
+  read-only look; the second loses at the atomic record and has then spent one
+  token. That takes a replay arriving while the original is still being
+  handled and costs at most one token per original — a recorded envelope
+  cannot be used for it twice.
+- **Resolve-then-connect is not atomic.** A name can answer the endpoint check
+  with one address and the connection with another (DNS rebinding). What that
+  buys is bounded: a POST of a fixed-shape signed envelope to a fixed path,
+  whose answer is discarded unless it carries the paired key's signature; with
+  a certificate pin the connection is refused before anything is sent. A name
+  the resolver definitely does not know passes the check — nothing can be
+  sent to it.
+- **`FEDERATION_ADVERTISED_URL` is checked for form only**, and only when an
+  offer or an acceptance is made — not at boot.
 
 ---
 
@@ -448,6 +538,8 @@ Reviewed on 2026-11-14 and left as they are:
 | Symptom | Cause | Fix |
 |---|---|---|
 | First query: **"Peer has no usable transport endpoint"** | `FEDERATION_ADVERTISED_URL` unset on the side being queried → `transport_config.endpoints=[]` | Set the advertised URL (§0.2), re-pair (endpoints are baked in at pair time). |
+| **"Peer has no usable transport endpoint"** / reachability reason "no address" on a pairing that has one | The stored endpoint fails the endpoint rules (§3b) — typically `http://` from before 2026-11-14. Backend log: `endpoint of peer <id> refused as a request target` | Re-pair over `https://`, or set `FEDERATION_ALLOW_HTTP_ENDPOINTS=true` on both instances. |
+| **"Pairing handshake failed"**, backend log `Peer endpoint refused: …` | The far side advertises an endpoint this instance does not accept (§3b) | Fix `FEDERATION_ADVERTISED_URL` on the far side and start again from Step 1. |
 | Pairing worked, breaks after a redeploy | Ephemeral identity key regenerated → pubkey changed | Provision the persisted-identity Secret (§0.1) and re-pair. |
 | **"Pairing handshake failed"** on complete | Wrong/edited/expired JSON, or offer↔response nonce mismatch | Restart the handshake from Step 1 with a fresh offer. |
 | Peer reaches only public content | Expected — see §2 | Person-link (Piece 3) not shipped yet. |

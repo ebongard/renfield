@@ -179,6 +179,7 @@ class PendingStore(Protocol):
     async def delete_many(self, request_ids: list[str]) -> None: ...
     async def prune_expired(self, now: float | None = None) -> int: ...
     async def record_nonce(self, nonce: str, now: float) -> bool: ...
+    async def nonce_seen(self, nonce: str, now: float) -> bool: ...
     async def clear_for_tests(self) -> None: ...
 
 
@@ -249,6 +250,14 @@ class InMemoryPendingStore:
             self._nonces.popitem(last=False)
         self._nonces[nonce] = now
         return True
+
+    async def nonce_seen(self, nonce: str, now: float) -> bool:
+        # Read-only: writes nothing and evicts nothing, so a caller that is
+        # about to be refused cannot use it to move the cache.
+        recorded_at = self._nonces.get(nonce)
+        if recorded_at is None:
+            return False
+        return recorded_at >= now - (NONCE_WINDOW_SECONDS + NONCE_GRACE_SECONDS)
 
     async def clear_for_tests(self) -> None:
         self._pending.clear()
@@ -362,6 +371,10 @@ class RedisPendingStore:
             ex=NONCE_WINDOW_SECONDS + NONCE_GRACE_SECONDS,
         )
         return bool(ok)
+
+    async def nonce_seen(self, nonce: str, now: float) -> bool:
+        # Read-only peek; `record_nonce` (SET NX) stays the atomic claim.
+        return bool(await self._r.exists(self._nonce_key(nonce)))
 
     async def clear_for_tests(self) -> None:
         # Best-effort scan-and-delete. We don't rely on this in

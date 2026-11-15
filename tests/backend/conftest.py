@@ -122,6 +122,28 @@ def _own_rename_claims():
     _fin.set_rename_claims_for_tests(None)
 
 
+# The federation endpoint guard resolves a peer's host name before a request
+# goes out. No test may depend on what the build box's resolver happens to
+# answer (it answers `*.test` with a LAN address): unless a test pins the
+# resolution itself, every name is DEFINITELY unknown (`EAI_NONAME`) -- the one
+# resolution failure the guard lets pass.
+@pytest.fixture(autouse=True)
+def _endpoint_guard_resolves_nothing(monkeypatch):
+    try:
+        from services import federation_endpoint_guard as _guard
+    except ImportError:
+        yield
+        return
+
+    import socket
+
+    def _unresolvable(host: str) -> list[str]:
+        raise socket.gaierror(socket.EAI_NONAME, "name resolution is pinned off in tests")
+
+    monkeypatch.setattr(_guard, "_resolve", _unresolvable)
+    yield
+
+
 # ============================================================================
 # Database Fixtures
 # ============================================================================

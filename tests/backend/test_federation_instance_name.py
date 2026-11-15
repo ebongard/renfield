@@ -870,7 +870,7 @@ def _client_for(final: dict) -> _Client:
 def asked_peer(far_identity) -> PeerUser:
     return PeerUser(
         id=3, circle_owner_id=1, remote_pubkey=far_identity.public_key_hex(),
-        remote_display_name="evdb", transport_config={"endpoints": ["http://far.test:8000"]},
+        remote_display_name="evdb", transport_config={"endpoints": ["https://far.test:8000"]},
     )
 
 

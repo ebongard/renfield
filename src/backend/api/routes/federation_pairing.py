@@ -109,11 +109,40 @@ async def _resolve_advertised_endpoints(provided: list[dict]) -> list[dict]:
     override re-falls-through to the setting."""
     cleaned = [e for e in provided if isinstance(e, dict) and str(e.get("url", "")).strip()]
     if cleaned:
+        _refuse_unacceptable_form(cleaned, source="Die angegebene URL")
         await _refuse_unresolvable(cleaned)
         return cleaned
     if settings.federation_advertised_url:
-        return [{"url": settings.federation_advertised_url}]
+        default = [{"url": settings.federation_advertised_url}]
+        _refuse_unacceptable_form(default, source="FEDERATION_ADVERTISED_URL")
+        return default
     return []
+
+
+def _refuse_unacceptable_form(endpoints: list[dict], *, source: str) -> None:
+    """An address the far side is going to refuse is not advertised at all.
+
+    The far side checks what it is handed (`federation_endpoint_guard`) and
+    answers a refusal with its uniform "Pairing handshake failed" -- which
+    would send the person looking for a fault in the handshake. The same FORM
+    rules are applied here, where the reason can still be said. Form only:
+    whether the address is a sensible TARGET is the far side's question.
+    """
+    from services.federation_endpoint_guard import EndpointRefused, validate_endpoint_url
+
+    for entry in endpoints:
+        try:
+            validate_endpoint_url(entry.get("url"))
+        except EndpointRefused as e:
+            logger.warning(f"Pairing: advertised endpoint refused ({source}): {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{source} ist als Adresse dieser Instanz nicht zulässig. "
+                    "Erwartet wird https://<Name>[:Port] ohne Zugangsdaten, "
+                    "Abfrage oder Fragment; http nur mit "
+                    "FEDERATION_ALLOW_HTTP_ENDPOINTS auf beiden Seiten."),
+            ) from None
 
 
 # =============================================================================

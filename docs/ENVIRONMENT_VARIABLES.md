@@ -3121,7 +3121,36 @@ FEDERATION_REACHABILITY_ENABLED=false
 # Prüfungen pro Minute je Kopplung, auf BEIDEN Seiten (1-120)
 # Default: 12
 FEDERATION_PING_RATE_PER_MINUTE=12
+
+# Gesamtfrist in Sekunden für das Lesen EINES eingehenden Rumpfs auf den
+# Peer-Routen /api/federation/peer/* (1-60)
+# Default: 10
+FEDERATION_INBOUND_READ_TIMEOUT_SECONDS=10
+
+# Peer-Adressen mit http:// zulassen (sonst nur https://)
+# Default: false
+FEDERATION_ALLOW_HTTP_ENDPOINTS=false
 ```
+
+- **`FEDERATION_INBOUND_READ_TIMEOUT_SECONDS`** gilt unabhängig vom
+  Erreichbarkeits-Flag für alle drei Peer-Routen (`ping`,
+  `query_brain/initiate`, `query_brain/retrieve`). Die Größengrenze begrenzt
+  Bytes, nicht Zeit: wer alle paar Sekunden ein Byte schickt, bleibt unter
+  jeder Grenze und hält die Verbindung. Die Frist gilt für den **ganzen**
+  Rumpf, nicht je Teilstück; nach Ablauf kommt die einheitliche 400.
+- **`FEDERATION_ALLOW_HTTP_ENDPOINTS`**: Die Adresse einer Gegenseite wird bei
+  der Kopplung **und** vor jeder ausgehenden Anfrage geprüft
+  (`services/federation_endpoint_guard.py`): nur `https://`, keine
+  Zugangsdaten, keine Abfrage, kein Fragment, und nie diese Maschine selbst
+  oder eine Link-Local-Adresse (Loopback, `169.254.0.0/16` samt
+  Cloud-Metadaten, `fe80::/10`) — auch nicht über einen Namen, der dorthin
+  auflöst. Private LAN-Bereiche und `.local`-Namen sind erlaubt. Der Schalter
+  lässt zusätzlich `http://` zu und gehört nur dorthin, wo beide Instanzen
+  über ein insgesamt vertrauenswürdiges Netz sprechen (derselbe Cluster,
+  Overlay-VPN) — dann auf **beiden** Seiten. 🛑 Eine Kopplung, die vor dieser
+  Regel mit `http://` gespeichert wurde, wird ohne den Schalter nicht mehr
+  angefragt („kein nutzbarer Endpunkt“). Einzelheiten:
+  `docs/FEDERATION_PAIRING.md` §3b.
 
 Bisher galt ein Peer auf dem Kiosk als „erreichbar“, wenn er **uns** in den
 letzten fünf Minuten etwas gefragt hatte — eine Aussage über seine Neugier,
@@ -3130,8 +3159,9 @@ nicht über die Verbindung. Mit dem Flag werden drei Dinge getrennt gezeigt:
 Richtungen) und **erreichbar / nicht erreichbar / unbekannt** aus einem
 signierten Rundlauf (`POST /api/federation/peer/ping`).
 
-- **Aus (Standard):** kein Ping verlässt die Instanz; die Route antwortet 404
-  wie eine Version, die sie nicht kennt; die Kiosk-Nutzlast und
+- **Aus (Standard):** kein Ping verlässt die Instanz; der Pfad antwortet 404
+  wie eine Version, die ihn nicht kennt — auf jede Methode, mit und ohne
+  abschließenden Schrägstrich, und er fehlt im OpenAPI-Schema; die Kiosk-Nutzlast und
   `GET /api/federation/peers` sind byte-identisch zum Stand davor.
 - **An:** eine **verbrauchergebundene, periodische Prüfung** — alle fünf
   Minuten je Kopplung, solange mindestens ein Kiosk verbunden ist (der
@@ -3181,9 +3211,10 @@ Nonce, sodass ein ungekoppelter Schlüssel **nichts** hinterlässt (keine Nonce,
 kein Kontingent, keine Zeile). Jede Ablehnung ist dieselbe einheitliche 400.
 Die anfragende Seite liest auch die Antwort nur bis 4096 Byte, verlangt sie
 unkomprimiert (`Accept-Encoding: identity`) und wertet eine komprimierte
-Antwort als `invalid_response`, ohne sie zu entpacken. Bekannte Grenze: eine
-wiederholte, gültig signierte Prüfung verbraucht ein Kontingent, bevor die
-Nonce sie abweist (`docs/FEDERATION_PAIRING.md` → „Known limits“).
+Antwort als `invalid_response`, ohne sie zu entpacken. Eine wiederholte,
+gültig signierte Prüfung verbraucht kein Kontingent: zwischen Kopplung und
+Kontingent steht ein rein lesender Blick in den Nonce-Speicher. Was bleibt,
+steht in `docs/FEDERATION_PAIRING.md` → „Known limits“.
 
 Eine Prüfung ist keine Anfrage: sie verschiebt `last_seen_at` nicht („Letzte
 Anfrage …“ behält seine Bedeutung), schreibt keine Audit-Zeile und verbraucht
