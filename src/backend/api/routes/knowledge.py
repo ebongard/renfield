@@ -735,7 +735,9 @@ async def _simba_uploaded_ids(db: AsyncSession, doc_ids: list[int]) -> set[int]:
     return {int(r) for r in rows}
 
 
-def paperless_document_url(paperless_document_id: int | None) -> str | None:
+def paperless_document_url(
+    paperless_document_id: int | None, *, public_only: bool = False
+) -> str | None:
     """The link to a document in Paperless, or None.
 
     🛑 ONE place, not three: `_doc_to_response_kwargs` serves `/documents`,
@@ -748,13 +750,20 @@ def paperless_document_url(paperless_document_id: int | None) -> str | None:
     None when the id is missing (the document is not filed yet, or it was a
     duplicate) or no base URL is configured. The trailing
     slash is stripped so no `//documents/` is produced.
+
+    `public_only=True` drops the fallback: the link is built from
+    `PAPERLESS_PUBLIC_URL` or not at all. The chat source chips use it
+    (`api/websocket/document_sources.py`) -- a link persisted into a
+    conversation must not be the backend-facing address, which on one instance
+    is a cluster-internal service name no browser resolves. The document
+    endpoints keep the fallback (their behaviour before the split).
     """
     if not isinstance(paperless_document_id, int) or isinstance(paperless_document_id, bool):
         return None
-    base = (
-        (settings.paperless_public_url or "").strip()
-        or (settings.paperless_api_url or "").strip()
-    ).rstrip("/")
+    base = (settings.paperless_public_url or "").strip()
+    if not base and not public_only:
+        base = (settings.paperless_api_url or "").strip()
+    base = base.rstrip("/")
     if not base:
         return None
     return f"{base}/documents/{paperless_document_id}/details"
