@@ -237,6 +237,51 @@ async def test_auto_index_worker_failure_surfaces_error(
 
 @pytest.mark.unit
 @pytest.mark.database
+async def test_auto_index_database_error_reaches_the_browser_without_its_statement(
+    db_session, async_engine, kb, chat_upload_row
+):
+    """The `document_error` frame is sent from a catch-all. A database error
+    carries its statement and bound parameters in the message; the frame
+    keeps the primary message and nothing after it."""
+    from sqlalchemy.exc import StatementError
+
+    notifications: list[dict] = []
+
+    async def _fake_notify(session_id, payload):
+        notifications.append({"session": session_id, **payload})
+
+    async def _failing_create(self, **kwargs):
+        raise StatementError(message="boom", statement="INSERT INTO documents",
+                             params={"filename": "zz-private-value-zz"},
+                             orig=RuntimeError("o"))
+
+    with _patch_worker_path(
+        async_engine,
+        worker_alive=True,
+        **{
+            "api.routes.chat_upload._get_or_create_default_kb": AsyncMock(
+                return_value=kb
+            ),
+            "services.rag_service.RAGService.create_document_record": _failing_create,
+            "api.websocket.shared.notify_session": _fake_notify,
+        },
+    ):
+        await _auto_index_to_kb(
+            upload_id=chat_upload_row.id,
+            file_path="/tmp/broken.pdf",
+            filename="broken.pdf",
+            file_hash=hashlib.sha256(b"db-error").hexdigest(),
+            session_id="sess-4",
+        )
+
+    err = next(n for n in notifications if n["type"] == "document_error")
+    assert "boom" in err["error"]
+    assert "zz-private-value-zz" not in err["error"]
+    assert "INSERT" not in err["error"]
+
+
+@pytest.mark.unit
+@pytest.mark.database
 async def test_auto_index_reuses_existing_doc_on_duplicate_hash(
     db_session, async_engine, kb, chat_upload_row
 ):

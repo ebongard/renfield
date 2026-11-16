@@ -1099,5 +1099,7 @@ async def _auto_index_to_kb(
                 "type": "document_error",
                 "upload_id": upload_id,
                 "filename": filename,
-                "error": str(e),
+                # A catch-all: a database error must not reach the browser
+                # with its statement and parameters.
+                "error": error_text_without_content(e),
             })
