@@ -43,4 +43,4 @@ async def refresh_keywords(user=Depends(require_permission(Permission.ADMIN))):
         }
     except Exception as e:
         logger.error(f"❌ Keyword refresh error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail=error_text_without_content(e)) from e

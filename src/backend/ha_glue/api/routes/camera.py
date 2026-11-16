@@ -40,7 +40,7 @@ async def get_camera_events(
         return {"events": events}
     except Exception as e:
         logger.error(f"❌ Camera events error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/cameras")
@@ -57,7 +57,7 @@ async def list_cameras(
         return {"cameras": cameras}
     except Exception as e:
         logger.error(f"❌ Camera list error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/snapshot/{event_id}")
@@ -85,7 +85,7 @@ async def get_snapshot(
         raise
     except Exception as e:
         logger.error(f"❌ Snapshot error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/latest/{label}")
@@ -103,4 +103,4 @@ async def get_latest_by_label(
         return {"events": events}
     except Exception as e:
         logger.error(f"❌ Latest events error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

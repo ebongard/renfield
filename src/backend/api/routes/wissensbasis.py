@@ -119,7 +119,7 @@ async def get_graph(
         return await svc.corpus(asker_id=user.id if user else None, lang=lang)
     except Exception as e:
         logger.error(f"Wissensbasis graph error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/focus", response_model=FocusNeighborhood)
@@ -152,7 +152,7 @@ async def get_focus(
         )
     except Exception as e:
         logger.error(f"Wissensbasis focus error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
     if result is None:
         raise HTTPException(status_code=404, detail="Entity not found")
@@ -177,4 +177,4 @@ async def search_entities(
         return {"items": items}
     except Exception as e:
         logger.error(f"Wissensbasis search error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

@@ -75,7 +75,7 @@ async def submit_correction(
         )
     except Exception as e:
         logger.error(f"❌ Feedback error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/corrections")
@@ -109,7 +109,7 @@ async def list_corrections(
         raise
     except Exception as e:
         logger.error(f"❌ List corrections error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.delete("/corrections/{correction_id}")
@@ -132,4 +132,4 @@ async def delete_correction(
         raise
     except Exception as e:
         logger.error(f"❌ Delete correction error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

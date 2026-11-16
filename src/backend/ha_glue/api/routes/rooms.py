@@ -193,7 +193,7 @@ async def list_ha_areas(db: AsyncSession = Depends(get_db), _user: User = Depend
         logger.error(f"Failed to fetch HA areas: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {e!s}"
+            detail=f"Failed to connect to Home Assistant: {error_text_without_content(e)}"
         )
 
     # Get all rooms to check links
@@ -240,7 +240,7 @@ async def import_ha_areas(
         logger.error(f"Failed to fetch HA areas: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {e!s}"
+            detail=f"Failed to connect to Home Assistant: {error_text_without_content(e)}"
         )
 
     results = await service.import_ha_areas(
@@ -277,7 +277,7 @@ async def export_rooms_to_ha(db: AsyncSession = Depends(get_db), _user: User = D
         logger.error(f"Failed to fetch HA areas: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {e!s}"
+            detail=f"Failed to connect to Home Assistant: {error_text_without_content(e)}"
         )
 
     area_by_name = {a.get("name", "").lower(): a for a in existing_areas}
@@ -340,7 +340,7 @@ async def sync_with_ha(
         logger.error(f"Failed to fetch HA areas: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {e!s}"
+            detail=f"Failed to connect to Home Assistant: {error_text_without_content(e)}"
         )
 
     # Import

@@ -137,7 +137,7 @@ async def speech_to_text(
     except Exception as e:
         logger.error(f"❌ STT error: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.post("/tts")
 @limiter.limit(settings.api_rate_limit_voice)
@@ -173,7 +173,7 @@ async def text_to_speech(request: Request, tts_request: TTSRequest, _user=Depend
         )
     except Exception as e:
         logger.error(f"❌ TTS error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.api_route("/tts-cache/{audio_id}", methods=["GET", "HEAD"])
 async def get_tts_cache(audio_id: str, request: Request):
@@ -341,7 +341,7 @@ async def voice_chat(
         }
     except Exception as e:
         logger.error(f"❌ Voice chat error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 async def _voice_chat_via_voice_server(

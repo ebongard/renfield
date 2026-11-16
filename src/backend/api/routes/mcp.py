@@ -83,7 +83,7 @@ async def mcp_refresh(
         return manager.get_status()
     except Exception as e:
         logger.error(f"MCP refresh failed: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.patch("/servers/{name}/tools")
@@ -112,4 +112,4 @@ async def update_server_tools(
         return manager.get_status()
     except Exception as e:
         logger.error(f"Failed to update tools for '{name}': {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

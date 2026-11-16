@@ -725,3 +725,85 @@ class TestNoSinkPrintsVariableValues:
         assert "zz-private-value-zz" not in installed
 
         assert "zz-private-value-zz" in probe(diagnose=True)
+
+
+# --- The same text on its way to a client --------------------------------------
+
+
+def _raw_error_responses(tree) -> list[int]:
+    """Line numbers where a CATCH-ALL handler (`except Exception as e`,
+    `except BaseException as e`) raises an `HTTPException` that carries its
+    exception raw -- `detail=str(e)`, `detail=f"...: {e}"`.
+
+    Catch-all only: there a database error can arrive, and its text went to
+    the caller as the body of a 500. A handler for a NAMED type (`except
+    ValueError as e` -> 400) answers with a message the code wrote itself;
+    those stay as they are.
+
+    🛑 Not seen: the same text in a `JSONResponse`, a returned dict, a
+    WebSocket error frame, a tool result or an `error_message` column; a
+    tuple of types that includes `Exception`; a detour through a variable.
+    """
+    lines = []
+    for handler in (n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)):
+        if not handler.name or not (isinstance(handler.type, ast.Name)
+                                    and handler.type.id in ("Exception", "BaseException")):
+            continue
+        for call in (c for c in ast.walk(handler) if isinstance(c, ast.Call)
+                     and getattr(c.func, "id", getattr(c.func, "attr", "")) == "HTTPException"):
+            def raw(node) -> bool:
+                if isinstance(node, ast.Call) and getattr(
+                        node.func, "id", getattr(node.func, "attr", "")) in _CONTENT_FREE:
+                    return False
+                if isinstance(node, ast.Name) and node.id == handler.name:  # noqa: B023
+                    return True
+                return any(raw(child) for child in ast.iter_child_nodes(node))
+            if raw(call):
+                lines.append(call.lineno)
+    return sorted(set(lines))
+
+
+class TestNoRawExceptionInAnErrorResponse:
+
+    def test_no_catch_all_handler_answers_with_the_raw_exception(self):
+        """70 routes did until 2026-11-16 (`raise HTTPException(500,
+        detail=str(e))`): the statement and parameters of a failed query as
+        the response body."""
+        found, routes = {}, 0
+        for rel, tree in _backend_modules():
+            routes += sum(1 for n in ast.walk(tree) if isinstance(n, ast.Call)
+                          and getattr(n.func, "id", "") == "HTTPException")
+            hits = _raw_error_responses(tree)
+            if hits:
+                found[rel] = hits
+        assert routes > 500, f"only {routes} HTTPException calls seen -- wrong tree?"
+        assert not found, (
+            "a catch-all handler answers with the raw exception; use "
+            f"`error_text_without_content(e)`: {found}")
+
+    def test_the_response_check_FINDS_the_planted_case(self):
+        """🛑 Negative control, on the same helper."""
+        source = (
+            "async def route():\n"
+            "    try:\n"
+            "        await work()\n"
+            "    except HTTPException:\n"
+            "        raise\n"
+            "    except ValueError as e:\n"
+            "        raise HTTPException(status_code=400, detail=str(e))\n"
+            "    except Exception as e:\n"
+            "        raise HTTPException(status_code=500, detail=str(e))\n"          # 9
+            "    try:\n"
+            "        await work()\n"
+            "    except Exception as exc:\n"
+            "        raise HTTPException(500, f'failed: {exc}') from exc\n"          # 13
+            "    try:\n"
+            "        await work()\n"
+            "    except Exception as e:\n"
+            "        raise HTTPException(500, detail=error_text_without_content(e)) from e\n"
+            "    try:\n"
+            "        await work()\n"
+            "    except BaseException as e:\n"
+            "        raise fastapi.HTTPException(500, detail=e.args)\n"              # 21
+        )
+        assert _raw_error_responses(ast.parse(source)) == [9, 13, 21]

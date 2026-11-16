@@ -537,7 +537,7 @@ async def forward_to_paperless(
         )
     except Exception as e:
         logger.error(f"Paperless forward failed: {error_text_without_content(e)}")
-        raise HTTPException(status_code=502, detail=f"Paperless forwarding failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Paperless forwarding failed: {error_text_without_content(e)}")
 
     # Parse MCP response for task_id
     task_id = None
@@ -683,7 +683,7 @@ async def forward_to_simba(
         result = await manager.execute_tool("mcp.simba.upload_documents", tool_args)
     except Exception as e:
         logger.error(f"Simba forward failed: {error_text_without_content(e)}")
-        raise HTTPException(status_code=502, detail=f"Simba forwarding failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Simba forwarding failed: {error_text_without_content(e)}")
 
     # Honest outcome: the MCP envelope success only means "didn't throw"; the doc
     # landed only if uebertragen>0. Mirror the agent bridge's parsing.
@@ -809,7 +809,7 @@ async def forward_via_email(
         )
     except Exception as e:
         logger.error(f"Email forward failed: {error_text_without_content(e)}")
-        raise HTTPException(status_code=502, detail=f"Email forwarding failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Email forwarding failed: {error_text_without_content(e)}")
 
     if not mcp_result or not mcp_result.get("success"):
         logger.error(f"Email forward MCP result: {mcp_result}")

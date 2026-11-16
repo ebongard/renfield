@@ -409,7 +409,7 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
     except Exception as e:
         logger.error(f"❌ Chat error: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.get("/history/{session_id}")
 async def get_history(
@@ -505,7 +505,7 @@ async def get_history(
         }
     except Exception as e:
         logger.error(f"❌ Failed to load the history: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.delete("/session/{session_id}")
 async def delete_session(
@@ -531,7 +531,7 @@ async def delete_session(
         return {"success": True}
     except Exception as e:
         logger.error(f"❌ Failed to delete the session: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.get("/conversations")
 async def list_conversations(
@@ -565,7 +565,7 @@ async def list_conversations(
         }
     except Exception as e:
         logger.error(f"❌ Failed to load the conversations: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.get("/conversation/{session_id}/summary")
 async def get_conversation_summary(
@@ -599,7 +599,7 @@ async def get_conversation_summary(
         raise
     except Exception as e:
         logger.error(f"❌ Failed to load the summary: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.get("/search")
 async def search_conversations(
@@ -638,7 +638,7 @@ async def search_conversations(
         raise
     except Exception as e:
         logger.error(f"❌ Search failed: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.get("/messages/search")
 async def search_messages(
@@ -693,7 +693,7 @@ async def search_messages(
         return {"query": q, **payload}
     except Exception as e:
         logger.error(f"❌ Message search failed: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.put("/{session_id}/active-leaf")
@@ -727,7 +727,7 @@ async def set_active_leaf(
         raise
     except Exception as e:
         logger.error(f"❌ Failed to set the active branch: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.delete("/{session_id}/branch/{message_id}")
@@ -767,7 +767,7 @@ async def delete_branch(
         raise
     except Exception as e:
         logger.error(f"❌ Failed to delete the branch: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/stats")
@@ -814,7 +814,7 @@ async def get_conversation_stats(
         }
     except Exception as e:
         logger.error(f"❌ Failed to load the statistics: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.delete("/conversations/cleanup")
 async def cleanup_old_conversations(
@@ -851,4 +851,4 @@ async def cleanup_old_conversations(
     except Exception as e:
         logger.error(f"❌ Cleanup failed: {error_text_without_content(e)}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

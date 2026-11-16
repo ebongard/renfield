@@ -58,7 +58,7 @@ async def create_task(
         }
     except Exception as e:
         logger.error(f"❌ Task creation error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.get("/list")
 async def list_tasks(
@@ -97,7 +97,7 @@ async def list_tasks(
         }
     except Exception as e:
         logger.error(f"❌ Task list error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.get("/{task_id}")
 async def get_task(
@@ -131,7 +131,7 @@ async def get_task(
         raise
     except Exception as e:
         logger.error(f"❌ Get task error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.patch("/{task_id}")
 async def update_task(
@@ -168,7 +168,7 @@ async def update_task(
         raise
     except Exception as e:
         logger.error(f"❌ Update task error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.delete("/{task_id}")
 async def delete_task(
@@ -190,4 +190,4 @@ async def delete_task(
         return {"success": True}
     except Exception as e:
         logger.error(f"❌ Delete task error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

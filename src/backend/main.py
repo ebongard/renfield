@@ -699,7 +699,7 @@ async def debug_intent(
         }
     except Exception as e:
         logger.error(f"❌ Intent debug error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 # Root Endpoint

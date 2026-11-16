@@ -46,7 +46,7 @@ async def get_all_states(
         return {"states": states}
     except Exception as e:
         logger.error(f"❌ Get states error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/state/{entity_id}")
@@ -68,7 +68,7 @@ async def get_entity_state(
         raise
     except Exception as e:
         logger.error(f"❌ Get state error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.post("/turn_on/{entity_id}")
 async def turn_on(
@@ -87,7 +87,7 @@ async def turn_on(
         return {"success": True, "action": "turn_on", "entity_id": entity_id}
     except Exception as e:
         logger.error(f"❌ Turn on error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.post("/turn_off/{entity_id}")
@@ -107,7 +107,7 @@ async def turn_off(
         return {"success": True, "action": "turn_off", "entity_id": entity_id}
     except Exception as e:
         logger.error(f"❌ Turn off error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.post("/toggle/{entity_id}")
@@ -127,7 +127,7 @@ async def toggle(
         return {"success": True, "action": "toggle", "entity_id": entity_id}
     except Exception as e:
         logger.error(f"❌ Toggle error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.post("/set_value")
@@ -156,7 +156,7 @@ async def set_value(
         }
     except Exception as e:
         logger.error(f"❌ Set value error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.post("/service")
 async def call_service(
@@ -180,7 +180,7 @@ async def call_service(
         return {"success": True}
     except Exception as e:
         logger.error(f"❌ Call service error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/search")
@@ -198,7 +198,7 @@ async def search_entities(
         return {"results": results}
     except Exception as e:
         logger.error(f"❌ Search error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/domain/{domain}")
@@ -216,4 +216,4 @@ async def get_entities_by_domain(
         return {"entities": entities}
     except Exception as e:
         logger.error(f"❌ Get domain entities error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

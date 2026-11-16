@@ -445,7 +445,7 @@ async def upload_document(
 
     except Exception as e:
         logger.error(f"Failed to store the file: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {error_text_without_content(e)}")
 
     # Worker path (#388): create the Document row synchronously (cheap
     # INSERT so the client has an id to poll), enqueue on the Redis
@@ -525,7 +525,7 @@ async def upload_document(
                 # needs to see. Log it and move on.
                 logger.warning(f"failed to clean up orphan upload {file_path}: {error_text_without_content(cleanup_err)}")
         logger.error(f"Failed to create the document record: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
     queue = DocumentTaskQueue(redis_client=get_redis())
     await queue.enqueue({
@@ -1244,7 +1244,7 @@ async def create_knowledge_base(
     except Exception as e:
         if "unique" in str(e).lower():
             raise HTTPException(status_code=400, detail=f"Knowledge Base '{data.name}' existiert bereits")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 def _counts_per_caller(user: User | None) -> bool:

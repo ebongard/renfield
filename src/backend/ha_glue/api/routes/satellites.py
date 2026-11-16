@@ -587,7 +587,7 @@ async def ping_satellite(satellite_id: str, _user: User = Depends(require_permis
         logger.error(f"Failed to ping satellite {satellite_id}: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to ping satellite: {e!s}"
+            detail=f"Failed to ping satellite: {error_text_without_content(e)}"
         )
 
 

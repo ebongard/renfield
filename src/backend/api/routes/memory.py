@@ -108,7 +108,7 @@ async def list_memories(
         )
     except Exception as e:
         logger.error(f"List memories error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/by-subject/{entity_id}", response_model=MemoryListResponse)
@@ -146,7 +146,7 @@ async def list_memories_by_subject(
         )
     except Exception as e:
         logger.error(f"List memories by subject error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.post("", response_model=MemoryResponse, status_code=201)
@@ -175,7 +175,7 @@ async def create_memory(
         raise
     except Exception as e:
         logger.error(f"Create memory error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.patch("/{memory_id}", response_model=MemoryResponse)
@@ -206,7 +206,7 @@ async def update_memory(
         raise
     except Exception as e:
         logger.error(f"Update memory error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/{memory_id}/history", response_model=MemoryHistoryResponse)
@@ -244,7 +244,7 @@ async def get_memory_history(
         )
     except Exception as e:
         logger.error(f"Get memory history error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.delete("/{memory_id}")
@@ -269,4 +269,4 @@ async def delete_memory(
         raise
     except Exception as e:
         logger.error(f"Delete memory error: {error_text_without_content(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
