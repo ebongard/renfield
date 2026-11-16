@@ -14,13 +14,21 @@ Loaded only when the chat handler, artifact/widget/follow-up services or a chat 
 
 ## Flags (config default)
 `FOLLOWUP_CHIPS_ENABLED`, `COMMAND_PALETTE_ENABLED` (frontend-only gate), `ROLE_SURFACING_ENABLED`,
-`MESSAGE_SEARCH_ENABLED`, `ARTIFACTS_TYPED_ENABLED` — all dark. Lane B (free-form HTML/SVG) is **not built and not
+`MESSAGE_SEARCH_ENABLED`, `ARTIFACTS_TYPED_ENABLED`, `CHAT_DOCUMENT_LINKS_ENABLED` — all dark. Lane B (free-form HTML/SVG) is **not built and not
 planned** (2026-09-20; its placeholder flag was removed — a build needs its own flag + security review). Provenance chips are always on. The weather widget also
 needs `WEATHER_ENABLED`.
 
 ## Turn frames
 - **Provenance chips:** `knowledge_tool` emits `data.sources`; `chat_handler._extract_agent_sources` rides them on the
   `done` frame + `message_metadata.sources`. Circle-safe ONLY because the sources come from `rag.search(user_id)`.
+- **Chip opens its document** (`CHAT_DOCUMENT_LINKS_ENABLED`, `api/websocket/document_sources.py`; flag off =
+  byte-identical): `chat_handler._turn_sources` is the ONE list for `done` + metadata. Adds Paperless tool results
+  (`get_document` uncapped, `search_documents` ≤ `PAPERLESS_SEARCH_SOURCE_CAP` per turn, rank-wise) and the direct
+  RAG path. 🛑 A link is SERVER-built: `paperless_document_url(id, public_only=True)` from `PAPERLESS_PUBLIC_URL`
+  + an id validated as `int` — never a URL/base from a tool result or the model, never the `PAPERLESS_API_URL`
+  fallback (cluster-internal on one instance, and the link is persisted). 🛑 KB metadata (title, Paperless id) only
+  through `_visible_document_meta`; a RAG-path document not visible NOW gets no chip. Paperless is one backend
+  token, NOT circle-filtered: a chip may only repeat id + title the tool result already put into that turn.
 - **Follow-up chips** (`services/followup_service.py`): best-effort small-model call in the background AFTER the `done`
   frame, via a separate `followups` frame — never delay the spinner/TTS/wakeword. Skipped on TTS/error/very-short turns.
 - **`role_hint` is ROUTING-ONLY** (palette, role badge via `pendingRoleHint`, "Neu beantworten" via `corrected_intent` →

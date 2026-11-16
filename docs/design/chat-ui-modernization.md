@@ -330,6 +330,37 @@ propagation").
 - `knowledge_tool` emits `data.sources`; `chat_handler._extract_agent_sources` rides them on the `done` frame and
   persists them as `message_metadata.sources`.
 - Circle-safe via `rag.search(user_id)` — the chips can only name documents the asker could retrieve.
+- `/knowledge?doc={id}` loads the document BY ID when the fetched list page does not contain it (the list is one
+  page, default limit 100; the link used to open the page and do nothing).
+
+### A chip opens its document (`CHAT_DOCUMENT_LINKS_ENABLED`, opt-in/dark)
+Reported: "when I search for a document in the chat I get information but no way to open it". Three causes, one
+module (`api/websocket/document_sources.py`), one list for the `done` frame and `message_metadata.sources`
+(`chat_handler._turn_sources`); flag off returns `_extract_agent_sources` untouched.
+- **Paperless results were dropped.** `mcp.paperless.get_document` → every fetched document is a source;
+  `mcp.paperless.search_documents` → at most `PAPERLESS_SEARCH_SOURCE_CAP` (3) per TURN, taken rank-wise across
+  the turn's searches (first hit of each, then second …), so a refined query is not starved by the first one.
+  One chip per document; a Paperless document that is also a knowledge-base source of the turn appears once, as the
+  knowledge-base chip. The cap is positional, not semantic (Paperless orders by `-created`): matching titles against
+  the answer would make the chip depend on what the model wrote — the thing this feature must not do.
+- **The direct RAG path had no sources** (`_stream_rag_response`: role `knowledge`, and `conversation` with
+  `use_rag`). It now hands out the results the answer was generated from — also the CACHED ones of a follow-up.
+- **The chip led nowhere useful.** Every source carries a server-built `paperless_url` where one exists.
+- **Link construction:** `paperless_document_url(id, public_only=True)` — `PAPERLESS_PUBLIC_URL` + an id validated
+  as a plain integer. No URL, host or base is ever read from a tool result or model output; a `paperless_url`
+  arriving inside a source is dropped. No fallback to `PAPERLESS_API_URL`: the link is persisted, and that address
+  is a cluster-internal name on one instance. No public base → the source is named without a link (the frontend
+  renders a non-interactive chip). The frontend additionally refuses any target that is not `http(s)://`.
+- **Access:** knowledge-base metadata (title, tier, Paperless id) is read through `_visible_document_meta`
+  (`documents_circles_filter`, server-injected `user_id`). A `knowledge_search` source keeps its chip but gets a
+  link only when the document is visible; a RAG-path document gets a chip only when it is visible NOW (cached
+  follow-up results may predate an access change). Paperless is read through ONE backend token and is not
+  circle-filtered — gated by `mcp.paperless.read` when the tool ran; a chip repeats only id + title that tool result
+  already put into the user's turn. No new read path for persisted sources: they sit in `message_metadata` and
+  are readable exactly where the answer text of that message is.
+- **Not built:** opening the ORIGINAL file of a knowledge-base document that is not filed in Paperless. It needs a
+  download endpoint behind `check_document_access` and an authenticated blob fetch in the frontend (one instance
+  has no cookie session, a plain `href` would 401).
 
 ### Follow-up suggestion chips (`FOLLOWUP_CHIPS_ENABLED`, opt-in/dark)
 - `services/followup_service.py`: a best-effort small-model call **in the background AFTER the `done` frame**,
