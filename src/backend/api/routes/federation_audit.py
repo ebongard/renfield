@@ -98,8 +98,18 @@ async def list_federation_audit(
         offset=offset,
         peer_pubkey=peer_pubkey,
     )
+    # 🛑 Only rows THIS instance wrote as the responder carry a code. On an
+    # asked row the column holds the far side's message; it is shown as it
+    # came, whatever it looks like.
     def _outcome(row) -> tuple[str | None, str | None]:
+        if row.direction != "answered":
+            return (None, None)
         return outcome_code(row.error_message) or (None, None)
+
+    def _sentence(row) -> str | None:
+        if row.direction != "answered":
+            return row.error_message
+        return outcome_sentence(row.error_message)
 
     entries = [
         FederationAuditEntry(
@@ -116,7 +126,7 @@ async def list_federation_audit(
             final_status=row.final_status,
             verified_signature=row.verified_signature,
             answer_excerpt=row.answer_excerpt,
-            error_message=outcome_sentence(row.error_message),
+            error_message=_sentence(row),
             outcome_code=_outcome(row)[0],
             outcome_stage=_outcome(row)[1],
         )

@@ -707,6 +707,18 @@ class TestTheRouteCarriesTheIdentityBasis:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_an_asked_row_is_shown_as_it_came(self, monkeypatch):
+        """On an asked row the column holds the FAR side's message. Even one
+        shaped exactly like a code of ours is not read as one, nor cut."""
+        stored = "[gone/after_read] says the far side"
+        e = await self._call(self._row(
+            direction="asked", identity_basis=None, final_status="failed",
+            error_message=stored), monkeypatch)
+        assert e.error_message == stored
+        assert (e.outcome_code, e.outcome_stage) == (None, None)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_a_legacy_row_keeps_its_None(self, monkeypatch):
         """🛑 Existing rows and asking-side rows carry `None`. The route must
         NOT turn that into "peer_tier" -- that would assert the narrower tier
@@ -750,7 +762,33 @@ class TestTheOutcomeIsACodeNotASentence:
                             stage=STAGE_AFTER_READ)
         assert outcome_code(text) == ("link_revoked", STAGE_AFTER_READ)
         assert text.endswith("Verknüpfung besteht nicht mehr …")
-        assert outcome_code(outcome_note("some_note", "text")) == ("some_note", None)
+        assert outcome_code(outcome_note("graph_expansion_skipped", "text")) == (
+            "graph_expansion_skipped", None)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("text", [
+        "[timeout] the far side gave up",           # a word in brackets, no code
+        "[gone/somewhere] text",                    # known code, unknown stage
+        "[warning/after_read] text",                # unknown code, known stage
+    ])
+    def test_a_text_that_only_looks_like_a_code_is_left_alone(self, text):
+        """The column also holds free failure text -- on asked rows the far
+        side's own. Neither read as a code nor cut."""
+        from services.federation_audit import outcome_code, outcome_sentence
+
+        assert outcome_code(text) is None
+        assert outcome_sentence(text) == text
+
+    @pytest.mark.unit
+    def test_every_code_the_responder_writes_is_known(self):
+        import services.federation_query_responder as fqr
+        from services.federation_audit import OUTCOME_CODES, outcome_note
+
+        assert set(fqr._OUTCOME_TEXT) | {fqr._UNEXPANDED} == set(OUTCOME_CODES)
+        with pytest.raises(ValueError):
+            outcome_note("made_up", "text")
+        with pytest.raises(ValueError):
+            outcome_note("gone", "text", stage="made_up")
 
     @pytest.mark.unit
     @pytest.mark.parametrize("text", [

@@ -84,25 +84,54 @@ STAGE_BEFORE_READ = "before_read"      # nothing was read
 STAGE_AFTER_READ = "after_read"        # data was read, no answer was made
 STAGE_AFTER_ANSWER = "after_answer"    # an answer was made, never handed over
 
+#: Every code a row can carry. `outcome_code` knows no other: the column also
+#: holds free failure text -- on asker rows the far side's own message -- and
+#: a text that merely LOOKS like `[word] ...` must be neither read as a code
+#: nor have its head cut off.
+OUTCOME_GONE = "gone"
+OUTCOME_PAIRING_REVOKED = "pairing_revoked"
+OUTCOME_LINK_REVOKED = "link_revoked"
+OUTCOME_CANCELLED = "cancelled"
+OUTCOME_NOT_STORED = "not_stored"
+OUTCOME_UNEXPANDED = "graph_expansion_skipped"
+OUTCOME_CODES = frozenset({
+    OUTCOME_GONE, OUTCOME_PAIRING_REVOKED, OUTCOME_LINK_REVOKED,
+    OUTCOME_CANCELLED, OUTCOME_NOT_STORED, OUTCOME_UNEXPANDED,
+})
+OUTCOME_STAGES = frozenset({STAGE_BEFORE_READ, STAGE_AFTER_READ, STAGE_AFTER_ANSWER})
+
 _OUTCOME_NOTE = re.compile(r"^\[([a-z_]+)(?:/([a-z_]+))?\] ")
 
 
 def outcome_note(code: str, sentence: str, *, stage: str | None = None) -> str:
     """`sentence`, led by its code (and stage) in machine-readable form."""
+    if code not in OUTCOME_CODES or (stage is not None and stage not in OUTCOME_STAGES):
+        raise ValueError(f"unknown outcome code or stage: {code!r}/{stage!r}")
     return f"[{code}/{stage}] {sentence}" if stage else f"[{code}] {sentence}"
+
+
+def _known_note(text: str | None) -> re.Match[str] | None:
+    match = _OUTCOME_NOTE.match(text or "")
+    if match is None or match.group(1) not in OUTCOME_CODES:
+        return None
+    if match.group(2) is not None and match.group(2) not in OUTCOME_STAGES:
+        return None
+    return match
 
 
 def outcome_code(text: str | None) -> tuple[str, str | None] | None:
     """`(code, stage)` of a text written by `outcome_note` -- `None` for any
-    other text (a plain failure message, a row from before 2026-11-16)."""
-    match = _OUTCOME_NOTE.match(text or "")
+    other text (a plain failure message, a row from before 2026-11-16, a text
+    in brackets that is not one of the known codes)."""
+    match = _known_note(text)
     return (match.group(1), match.group(2)) if match else None
 
 
 def outcome_sentence(text: str | None) -> str | None:
-    """`text` without a leading code -- what a person is shown. Any other
-    text comes back unchanged."""
-    return _OUTCOME_NOTE.sub("", text, count=1) if text else text
+    """`text` without a leading KNOWN code -- what a person is shown. Any
+    other text comes back unchanged."""
+    match = _known_note(text)
+    return text[match.end():] if match and text else text
 
 
 def _truncate(s: str | None, max_len: int) -> str | None:
