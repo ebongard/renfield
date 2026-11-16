@@ -93,7 +93,11 @@ ersten Anweisung ein LLM, Lesefrist 300 s): hielte die Quelle ihren Platz über 
 wartende Modellaufrufe alle Plätze ohne eine einzige Verbindung, und das SQL jeder anderen Anfrage stünde
 dahinter an. Die Schranke gilt nur, weil der Responder EINE `SourceSessions`-Instanz für alle Abrufe hält.
 Dazu hat jede Quelle dort eine Frist (`ATOM_FANOUT_SOURCE_TIMEOUT`, 20 s): wer sie überschreitet, wird
-abgebrochen und als abgestürzt gezählt, die übrigen tragen die Antwort.
+abgebrochen und als abgestürzt gezählt, die übrigen tragen die Antwort. Der GANZE Abrufschritt des
+Responders — Quellen und die Graph-Erweiterung danach, die keine eigene Frist hat — steht zusätzlich unter
+einer abgeleiteten Gesamtfrist (60 s Anfragefenster − `FEDERATION_SYNTHESIS_TIMEOUT` − 5 s Reserve); darüber
+endet die Anfrage als fehlgeschlagen. Dass Quellenfrist und Synthese zusammen ins Fenster passen, prüft der
+Start (`docs/ENVIRONMENT_VARIABLES.md`).
 
 🛑 **Ein föderierter Abruf ist ein reiner Lesevorgang — und das folgt der ANGABE des Aufrufers
 (`query(federated=True)`), nicht dem Sitzungsregime.** Zwei Quellen schreiben sonst, und beide sind für einen

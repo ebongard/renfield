@@ -43,13 +43,15 @@ from services.federation_query_schemas import (
     STATUS_PROCESSING,
 )
 from services.mcp_streaming import PROGRESS_LABEL_RETRIEVING
-from utils.config import settings
+from utils.config import FEDERATION_REQUEST_TTL_SECONDS, settings
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
 
-REQUEST_TTL_SECONDS = 60
+# One number for the store, the settings validator and the retrieval deadline
+# (`utils/config.py`).
+REQUEST_TTL_SECONDS = FEDERATION_REQUEST_TTL_SECONDS
 NONCE_WINDOW_SECONDS = 60
 NONCE_GRACE_SECONDS = 60          # how long past the window we still remember
 # In-memory only — the Redis backend bounds growth via TTL rather than

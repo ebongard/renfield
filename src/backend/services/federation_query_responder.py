@@ -799,8 +799,16 @@ class FederationQueryResponder:
             await self._emit_progress(pending, PROGRESS_LABEL_RETRIEVING)
 
             # Fresh session scoped to this bg task only.
+            #
+            # 🛑 ONE deadline over the whole step. Each source of the fan-out
+            # has its own, but graph expansion runs after it on this session
+            # with none, and the far side stops polling when the request
+            # window closes. Over the deadline the query FAILS (a terminal
+            # status the far side sees) instead of being answered into a
+            # window that has closed; the session is closed on the way out.
             async with AsyncSessionLocal() as session:
-                matches = await self._retrieve(session, pending)
+                async with asyncio.timeout(settings.federation_retrieve_deadline):
+                    matches = await self._retrieve(session, pending)
             # 🛑 From here on foreign data sat in memory. If the query is
             # cancelled now that is still an access -- and only this record
             # tells it apart afterwards from a cancellation before it.
@@ -991,7 +999,7 @@ class FederationQueryResponder:
                         "num_predict": 512,    # hard cap on generated tokens
                     },
                 ),
-                timeout=settings.federation_synthesis_timeout,  # constraint validated in config: must be <60 (responder TTL)
+                timeout=settings.federation_synthesis_timeout,  # fits the request window together with the retrieval: validated in config
             )
             answer = extract_response_content(response) or ""
         except Exception as e:

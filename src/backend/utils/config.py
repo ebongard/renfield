@@ -29,6 +29,18 @@ _CHANGEME_FIELDS: tuple[str, ...] = (
 # (insecure SECRET_KEY, cookie posture, self-registration). One place to extend.
 _REAL_DEPLOY_ENVS = frozenset({"production", "prod", "staging"})
 
+#: How long the responder keeps an inbound federated request, and how long
+#: the asking side polls for it (`federation_query_asker.MAX_POLL_DURATION_SECONDS`).
+#: Retrieval and synthesis both have to END inside it, or the far side gives
+#: up on an answer that is still being made. Defined here, not in the pending
+#: store, so that the settings can be validated against it.
+FEDERATION_REQUEST_TTL_SECONDS = 60
+
+#: What the two steps must leave of that window: the revocation re-checks
+#: (three short sessions), storing the answer, the audit row, and the asker's
+#: next poll (interval 0.5 s plus its round trip).
+FEDERATION_ANSWER_HEADROOM_SECONDS = 5.0
+
 
 class Settings(BaseSettings):
     """Application settings."""
@@ -508,17 +520,15 @@ class Settings(BaseSettings):
     geocode_http_timeout: float = Field(default=8.0, ge=1.0, le=30.0)
     """HTTP timeout for the Nominatim geocode httpx client in mcp_client.py."""
     federation_synthesis_timeout: float = Field(default=30.0, ge=5.0, le=59.0)
-    """Federation responder synthesis timeout. Hard upper bound 59s because the
-    responder TTL is 60s and synthesis must fit inside that along with
-    retrieval and the poll-reply round trip. The Field constraint enforces
-    this, not just the comment."""
+    """Federation responder synthesis timeout. It has to fit inside the
+    responder TTL together with the retrieval; the field range alone does not
+    say that, `assert_federated_answer_fits_its_window` does."""
     atom_fanout_source_timeout: float = Field(default=20.0, ge=0.1, le=29.0)
     """Deadline for ONE source of an atom fan-out that runs on own sessions
     (today: the federated retrieval). A source over it is cancelled and
     counted as crashed; the others still make the answer. The sources run
-    side by side, so this is also the bound of the fan-out. Upper bound 29s:
-    together with `federation_synthesis_timeout` (default 30) it has to stay
-    inside the responder TTL of 60s."""
+    side by side, so this is also the bound of the fan-out. It must not
+    exceed `federation_retrieve_deadline` (validated at startup)."""
 
     # Agent Advanced
     agent_history_limit: int = Field(default=20, ge=1, le=100)       # Max history steps in agent loop
@@ -2597,6 +2607,36 @@ class Settings(BaseSettings):
                 f"LOGIN_LOCKOUT_USERNAME_MAX_ATTEMPTS={self.login_lockout_username_max_attempts} "
                 f"must be >= LOGIN_LOCKOUT_MAX_ATTEMPTS={self.login_lockout_max_attempts} "
                 "— the username-wide backstop is meant to trip AFTER the per-IP scope."
+            )
+        return self
+
+    @property
+    def federation_retrieve_deadline(self) -> float:
+        """Seconds the WHOLE retrieval step of an inbound federated query may
+        take: the fan-out and everything after it (graph expansion), which
+        has no deadline of its own. What the request window leaves once the
+        synthesis and the headroom are taken out -- derived, not configured,
+        so the three numbers cannot drift apart."""
+        return (
+            FEDERATION_REQUEST_TTL_SECONDS
+            - self.federation_synthesis_timeout
+            - FEDERATION_ANSWER_HEADROOM_SECONDS
+        )
+
+    @model_validator(mode="after")
+    def assert_federated_answer_fits_its_window(self) -> "Settings":
+        """Retrieval plus synthesis must end inside the window the far side
+        polls in. Each field's own range allowed 29 s + 59 s against a window
+        of 60 s; the relation was only written in a comment."""
+        if self.atom_fanout_source_timeout > self.federation_retrieve_deadline:
+            raise ValueError(
+                f"ATOM_FANOUT_SOURCE_TIMEOUT={self.atom_fanout_source_timeout:g} + "
+                f"FEDERATION_SYNTHESIS_TIMEOUT={self.federation_synthesis_timeout:g} + "
+                f"{FEDERATION_ANSWER_HEADROOM_SECONDS:g} s headroom exceed the "
+                f"{FEDERATION_REQUEST_TTL_SECONDS} s a federated request lives: the "
+                "far side would stop polling before the answer is ready. Lower "
+                "one of the two (their sum may be at most "
+                f"{FEDERATION_REQUEST_TTL_SECONDS - FEDERATION_ANSWER_HEADROOM_SECONDS:g})."
             )
         return self
 

@@ -3163,9 +3163,28 @@ FEDERATION_INBOUND_READ_TIMEOUT_SECONDS=10
 # Frist in Sekunden für EINE Quelle des Atom-Abrufs, wenn er auf eigenen
 # Sitzungen läuft (heute: der föderierte Abruf). Eine Quelle darüber wird
 # abgebrochen und als abgestürzt gezählt; die übrigen tragen die Antwort.
-# Zusammen mit FEDERATION_SYNTHESIS_TIMEOUT unter 60 s halten (0.1-29)
+# (0.1-29)
 # Default: 20
 ATOM_FANOUT_SOURCE_TIMEOUT=20
+
+# Frist in Sekunden für die Synthese der Antwort auf eine eingehende
+# föderierte Anfrage (5-59). Darüber fällt die Antwort auf die Fundstellen
+# zurück.
+# Default: 30
+FEDERATION_SYNTHESIS_TIMEOUT=30
+
+# 🛑 Die beiden Fristen hängen zusammen, und der Start PRÜFT es: eine
+# eingehende Anfrage lebt 60 s, und genau so lange fragt die Gegenseite nach.
+#   ATOM_FANOUT_SOURCE_TIMEOUT + FEDERATION_SYNTHESIS_TIMEOUT + 5 s <= 60 s
+# (5 s Reserve: Widerrufsprüfungen, Speichern, Protokollzeile, nächste
+# Nachfrage der Gegenseite.) Eine Konfiguration darüber verweigert den Start
+# mit einer Meldung, die beide Werte nennt — die Wertebereiche der einzelnen
+# Variablen erlauben sie für sich genommen.
+# Der GESAMTE Abrufschritt (alle Quellen und die Graph-Erweiterung danach,
+# die keine eigene Frist hat) ist auf 60 - FEDERATION_SYNTHESIS_TIMEOUT - 5
+# Sekunden begrenzt (Standard: 25); darüber endet die Anfrage als
+# fehlgeschlagen, statt in ein geschlossenes Fenster zu antworten. Dieser
+# Wert wird abgeleitet, nicht eingestellt.
 
 # Peer-Adressen mit http:// zulassen (sonst nur https://)
 # Default: false

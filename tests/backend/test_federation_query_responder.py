@@ -582,6 +582,103 @@ class TestBackgroundTaskSession:
         assert pending_after.answered_at is not None  # set on failure per fix
 
 
+class TestTheRetrievalStepIsBounded:
+    """🛑 The timing chain was asserted in prose only. Each source of the
+    fan-out has a deadline, but graph expansion runs after it with none, and
+    the far side stops polling when the request window (60 s) closes."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_retrieval_that_never_returns_ends_as_failed(
+        self, responder_identity, asker_identity, monkeypatch,
+    ):
+        import asyncio
+
+        from services import federation_query_responder as fqr
+
+        pending = _PendingRequest(
+            request_id="bg-test-slow", asker_pubkey=asker_identity.public_key_hex(),
+            peer_user_id=1, asker_local_user_id=None, max_visible_tier=2,
+            query="q", initiated_at=time.time(), peer_owner_id=1,
+        )
+        await get_pending_store().put(pending)
+        monkeypatch.setattr(fqr, "AsyncSessionLocal", _SessionSeeingAnActivePairing)
+        # 60 - 54.8 - 5 headroom: the deadline is DERIVED from the window.
+        monkeypatch.setattr(settings, "federation_synthesis_timeout", 54.8)
+        assert settings.federation_retrieve_deadline == pytest.approx(0.2)
+
+        cancelled = []
+
+        async def stuck(_session, _pending):
+            try:
+                await asyncio.sleep(3600)      # graph expansion that never ends
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+
+        responder = FederationQueryResponder(db=MagicMock())
+        responder._retrieve = stuck
+        responder._synthesize = AsyncMock(return_value="never reached")
+
+        await asyncio.wait_for(responder._run_query(pending.request_id), 5)
+
+        assert cancelled == [True]
+        responder._synthesize.assert_not_awaited()
+        after = await get_pending_store().get(pending.request_id)
+        assert after.status == STATUS_FAILED
+        assert after.error_message.startswith("TimeoutError")
+        assert after.retrieved_count is None      # nothing was handed on
+
+    @pytest.mark.unit
+    def test_the_deadline_is_what_the_window_leaves(self):
+        from services.federation_pending_store import REQUEST_TTL_SECONDS
+        from services.federation_query_asker import MAX_POLL_DURATION_SECONDS
+        from utils.config import (
+            FEDERATION_ANSWER_HEADROOM_SECONDS,
+            FEDERATION_REQUEST_TTL_SECONDS,
+            Settings,
+        )
+
+        # One window on both sides of the wire.
+        assert REQUEST_TTL_SECONDS == FEDERATION_REQUEST_TTL_SECONDS == MAX_POLL_DURATION_SECONDS
+        s = Settings(_env_file=None)
+        assert s.federation_retrieve_deadline == pytest.approx(
+            FEDERATION_REQUEST_TTL_SECONDS - s.federation_synthesis_timeout
+            - FEDERATION_ANSWER_HEADROOM_SECONDS)
+        # The defaults fit, with room for the fan-out's own deadline.
+        assert s.atom_fanout_source_timeout <= s.federation_retrieve_deadline
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("source, synthesis", [
+        (29.0, 59.0),      # both field maxima: 88 s into a 60 s window
+        (20.0, 35.5),      # the default source deadline, synthesis a little long
+        (25.1, 30.0),      # the default synthesis, source a little long
+    ])
+    def test_a_configuration_that_cannot_fit_refuses_to_start(self, source, synthesis):
+        from pydantic import ValidationError
+
+        from utils.config import Settings
+
+        with pytest.raises(ValidationError) as refused:
+            Settings(_env_file=None, atom_fanout_source_timeout=source,
+                     federation_synthesis_timeout=synthesis)
+        text = str(refused.value)
+        assert "ATOM_FANOUT_SOURCE_TIMEOUT" in text
+        assert "FEDERATION_SYNTHESIS_TIMEOUT" in text
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("source, synthesis", [
+        (20.0, 30.0), (25.0, 30.0), (20.0, 35.0), (0.1, 54.9), (29.0, 26.0),
+    ])
+    def test_a_configuration_that_fits_starts(self, source, synthesis):
+        """Negative control, the boundary included."""
+        from utils.config import Settings
+
+        s = Settings(_env_file=None, atom_fanout_source_timeout=source,
+                     federation_synthesis_timeout=synthesis)
+        assert s.atom_fanout_source_timeout <= s.federation_retrieve_deadline
+
+
 class TestProgressRateLimit:
     @pytest.mark.asyncio
     @pytest.mark.unit
