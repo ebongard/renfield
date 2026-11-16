@@ -168,7 +168,10 @@ async def _no_statement_still_runs(pool, marker: str) -> None:
         for _ in range(100):
             running = (await conn.execute(text(
                 "SELECT count(*) FROM pg_stat_activity "
-                "WHERE state = 'active' AND pid <> pg_backend_pid() "
+                # This database only: the view is server-wide, and a run next
+                # door on a database of its own runs the same marked statement.
+                "WHERE datname = current_database() "
+                "AND state = 'active' AND pid <> pg_backend_pid() "
                 "AND query LIKE :m"), {"m": f"%{marker}%"})).scalar()
             if running == 0:
                 return
