@@ -29,6 +29,10 @@ needs `WEATHER_ENABLED`.
   fallback (cluster-internal on one instance, and the link is persisted). 🛑 KB metadata (title, Paperless id) only
   through `_visible_document_meta`; a RAG-path document not visible NOW gets no chip. Paperless is one backend
   token, NOT circle-filtered: a chip may only repeat id + title the tool result already put into that turn.
+  🛑 READ side (`metadata_for_reader`, flag-independent, auth-on): `GET /api/chat/history` serves sources by the
+  READER's rights (circle filter per KB document, `mcp.paperless.read` for Paperless) — a shared thread is read by
+  people who did not ask. A new route that returns `message_metadata` must go through it. Enable the flag only
+  AFTER the frontend has propagated (old bundle → `/knowledge?doc=undefined`).
 - **Follow-up chips** (`services/followup_service.py`): best-effort small-model call in the background AFTER the `done`
   frame, via a separate `followups` frame — never delay the spinner/TTS/wakeword. Skipped on TTS/error/very-short turns.
 - **`role_hint` is ROUTING-ONLY** (palette, role badge via `pendingRoleHint`, "Neu beantworten" via `corrected_intent` →

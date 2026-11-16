@@ -3590,6 +3590,13 @@ PAPERLESS_API_URL=http://paperless.local:8000
 # gespeichert, und die API-Adresse ist auf einer Instanz ein clusterinterner Dienstname,
 # den kein Browser auflöst. Ohne PAPERLESS_PUBLIC_URL wird eine Paperless-Quelle genannt,
 # hat aber KEINEN Link; ein Wissensdatenbank-Chip öffnet dann nur die Dokumentansicht.
+# 🛑 Reihenfolge beim Einschalten: ERST das neue Frontend ausrollen und abwarten, bis es
+# in den Browsern angekommen ist (PWA-Service-Worker), DANN den Schalter umlegen. Ein
+# altes Bundle kennt die Paperless-Quelle nicht und zeigt sie als Chip mit dem toten Ziel
+# `/knowledge?doc=undefined`.
+# Lesende Seite (unabhängig vom Schalter, nur bei AUTH_ENABLED=true): `GET /api/chat/history`
+# liefert `metadata.sources` je LESER — eine Wissensdatenbank-Quelle nur, wenn das Dokument
+# für ihn sichtbar ist, eine Paperless-Quelle nur mit `mcp.paperless.read`.
 # CHAT_DOCUMENT_LINKS_ENABLED=false
 
 # Calendar (Unified Calendar MCP Server — EWS, Google, CalDAV)
