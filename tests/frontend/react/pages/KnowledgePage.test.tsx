@@ -126,6 +126,72 @@ describe('KnowledgePage Schicht A integration', () => {
     expect(document.getElementById('doc-977')).toBeNull();
   });
 
+  // Every knowledge mutation invalidates `['knowledge']`, the by-id entry
+  // included. react-query keeps the LAST successful data when the refetch
+  // fails -- so the pinned row must follow the error, not the stale data.
+  it.each([
+    ['deleted (404)', 404],
+    ['no longer readable (403)', 403],
+  ])('drops the pinned row once the document is %s on refetch', async (_label, status) => {
+    const FAR = { ...DOC, id: 977, filename: 'alt.pdf', title: 'Alter Vertrag' };
+    let gone = false;
+    mockedGet.mockImplementation((url: string) => {
+      if (url === '/api/knowledge/documents/977') {
+        return gone
+          ? Promise.reject(Object.assign(new Error('gone'), { response: { status } }))
+          : Promise.resolve(createMockResponse(FAR));
+      }
+      if (url.includes('/api/knowledge/documents')) return Promise.resolve(createMockResponse([DOC]));
+      if (url.includes('/api/config/features')) {
+        return Promise.resolve(createMockResponse({ schicht_a_extraction_enabled: true }));
+      }
+      return Promise.resolve(createMockResponse([]));
+    });
+    const queryClient = createTestQueryClient();
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge?doc=977', queryClient });
+    await waitFor(() => expect(document.getElementById('doc-977')).not.toBeNull());
+
+    // What a delete / move / tier mutation does on success.
+    gone = true;
+    await queryClient.invalidateQueries({ queryKey: ['knowledge'] });
+
+    await waitFor(() => expect(document.getElementById('doc-977')).toBeNull());
+    expect(document.getElementById('doc-5')).not.toBeNull();
+  });
+
+  it('does not pin the deep-linked document on top of a document search', async () => {
+    const FAR = { ...DOC, id: 977, filename: 'alt.pdf', title: 'Alter Vertrag' };
+    const OTHER = { ...DOC, id: 6, filename: 'strom.pdf', title: 'Stromrechnung' };
+    const byId: string[] = [];
+    mockedGet.mockImplementation((url: string, config?: { params?: Record<string, unknown> }) => {
+      if (url === '/api/knowledge/documents/977') {
+        byId.push(url);
+        return Promise.resolve(createMockResponse(FAR));
+      }
+      if (url.includes('/api/knowledge/documents')) {
+        const searching = url.includes('q=') || Boolean(config?.params?.q);
+        return Promise.resolve(createMockResponse(searching ? [OTHER] : [DOC]));
+      }
+      if (url.includes('/api/config/features')) {
+        return Promise.resolve(createMockResponse({ schicht_a_extraction_enabled: true }));
+      }
+      return Promise.resolve(createMockResponse([]));
+    });
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge?doc=977' });
+    await waitFor(() => expect(document.getElementById('doc-977')).not.toBeNull());
+
+    const searchBox = document.querySelector('input.input.flex-1') as HTMLInputElement;
+    fireEvent.change(searchBox, { target: { value: 'Strom' } });
+
+    // The search result arrives (debounced); 977 does not match and is not shown.
+    await waitFor(() => expect(document.getElementById('doc-6')).not.toBeNull());
+    expect(document.getElementById('doc-977')).toBeNull();
+    const rows = Array.from(document.querySelectorAll('[id^="doc-"]')).map((el) => el.id);
+    expect(rows).toEqual(['doc-6']);
+    // ... and no second by-id fetch was made for the search view.
+    expect(byId).toHaveLength(1);
+  });
+
   it('does not auto-expand without a deep link', async () => {
     renderWithProviders(<KnowledgePage />, { route: '/knowledge' });
     const toggle = await screen.findByRole('button', { name: /Fakten/ });

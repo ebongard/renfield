@@ -218,9 +218,19 @@ export default function KnowledgePage() {
     // target missing from the UNFILTERED page is really outside the list.
     && selectedKnowledgeBase === null
     && statusFilter === 'all'
+    // A document search is the user's own narrowing: a target it does not
+    // match must not sit on top of unrelated results. Both the typed value
+    // and its debounced copy, so the pin goes with the first keystroke.
+    && searchQuery.trim() === ''
+    && docSearchQuery.trim() === ''
     && !listedDocuments.some((d) => d.id === deepLinkId);
   const deepLinkQuery = useDocumentQuery(deepLinkId ?? 0, deepLinkOutsideList);
-  const deepLinkedDocument = deepLinkOutsideList ? deepLinkQuery.data : undefined;
+  // 🛑 `isError` decides, not `data`: every knowledge mutation invalidates
+  // `keys.knowledge.all`, the by-id key included, and react-query KEEPS the
+  // last successful data when the refetch fails. Without this check a
+  // document deleted here (404) or no longer readable (403) stayed pinned.
+  const deepLinkedDocument =
+    deepLinkOutsideList && !deepLinkQuery.isError ? deepLinkQuery.data : undefined;
   const documents = useMemo(
     () => (deepLinkedDocument
       ? [deepLinkedDocument, ...(listedDocuments ?? [])]
