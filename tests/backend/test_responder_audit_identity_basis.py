@@ -30,6 +30,13 @@ from services.federation_query_responder import (
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
+from services.federation_audit import outcome_code as _what_happened
+from services.federation_query_responder import (
+    _CANCELLED,
+    _unserved_note,
+)
+
+
 def _pending(*, mapped: bool, asker_local_user_id=None, peer_owner_id=None,
              peer_display_name="the neighbour's Renfield"):
     return _PendingRequest(
@@ -266,7 +273,8 @@ class TestACancelledAccessIsStillAnAccess:
         k = written.await_args.kwargs
         assert k["direction"] == "answered"
         assert k["identity_basis"] == "mapped"
-        assert "3 Treffer" in k["final_item"]["message"]
+        assert _what_happened(k["final_item"]["message"]) == ("cancelled", "after_read")
+        assert k["final_item"]["message"] == _unserved_note(_CANCELLED, p)
 
     @pytest.mark.asyncio
     async def test_a_cancellation_BEFORE_the_read_is_recorded_TOO(self, written):
@@ -281,8 +289,8 @@ class TestACancelledAccessIsStillAnAccess:
         assert p.retrieved_count is None, "default: nothing read yet"
         await _record_cancelled_access(p)
 
-        assert "keine Daten gelesen" in written.await_args.kwargs[
-            "final_item"]["message"]
+        assert _what_happened(written.await_args.kwargs["final_item"]["message"]) == (
+            "cancelled", "before_read")
 
     @pytest.mark.asyncio
     async def test_the_two_cases_do_NOT_collapse(self, written):
@@ -303,9 +311,8 @@ class TestACancelledAccessIsStillAnAccess:
         await _record_cancelled_access(p)
         text_none = written.await_args.kwargs["final_item"]["message"]
 
-        assert text_null != text_none
-        assert "nach dem Abruf" in text_null
-        assert "vor dem Abruf" in text_none
+        assert _what_happened(text_null) == ("cancelled", "after_read")
+        assert _what_happened(text_none) == ("cancelled", "before_read")
 
     @pytest.mark.asyncio
     async def test_it_classifies_as_aborted_NOT_failed(self, written):
@@ -327,7 +334,7 @@ class TestACancelledAccessIsStillAnAccess:
         assert status == "aborted"
         assert verified is False
         assert excerpt is None
-        assert "3 Treffer" in error
+        assert error == _unserved_note(_CANCELLED, p)
 
     def test_a_plain_failure_is_STILL_failed(self):
         """Negative control for the classifier: the new branch must not

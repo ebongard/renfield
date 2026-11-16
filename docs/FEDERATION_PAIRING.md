@@ -685,6 +685,15 @@ read, and what it knows about the cause: the pairing revoked, the link gone,
 or only that the request was no longer there (discarded with the other
 requests of that far side, or lapsed).
 
+That cause is stored as a CODE, at the head of the row's `error_message`:
+`[link_revoked/after_read] …`, with the cause (`pairing_revoked`,
+`link_revoked`, `gone`, `cancelled`) and how far the access had got
+(`before_read`, `after_read`, `after_answer`). The German sentence after it
+is for the person reading `/brain/audit` and may be reworded; anything that
+counts, filters or tests these rows reads the code
+(`federation_audit.outcome_code`). It sits in the text column because a query
+row has no structured field; rows written before 2026-11-16 carry no code.
+
 Reviewed on 2026-11-14 and left as they are:
 
 - **ZERO WIDTH JOINER and NON-JOINER are removed from a name**, with every

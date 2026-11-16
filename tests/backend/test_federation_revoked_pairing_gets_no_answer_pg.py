@@ -40,6 +40,11 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from models.database import FederationQueryLog, FederationUserLink, PeerUser, Role, User
+from services.federation_audit import (
+    STAGE_AFTER_READ,
+    STAGE_BEFORE_READ,
+    outcome_code,
+)
 from services.federation_identity import (
     FederationIdentity,
     init_federation_identity,
@@ -50,6 +55,10 @@ from services.federation_pending_store import (
     get_pending_store,
     reset_store_for_tests,
 )
+from services.federation_query_responder import _REFUSED_GONE as GONE
+from services.federation_query_responder import _REFUSED_LINK as LINK
+from services.federation_query_responder import _REFUSED_PAIRING as PAIRING
+from services.federation_query_responder import _unserved_note
 from services.federation_query_schemas import (
     STATUS_COMPLETE,
     STATUS_EXPIRED,
@@ -60,6 +69,18 @@ from services.pairing_service import _canonical_bytes
 from utils.config import settings
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
+
+
+def _what_happened(row: FederationQueryLog) -> tuple[str, str | None] | None:
+    """The outcome of an audit row as its CODE -- cause and stage. The German
+    sentence behind it is presentation and is not what these tests go by."""
+    return outcome_code(row.error_message)
+
+
+def _note(code: str, *, read: int | None) -> str:
+    """The exact text the responder stores for `code` -- built by the
+    responder's own function, never spelled out here."""
+    return _unserved_note(code, SimpleNamespace(retrieved_count=read))
 
 _ANSWER = "the answer nobody may collect"
 
@@ -261,7 +282,7 @@ class TestRevokedBeforeTheTaskGotToWork:
         assert await get_pending_store().get(rid) is None
         rows = await _answered_rows(maker)
         assert [r.final_status for r in rows] == ["aborted"]
-        assert "vor dem Abruf" in rows[0].error_message
+        assert _what_happened(rows[0]) == (PAIRING, STAGE_BEFORE_READ)
         assert rows[0].answer_excerpt is None
 
     async def test_revoked_in_the_database_but_not_yet_purged(
@@ -300,9 +321,10 @@ class TestRevokedWhileInFlight:
 
         rows = await _answered_rows(maker)
         assert [r.final_status for r in rows] == ["aborted"]
-        # Data WAS read before the revocation arrived; the row says so.
-        assert "nach dem Abruf" in rows[0].error_message
-        assert "2 Treffer" in rows[0].error_message
+        # Data WAS read before the revocation arrived; the row says so --
+        # in its code, and in a sentence that names the count.
+        assert _what_happened(rows[0]) == (PAIRING, STAGE_AFTER_READ)
+        assert rows[0].error_message == _note(PAIRING, read=2)
         assert rows[0].answer_excerpt is None
 
     async def test_during_synthesis_the_finished_answer_is_not_stored(
@@ -350,7 +372,7 @@ class TestRevokedWhileInFlight:
         assert await get_pending_store().get(rid) is None
         rows = await _answered_rows(maker)
         assert [r.final_status for r in rows] == ["aborted"]
-        assert "nach dem Abruf" in rows[0].error_message
+        assert _what_happened(rows[0]) == (GONE, STAGE_AFTER_READ)
 
     async def test_a_failing_query_does_not_bring_the_record_back_either(
         self, responder, maker, pairing, far_side
@@ -507,8 +529,7 @@ class TestALinkRevokedBeforeTheTaskGotToWork:
         rows = await _answered_rows(maker)
         assert [(r.final_status, r.identity_basis, r.user_id) for r in rows] == [
             ("aborted", "mapped", linked["person"])]
-        assert "Verknüpfung" in rows[0].error_message
-        assert "vor dem Abruf" in rows[0].error_message
+        assert _what_happened(rows[0]) == (LINK, STAGE_BEFORE_READ)
 
     async def test_revoked_and_purged_between_resolving_the_link_and_storing_the_record(
         self, responder, maker, linked, far_side
@@ -539,7 +560,7 @@ class TestALinkRevokedBeforeTheTaskGotToWork:
         assert await store.get(rid) is None
         rows = await _answered_rows(maker)
         assert [r.final_status for r in rows] == ["aborted"]
-        assert "Verknüpfung" in rows[0].error_message
+        assert _what_happened(rows[0]) == (LINK, STAGE_BEFORE_READ)
 
     async def test_a_deactivated_account_lends_nothing_any_more(
         self, responder, maker, linked, far_side
@@ -577,8 +598,8 @@ class TestALinkRevokedWhileInFlight:
         assert await get_pending_store().get(rid) is None
         rows = await _answered_rows(maker)
         assert [r.final_status for r in rows] == ["aborted"]
-        assert "Verknüpfung" in rows[0].error_message
-        assert "nach dem Abruf" in rows[0].error_message and "2 Treffer" in rows[0].error_message
+        assert _what_happened(rows[0]) == (LINK, STAGE_AFTER_READ)
+        assert rows[0].error_message == _note(LINK, read=2)
         assert rows[0].answer_excerpt is None
 
     @pytest.mark.parametrize("purge", [True, False])
@@ -668,8 +689,7 @@ class TestTheRecordSaysWhatTheCodeKnows:
         assert calls == {"retrieve": 0, "synthesize": 0}
         rows = await _answered_rows(maker)
         assert [r.final_status for r in rows] == ["aborted"]
-        assert "nicht mehr vorhanden" in rows[0].error_message
-        assert "iderruf" not in rows[0].error_message
+        assert _what_happened(rows[0]) == (GONE, STAGE_BEFORE_READ)
 
     async def test_a_revoked_pairing_is_named_even_after_the_purge(
         self, responder, maker, pairing, far_side
@@ -682,4 +702,4 @@ class TestTheRecordSaysWhatTheCodeKnows:
         await finish()
 
         rows = await _answered_rows(maker)
-        assert "Kopplung widerrufen" in rows[0].error_message
+        assert _what_happened(rows[0]) == (PAIRING, STAGE_BEFORE_READ)

@@ -708,3 +708,49 @@ class TestTheRouteCarriesTheIdentityBasis:
         legacy = await self._call(self._row(), monkeypatch)
         assert legacy.peer_instance_name is None
         assert legacy.peer_display_name == "evdb"
+
+
+class TestTheOutcomeIsACodeNotASentence:
+    """What happened to a query is carried as a code at the head of
+    `error_message`; the sentence behind it is presentation."""
+
+    @pytest.mark.unit
+    def test_code_and_stage_come_back_out(self):
+        from services.federation_audit import (
+            STAGE_AFTER_READ,
+            outcome_code,
+            outcome_note,
+        )
+
+        text = outcome_note("link_revoked", "Verknüpfung besteht nicht mehr …",
+                            stage=STAGE_AFTER_READ)
+        assert outcome_code(text) == ("link_revoked", STAGE_AFTER_READ)
+        assert text.endswith("Verknüpfung besteht nicht mehr …")
+        assert outcome_code(outcome_note("some_note", "text")) == ("some_note", None)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("text", [
+        None, "", "Responder signature verification failed",
+        "RuntimeError: boom", "[not a code] text", "text [gone/after_read] later",
+    ])
+    def test_any_other_text_has_no_code(self, text):
+        """Negative control: a plain failure message, and every row written
+        before the code existed."""
+        from services.federation_audit import outcome_code
+
+        assert outcome_code(text) is None
+
+    @pytest.mark.unit
+    def test_the_code_survives_the_truncation_of_the_column(self):
+        from services.federation_audit import (
+            MAX_ERROR_MESSAGE_LEN,
+            _classify_final,
+            outcome_code,
+            outcome_note,
+        )
+
+        long = outcome_note("gone", "x" * 5000, stage="before_read")
+        _status, _verified, _excerpt, error = _classify_final(
+            {"success": False, "aborted": True, "message": long})
+        assert len(error) == MAX_ERROR_MESSAGE_LEN
+        assert outcome_code(error) == ("gone", "before_read")

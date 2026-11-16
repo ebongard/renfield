@@ -70,6 +70,11 @@ from models.database import PeerUser
 from services.atom_types import Provenance
 from services.circle_sql import PeerScope
 from services.database import AsyncSessionLocal
+from services.federation_audit import (
+    STAGE_AFTER_READ,
+    STAGE_BEFORE_READ,
+    outcome_note,
+)
 from services.federation_identity import (
     FederationIdentity,
     get_federation_identity,
@@ -257,19 +262,52 @@ async def _write_responder_audit(
     )
 
 
+#: Why a request is no longer served. `_GONE` is all the code knows when only
+#: the pending record is missing: purged by a revocation (the purge also hits
+#: the other requests of the same far side) or lapsed -- it cannot tell which.
+_REFUSED_GONE = "gone"
+_REFUSED_PAIRING = "pairing_revoked"
+_REFUSED_LINK = "link_revoked"
+#: The background task was cancelled (shutdown, a test reset).
+_CANCELLED = "cancelled"
+
+#: The German sentence for each code -- presentation. The code itself leads
+#: the stored text (`federation_audit.outcome_note`) and is what tests and
+#: later readers of the log go by.
+_OUTCOME_TEXT = {
+    _REFUSED_GONE: "Anfrage nicht mehr vorhanden (verworfen oder abgelaufen)",
+    _REFUSED_PAIRING: "Kopplung widerrufen",
+    _REFUSED_LINK: "Verknüpfung besteht nicht mehr",
+    _CANCELLED: "Abgebrochen",
+}
+
+
+def _unserved_note(code: str, pending: _PendingRequest) -> str:
+    """The audit text for an access that stopped being served: the code, how
+    far it had got, and the sentence saying the same.
+
+    `retrieved_count` is the dividing line: `None` = nothing was read, a
+    number = foreign data sat in memory, even though no answer went out.
+    """
+    what = _OUTCOME_TEXT[code]
+    if pending.retrieved_count is None:
+        return outcome_note(
+            code, f"{what} vor dem Abruf — es wurden keine Daten gelesen.",
+            stage=STAGE_BEFORE_READ)
+    return outcome_note(
+        code,
+        f"{what} nach dem Abruf — {pending.retrieved_count} Treffer "
+        "gelesen, keine Antwort ausgeliefert.",
+        stage=STAGE_AFTER_READ)
+
+
 async def _record_cancelled_access(pending: _PendingRequest) -> None:
     """Write the record for a cancelled foreign access.
 
     A separate function so the cancellation branch above stays readable and
     the write is testable without staging a race.
     """
-    if pending.retrieved_count is None:
-        reason = "Abgebrochen vor dem Abruf — es wurden keine Daten gelesen."
-    else:
-        reason = (
-            f"Abgebrochen nach dem Abruf — {pending.retrieved_count} Treffer "
-            "gelesen, keine Antwort ausgeliefert."
-        )
+    reason = _unserved_note(_CANCELLED, pending)
     try:
         # `shield`: a SECOND cancel() ends the wait here, not the write
         # itself. Against a closing event loop nothing helps -- then there is
@@ -284,40 +322,19 @@ async def _record_cancelled_access(pending: _PendingRequest) -> None:
         logger.warning(f"Federation: cancellation record not written: {error_text_without_content(e)}")
 
 
-#: Why a request is no longer served. `_GONE` is all the code knows when only
-#: the pending record is missing: purged by a revocation (the purge also hits
-#: the other requests of the same far side) or lapsed -- it cannot tell which.
-_REFUSED_GONE = "gone"
-_REFUSED_PAIRING = "pairing_revoked"
-_REFUSED_LINK = "link_revoked"
-
-_REFUSAL_TEXT = {
-    _REFUSED_GONE: "Anfrage nicht mehr vorhanden (verworfen oder abgelaufen)",
-    _REFUSED_PAIRING: "Kopplung widerrufen",
-    _REFUSED_LINK: "Verknüpfung besteht nicht mehr",
-}
-
-
 async def _record_refused_access(pending: _PendingRequest, why: str) -> None:
     """Write the record for a query that stopped being served under way.
 
     `aborted`, like a cancellation, and for the same reason: after the
     retrieval this is not a failed access but one that happened and was not
-    delivered. `retrieved_count` is the dividing line here as well.
+    delivered.
 
-    The text says what the code KNOWS (`why`): a revoked pairing and a link
+    The record says what the code KNOWS (`why`): a revoked pairing and a link
     that no longer stands were read from the database; a record that is merely
     gone is called gone, not revoked.
     """
-    what = _REFUSAL_TEXT[why]
-    if pending.retrieved_count is None:
-        reason = f"{what} vor dem Abruf — es wurden keine Daten gelesen."
-    else:
-        reason = (
-            f"{what} nach dem Abruf — {pending.retrieved_count} Treffer "
-            "gelesen, keine Antwort ausgeliefert."
-        )
-    await _write_responder_audit(pending, success=False, error=reason, aborted=True)
+    await _write_responder_audit(
+        pending, success=False, error=_unserved_note(why, pending), aborted=True)
 
 
 async def _pairing_is_active(db: AsyncSession, peer_user_id: int) -> bool:

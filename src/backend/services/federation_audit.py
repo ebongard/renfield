@@ -24,6 +24,7 @@ Retention:
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -62,6 +63,40 @@ PAIRING_REVIVED = "pairing_revived"
 BASIS_OWNER = "owner"   # the account that owns the pairing
 BASIS_SELF = "self"     # the account the link belongs to
 BASIS_ADMIN = "admin"   # an `admin` holder acting on someone else's row
+
+
+# --- The outcome of a query row, as a code -----------------------------------
+#
+# `error_message` is a sentence for the person reading `/brain/audit`. What
+# HAPPENED must not have to be read back out of that sentence -- not by a
+# test, and not by anything that later counts or filters these rows. So the
+# sentence is led by a code:
+#
+#     [link_revoked/after_read] Verknüpfung besteht nicht mehr nach dem ...
+#
+# The code is the record; the sentence is presentation and may be reworded.
+# It lives in the text column because a query row has no structured field
+# (the JSON a revocation row carries sits in `query_text`, which here holds
+# the question). A column of its own would be the cleaner home.
+
+#: How far the access had got when it stopped being served.
+STAGE_BEFORE_READ = "before_read"      # nothing was read
+STAGE_AFTER_READ = "after_read"        # data was read, no answer was made
+STAGE_AFTER_ANSWER = "after_answer"    # an answer was made, never handed over
+
+_OUTCOME_NOTE = re.compile(r"^\[([a-z_]+)(?:/([a-z_]+))?\] ")
+
+
+def outcome_note(code: str, sentence: str, *, stage: str | None = None) -> str:
+    """`sentence`, led by its code (and stage) in machine-readable form."""
+    return f"[{code}/{stage}] {sentence}" if stage else f"[{code}] {sentence}"
+
+
+def outcome_code(text: str | None) -> tuple[str, str | None] | None:
+    """`(code, stage)` of a text written by `outcome_note` -- `None` for any
+    other text (a plain failure message, a row from before 2026-11-16)."""
+    match = _OUTCOME_NOTE.match(text or "")
+    return (match.group(1), match.group(2)) if match else None
 
 
 def _truncate(s: str | None, max_len: int) -> str | None:
