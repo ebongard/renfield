@@ -119,7 +119,7 @@ async def _fact_candidates(
         )
         return _dedup_doc_ids(hits)
     except Exception as e:
-        logger.warning(f"document_search: fact signal failed: {e}")
+        logger.warning(f"document_search: fact signal failed: {error_text_without_content(e)}")
         return []
 
 
@@ -134,7 +134,7 @@ async def _chunk_candidates(
         )
         return _dedup_doc_ids(hits)  # best-first by similarity; first hit per doc
     except Exception as e:
-        logger.warning(f"document_search: chunk signal failed: {e}")
+        logger.warning(f"document_search: chunk signal failed: {error_text_without_content(e)}")
         return []
 
 

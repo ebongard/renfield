@@ -59,6 +59,7 @@ from services.task_queue import (
     StreamEntry,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content, frames_without_content, install_log_sink
 
 HEARTBEAT_INTERVAL_S = 30
 HEARTBEAT_TTL_S = 90
@@ -160,7 +161,7 @@ async def _hand_back_as_single(
         )
         return True
     except Exception as e:
-        logger.warning(f"pdf-split[slow]: hand-back failed for doc {document_id}: {e}")
+        logger.warning(f"pdf-split[slow]: hand-back failed for doc {document_id}: {error_text_without_content(e)}")
         return False
 
 
@@ -173,7 +174,7 @@ async def _heartbeat_loop(
                 PDF_SPLIT_WORKER_HEARTBEAT_KEY, consumer_id, ex=HEARTBEAT_TTL_S
             )
         except Exception as e:
-            logger.warning(f"heartbeat write failed: {e}")
+            logger.warning(f"heartbeat write failed: {error_text_without_content(e)}")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_INTERVAL_S)
         except TimeoutError:
@@ -189,7 +190,7 @@ async def _row_heartbeat_loop(document_id, stop_event: asyncio.Event) -> None:
                     doc.split_heartbeat_at = datetime.utcnow()
                     await db.commit()
         except Exception as e:
-            logger.debug(f"row heartbeat write failed for doc {document_id}: {e}")
+            logger.debug(f"row heartbeat write failed for doc {document_id}: {error_text_without_content(e)}")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=ROW_HEARTBEAT_REFRESH_S)
         except TimeoutError:
@@ -213,7 +214,7 @@ async def _clear_transient(redis: aioredis.Redis, entry_id: str) -> None:
         await redis.delete(_transient_key(entry_id))
         await redis.delete(_flagpark_key(entry_id))
     except Exception as e:
-        logger.debug(f"transient-counter cleanup failed for {entry_id}: {e}")
+        logger.debug(f"transient-counter cleanup failed for {entry_id}: {error_text_without_content(e)}")
 
 
 async def _claim_row(document_id) -> str:
@@ -272,7 +273,7 @@ async def _process_entry(
             # safe fail-safe outcome, not data loss.
             await redis.expire(fkey, 604_800)
         except Exception as ie:
-            logger.debug(f"flagpark-counter incr failed: {ie}")
+            logger.debug(f"flagpark-counter incr failed: {error_text_without_content(ie)}")
         logger.warning(
             f"doc {document_id}: PDF_SPLIT_ENABLED is off — parking entry "
             f"{entry.entry_id} in the PEL (re-enable to resume)"
@@ -325,14 +326,17 @@ async def _process_entry(
             f"slow-split doc {document_id}: {outcome} (entry {entry.entry_id})"
         )
     except Exception as e:
-        logger.exception(f"slow-split doc {document_id} failed: {e}")
+        logger.error(
+            f"slow-split doc {document_id} failed: {type(e).__name__}: {error_text_without_content(e)}"
+            f" | at {frames_without_content(e)}"
+        )
         if _is_transient_error(e):
             try:
                 tkey = _transient_key(entry.entry_id)
                 await redis.incr(tkey)
                 await redis.expire(tkey, 604_800)  # 7d — see flagpark TTL note
             except Exception as ie:
-                logger.debug(f"transient-counter incr failed: {ie}")
+                logger.debug(f"transient-counter incr failed: {error_text_without_content(ie)}")
             logger.warning(
                 f"doc {document_id}: transient {type(e).__name__} — leaving in PEL"
             )
@@ -357,7 +361,7 @@ async def _process_entry(
                 )
             except Exception as me:
                 logger.error(
-                    f"doc {document_id}: could not record terminal failure ({me}) "
+                    f"doc {document_id}: could not record terminal failure ({error_text_without_content(me)}) "
                     f"— leaving in PEL"
                 )
     finally:
@@ -409,7 +413,7 @@ async def main() -> None:
                     for stale in await queue.reclaim_stale(min_idle_ms=_RECLAIM_MIN_IDLE_MS):
                         await _process_entry(redis, queue, stale)
                 except Exception as e:
-                    logger.warning(f"periodic reclaim failed: {e}")
+                    logger.warning(f"periodic reclaim failed: {error_text_without_content(e)}")
             entry = await queue.read_one(block_ms=5_000)
             if entry is None:
                 continue
@@ -431,4 +435,9 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    # The worker is a process of its own and never imports `main.py`: without
+    # this it logs through loguru's built-in sink, which prints the variable
+    # values of every frame into a traceback (`install_log_sink`). The level
+    # stays what that built-in sink had -- loguru's own, NOT `LOG_LEVEL`.
+    install_log_sink(os.getenv("LOGURU_LEVEL", "DEBUG"))
     asyncio.run(main())

@@ -33,6 +33,8 @@ from __future__ import annotations
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content, frames_without_content
+
 # ---------------------------------------------------------------------------
 # Chat TTS routing — the big one
 # ---------------------------------------------------------------------------
@@ -126,9 +128,8 @@ async def ha_route_chat_tts_to_device_output(
             return False
 
     except Exception as e:
-        logger.error(f"❌ ha_glue chat TTS routing failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ ha_glue chat TTS routing failed: {type(e).__name__}: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
         return False
 
 
@@ -153,7 +154,7 @@ async def ha_resolve_room_context_by_ip(*, ip_address: str) -> dict | None:
             room_service = RoomService(db_session)
             return await room_service.get_room_context_by_ip(ip_address)
     except Exception as e:
-        logger.warning(f"⚠️  ha_glue room context lookup failed: {e}")
+        logger.warning(f"⚠️  ha_glue room context lookup failed: {error_text_without_content(e)}")
         return None
 
 
@@ -176,5 +177,5 @@ async def ha_fetch_tts_audio_cache(*, audio_id: str) -> bytes | None:
         service = get_audio_output_service()
         return service.get_cached_audio(audio_id)
     except Exception as e:
-        logger.warning(f"⚠️  ha_glue TTS cache fetch failed: {e}")
+        logger.warning(f"⚠️  ha_glue TTS cache fetch failed: {error_text_without_content(e)}")
         return None

@@ -16,6 +16,7 @@ from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
 from utils.hooks import run_hooks
+from utils.log_safety import error_text_without_content
 
 # Import all schemas from separate file
 from .rooms_schemas import (
@@ -189,10 +190,10 @@ async def list_ha_areas(db: AsyncSession = Depends(get_db), _user: User = Depend
     try:
         areas = await ha_client.get_areas()
     except Exception as e:
-        logger.error(f"Failed to fetch HA areas: {e}")
+        logger.error(f"Failed to fetch HA areas: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {e!s}"
+            detail=f"Failed to connect to Home Assistant: {error_text_without_content(e)}"
         )
 
     # Get all rooms to check links
@@ -236,10 +237,10 @@ async def import_ha_areas(
     try:
         areas = await ha_client.get_areas()
     except Exception as e:
-        logger.error(f"Failed to fetch HA areas: {e}")
+        logger.error(f"Failed to fetch HA areas: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {e!s}"
+            detail=f"Failed to connect to Home Assistant: {error_text_without_content(e)}"
         )
 
     results = await service.import_ha_areas(
@@ -273,10 +274,10 @@ async def export_rooms_to_ha(db: AsyncSession = Depends(get_db), _user: User = D
     try:
         existing_areas = await ha_client.get_areas()
     except Exception as e:
-        logger.error(f"Failed to fetch HA areas: {e}")
+        logger.error(f"Failed to fetch HA areas: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {e!s}"
+            detail=f"Failed to connect to Home Assistant: {error_text_without_content(e)}"
         )
 
     area_by_name = {a.get("name", "").lower(): a for a in existing_areas}
@@ -336,10 +337,10 @@ async def sync_with_ha(
     try:
         areas = await ha_client.get_areas()
     except Exception as e:
-        logger.error(f"Failed to fetch HA areas: {e}")
+        logger.error(f"Failed to fetch HA areas: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {e!s}"
+            detail=f"Failed to connect to Home Assistant: {error_text_without_content(e)}"
         )
 
     # Import

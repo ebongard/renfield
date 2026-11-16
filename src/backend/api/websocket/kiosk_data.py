@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Message
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 
 class RoleActivityEntry(BaseModel):
@@ -194,7 +195,7 @@ async def broadcast_turn_activity(
             }
         )
     except Exception as e:
-        logger.debug(f"kiosk turn_activity broadcast failed: {e}")
+        logger.debug(f"kiosk turn_activity broadcast failed: {error_text_without_content(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +277,7 @@ async def _knowledge_health() -> "InternalSubsystemHealth":
 
         worker_alive, backlog = await ingest_worker_and_backlog()
     except Exception as e:
-        logger.debug(f"kiosk internal health: knowledge probe failed: {e}")
+        logger.debug(f"kiosk internal health: knowledge probe failed: {error_text_without_content(e)}")
         return InternalSubsystemHealth(
             id="knowledge", health="degraded", impaired_code="knowledge_worker_down"
         )
@@ -312,7 +313,7 @@ async def compute_internal_subsystem_health() -> list[dict]:
         try:
             out.append((await compute()).model_dump())
         except Exception as e:
-            logger.debug(f"kiosk internal health: {compute.__name__} failed: {e}")
+            logger.debug(f"kiosk internal health: {compute.__name__} failed: {error_text_without_content(e)}")
     return out
 
 
@@ -359,7 +360,7 @@ async def refresh_and_push_internal_health() -> None:
     except Exception as e:
         # Do NOT advance the gate on a failed broadcast — otherwise the delta is
         # lost permanently (the next tick would see no change and stay silent).
-        logger.debug(f"kiosk internal_health_changed broadcast failed: {e}")
+        logger.debug(f"kiosk internal_health_changed broadcast failed: {error_text_without_content(e)}")
         return
     _internal_health_last_pushed = health
 
@@ -541,7 +542,7 @@ async def compute_peer_status() -> list[dict]:
             try:
                 asked = await last_asked_at(db, [peer.id for peer in rows])
             except Exception as e:
-                logger.debug(f"kiosk peers: last-asked lookup failed: {e}")
+                logger.debug(f"kiosk peers: last-asked lookup failed: {error_text_without_content(e)}")
 
     readings: dict = {}
     if probing and rows:
@@ -680,7 +681,7 @@ async def refresh_and_push_peer_status() -> None:
         })
     except Exception as e:
         # Do NOT advance the gate on a failed broadcast (see internal-health).
-        logger.debug(f"kiosk peer_status_changed broadcast failed: {e}")
+        logger.debug(f"kiosk peer_status_changed broadcast failed: {error_text_without_content(e)}")
         return
     _peer_status_last_pushed = comparable
     _peer_status_last_pushed_at = time.monotonic()
@@ -760,7 +761,7 @@ async def compute_kiosk_weather(mcp_manager, force: bool = False) -> "KioskWeath
             low=today.get("temp_min"),
         )
     except Exception as e:
-        logger.warning(f"kiosk_weather: {e}")
+        logger.warning(f"kiosk_weather: {error_text_without_content(e)}")
         return _weather_cache["value"]
 
     _weather_cache["at"] = now
@@ -793,4 +794,4 @@ async def refresh_and_push_kiosk_weather(mcp_manager) -> None:
 
         await broadcast_kiosk_event({"type": "weather_updated", "weather": payload})
     except Exception as e:
-        logger.debug(f"kiosk weather_updated broadcast failed: {e}")
+        logger.debug(f"kiosk weather_updated broadcast failed: {error_text_without_content(e)}")

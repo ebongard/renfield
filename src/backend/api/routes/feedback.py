@@ -12,6 +12,7 @@ from services.api_rate_limiter import limiter
 from services.auth_service import get_current_user
 from services.database import get_db
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -73,8 +74,8 @@ async def submit_correction(
             created_at=correction.created_at.isoformat(),
         )
     except Exception as e:
-        logger.error(f"❌ Feedback error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Feedback error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/corrections")
@@ -107,8 +108,8 @@ async def list_corrections(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ List corrections error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ List corrections error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.delete("/corrections/{correction_id}")
@@ -130,5 +131,5 @@ async def delete_correction(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Delete correction error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Delete correction error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

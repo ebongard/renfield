@@ -16,6 +16,7 @@ from ha_glue.integrations.homeassistant import HomeAssistantClient
 from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 ha_client = HomeAssistantClient()
@@ -44,8 +45,8 @@ async def get_all_states(
         states = await ha_client.get_states()
         return {"states": states}
     except Exception as e:
-        logger.error(f"❌ Get states error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Get states error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/state/{entity_id}")
@@ -66,8 +67,8 @@ async def get_entity_state(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Get state error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Get state error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.post("/turn_on/{entity_id}")
 async def turn_on(
@@ -85,8 +86,8 @@ async def turn_on(
             raise HTTPException(status_code=500, detail="Aktion fehlgeschlagen")
         return {"success": True, "action": "turn_on", "entity_id": entity_id}
     except Exception as e:
-        logger.error(f"❌ Turn on error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Turn on error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.post("/turn_off/{entity_id}")
@@ -105,8 +106,8 @@ async def turn_off(
             raise HTTPException(status_code=500, detail="Aktion fehlgeschlagen")
         return {"success": True, "action": "turn_off", "entity_id": entity_id}
     except Exception as e:
-        logger.error(f"❌ Turn off error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Turn off error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.post("/toggle/{entity_id}")
@@ -125,8 +126,8 @@ async def toggle(
             raise HTTPException(status_code=500, detail="Aktion fehlgeschlagen")
         return {"success": True, "action": "toggle", "entity_id": entity_id}
     except Exception as e:
-        logger.error(f"❌ Toggle error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Toggle error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.post("/set_value")
@@ -154,8 +155,8 @@ async def set_value(
             "value": request.value
         }
     except Exception as e:
-        logger.error(f"❌ Set value error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Set value error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 @router.post("/service")
 async def call_service(
@@ -178,8 +179,8 @@ async def call_service(
             raise HTTPException(status_code=500, detail="Service-Aufruf fehlgeschlagen")
         return {"success": True}
     except Exception as e:
-        logger.error(f"❌ Call service error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Call service error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/search")
@@ -196,8 +197,8 @@ async def search_entities(
         results = await ha_client.search_entities(query)
         return {"results": results}
     except Exception as e:
-        logger.error(f"❌ Search error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Search error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/domain/{domain}")
@@ -214,5 +215,5 @@ async def get_entities_by_domain(
         entities = await ha_client.get_entities_by_domain(domain)
         return {"entities": entities}
     except Exception as e:
-        logger.error(f"❌ Get domain entities error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Get domain entities error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

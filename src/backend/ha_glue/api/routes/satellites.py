@@ -19,6 +19,7 @@ from models.permissions import Permission
 from services.auth_service import get_optional_user, require_permission
 from services.database import get_db
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -268,7 +269,7 @@ def _satellite_to_response_guarded(sat_id: str, sat_data: dict[str, Any]) -> Sat
     try:
         return _satellite_to_response(sat_id, sat_data)
     except _CORRUPT_ENTRY_ERRORS as e:
-        logger.error(f"Satellite '{sat_id}' cannot be rendered, shown as corrupt: {e!r}")
+        logger.error(f"Satellite '{sat_id}' cannot be rendered, shown as corrupt: {type(e).__name__}: {error_text_without_content(e)}")
         return _corrupt_satellite_response(sat_id, sat_data)
 
 
@@ -583,10 +584,10 @@ async def ping_satellite(satellite_id: str, _user: User = Depends(require_permis
         })
         return {"status": "sent", "satellite_id": satellite_id}
     except Exception as e:
-        logger.error(f"Failed to ping satellite {satellite_id}: {e}")
+        logger.error(f"Failed to ping satellite {satellite_id}: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to ping satellite: {e!s}"
+            detail=f"Failed to ping satellite: {error_text_without_content(e)}"
         )
 
 

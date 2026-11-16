@@ -25,6 +25,8 @@ from dataclasses import dataclass
 import numpy as np
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 PEAK_TARGET = 10 ** (-1.0 / 20)  # -1 dBFS ceiling: the shelf adds gain, so re-level
 
 
@@ -138,5 +140,5 @@ def apply_profile(wav_bytes: bytes, profile_name: str | None) -> bytes:
         return out.getvalue()
 
     except Exception as e:
-        logger.warning(f"TTS sound profile {profile_name!r} failed — playing unprocessed: {e}")
+        logger.warning(f"TTS sound profile {profile_name!r} failed — playing unprocessed: {error_text_without_content(e)}")
         return wav_bytes

@@ -26,6 +26,8 @@ import time
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 
 class InternalToolService:
     """Provider-agnostic internal tools for the Agent Loop."""
@@ -414,7 +416,7 @@ class InternalToolService:
                 }
 
         except Exception as e:
-            logger.error(f"Error resolving room player for '{room_name}': {e}")
+            logger.error(f"Error resolving room player for '{room_name}': {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error resolving room: {e!s}",
@@ -498,7 +500,7 @@ class InternalToolService:
             ha = HomeAssistantClient()
             states = await ha.get_states()
         except Exception as e:
-            logger.warning(f"device_controls: HA states fetch failed: {e}")
+            logger.warning(f"device_controls: HA states fetch failed: {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": "Die Geräteliste konnte gerade nicht geladen werden.",
@@ -628,7 +630,7 @@ class InternalToolService:
                 "data": {"entity_id": entity_id, "state": resolved},
             }
         except Exception as e:
-            logger.error(f"device_action {action} on {entity_id} failed: {e}")
+            logger.error(f"device_action {action} on {entity_id} failed: {error_text_without_content(e)}")
             return {"success": False, "message": f"Fehler: {e!s}", "action_taken": False}
 
     async def _presence_map(self, params: dict) -> dict:
@@ -643,7 +645,7 @@ class InternalToolService:
             ps = get_presence_service()
             all_presence = ps.get_all_presence()
         except Exception as e:
-            logger.warning(f"presence_map: presence fetch failed: {e}")
+            logger.warning(f"presence_map: presence fetch failed: {error_text_without_content(e)}")
             return {"success": False, "message": "Anwesenheit konnte nicht geladen werden.", "action_taken": False}
 
         if not all_presence:
@@ -1047,7 +1049,7 @@ class InternalToolService:
             return {"success": False, "message": f"Kein Lautsprecher in {resolved_room_name} verfügbar", "action_taken": False}
 
         except Exception as e:
-            logger.error(f"Error announcing in room '{room_name}': {e}")
+            logger.error(f"Error announcing in room '{room_name}': {error_text_without_content(e)}")
             return {"success": False, "message": f"Error announcing: {e!s}", "action_taken": False}
 
     async def _broadcast_announcement(self, params: dict) -> dict:
@@ -1126,7 +1128,7 @@ class InternalToolService:
                         )
                         return (room_name, bool(res.get("success")))
                     except Exception as e:
-                        logger.warning(f"broadcast: room '{room_name}' failed: {e}")
+                        logger.warning(f"broadcast: room '{room_name}' failed: {error_text_without_content(e)}")
                         return (room_name, False)
 
             results = await asyncio.gather(*[_one(rn) for _rid, rn in rooms])
@@ -1144,7 +1146,7 @@ class InternalToolService:
                 "data": {"reached": reached, "failed": failed, "text": text},
             }
         except Exception as e:
-            logger.error(f"Error broadcasting announcement: {e}")
+            logger.error(f"Error broadcasting announcement: {error_text_without_content(e)}")
             return {"success": False, "message": f"Error broadcasting: {e!s}", "action_taken": False}
 
     def _presence_room_user(self, room_id: int) -> int | None:
@@ -1206,7 +1208,7 @@ class InternalToolService:
                 **kwargs,
             )
         except Exception as e:
-            logger.debug(f"Media follow registration failed: {e}")
+            logger.debug(f"Media follow registration failed: {error_text_without_content(e)}")
 
     async def _play_in_room(self, params: dict) -> dict:
         """
@@ -1427,7 +1429,7 @@ class InternalToolService:
             }
 
         except Exception as e:
-            logger.error(f"Error playing media in '{room_name}': {e}")
+            logger.error(f"Error playing media in '{room_name}': {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error playing media: {e!s}",
@@ -1450,7 +1452,7 @@ class InternalToolService:
                 return None
             return build_mcp_output_providers(mcp_manager).get(target_type)
         except Exception as e:  # never let provider lookup break playback
-            logger.error(f"output provider lookup failed for '{target_type}': {e}")
+            logger.error(f"output provider lookup failed for '{target_type}': {error_text_without_content(e)}")
             return None
 
     # Explicitly-not-ready states. Drives the power-on trigger AND the readiness
@@ -1505,7 +1507,7 @@ class InternalToolService:
             try:
                 st = await provider.status(target_id)
             except OutputProviderError as e:
-                logger.info(f"{provider.key} pre-play status failed ({e}); treating as off → power-on")
+                logger.info(f"{provider.key} pre-play status failed ({error_text_without_content(e)}); treating as off → power-on")
                 st = None
             if st is None or st.state in self._NOT_READY_STATES:
                 try:
@@ -1634,7 +1636,7 @@ class InternalToolService:
                 },
             }
         except Exception as e:
-            logger.error(f"Error playing URL on DLNA renderer '{renderer_name}': {e}")
+            logger.error(f"Error playing URL on DLNA renderer '{renderer_name}': {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error playing on DLNA: {e!s}",
@@ -2063,7 +2065,7 @@ class InternalToolService:
             }
 
         except Exception as e:
-            logger.error(f"Error executing DLNA media {action} in '{room_name}': {e}")
+            logger.error(f"Error executing DLNA media {action} in '{room_name}': {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error executing media {action}: {e!s}",
@@ -2206,7 +2208,7 @@ class InternalToolService:
             }
 
         except Exception as e:
-            logger.error(f"Error executing media {action} in '{room_name}': {e}")
+            logger.error(f"Error executing media {action} in '{room_name}': {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error executing media {action}: {e!s}",
@@ -2359,7 +2361,7 @@ class InternalToolService:
             }
 
         except Exception as e:
-            logger.error(f"Error playing album on DLNA: {e}")
+            logger.error(f"Error playing album on DLNA: {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error playing album on DLNA: {e!s}",
@@ -2436,7 +2438,7 @@ class InternalToolService:
                 },
             }
         except Exception as e:
-            logger.error(f"Error playing from server '{server_name}' object '{object_id}' in '{room_name}': {e}")
+            logger.error(f"Error playing from server '{server_name}' object '{object_id}' in '{room_name}': {error_text_without_content(e)}")
             return {"success": False, "message": f"Error playing from server: {e!s}", "action_taken": False}
 
     async def _resolve_room_visual_player(self, params: dict) -> dict:
@@ -2510,7 +2512,7 @@ class InternalToolService:
                 }
 
         except Exception as e:
-            logger.error(f"Error resolving visual player for '{room_name}': {e}")
+            logger.error(f"Error resolving visual player for '{room_name}': {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error resolving visual player: {e!s}",
@@ -2650,7 +2652,7 @@ class InternalToolService:
             }
 
         except Exception as e:
-            logger.error(f"Error playing video on DLNA: {e}")
+            logger.error(f"Error playing video on DLNA: {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error playing video on DLNA: {e!s}",
@@ -3102,7 +3104,7 @@ class InternalToolService:
                 return result
 
         except Exception as e:
-            logger.error(f"Error playing radio station '{station_id}' in '{room_name}': {e}")
+            logger.error(f"Error playing radio station '{station_id}' in '{room_name}': {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error playing radio: {e!s}",
@@ -3171,7 +3173,7 @@ class InternalToolService:
                 }
 
         except Exception as e:
-            logger.error(f"Error saving radio favorite: {e}")
+            logger.error(f"Error saving radio favorite: {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error saving favorite: {e!s}",
@@ -3226,7 +3228,7 @@ class InternalToolService:
                 }
 
         except Exception as e:
-            logger.error(f"Error listing radio favorites: {e}")
+            logger.error(f"Error listing radio favorites: {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error listing favorites: {e!s}",
@@ -3276,7 +3278,7 @@ class InternalToolService:
                 }
 
         except Exception as e:
-            logger.error(f"Error removing radio favorite: {e}")
+            logger.error(f"Error removing radio favorite: {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error removing favorite: {e!s}",
@@ -3346,7 +3348,7 @@ class InternalToolService:
                 "data": data,
             }
         except Exception as e:
-            logger.error(f"Error running Bluetooth scan: {e}")
+            logger.error(f"Error running Bluetooth scan: {error_text_without_content(e)}")
             return {
                 "success": False,
                 "message": f"Error running Bluetooth scan: {e!s}",

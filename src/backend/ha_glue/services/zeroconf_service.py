@@ -11,6 +11,8 @@ import socket
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 try:
     from zeroconf import IPVersion, ServiceInfo
     from zeroconf.asyncio import AsyncZeroconf
@@ -144,7 +146,7 @@ class ZeroconfService:
             logger.info("   Satellites can now auto-discover this server")
 
         except Exception as e:
-            logger.error(f"❌ Failed to register zeroconf service: {e}")
+            logger.error(f"❌ Failed to register zeroconf service: {error_text_without_content(e)}")
 
     async def stop(self):
         """Stop advertising the service"""
@@ -159,7 +161,7 @@ class ZeroconfService:
             logger.info("👋 Zeroconf service unregistered")
 
         except Exception as e:
-            logger.error(f"❌ Failed to unregister zeroconf service: {e}")
+            logger.error(f"❌ Failed to unregister zeroconf service: {error_text_without_content(e)}")
 
     @property
     def is_registered(self) -> bool:

@@ -39,6 +39,7 @@ from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
 from services.task_queue import document_worker_is_alive as _worker_is_alive
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 
 async def _augment_with_progress(
@@ -65,7 +66,7 @@ async def _augment_with_progress(
         if live.get("pages"):
             resp_kwargs["pages"] = live["pages"]
     except Exception as e:
-        logger.warning(f"progress read failed for doc {doc.id}: {e}")
+        logger.warning(f"progress read failed for doc {doc.id}: {error_text_without_content(e)}")
 
     if include_queue_position and doc.status == "pending":
         try:
@@ -80,7 +81,7 @@ async def _augment_with_progress(
             else:
                 resp_kwargs["queue_position"] = 1
         except Exception as e:
-            logger.warning(f"queue position read failed for doc {doc.id}: {e}")
+            logger.warning(f"queue position read failed for doc {doc.id}: {error_text_without_content(e)}")
 
 # Import all schemas from separate file
 from .knowledge_schemas import (
@@ -443,8 +444,8 @@ async def upload_document(
         logger.info(f"File stored: {file_path}")
 
     except Exception as e:
-        logger.error(f"Failed to store the file: {e}")
-        raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {e!s}")
+        logger.error(f"Failed to store the file: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {error_text_without_content(e)}")
 
     # Worker path (#388): create the Document row synchronously (cheap
     # INSERT so the client has an id to poll), enqueue on the Redis
@@ -458,7 +459,7 @@ async def upload_document(
             try:
                 os.remove(file_path)
             except OSError as e:
-                logger.warning(f"failed to clean up orphan upload {file_path}: {e}")
+                logger.warning(f"failed to clean up orphan upload {file_path}: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503,
             detail={
@@ -488,7 +489,7 @@ async def upload_document(
             try:
                 os.remove(file_path)
             except OSError as cleanup_err:
-                logger.warning(f"failed to clean up orphan upload {file_path}: {cleanup_err}")
+                logger.warning(f"failed to clean up orphan upload {file_path}: {error_text_without_content(cleanup_err)}")
         winner = dup.winner
         raise HTTPException(
             status_code=409,
@@ -513,7 +514,7 @@ async def upload_document(
             try:
                 os.remove(file_path)
             except OSError as cleanup_err:
-                logger.warning(f"failed to clean up orphan upload {file_path}: {cleanup_err}")
+                logger.warning(f"failed to clean up orphan upload {file_path}: {error_text_without_content(cleanup_err)}")
         raise HTTPException(status_code=500, detail="Database integrity error")
     except Exception as e:
         if file_path.exists():
@@ -522,9 +523,9 @@ async def upload_document(
             except OSError as cleanup_err:
                 # Don't let cleanup mask the real DB error the user
                 # needs to see. Log it and move on.
-                logger.warning(f"failed to clean up orphan upload {file_path}: {cleanup_err}")
-        logger.error(f"Failed to create the document record: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+                logger.warning(f"failed to clean up orphan upload {file_path}: {error_text_without_content(cleanup_err)}")
+        logger.error(f"Failed to create the document record: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
     queue = DocumentTaskQueue(redis_client=get_redis())
     await queue.enqueue({
@@ -1243,7 +1244,7 @@ async def create_knowledge_base(
     except Exception as e:
         if "unique" in str(e).lower():
             raise HTTPException(status_code=400, detail=f"Knowledge Base '{data.name}' existiert bereits")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 def _counts_per_caller(user: User | None) -> bool:

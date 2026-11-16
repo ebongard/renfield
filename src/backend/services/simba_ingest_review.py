@@ -557,7 +557,7 @@ async def confirm(
             "mcp.simba.upload_documents", tool_args, truncate=False
         )
     except Exception as e:
-        logger.error(f"simba-ingest confirm: upload error for proposal {proposal_id}: {e}")
+        logger.error(f"simba-ingest confirm: upload error for proposal {proposal_id}: {error_text_without_content(e)}")
         await _revert_claim(db, proposal_id)
         return {"success": False, "message": f"upload error: {e}"}
 

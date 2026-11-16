@@ -84,7 +84,7 @@ async def _retrieve_facts(
             query, asker_id=user_id_int, top_k=_FACT_SEARCH_TOP_K,
         )
     except Exception as e:
-        logger.warning(f"knowledge_search: fact retrieval failed (ignored): {e}")
+        logger.warning(f"knowledge_search: fact retrieval failed (ignored): {error_text_without_content(e)}")
         return [], {}
 
     doc_ids = {f["document_id"] for f in facts if f.get("document_id") is not None}

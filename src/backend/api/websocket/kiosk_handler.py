@@ -74,6 +74,7 @@ from models.permissions import Permission
 from services.auth_service import get_user_by_id
 from services.database import AsyncSessionLocal
 from services.websocket_auth import WSAuthError, authenticate_websocket
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -102,7 +103,7 @@ async def note_chat_turn_active(active: bool) -> None:
         try:
             await broadcast_kiosk_event({"type": "chat_activity", "active": now_active})
         except Exception as e:
-            logger.debug(f"kiosk chat_activity broadcast failed: {e}")
+            logger.debug(f"kiosk chat_activity broadcast failed: {error_text_without_content(e)}")
 
 
 # Per-client send deadline. A backpressured wall display (tab asleep, WiFi
@@ -179,7 +180,7 @@ async def _broadcast_consumer() -> None:
                     if isinstance(result, Exception):
                         _kiosk_clients.discard(ws)
         except Exception as e:  # never let one event kill the consumer
-            logger.debug(f"kiosk broadcast consumer error: {e}")
+            logger.debug(f"kiosk broadcast consumer error: {error_text_without_content(e)}")
         finally:
             _event_queue.task_done()
 
@@ -263,7 +264,7 @@ async def build_kiosk_snapshot(app) -> dict:
 
         snapshot["satellites"] = get_satellite_manager().get_all_satellites()
     except Exception as e:
-        logger.debug(f"kiosk snapshot: satellites unavailable: {e}")
+        logger.debug(f"kiosk snapshot: satellites unavailable: {error_text_without_content(e)}")
 
     # --- Presence (rooms → occupant counts; no user ids) -----------------
     try:
@@ -271,7 +272,7 @@ async def build_kiosk_snapshot(app) -> dict:
 
         snapshot["presence"] = build_presence_payload(get_presence_service())
     except Exception as e:
-        logger.debug(f"kiosk snapshot: presence unavailable: {e}")
+        logger.debug(f"kiosk snapshot: presence unavailable: {error_text_without_content(e)}")
 
     # --- MCP connection status + tool counts -----------------------------
     mcp_manager = getattr(app.state, "mcp_manager", None)
@@ -282,7 +283,7 @@ async def build_kiosk_snapshot(app) -> dict:
 
             snapshot["mcp"] = kiosk_mcp_status(mcp_manager)
         except Exception as e:
-            logger.debug(f"kiosk snapshot: mcp status unavailable: {e}")
+            logger.debug(f"kiosk snapshot: mcp status unavailable: {error_text_without_content(e)}")
 
     # --- Tool-health classification (aggregated, user-id-free) -----------
     try:
@@ -337,7 +338,7 @@ async def build_kiosk_snapshot(app) -> dict:
             )
         snapshot["tool_health"] = tool_health
     except Exception as e:
-        logger.debug(f"kiosk snapshot: tool health unavailable: {e}")
+        logger.debug(f"kiosk snapshot: tool health unavailable: {error_text_without_content(e)}")
 
     # --- Internal-subsystem health (knowledge / presence / media) --------
     try:
@@ -345,7 +346,7 @@ async def build_kiosk_snapshot(app) -> dict:
 
         snapshot["internal_health"] = await compute_internal_subsystem_health()
     except Exception as e:
-        logger.debug(f"kiosk snapshot: internal health unavailable: {e}")
+        logger.debug(f"kiosk snapshot: internal health unavailable: {error_text_without_content(e)}")
 
     # --- Agent roles (availability-filtered, as the router sees them) ----
     try:
@@ -362,7 +363,7 @@ async def build_kiosk_snapshot(app) -> dict:
                 for role in agent_router.roles.values()
             ]
     except Exception as e:
-        logger.debug(f"kiosk snapshot: roles unavailable: {e}")
+        logger.debug(f"kiosk snapshot: roles unavailable: {error_text_without_content(e)}")
 
     # --- Recent role activations (content-free pulse history) ------------
     try:
@@ -375,7 +376,7 @@ async def build_kiosk_snapshot(app) -> dict:
             for e in entries
         ]
     except Exception as e:
-        logger.debug(f"kiosk snapshot: activity unavailable: {e}")
+        logger.debug(f"kiosk snapshot: activity unavailable: {error_text_without_content(e)}")
 
     # --- Federation peers (reachability, no message content) -------------
     # Shared with the peer_status_changed refresher so snapshot + delta agree.
@@ -384,7 +385,7 @@ async def build_kiosk_snapshot(app) -> dict:
 
         snapshot["peers"] = await compute_peer_status()
     except Exception as e:
-        logger.debug(f"kiosk snapshot: peers unavailable: {e}")
+        logger.debug(f"kiosk snapshot: peers unavailable: {error_text_without_content(e)}")
 
     # --- Weather tile (process-cached; None hides the tile) --------------
     try:
@@ -394,7 +395,7 @@ async def build_kiosk_snapshot(app) -> dict:
         if weather is not None:
             snapshot["weather"] = weather.model_dump()
     except Exception as e:
-        logger.debug(f"kiosk snapshot: weather unavailable: {e}")
+        logger.debug(f"kiosk snapshot: weather unavailable: {error_text_without_content(e)}")
 
     # --- Now-playing tile (one per room, PLAYING only, no user ids) ------
     try:
@@ -405,7 +406,7 @@ async def build_kiosk_snapshot(app) -> dict:
 
             snapshot["now_playing"] = get_media_follow_service().active_sessions()
     except Exception as e:
-        logger.debug(f"kiosk snapshot: now-playing unavailable: {e}")
+        logger.debug(f"kiosk snapshot: now-playing unavailable: {error_text_without_content(e)}")
 
     return snapshot
 
@@ -459,7 +460,7 @@ async def kiosk_live(
                     )
                 )
             except Exception as e:
-                logger.warning(f"kiosk WS permission check failed: {e}")
+                logger.warning(f"kiosk WS permission check failed: {error_text_without_content(e)}")
                 may_view = False
         if not may_view:
             await websocket.close(
@@ -483,7 +484,7 @@ async def kiosk_live(
     except WebSocketDisconnect:
         return
     except Exception as e:
-        logger.debug(f"Kiosk hydrate failed: {e}")
+        logger.debug(f"Kiosk hydrate failed: {error_text_without_content(e)}")
         return
 
     _kiosk_clients.add(websocket)  # now broadcast-eligible
@@ -511,7 +512,7 @@ async def kiosk_live(
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        logger.debug(f"Kiosk display connection error: {e}")
+        logger.debug(f"Kiosk display connection error: {error_text_without_content(e)}")
     finally:
         _kiosk_clients.discard(websocket)
         logger.info(f"🖥️ Kiosk display disconnected ({len(_kiosk_clients)} total)")

@@ -38,6 +38,8 @@ import uuid
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 # --- caps (kept well under the artifact_service backend caps) ----------------
 # keyvalue: MAX_KEYVALUE_PAIRS=100 — a household has far fewer rooms.
 MAX_SENSOR_PAIRS = 60
@@ -366,5 +368,5 @@ async def _safe_entity_map(producer: str) -> list[dict]:
         from ha_glue.integrations.homeassistant import HomeAssistantClient
         return await HomeAssistantClient().get_entity_map()
     except Exception as e:
-        logger.warning(f"smarthome_artifacts[{producer}]: HA entity map fetch failed: {e}")
+        logger.warning(f"smarthome_artifacts[{producer}]: HA entity map fetch failed: {error_text_without_content(e)}")
         return []

@@ -65,6 +65,7 @@ from services.rag_service import DuplicateDocumentError, RAGService
 from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Cross-repo push-contract version (DX-7). Sent in the request + response
 # header; the MCP treats an unknown response status as `retry` and logs a skew
@@ -295,7 +296,7 @@ async def ingest_document(
         # Disk full / permission denied writing the recovery copy. Transient —
         # the MCP leaves the file in the inbox and re-pushes rather than losing
         # it to failed/.
-        logger.error(f"folder-ingest: persist failed for {meta.filename!r}: {exc}")
+        logger.error(f"folder-ingest: persist failed for {meta.filename!r}: {error_text_without_content(exc)}")
         return IngestResult(IngestStatus.RETRY, detail="persist_error")
 
     if decision is _Decision.REINGEST:
@@ -349,7 +350,7 @@ async def ingest_document(
             )
         except Exception as exc:
             _cleanup(file_path)
-            logger.error(f"folder-ingest: create failed for {meta.filename!r}: {exc}")
+            logger.error(f"folder-ingest: create failed for {meta.filename!r}: {error_text_without_content(exc)}")
             return IngestResult(IngestStatus.FAILED, detail="create_error")
 
     # 4. Mark for async Paperless filing (Design Z), BEFORE enqueue. We do NOT run

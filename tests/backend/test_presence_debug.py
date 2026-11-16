@@ -149,7 +149,11 @@ class TestPayloadBuilder:
         assert sats["sat-kitchen"]["rssi"] == -55
         assert sats["sat-hall"]["room_name"] == "Hall"
         assert sats["sat-hall"]["timestamp"] == 1001.0
-        assert sats["sat-hall"]["age_s"] == round(payload["now"] - 1001.0, 2)
+        # Both numbers are rounded from the same unrounded clock reading -- `now`
+        # to 3 places, the age to 2 -- so recomputing the age from the rounded
+        # `now` lands on the neighbouring cent whenever that reading sat just
+        # below a half (seen 2026-11-16: ...393.265 - 1001.0 -> .27, age .26).
+        assert sats["sat-hall"]["age_s"] == pytest.approx(payload["now"] - 1001.0, abs=0.0061)
 
     def test_device_without_a_placement(self, service, monkeypatch):
         monkeypatch.setattr(hub, "_connected_satellites", lambda: [])

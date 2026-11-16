@@ -18,7 +18,7 @@ from services.database import AsyncSessionLocal, init_db
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, frames_without_content
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -73,7 +73,7 @@ def _spawn_periodic_task(
             # so a transient boot-run error still falls into the interval
             # loop instead of disabling the scheduler.
             except Exception as e:
-                logger.warning(f"{name} failed (boot run): {e}")
+                logger.warning(f"{name} failed (boot run): {error_text_without_content(e)}")
         while True:
             try:
                 await asyncio.sleep(interval)
@@ -81,7 +81,7 @@ def _spawn_periodic_task(
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"{name} failed: {e}")
+                logger.warning(f"{name} failed: {error_text_without_content(e)}")
 
     task = asyncio.create_task(_loop())
     _startup_tasks.append(task)
@@ -103,7 +103,7 @@ async def _reconcile_credentials_boot():
 
         await reconcile_credentials()
     except Exception as e:
-        logger.warning(f"credential-reconciler boot pass failed: {e}")
+        logger.warning(f"credential-reconciler boot pass failed: {error_text_without_content(e)}")
 
 
 _KB_SHARES_CHECK_TIMEOUT_S = 30.0
@@ -170,9 +170,8 @@ async def _init_auth():
                     f"CHANGE THE PASSWORD IMMEDIATELY!"
                 )
     except Exception as e:
-        logger.error(f"❌ Auth initialisation failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Auth initialisation failed: {type(e).__name__}: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
 
 
 async def _init_ollama(app: "FastAPI") -> OllamaService:
@@ -204,13 +203,13 @@ def _schedule_whisper_preload():
                 whisper_service.load_model()
                 logger.info("✅ Whisper service ready (STT enabled)")
             except Exception as e:
-                logger.warning(f"⚠️  Whisper could not be preloaded: {e}")
+                logger.warning(f"⚠️  Whisper could not be preloaded: {error_text_without_content(e)}")
                 logger.warning("💡 Speech input will be loaded on first use")
 
         task = asyncio.create_task(preload_whisper())
         _startup_tasks.append(task)
     except Exception as e:
-        logger.warning(f"⚠️  Whisper preloading failed: {e}")
+        logger.warning(f"⚠️  Whisper preloading failed: {error_text_without_content(e)}")
 
 
 def _schedule_reminder_checker():
@@ -446,12 +445,11 @@ async def _init_mcp(app: "FastAPI"):
                 await sync_peers(manager, peer_session)
         except Exception as peer_error:
             logger.warning(
-                f"Federation peer registry sync skipped at startup: {peer_error}"
+                f"Federation peer registry sync skipped at startup: {error_text_without_content(peer_error)}"
             )
     except Exception as e:
-        logger.error(f"MCP client could not be initialised: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"MCP client could not be initialised: {type(e).__name__}: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
         app.state.mcp_manager = None
 
 
@@ -493,7 +491,7 @@ async def _init_agent_router(app: "FastAPI"):
                 await sr.initialize(router.roles)
                 router.set_semantic_router(sr)
             except Exception as e:
-                logger.warning(f"SemanticRouter init failed (non-fatal): {e}")
+                logger.warning(f"SemanticRouter init failed (non-fatal): {error_text_without_content(e)}")
 
         # Load entity patterns for context-aware routing
         try:
@@ -514,11 +512,10 @@ async def _init_agent_router(app: "FastAPI"):
                             base_patterns[domain] = cfg
             compile_patterns(base_patterns)
         except Exception as e:
-            logger.debug(f"Entity patterns not loaded (non-fatal): {e}")
+            logger.debug(f"Entity patterns not loaded (non-fatal): {error_text_without_content(e)}")
     except Exception as e:
-        logger.error(f"❌ Agent router could not be initialised: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Agent router could not be initialised: {type(e).__name__}: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
         app.state.agent_router = None
         app.state.agent_roles_config = None
 
@@ -585,8 +582,12 @@ async def _load_one_plugin(spec: str):
         _plugin_status[spec] = {"ok": True, "error": None}
         logger.info(f"Plugin module loaded: {spec}")
     except Exception as e:
-        _plugin_status[spec] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        logger.opt(exception=True).error(f"Failed to load plugin module: {spec}")
+        _plugin_status[spec] = {
+            "ok": False, "error": f"{type(e).__name__}: {error_text_without_content(e)}"}
+        logger.error(
+            f"Failed to load plugin module: {spec}"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+        )
 
 
 async def _load_plugin_module():
@@ -645,8 +646,11 @@ async def _init_paperless_audit(app: "FastAPI") -> None:
         app.state.paperless_audit = audit_service
         await audit_service.start()
         logger.info("✅ Paperless Audit: routes mounted + service started (platform-core)")
-    except Exception:
-        logger.opt(exception=True).warning("Paperless audit init failed")
+    except Exception as e:
+        logger.warning(
+            "Paperless audit init failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+        )
 
 
 async def _setup_task_engine(app):
@@ -670,9 +674,10 @@ async def _setup_task_engine(app):
     # skip everything.
     try:
         register_builtin_handlers()
-    except Exception:
-        logger.opt(exception=True).error(
+    except Exception as e:
+        logger.error(
             "Scheduled Tasks handler registration failed — engine not started"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
         return
 
@@ -683,10 +688,11 @@ async def _setup_task_engine(app):
     try:
         await ensure_builtin_tasks()
         await force_run_at_boot_tasks()
-    except Exception:
-        logger.opt(exception=True).error(
+    except Exception as e:
+        logger.error(
             "Scheduled Tasks seeding/boot-force failed — starting the engine anyway "
             "(existing rows still run; new built-ins may be missing until next boot)"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
     async def _tick():
@@ -704,8 +710,11 @@ async def _setup_task_engine(app):
             ),
             run_at_boot=True,
         )
-    except Exception:
-        logger.opt(exception=True).error("Scheduled Tasks engine tick loop failed to start")
+    except Exception as e:
+        logger.error(
+            "Scheduled Tasks engine tick loop failed to start"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+        )
 
 
 @asynccontextmanager
@@ -744,7 +753,7 @@ async def lifespan(app: "FastAPI"):
         # persisted key is malformed (e.g. 33-byte trailing-newline). Both are a
         # clean, deliberate boot failure — never a silent ephemeral fallback that
         # would break pairings.
-        logger.critical(f"Federation identity check failed: {e}")
+        logger.critical(f"Federation identity check failed: {error_text_without_content(e)}")
         raise SystemExit(1) from e
 
     # Warn about insecure defaults when auth is enabled.
@@ -786,9 +795,10 @@ async def lifespan(app: "FastAPI"):
             logger.info("✅ ha_glue bootstrap loaded")
         except ImportError:
             logger.info("ha_glue not installed — running platform-only")
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "ha_glue bootstrap raised — HA fallback disabled, continuing startup"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
 
     # Stage 1: Sequential (auth depends on database)
@@ -833,7 +843,7 @@ async def lifespan(app: "FastAPI"):
                 if loaded:
                     logger.info(f"🌱 Skill seeds loaded: {loaded}")
         except Exception as e:
-            logger.warning(f"⚠️  Skill seed loading failed: {e}")
+            logger.warning(f"⚠️  Skill seed loading failed: {error_text_without_content(e)}")
 
     # Presence / paperless audit / media follow / conversation handoff /
     # Zeroconf satellite discovery are bootstrapped by ha_glue via its
@@ -912,7 +922,7 @@ async def lifespan(app: "FastAPI"):
     try:
         assert_login_possible()
     except RuntimeError as e:
-        logger.critical(f"Credential provider check failed: {e}")
+        logger.critical(f"Credential provider check failed: {error_text_without_content(e)}")
         raise SystemExit(1) from e
 
     # Paperless audit — mounted from platform core (not the ha_glue plugin) so it
@@ -936,8 +946,11 @@ async def lifespan(app: "FastAPI"):
     try:
         from services.scheduled_tasks.engine import drain_running_tasks
         await drain_running_tasks()
-    except Exception:
-        logger.opt(exception=True).warning("Scheduled Tasks drain failed")
+    except Exception as e:
+        logger.warning(
+            "Scheduled Tasks drain failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+        )
 
     # Stop paperless audit before MCP shutdown
     if getattr(app.state, "paperless_audit", None):
@@ -968,13 +981,13 @@ async def lifespan(app: "FastAPI"):
         from services.redis_client import close_redis
         await close_redis()
     except Exception as e:  # pragma: no cover — defensive cleanup
-        logger.warning(f"redis close failed: {e}")
+        logger.warning(f"redis close failed: {error_text_without_content(e)}")
 
     # Dispose the readiness probe's own NullPool engine + Redis client.
     try:
         from services import health_check
         await health_check.dispose()
     except Exception as e:  # pragma: no cover — defensive cleanup
-        logger.warning(f"health check dispose failed: {e}")
+        logger.warning(f"health check dispose failed: {error_text_without_content(e)}")
 
     logger.info("✅ Shutdown complete")

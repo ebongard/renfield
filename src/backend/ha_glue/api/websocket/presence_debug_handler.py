@@ -45,6 +45,7 @@ from models.permissions import Permission
 from services.auth_service import get_user_by_id
 from services.database import AsyncSessionLocal
 from services.websocket_auth import WSAuthError, authenticate_websocket
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -63,7 +64,7 @@ async def _refuse(websocket: WebSocket, code: int, reason: str) -> None:
         await websocket.accept()
         await websocket.close(code=code, reason=reason)
     except Exception as e:
-        logger.debug(f"presence-debug refusal could not be delivered: {e}")
+        logger.debug(f"presence-debug refusal could not be delivered: {error_text_without_content(e)}")
 
 
 async def _admin_verdict(user_id: int | None) -> bool | None:
@@ -83,7 +84,7 @@ async def _admin_verdict(user_id: int | None) -> bool | None:
             return None
         return bool(user.has_permission(Permission.ADMIN))
     except Exception as e:
-        logger.warning(f"presence-debug WS permission check failed: {e}")
+        logger.warning(f"presence-debug WS permission check failed: {error_text_without_content(e)}")
         return None
 
 
@@ -119,7 +120,7 @@ async def presence_debug_live(
     except WebSocketDisconnect:
         return
     except Exception as e:
-        logger.debug(f"presence-debug hydrate failed: {e}")
+        logger.debug(f"presence-debug hydrate failed: {error_text_without_content(e)}")
         return
 
     presence_debug.register_viewer(websocket)
@@ -138,11 +139,11 @@ async def presence_debug_live(
                 code=SESSION_RENEWAL_CLOSE_CODE, reason="session renewal"
             )
         except Exception as e:
-            logger.debug(f"presence-debug renewal close failed: {e}")
+            logger.debug(f"presence-debug renewal close failed: {error_text_without_content(e)}")
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        logger.debug(f"presence-debug connection error: {e}")
+        logger.debug(f"presence-debug connection error: {error_text_without_content(e)}")
     finally:
         presence_debug.unregister_viewer(websocket)
         logger.info(

@@ -37,6 +37,7 @@ from services.pdf_split_proposals import (
 )
 from services.task_queue import document_worker_is_alive
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -218,7 +219,7 @@ def _render_page_thumb(file_path: str, page_number: int) -> bytes | None:
         finally:
             pdf.close()
     except Exception as e:
-        logger.warning(f"pdf-split: page render failed for {file_path}: {e}")
+        logger.warning(f"pdf-split: page render failed for {file_path}: {error_text_without_content(e)}")
         return None
 
 

@@ -43,6 +43,7 @@ from services.email_ingest import (
 )
 from services.folder_ingest import IngestStatus
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -139,7 +140,7 @@ async def ingest_pushed_email(
         if not mailbox_id:
             raise ValueError("metadata is missing a mailbox_id")
     except (json.JSONDecodeError, ValueError, TypeError) as exc:
-        logger.warning(f"email-ingest: malformed metadata: {exc}")
+        logger.warning(f"email-ingest: malformed metadata: {error_text_without_content(exc)}")
         return EmailIngestResponse(status=IngestStatus.FAILED.value, detail="malformed_metadata")
 
     # 5. Stream the body with an early size abort. Oversize → failed (terminal).
@@ -172,7 +173,7 @@ async def ingest_pushed_email(
             file_to_paperless=_should_file_paperless(),
         )
     except Exception as exc:
-        logger.error(f"email-ingest: unexpected error processing {filename!r}: {exc}")
+        logger.error(f"email-ingest: unexpected error processing {filename!r}: {error_text_without_content(exc)}")
         raise HTTPException(
             status_code=503,
             detail={"message": "Transient ingest error", "reason": "internal_error"},

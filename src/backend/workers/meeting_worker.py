@@ -47,6 +47,7 @@ from services.task_queue import (
 )
 from services.voice_server_client import VoiceServerError
 from utils.config import settings
+from utils.log_safety import error_text_without_content, frames_without_content, install_log_sink
 
 HEARTBEAT_KEY = "renfield:worker:meeting:heartbeat"
 HEARTBEAT_INTERVAL_S = 30
@@ -138,7 +139,7 @@ async def _mark_meeting_failed(meeting_id, error: BaseException) -> bool:
                 await db.commit()
             return True
     except Exception as e:
-        logger.warning(f"could not mark meeting {meeting_id} failed: {e}")
+        logger.warning(f"could not mark meeting {meeting_id} failed: {error_text_without_content(e)}")
         return False
 
 
@@ -150,7 +151,7 @@ async def _heartbeat_loop(
         try:
             await redis.set(HEARTBEAT_KEY, consumer_id, ex=HEARTBEAT_TTL_S)
         except Exception as e:
-            logger.warning(f"heartbeat write failed: {e}")
+            logger.warning(f"heartbeat write failed: {error_text_without_content(e)}")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_INTERVAL_S)
         except TimeoutError:
@@ -168,7 +169,7 @@ async def _row_heartbeat_loop(meeting_id, stop_event: asyncio.Event) -> None:
                     meeting.heartbeat_at = datetime.utcnow()
                     await db.commit()
         except Exception as e:
-            logger.debug(f"row heartbeat write failed for meeting {meeting_id}: {e}")
+            logger.debug(f"row heartbeat write failed for meeting {meeting_id}: {error_text_without_content(e)}")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=ROW_HEARTBEAT_REFRESH_S)
         except TimeoutError:
@@ -183,7 +184,7 @@ async def _clear_transient(redis: aioredis.Redis, entry_id: str) -> None:
     try:
         await redis.delete(_transient_key(entry_id))
     except Exception as e:
-        logger.debug(f"transient-counter cleanup failed for {entry_id}: {e}")
+        logger.debug(f"transient-counter cleanup failed for {entry_id}: {error_text_without_content(e)}")
 
 
 async def _claim_meeting_row(meeting_id) -> str:
@@ -293,7 +294,10 @@ async def _process_entry(
         await _clear_transient(redis, entry.entry_id)
         logger.info(f"transcribed meeting {meeting_id} (entry {entry.entry_id})")
     except Exception as e:
-        logger.exception(f"meeting {meeting_id} (entry {entry.entry_id}) failed: {e}")
+        logger.error(
+            f"meeting {meeting_id} (entry {entry.entry_id}) failed: {type(e).__name__}: {error_text_without_content(e)}"
+            f" | at {frames_without_content(e)}"
+        )
         if _is_transient_error(e):
             # Infra blip / voice-server hiccup: leave un-ACKed for reclaim; record
             # the CLEAN leave so it isn't counted as a crash by the poison guard.
@@ -302,7 +306,7 @@ async def _process_entry(
                 await redis.incr(tkey)
                 await redis.expire(tkey, 86_400)
             except Exception as ie:
-                logger.debug(f"transient-counter incr failed for {entry.entry_id}: {ie}")
+                logger.debug(f"transient-counter incr failed for {entry.entry_id}: {error_text_without_content(ie)}")
             logger.warning(
                 f"meeting {meeting_id}: transient {type(e).__name__} — leaving in PEL"
             )
@@ -370,7 +374,7 @@ async def main() -> None:
                     for stale in await queue.reclaim_stale(min_idle_ms=_RECLAIM_MIN_IDLE_MS):
                         await _process_entry(redis, queue, stale)
                 except Exception as e:
-                    logger.warning(f"periodic reclaim failed: {e}")
+                    logger.warning(f"periodic reclaim failed: {error_text_without_content(e)}")
             entry = await queue.read_one(block_ms=5_000)
             if entry is None:
                 continue
@@ -392,4 +396,9 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    # The worker is a process of its own and never imports `main.py`: without
+    # this it logs through loguru's built-in sink, which prints the variable
+    # values of every frame into a traceback (`install_log_sink`). The level
+    # stays what that built-in sink had -- loguru's own, NOT `LOG_LEVEL`.
+    install_log_sink(os.getenv("LOGURU_LEVEL", "DEBUG"))
     asyncio.run(main())

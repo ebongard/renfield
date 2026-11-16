@@ -192,7 +192,7 @@ async def _warn_about_tables_no_migration_created() -> None:
                 len(missing), ", ".join(missing[:10]),
             )
     except Exception as exc:  # pragma: no cover - a warning must never disrupt
-        logger.debug("Table reconciliation skipped: {}", exc)
+        logger.debug("Table reconciliation skipped: {}", error_text_without_content(exc))
 
 
 async def _warn_about_columns_not_generated() -> None:

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -81,8 +82,8 @@ async def mcp_refresh(
         await manager.refresh_tools()
         return manager.get_status()
     except Exception as e:
-        logger.error(f"MCP refresh failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"MCP refresh failed: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.patch("/servers/{name}/tools")
@@ -110,5 +111,5 @@ async def update_server_tools(
         await manager.set_tool_override(name, body.active_tools, db)
         return manager.get_status()
     except Exception as e:
-        logger.error(f"Failed to update tools for '{name}': {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to update tools for '{name}': {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

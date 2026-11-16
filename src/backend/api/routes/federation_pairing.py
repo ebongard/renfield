@@ -135,7 +135,7 @@ def _refuse_unacceptable_form(endpoints: list[dict], *, source: str) -> None:
         try:
             validate_endpoint_url(entry.get("url"))
         except EndpointRefused as e:
-            logger.warning(f"Pairing: advertised endpoint refused ({source}): {e}")
+            logger.warning(f"Pairing: advertised endpoint refused ({source}): {error_text_without_content(e)}")
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -321,10 +321,10 @@ async def accept_pair_offer(
     except AlreadyPairedElsewhere as e:
         # 🛑 BEFORE the uniform catch: local state, not a cryptographic
         # finding. Kept opaque it sends the person to the wrong place.
-        logger.warning(f"Pairing accept refused for user {current_user.id}: {e}")
+        logger.warning(f"Pairing accept refused for user {current_user.id}: {error_text_without_content(e)}")
         raise HTTPException(status_code=409, detail=str(e)) from e
     except PairingError as e:
-        logger.warning(f"Pairing accept failed for user {current_user.id}: {e}")
+        logger.warning(f"Pairing accept failed for user {current_user.id}: {error_text_without_content(e)}")
         # Uniform error — no oracle on which check failed.
         raise HTTPException(status_code=400, detail="Pairing handshake failed")
 
@@ -349,10 +349,10 @@ async def complete_pair_handshake(
             their_tier_for_me=body.their_tier_for_me,
         )
     except AlreadyPairedElsewhere as e:
-        logger.warning(f"Pairing complete refused for user {current_user.id}: {e}")
+        logger.warning(f"Pairing complete refused for user {current_user.id}: {error_text_without_content(e)}")
         raise HTTPException(status_code=409, detail=str(e)) from e
     except PairingError as e:
-        logger.warning(f"Pairing complete failed for user {current_user.id}: {e}")
+        logger.warning(f"Pairing complete failed for user {current_user.id}: {error_text_without_content(e)}")
         raise HTTPException(status_code=400, detail="Pairing handshake failed")
 
     await _resync_peer_registry(request, db, "pair/complete")

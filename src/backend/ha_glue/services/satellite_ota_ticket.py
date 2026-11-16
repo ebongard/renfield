@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from loguru import logger
 
 from services.redis_client import get_redis
+from utils.log_safety import error_text_without_content
 
 _KEY_PREFIX = "sat_ota_ticket:"
 
@@ -82,7 +83,7 @@ async def issue_ticket(satellite_id: str, version: str, checksum: str) -> str | 
             _key(ticket), payload, ex=TICKET_TTL_SECONDS, nx=True
         )
     except Exception as e:
-        logger.warning(f"satellite OTA: download ticket could not be stored: {e}")
+        logger.warning(f"satellite OTA: download ticket could not be stored: {error_text_without_content(e)}")
         return None
     if not stored:
         logger.error("satellite OTA: download ticket collision — no ticket issued")
@@ -104,7 +105,7 @@ async def consume_ticket(
     try:
         raw = await get_redis().getdel(_key(ticket))
     except Exception as e:
-        logger.warning(f"satellite OTA: ticket lookup failed: {e}")
+        logger.warning(f"satellite OTA: ticket lookup failed: {error_text_without_content(e)}")
         return None
     if not raw:
         logger.warning(
@@ -120,7 +121,7 @@ async def consume_ticket(
             checksum=str(d["checksum"]),
         )
     except (json.JSONDecodeError, KeyError, TypeError) as e:
-        logger.warning(f"satellite OTA: unusable ticket payload discarded: {e}")
+        logger.warning(f"satellite OTA: unusable ticket payload discarded: {error_text_without_content(e)}")
         return None
 
     if satellite_id is None or not hmac.compare_digest(grant.satellite_id, satellite_id):

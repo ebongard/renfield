@@ -43,7 +43,7 @@ except ImportError:
     logger.warning("librosa/soundfile not available - audio preprocessing disabled. Install with: pip install librosa soundfile")
 
 from services.audio_preprocessor import AudioPreprocessor
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, frames_without_content
 
 
 # B.4.c thin-client helpers — used when delegating to voice-server.
@@ -567,9 +567,8 @@ class WhisperService:
                     logger.info("🎤 Speaker not recognized (auto-enroll disabled)")
 
             except Exception as e:
-                logger.warning(f"Speaker identification failed: {error_text_without_content(e)}")
-                import traceback
-                logger.debug(traceback.format_exc())
+                logger.warning(f"Speaker identification failed: {type(e).__name__}: {error_text_without_content(e)}")
+                logger.debug(f"at {frames_without_content(e)}")
 
             return {"text": text, **speaker_info}
 
@@ -716,7 +715,7 @@ class WhisperService:
                     auth_token=token,
                 )
         except VoiceServerError as e:
-            logger.error(f"voice-server STT failed: {e}")
+            logger.error(f"voice-server STT failed: {error_text_without_content(e)}")
             if raise_stt_errors:
                 raise
             return {

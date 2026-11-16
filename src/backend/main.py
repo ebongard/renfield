@@ -4,7 +4,6 @@ Main application, FastAPI
 """
 import hmac
 import os
-import sys
 from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -13,13 +12,12 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Configure logging
-logger.remove()
-logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
+# Configure logging: one sink that prints no variable values into a traceback,
+# and no credential from a URL (`/ws?token=...`) in uvicorn's access/WebSocket
+# lines.
+from utils.log_safety import error_text_without_content, install_log_sink, install_uvicorn_url_redaction
 
-# No credential from a URL (`/ws?token=...`) in uvicorn's access/WebSocket lines.
-from utils.log_safety import install_uvicorn_url_redaction
-
+install_log_sink(os.getenv("LOG_LEVEL", "INFO"))
 install_uvicorn_url_redaction()
 
 # Local imports
@@ -394,7 +392,7 @@ async def wakeword_websocket(websocket: WebSocket, token: str | None = Query(Non
     except WebSocketDisconnect:
         logger.info("👋 Wake word WebSocket connection closed")
     except Exception as e:
-        logger.error(f"❌ Wake word WebSocket error: {e}")
+        logger.error(f"❌ Wake word WebSocket error: {error_text_without_content(e)}")
         try:
             await websocket.send_json({
                 "type": "error",
@@ -466,7 +464,7 @@ async def readiness_check():
         else:
             checks["ollama"] = {"status": "degraded", "error": "not initialized"}
     except Exception as e:
-        logger.warning(f"Health check: ollama unhealthy: {e}")
+        logger.warning(f"Health check: ollama unhealthy: {error_text_without_content(e)}")
         checks["ollama"] = {"status": "unhealthy", "error": "connection failed"}
         overall_healthy = False
 
@@ -660,7 +658,7 @@ async def reembed_all(
                     except Exception as e:
                         error_count += 1
                         logger.warning(
-                            f"⚠️ {label} id={record.id}: embedding failed: {e}"
+                            f"⚠️ {label} id={record.id}: embedding failed: {error_text_without_content(e)}"
                         )
 
                 await db.commit()
@@ -700,8 +698,8 @@ async def debug_intent(
             "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat()
         }
     except Exception as e:
-        logger.error(f"❌ Intent debug error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Intent debug error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 # Root Endpoint

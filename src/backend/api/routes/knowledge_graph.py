@@ -49,6 +49,7 @@ from services.kg_reconciler_service import KgReconcilerService
 from services.kg_validity_sql import live_conditions
 from services.knowledge_graph_service import KnowledgeGraphService
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -136,8 +137,8 @@ async def list_entities(
             size=size,
         )
     except Exception as e:
-        logger.error(f"List KG entities error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"List KG entities error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/entities/{entity_id}", response_model=EntityResponse)
@@ -186,8 +187,8 @@ async def update_entity(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Update KG entity error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Update KG entity error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.patch("/entities/{entity_id}/circle-tier", response_model=EntityResponse)
@@ -211,8 +212,8 @@ async def update_entity_circle_tier(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Update KG entity circle_tier error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Update KG entity circle_tier error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.delete("/entities/{entity_id}")
@@ -251,8 +252,8 @@ async def merge_entities(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Merge KG entities error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Merge KG entities error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/relations", response_model=RelationListResponse)
@@ -294,8 +295,8 @@ async def list_relations(
             size=size,
         )
     except Exception as e:
-        logger.error(f"List KG relations error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"List KG relations error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.post("/relations", response_model=RelationResponse)
@@ -338,8 +339,8 @@ async def create_relation(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Create KG relation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Create KG relation error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.put("/relations/{relation_id}", response_model=RelationResponse)
@@ -380,8 +381,8 @@ async def update_relation(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Update KG relation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Update KG relation error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.delete("/relations/{relation_id}")
@@ -418,8 +419,8 @@ async def get_stats(
         )
         return KGStatsResponse(**stats)
     except Exception as e:
-        logger.error(f"KG stats error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"KG stats error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 # =============================================================================
@@ -442,8 +443,8 @@ async def cleanup_invalid_entities(
         result = await svc.cleanup_invalid_entities(dry_run=dry_run)
         return CleanupInvalidResponse(**result)
     except Exception as e:
-        logger.error(f"KG cleanup invalid error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"KG cleanup invalid error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/cleanup/duplicates", response_model=DuplicateClustersResponse)
@@ -475,8 +476,8 @@ async def find_duplicate_clusters(
             total_clusters=len(clusters),
         )
     except Exception as e:
-        logger.error(f"KG find duplicates error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"KG find duplicates error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.post("/cleanup/merge-duplicates", response_model=MergeDuplicatesResponse)
@@ -501,8 +502,8 @@ async def merge_duplicate_clusters(
         )
         return MergeDuplicatesResponse(**result)
     except Exception as e:
-        logger.error(f"KG merge duplicates error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"KG merge duplicates error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 # =========================================================================

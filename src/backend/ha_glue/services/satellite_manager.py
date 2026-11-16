@@ -25,6 +25,7 @@ from loguru import logger
 
 from ha_glue.services.opus_transport import frame_packets
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # ---------------------------------------------------------------------------
 # Device-supplied values (#1279)
@@ -467,7 +468,7 @@ class SatelliteManager:
         try:
             audio_bytes = base64.b64decode(chunk_b64)
         except Exception as e:
-            logger.error(f"❌ Failed to decode audio chunk: {e}")
+            logger.error(f"❌ Failed to decode audio chunk: {error_text_without_content(e)}")
             return False, "Invalid base64 encoding"
 
         return self.buffer_audio_bytes(session_id, audio_bytes, sequence)
@@ -632,7 +633,7 @@ class SatelliteManager:
                 }
             )
         except Exception as e:
-            logger.debug(f"kiosk satellite_state broadcast failed: {e}")
+            logger.debug(f"kiosk satellite_state broadcast failed: {error_text_without_content(e)}")
 
     def _spawn_duck(self, room_id: int, room_name: str | None, duck: bool) -> None:
         """Fire-and-forget duck (True) or restore (False) of room media, holding a
@@ -646,7 +647,7 @@ class SatelliteManager:
             self._duck_bg_tasks.add(task)
             task.add_done_callback(self._duck_bg_tasks.discard)
         except Exception as e:
-            logger.debug(f"duck-on-listen spawn failed for room {room_id}: {e}")
+            logger.debug(f"duck-on-listen spawn failed for room {room_id}: {error_text_without_content(e)}")
 
     async def _broadcast_satellite_liveness(
         self, satellite_id: str, room: str | None, room_id: int | None, online: bool
@@ -676,7 +677,7 @@ class SatelliteManager:
                 }
             )
         except Exception as e:
-            logger.debug(f"kiosk satellite liveness broadcast failed: {e}")
+            logger.debug(f"kiosk satellite liveness broadcast failed: {error_text_without_content(e)}")
 
     async def set_session_state(
         self,
@@ -702,7 +703,7 @@ class SatelliteManager:
                     "state": state.value
                 })
             except Exception as e:
-                logger.error(f"❌ Failed to send state to satellite: {e}")
+                logger.error(f"❌ Failed to send state to satellite: {error_text_without_content(e)}")
 
     async def send_transcription(
         self,
@@ -725,7 +726,7 @@ class SatelliteManager:
                     "text": text
                 })
             except Exception as e:
-                logger.error(f"❌ Failed to send transcription: {e}")
+                logger.error(f"❌ Failed to send transcription: {error_text_without_content(e)}")
 
     async def send_action_result(
         self,
@@ -749,7 +750,7 @@ class SatelliteManager:
                     "success": success
                 })
             except Exception as e:
-                logger.error(f"❌ Failed to send action result: {e}")
+                logger.error(f"❌ Failed to send action result: {error_text_without_content(e)}")
 
     async def send_tts_audio(
         self,
@@ -791,7 +792,7 @@ class SatelliteManager:
                 logger.info(f"🔊 Sent TTS audio to {sat.satellite_id} ({len(audio_bytes)} bytes)")
 
             except Exception as e:
-                logger.error(f"❌ Failed to send TTS audio: {e}")
+                logger.error(f"❌ Failed to send TTS audio: {error_text_without_content(e)}")
 
     async def end_session(
         self, session_id: str, reason: str = "completed", detail: dict | None = None,
@@ -884,7 +885,7 @@ class SatelliteManager:
                 self._duck_bg_tasks.add(task)
                 task.add_done_callback(self._duck_bg_tasks.discard)
             except Exception as e:
-                logger.debug(f"force_release: state funnel not scheduled: {e!r}")
+                logger.debug(f"force_release: state funnel not scheduled: {type(e).__name__}: {error_text_without_content(e)}")
         if not session.end_recorded:
             try:
                 self._add_event(session.satellite_id, "session_end", {

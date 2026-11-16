@@ -35,6 +35,7 @@ from services.database import AsyncSessionLocal, get_db
 from services.document_processor import DocumentProcessor
 from services.ingest_common import get_or_create_owned_kb
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 from .chat_upload_schemas import (
     ChatUploadResponse,
@@ -122,7 +123,7 @@ async def upload_chat_document(
         async with aiofiles.open(file_path, 'wb') as f:
             await f.write(content)
     except Exception as e:
-        logger.error(f"Chat upload: saving the file failed: {e}")
+        logger.error(f"Chat upload: saving the file failed: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail="File save failed")
 
     # Create the row up-front in PROCESSING state so the client gets an id right
@@ -189,7 +190,7 @@ async def _extract_and_finalize(
     try:
         extracted_text = await _get_processor().extract_text_only(file_path)
     except Exception as e:
-        logger.error(f"Chat upload {upload_id}: text extraction failed: {e}")
+        logger.error(f"Chat upload {upload_id}: text extraction failed: {error_text_without_content(e)}")
         status = UPLOAD_STATUS_FAILED
         error_message = str(e)
 
@@ -204,7 +205,7 @@ async def _extract_and_finalize(
             upload.error_message = error_message
             await db.commit()
     except Exception as e:
-        logger.error(f"Chat upload {upload_id}: status persist failed: {e}")
+        logger.error(f"Chat upload {upload_id}: status persist failed: {error_text_without_content(e)}")
         return
 
     # Push the extraction result over the chat WebSocket so the attachment chip
@@ -221,7 +222,7 @@ async def _extract_and_finalize(
                 "error": error_message,
             })
         except Exception as e:
-            logger.warning(f"Chat upload {upload_id}: notify_session failed: {e}")
+            logger.warning(f"Chat upload {upload_id}: notify_session failed: {error_text_without_content(e)}")
 
     if status != UPLOAD_STATUS_COMPLETED:
         return
@@ -237,7 +238,7 @@ async def _extract_and_finalize(
                 user_id=user_id,
             )
         except Exception as e:
-            logger.warning(f"Chat upload {upload_id}: KG hook failed: {e}")
+            logger.warning(f"Chat upload {upload_id}: KG hook failed: {error_text_without_content(e)}")
 
     if settings.chat_upload_auto_index:
         await _auto_index_to_kb(
@@ -526,7 +527,7 @@ async def forward_to_paperless(
         # OCR failures, taxonomy fetch errors, and LLM timeouts all funnel
         # here. The user still gets the document into Paperless — just
         # without auto-filled metadata.
-        logger.warning(f"Paperless metadata extraction failed; falling back to filename-only: {e}")
+        logger.warning(f"Paperless metadata extraction failed; falling back to filename-only: {error_text_without_content(e)}")
 
     # Execute MCP tool with the (possibly metadata-enriched) params.
     try:
@@ -535,8 +536,8 @@ async def forward_to_paperless(
             upload_params,
         )
     except Exception as e:
-        logger.error(f"Paperless forward failed: {e}")
-        raise HTTPException(status_code=502, detail=f"Paperless forwarding failed: {e}")
+        logger.error(f"Paperless forward failed: {error_text_without_content(e)}")
+        raise HTTPException(status_code=502, detail=f"Paperless forwarding failed: {error_text_without_content(e)}")
 
     # Parse MCP response for task_id
     task_id = None
@@ -575,7 +576,7 @@ async def _simba_taxonomy(manager) -> dict[str, list[str]]:
     try:
         result = await manager.execute_tool("mcp.simba.list_categories", {"live": False})
     except Exception as e:
-        logger.warning(f"Simba categories unavailable: {e}")
+        logger.warning(f"Simba categories unavailable: {error_text_without_content(e)}")
         return {}
     if not result or not result.get("success"):
         return {}
@@ -681,8 +682,8 @@ async def forward_to_simba(
     try:
         result = await manager.execute_tool("mcp.simba.upload_documents", tool_args)
     except Exception as e:
-        logger.error(f"Simba forward failed: {e}")
-        raise HTTPException(status_code=502, detail=f"Simba forwarding failed: {e}")
+        logger.error(f"Simba forward failed: {error_text_without_content(e)}")
+        raise HTTPException(status_code=502, detail=f"Simba forwarding failed: {error_text_without_content(e)}")
 
     # Honest outcome: the MCP envelope success only means "didn't throw"; the doc
     # landed only if uebertragen>0. Mirror the agent bridge's parsing.
@@ -807,8 +808,8 @@ async def forward_via_email(
             },
         )
     except Exception as e:
-        logger.error(f"Email forward failed: {e}")
-        raise HTTPException(status_code=502, detail=f"Email forwarding failed: {e}")
+        logger.error(f"Email forward failed: {error_text_without_content(e)}")
+        raise HTTPException(status_code=502, detail=f"Email forwarding failed: {error_text_without_content(e)}")
 
     if not mcp_result or not mcp_result.get("success"):
         logger.error(f"Email forward MCP result: {mcp_result}")
@@ -851,7 +852,7 @@ async def _cleanup_uploads(db: AsyncSession, days: int) -> tuple[int, int]:
                     p.unlink()
                     deleted_files += 1
             except Exception as e:
-                logger.warning(f"Failed to delete file {upload.file_path}: {e}")
+                logger.warning(f"Failed to delete file {upload.file_path}: {error_text_without_content(e)}")
         await db.delete(upload)
 
     deleted_count = len(uploads)
@@ -1092,11 +1093,13 @@ async def _auto_index_to_kb(
         raise TimeoutError(f"Worker did not finish within {_POLL_TIMEOUT_S} s")
 
     except Exception as e:
-        logger.error(f"Auto-index failed for upload {upload_id}: {e}")
+        logger.error(f"Auto-index failed for upload {upload_id}: {error_text_without_content(e)}")
         if session_id:
             await notify_session(session_id, {
                 "type": "document_error",
                 "upload_id": upload_id,
                 "filename": filename,
-                "error": str(e),
+                # A catch-all: a database error must not reach the browser
+                # with its statement and parameters.
+                "error": error_text_without_content(e),
             })

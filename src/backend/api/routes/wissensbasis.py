@@ -33,6 +33,7 @@ from services.kg_graph_service import (
     KGGraphService,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -117,8 +118,8 @@ async def get_graph(
         svc = KGGraphService(db)
         return await svc.corpus(asker_id=user.id if user else None, lang=lang)
     except Exception as e:
-        logger.error(f"Wissensbasis graph error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Wissensbasis graph error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/focus", response_model=FocusNeighborhood)
@@ -150,8 +151,8 @@ async def get_focus(
             max_per_hop=max_per_hop,
         )
     except Exception as e:
-        logger.error(f"Wissensbasis focus error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Wissensbasis focus error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
     if result is None:
         raise HTTPException(status_code=404, detail="Entity not found")
@@ -175,5 +176,5 @@ async def search_entities(
         )
         return {"items": items}
     except Exception as e:
-        logger.error(f"Wissensbasis search error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Wissensbasis search error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

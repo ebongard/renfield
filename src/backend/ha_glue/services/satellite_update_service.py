@@ -28,6 +28,7 @@ from ha_glue.services.satellite_manager import UpdateStatus, get_satellite_manag
 from ha_glue.services.satellite_ota_ticket import TICKET_QUERY_PARAM, issue_ticket
 from ha_glue.utils.config import ha_glue_settings
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 #: The package route (`ha_glue.api.routes.satellites.get_update_package`).
 PACKAGE_PATH = "/api/satellites/update-package"
@@ -231,7 +232,7 @@ class SatelliteUpdateService:
             return tarball_path
 
         except Exception as e:
-            logger.error(f"❌ Failed to build update package: {e}")
+            logger.error(f"❌ Failed to build update package: {error_text_without_content(e)}")
             return None
 
     def _calculate_checksum(self, file_path: Path) -> str:

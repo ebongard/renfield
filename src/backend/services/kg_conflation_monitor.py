@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import EMBEDDING_DIMENSION
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 logger = logging.getLogger("kg_conflation_monitor")
 
@@ -132,7 +133,7 @@ class KgConflationMonitor:
             try:
                 pairs = await self.scan_for_user(uid)
             except Exception as e:
-                logger.warning("conflation scan failed for user %d: %s", uid, e)
+                logger.warning("conflation scan failed for user %d: %s", uid, error_text_without_content(e))
                 # All users share this session: a DB error leaves the txn in an
                 # aborted state and every subsequent user would fail too, silently
                 # zeroing the gauge — the worst failure for a tripwire. Roll back

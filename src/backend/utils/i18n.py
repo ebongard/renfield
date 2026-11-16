@@ -17,6 +17,8 @@ from typing import Any
 import yaml
 from loguru import logger
 
+from utils.log_safety import error_text_without_content, frames_without_content
+
 _translations: dict[str, dict[str, str]] = {}
 
 
@@ -54,8 +56,11 @@ def load_translations(config_dir: str | None = None) -> None:
             _flatten(raw, "", flat)
             _translations[lang] = flat
             count += len(flat)
-        except Exception:
-            logger.opt(exception=True).warning(f"Failed to load i18n file: {yaml_file}")
+        except Exception as e:
+            logger.warning(
+                f"Failed to load i18n file: {yaml_file}"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+            )
 
     logger.info(f"i18n loaded: {count} keys across {len(_translations)} language(s)")
 

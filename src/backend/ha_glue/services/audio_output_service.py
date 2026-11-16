@@ -20,6 +20,7 @@ from ha_glue.integrations.homeassistant import HomeAssistantClient
 from ha_glue.services.device_manager import get_device_manager
 from models.database import RoomOutputDevice
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 
 class AudioOutputService:
@@ -142,7 +143,7 @@ class AudioOutputService:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to send audio to Renfield device {device_id}: {e}")
+            logger.error(f"Failed to send audio to Renfield device {device_id}: {error_text_without_content(e)}")
             return False
 
     async def _play_on_dlna_renderer(
@@ -168,7 +169,7 @@ class AudioOutputService:
         try:
             audio_path.write_bytes(audio_bytes)
         except Exception as e:
-            logger.error(f"Failed to cache TTS audio for DLNA: {e}")
+            logger.error(f"Failed to cache TTS audio for DLNA: {error_text_without_content(e)}")
             return False
 
         base_url = self._get_backend_url()
@@ -205,7 +206,7 @@ class AudioOutputService:
                 return False
 
         except Exception as e:
-            logger.error(f"Failed to play audio on DLNA renderer {renderer_name}: {e}")
+            logger.error(f"Failed to play audio on DLNA renderer {renderer_name}: {error_text_without_content(e)}")
             return False
 
     async def _play_on_ha_media_player(
@@ -234,7 +235,7 @@ class AudioOutputService:
             audio_path.write_bytes(audio_bytes)
             logger.debug(f"Cached TTS audio: {audio_path}")
         except Exception as e:
-            logger.error(f"Failed to cache TTS audio: {e}")
+            logger.error(f"Failed to cache TTS audio: {error_text_without_content(e)}")
             return False
 
         # Build the URL for HA to fetch the audio
@@ -291,7 +292,7 @@ class AudioOutputService:
             return success
 
         except Exception as e:
-            logger.error(f"Failed to play audio on HA media player {entity_id}: {e}")
+            logger.error(f"Failed to play audio on HA media player {entity_id}: {error_text_without_content(e)}")
             return False
 
     async def _get_ha_volume(self, entity_id: str) -> float | None:
@@ -301,7 +302,7 @@ class AudioOutputService:
             if state:
                 return state.get("attributes", {}).get("volume_level")
         except Exception as e:
-            logger.error(f"Failed to get volume for {entity_id}: {e}")
+            logger.error(f"Failed to get volume for {entity_id}: {error_text_without_content(e)}")
         return None
 
     async def _restore_volume_after_delay(
@@ -321,7 +322,7 @@ class AudioOutputService:
             )
             logger.debug(f"Restored volume to {volume} for {entity_id}")
         except Exception as e:
-            logger.error(f"Failed to restore volume for {entity_id}: {e}")
+            logger.error(f"Failed to restore volume for {entity_id}: {error_text_without_content(e)}")
 
     def _get_backend_url(self) -> str:
         """
@@ -366,7 +367,7 @@ class AudioOutputService:
                     cache_file.unlink()
                     logger.debug(f"Cleaned up old TTS cache file: {cache_file.name}")
         except Exception as e:
-            logger.error(f"Error during TTS cache cleanup: {e}")
+            logger.error(f"Error during TTS cache cleanup: {error_text_without_content(e)}")
 
     def get_cached_audio(self, audio_id: str) -> bytes | None:
         """
@@ -380,7 +381,7 @@ class AudioOutputService:
             try:
                 return audio_path.read_bytes()
             except Exception as e:
-                logger.error(f"Failed to read cached audio {audio_id}: {e}")
+                logger.error(f"Failed to read cached audio {audio_id}: {error_text_without_content(e)}")
 
         return None
 

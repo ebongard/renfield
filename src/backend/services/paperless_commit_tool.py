@@ -43,6 +43,8 @@ from typing import Any
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 # Hold references to fire-and-forget background tasks (the async-commit
 # finalizer). asyncio.create_task keeps only a weak ref, so without this the
 # GC can cancel an in-flight finalize mid-poll.
@@ -846,10 +848,10 @@ async def _finalize_paperless_commit(
                 )
             except Exception as exc:
                 logger.warning(
-                    "paperless finalize: announcement not persisted, filing kept: {}", exc
+                    "paperless finalize: announcement not persisted, filing kept: {}", error_text_without_content(exc)
                 )
     except Exception as exc:
-        logger.warning("paperless finalize: outcome persist failed: {}", exc)
+        logger.warning("paperless finalize: outcome persist failed: {}", error_text_without_content(exc))
 
     if session_id and not already_tracked and not suppress_announce:
         try:

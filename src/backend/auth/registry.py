@@ -34,6 +34,7 @@ from loguru import logger
 from auth.provider_contract import AuthProvider, ProviderResult
 from utils.config import settings
 from utils.hooks import has_hook
+from utils.log_safety import error_text_without_content, frames_without_content
 from utils.metrics import record_auth_provider_unreachable
 
 
@@ -133,10 +134,11 @@ class ProviderRegistry:
                 )
                 record_auth_provider_unreachable(provider.provider_id)
                 continue
-            except Exception:
-                logger.opt(exception=True).warning(
+            except Exception as e:
+                logger.warning(
                     f"Auth provider {provider.provider_id!r} errored — "
                     f"skipped (fail-open), continuing walk"
+                    f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
                 )
                 record_auth_provider_unreachable(provider.provider_id)
                 continue

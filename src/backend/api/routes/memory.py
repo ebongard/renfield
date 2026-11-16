@@ -21,6 +21,7 @@ from services.auth_service import get_user_or_default
 from services.conversation_memory_service import ConversationMemoryService
 from services.database import get_db
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -106,8 +107,8 @@ async def list_memories(
             offset=offset,
         )
     except Exception as e:
-        logger.error(f"List memories error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"List memories error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/by-subject/{entity_id}", response_model=MemoryListResponse)
@@ -144,8 +145,8 @@ async def list_memories_by_subject(
             total=len(rows), limit=limit, offset=0,
         )
     except Exception as e:
-        logger.error(f"List memories by subject error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"List memories by subject error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.post("", response_model=MemoryResponse, status_code=201)
@@ -173,8 +174,8 @@ async def create_memory(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Create memory error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Create memory error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.patch("/{memory_id}", response_model=MemoryResponse)
@@ -204,8 +205,8 @@ async def update_memory(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Update memory error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Update memory error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.get("/{memory_id}/history", response_model=MemoryHistoryResponse)
@@ -242,8 +243,8 @@ async def get_memory_history(
             total=len(entries),
         )
     except Exception as e:
-        logger.error(f"Get memory history error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Get memory history error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))
 
 
 @router.delete("/{memory_id}")
@@ -267,5 +268,5 @@ async def delete_memory(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Delete memory error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Delete memory error: {error_text_without_content(e)}")
+        raise HTTPException(status_code=500, detail=error_text_without_content(e))

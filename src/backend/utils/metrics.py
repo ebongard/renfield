@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -472,7 +473,7 @@ def observe_duration(record: Callable[..., Any], *labels: str) -> Iterator[None]
             try:
                 record(*labels, time.monotonic() - started, outcome)
             except Exception as e:
-                logger.warning(f"Could not record a duration metric: {e!r}")
+                logger.warning(f"Could not record a duration metric: {type(e).__name__}: {error_text_without_content(e)}")
 
 
 def record_agent_steps(steps: int):
@@ -860,7 +861,7 @@ class WebSocketGaugeMiddleware:
         try:
             record(ws_type)
         except Exception as e:
-            logger.warning(f"Could not record a WebSocket connection metric: {e!r}")
+            logger.warning(f"Could not record a WebSocket connection metric: {type(e).__name__}: {error_text_without_content(e)}")
 
 
 def setup_metrics(app: "FastAPI"):
@@ -882,7 +883,7 @@ def setup_metrics(app: "FastAPI"):
     except Exception as e:
         # Priming must never block startup. WARNING, not debug: a silently
         # unprimed counter is exactly the blind spot the priming exists to close.
-        logger.warning(f"Could not prime renfield_llm_response_truncated_total: {e!r}")
+        logger.warning(f"Could not prime renfield_llm_response_truncated_total: {type(e).__name__}: {error_text_without_content(e)}")
 
     _prime_agent_outcome()
     _prime_agent_schema_repairs()

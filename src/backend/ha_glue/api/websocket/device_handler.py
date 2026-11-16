@@ -25,6 +25,7 @@ from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
 from utils.config import settings
+from utils.log_safety import error_text_without_content, frames_without_content
 
 router = APIRouter()
 
@@ -86,9 +87,8 @@ async def _route_tts_output(
                     await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
 
     except Exception as e:
-        logger.error(f"❌ Output routing failed: {e}, falling back to input device")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Output routing failed: {type(e).__name__}: {error_text_without_content(e)}, falling back to input device")
+        logger.error(f"at {frames_without_content(e)}")
         # Fallback to input device on error
         if device.capabilities.has_speaker:
             await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
@@ -213,9 +213,8 @@ async def _process_device_session(
         await _process_text_input(app, device_manager, session_id, text, speaker_name, speaker_alias)
 
     except Exception as e:
-        logger.error(f"❌ Audio processing failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Audio processing failed: {type(e).__name__}: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
         if stt_outcome is None:
             empty_turn(stt_failed=True)
         await device_manager.end_session(session_id, reason="processing_error")
@@ -317,9 +316,8 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                 logger.warning(f"⚠️ TTS synthesis failed for session {session_id}")
 
     except Exception as e:
-        logger.error(f"❌ Text processing failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Text processing failed: {type(e).__name__}: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
 
     # End session
     await device_manager.end_session(session_id, reason="completed")
@@ -471,7 +469,7 @@ async def device_websocket(
                                 device_manager.set_room_id(device_id, room_id)
                                 logger.info(f"📍 Device {device_id} linked to room '{room}' (id: {room_id})")
                     except Exception as e:
-                        logger.warning(f"⚠️ Failed to persist device to database: {e}")
+                        logger.warning(f"⚠️ Failed to persist device to database: {error_text_without_content(e)}")
 
                 # Load wake word config from config manager
                 wakeword_config_manager = get_wakeword_config_manager()
@@ -637,7 +635,7 @@ async def device_websocket(
                                 "not found or not visible to this connection"
                             )
                     except Exception as e:
-                        logger.warning(f"⚠️ Notification ack failed: {e}")
+                        logger.warning(f"⚠️ Notification ack failed: {error_text_without_content(e)}")
 
             # === HEARTBEAT ===
             elif msg_type == "heartbeat":
@@ -648,9 +646,8 @@ async def device_websocket(
     except WebSocketDisconnect:
         logger.info(f"👋 Device WebSocket disconnected: {device_id}")
     except Exception as e:
-        logger.error(f"❌ Device WebSocket error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Device WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
     finally:
         # Clean up connection limiter
         if device_id and ip_address:
@@ -665,7 +662,7 @@ async def device_websocket(
                     room_service = RoomService(db_session)
                     await room_service.set_device_online(device_id, False)
             except Exception as e:
-                logger.warning(f"⚠️ Failed to mark device offline: {e}")
+                logger.warning(f"⚠️ Failed to mark device offline: {error_text_without_content(e)}")
 
             # Unsubscribe from wake word config updates
             wakeword_config_manager = get_wakeword_config_manager()

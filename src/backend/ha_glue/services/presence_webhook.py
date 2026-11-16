@@ -5,6 +5,7 @@ from loguru import logger
 
 from ha_glue.utils.config import ha_glue_settings
 from utils.hooks import register_hook
+from utils.log_safety import error_text_without_content, frames_without_content
 
 _client: httpx.AsyncClient | None = None
 
@@ -24,8 +25,11 @@ async def _dispatch(event: str, **kwargs):
         resp = await _client.post(ha_glue_settings.presence_webhook_url, json=payload, headers=headers)
         resp.raise_for_status()
         logger.debug(f"Presence webhook: {event} → {resp.status_code}")
-    except Exception:
-        logger.opt(exception=True).warning(f"Presence webhook failed for {event}")
+    except Exception as e:
+        logger.warning(
+            f"Presence webhook failed for {event}"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+        )
 
 
 def register_presence_webhooks():

@@ -17,6 +17,7 @@ from loguru import logger
 
 from ha_glue.utils.config import ha_glue_settings
 from utils.config import settings
+from utils.log_safety import error_text_without_content, frames_without_content
 
 
 class MediaType(str, Enum):
@@ -180,7 +181,7 @@ class MediaFollowService:
                 {"type": "now_playing_changed", "sessions": sessions}
             )
         except Exception as e:
-            logger.debug(f"kiosk now_playing broadcast failed: {e}")
+            logger.debug(f"kiosk now_playing broadcast failed: {error_text_without_content(e)}")
 
     def _schedule_now_playing_broadcast(self) -> None:
         """Fire the diff-gated now_playing broadcast from a SYNC mutation site
@@ -333,7 +334,7 @@ class MediaFollowService:
                     f"{result.get('message')}"
                 )
         except Exception as e:
-            logger.error(f"🎵 Error stopping playback in {session.room_name}: {e}")
+            logger.error(f"🎵 Error stopping playback in {session.room_name}: {error_text_without_content(e)}")
 
     async def _resume_playback(
         self, session: MediaSession, new_room_id: int, new_room_name: str
@@ -411,7 +412,7 @@ class MediaFollowService:
                 await self._broadcast_now_playing_if_changed()
 
         except Exception as e:
-            logger.error(f"🎵 Error resuming playback in {new_room_name}: {e}")
+            logger.error(f"🎵 Error resuming playback in {new_room_name}: {error_text_without_content(e)}")
 
     # ------------------------------------------------------------------
     # Internal: Conflict Resolution
@@ -458,8 +459,11 @@ class MediaFollowService:
                 if user is None:
                     return False
                 return bool(user.media_follow_enabled)
-        except Exception:
-            logger.exception(f"🎵 Error checking media_follow opt-in for user {user_id}")
+        except Exception as e:
+            logger.error(
+                f"🎵 Error checking media_follow opt-in for user {user_id}"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+            )
             return False
 
     async def _get_role_priority(self, user_id: int) -> int:
@@ -474,8 +478,11 @@ class MediaFollowService:
                     role = await db.get(Role, user.role_id)
                     if role:
                         return role.priority
-        except Exception:
-            logger.exception(f"🎵 Error looking up role priority for user {user_id}")
+        except Exception as e:
+            logger.error(
+                f"🎵 Error looking up role priority for user {user_id}"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+            )
         return 100
 
     async def _get_room_owner_id(self, room_id: int) -> int | None:
@@ -487,8 +494,11 @@ class MediaFollowService:
             async with AsyncSessionLocal() as db:
                 room = await db.get(Room, room_id)
                 return room.owner_id if room else None
-        except Exception:
-            logger.exception(f"🎵 Error looking up room owner for room {room_id}")
+        except Exception as e:
+            logger.error(
+                f"🎵 Error looking up room owner for room {room_id}"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+            )
             return None
 
     # ------------------------------------------------------------------

@@ -12,6 +12,8 @@ from typing import Any
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content, frames_without_content
+
 HOOK_EVENTS: frozenset[str] = frozenset({
     "startup",
     "shutdown",
@@ -426,9 +428,10 @@ async def run_hooks(event: str, **kwargs: Any) -> list[Any]:
             result = await fn(**kwargs)
             if result is not None:
                 results.append(result)
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 f"Hook {getattr(fn, '__qualname__', repr(fn))} failed for {event}"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
     return results
 
@@ -455,8 +458,9 @@ async def run_hooks_with_errors(
                 results.append(result)
         except Exception as e:
             errors.append((fn, e))
-            logger.opt(exception=True).warning(
+            logger.warning(
                 f"Hook {getattr(fn, '__qualname__', repr(fn))} failed for {event}"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
     return results, errors
 

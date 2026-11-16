@@ -49,6 +49,7 @@ from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.document_fact_retrieval import DocumentFactRetrieval
 from services.polymorphic_atom_store import PolymorphicAtomStore
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -431,7 +432,7 @@ async def set_calendar_pref(
                 try:
                     await ObligationCalendarSync(db, mgr).teardown_user(current_user.id)
                 except Exception as e:
-                    logger.warning(f"calendar pref clear: teardown failed: {e}")
+                    logger.warning(f"calendar pref clear: teardown failed: {error_text_without_content(e)}")
             await db.delete(existing)
             await db.commit()
         return ObligationCalendarPrefResponse(calendar_name=None, available=available)

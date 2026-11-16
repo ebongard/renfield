@@ -13,6 +13,7 @@ import httpx
 from loguru import logger
 
 from ha_glue.utils.config import ha_glue_settings
+from utils.log_safety import error_text_without_content
 
 _shared_http_client: httpx.AsyncClient | None = None
 
@@ -64,7 +65,7 @@ class HomeAssistantClient:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"❌ Failed to fetch the states: {e}")
+            logger.error(f"❌ Failed to fetch the states: {error_text_without_content(e)}")
             return []
 
     async def get_state(self, entity_id: str) -> dict | None:
@@ -75,7 +76,7 @@ class HomeAssistantClient:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"❌ Failed to fetch the state for {entity_id}: {e}")
+            logger.error(f"❌ Failed to fetch the state for {entity_id}: {error_text_without_content(e)}")
             return None
 
     async def call_service(
@@ -102,7 +103,7 @@ class HomeAssistantClient:
             logger.info(f"✅ Service {domain}.{service} called for {entity_id}")
             return True
         except Exception as e:
-            logger.error(f"❌ Failed to call {domain}.{service}: {e}")
+            logger.error(f"❌ Failed to call {domain}.{service}: {error_text_without_content(e)}")
             return False
 
     async def turn_on(self, entity_id: str) -> bool:
@@ -273,7 +274,7 @@ class HomeAssistantClient:
             return keywords
 
         except Exception as e:
-            logger.error(f"❌ Failed to load the keywords: {e}")
+            logger.error(f"❌ Failed to load the keywords: {error_text_without_content(e)}")
             return self._get_fallback_keywords()
 
     def _get_fallback_keywords(self) -> set:
@@ -342,7 +343,7 @@ class HomeAssistantClient:
             return entity_map
 
         except Exception as e:
-            logger.error(f"❌ Failed to build the entity map: {e}")
+            logger.error(f"❌ Failed to build the entity map: {error_text_without_content(e)}")
             return []
 
     def _extract_room(self, entity_id: str, friendly_name: str) -> str | None:
@@ -452,7 +453,7 @@ class HomeAssistantClient:
             logger.error("HA WebSocket timeout")
             return None
         except Exception as e:
-            logger.error(f"HA WebSocket error: {e}")
+            logger.error(f"HA WebSocket error: {error_text_without_content(e)}")
             return None
 
     async def get_areas(self) -> list[dict[str, Any]]:
@@ -472,7 +473,7 @@ class HomeAssistantClient:
             return result if isinstance(result, list) else []
 
         except Exception as e:
-            logger.error(f"Failed to get HA areas: {e}")
+            logger.error(f"Failed to get HA areas: {error_text_without_content(e)}")
             return await self._get_areas_rest_fallback()
 
     async def _get_areas_rest_fallback(self) -> list[dict[str, Any]]:
@@ -495,7 +496,7 @@ class HomeAssistantClient:
             return []
 
         except Exception as e:
-            logger.error(f"HA areas REST fallback error: {e}")
+            logger.error(f"HA areas REST fallback error: {error_text_without_content(e)}")
             return []
 
     async def create_area(self, name: str, icon: str | None = None) -> dict | None:
@@ -523,7 +524,7 @@ class HomeAssistantClient:
             return None
 
         except Exception as e:
-            logger.error(f"Failed to create HA area: {e}")
+            logger.error(f"Failed to create HA area: {error_text_without_content(e)}")
             return None
 
     async def update_area(
@@ -559,7 +560,7 @@ class HomeAssistantClient:
             return None
 
         except Exception as e:
-            logger.error(f"Failed to update HA area: {e}")
+            logger.error(f"Failed to update HA area: {error_text_without_content(e)}")
             return None
 
     async def delete_area(self, area_id: str) -> bool:
@@ -585,5 +586,5 @@ class HomeAssistantClient:
             return False
 
         except Exception as e:
-            logger.error(f"Failed to delete HA area: {e}")
+            logger.error(f"Failed to delete HA area: {error_text_without_content(e)}")
             return False

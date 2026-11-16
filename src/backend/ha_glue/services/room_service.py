@@ -29,6 +29,7 @@ from models.database import (
     Room,
     RoomDevice,
 )
+from utils.log_safety import error_text_without_content
 
 
 def normalize_room_name(name: str) -> str:
@@ -352,7 +353,7 @@ class RoomService:
                 results["imported"] += 1
 
             except Exception as e:
-                logger.error(f"Error importing area {area_name}: {e}")
+                logger.error(f"Error importing area {area_name}: {error_text_without_content(e)}")
                 results["errors"].append(f"{area_name}: {e!s}")
 
         logger.info(f"HA Import complete: {results}")

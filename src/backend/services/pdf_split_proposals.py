@@ -43,6 +43,7 @@ from services.pdf_split_detector import SplitPiece, SplitVerdict, validate_bound
 from services.pdf_splitter import _resolve_parent_owner
 from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
+from utils.log_safety import error_text_without_content
 
 NOTIFY_EVENT_TYPE = "pdf_split_review"
 NOTIFY_SOURCE = "pdf_split"
@@ -147,7 +148,7 @@ async def _notify_owner(
             },
         )
     except Exception as e:
-        logger.warning(f"pdf-split: review notification failed: {e}")
+        logger.warning(f"pdf-split: review notification failed: {error_text_without_content(e)}")
 
 
 def _coerce_override(

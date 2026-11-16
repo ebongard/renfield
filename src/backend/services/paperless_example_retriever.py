@@ -34,6 +34,8 @@ from typing import Any
 from loguru import logger
 from sqlalchemy import select
 
+from utils.log_safety import error_text_without_content
+
 # Embedding lookups happen at retrieval time, so we want to cap latency.
 # Production embedding p50 lands around 80–250 ms on a warm Ollama;
 # we accept up to ~3× headroom before falling back to the seed-only
@@ -125,7 +127,7 @@ async def fetch_relevant_examples(
             result = await db.execute(stmt)
             rows = result.scalars().all()
     except Exception as exc:
-        logger.warning("Paperless example retrieval skipped — DB query failed: {}", exc)
+        logger.warning("Paperless example retrieval skipped — DB query failed: {}", error_text_without_content(exc))
         return []
 
     examples: list[dict[str, Any]] = []

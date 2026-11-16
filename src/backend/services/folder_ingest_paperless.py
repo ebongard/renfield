@@ -39,6 +39,7 @@ from models.database import (
     Document,
 )
 from services.folder_ingest import _PAPERLESS_SETTLED, IngestMeta, PaperlessLeg
+from utils.log_safety import error_text_without_content
 
 
 class PaperlessResolveError(Exception):
@@ -533,12 +534,12 @@ def make_paperless_leg(
                 except Exception as tax_exc:
                     logger.warning(
                         f"paperless-leg: document_type/tags resolution failed for "
-                        f"doc {doc.id} (uploading with title/correspondent only): {tax_exc}"
+                        f"doc {doc.id} (uploading with title/correspondent only): {error_text_without_content(tax_exc)}"
                     )
         except Exception as exc:
             logger.warning(
                 f"paperless-leg: extractor error for doc {doc.id} "
-                f"(bare upload): {exc}"
+                f"(bare upload): {error_text_without_content(exc)}"
             )
 
         # 2. Upload (non-blocking). Distinguish a TRANSPORT failure (MCP
@@ -655,7 +656,7 @@ def make_paperless_leg(
                     except Exception as exc:
                         logger.warning(
                             f"paperless-leg: post-consume patch error for doc "
-                            f"{doc.id}: {exc}"
+                            f"{doc.id}: {error_text_without_content(exc)}"
                         )
             return True
 

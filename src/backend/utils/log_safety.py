@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from urllib.parse import unquote_plus
 
 #: Nobody needs more than this to place an error, and the longer the message
@@ -73,11 +74,11 @@ def frames_without_content(e: BaseException) -> str:
 
     🛑 For the handlers that used to log a full traceback
     (`logger.opt(exception=True)`). A traceback ends in `str(e)`, i.e. in the
-    `[SQL: ...] [parameters: ...]` tail this module exists to cut, and the
-    app's log sink runs with loguru's default `diagnose=True`, which prints
-    the VALUES of the variables on every source line of every frame
-    (measured on 2026-11-16: `work("<the argument>")` comes out with its
-    argument). The stack itself is the useful part and carries no content.
+    `[SQL: ...] [parameters: ...]` tail this module exists to cut. (Until
+    2026-11-16 the sink also ran with loguru's default `diagnose=True` and
+    printed the VALUES of the variables of every frame; `install_log_sink`
+    ended that, the last line of a traceback it cannot change.) The stack
+    itself is the useful part and carries no content.
 
     What is lost against the traceback: the source lines, the variable
     values (the point), and the frames of a chained exception (`__cause__` /
@@ -90,6 +91,42 @@ def frames_without_content(e: BaseException) -> str:
         f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno} in {frame.name}"
         for frame in frames
     ) or "no stack"
+
+
+# --- The sink ------------------------------------------------------------------
+
+
+def install_log_sink(level: str) -> None:
+    """Replace every loguru sink of this process by ONE to stderr that prints
+    no variable values.
+
+    🛑 `diagnose=False` is the point. loguru's default is True: under every
+    source line of a traceback it prints the VALUES of the names on that line
+    -- the session, the statement, the bound parameters, the row. Measured on
+    2026-11-16 with the app's sink as it was: a failing query came out with
+    its full `[SQL: ...] [parameters: ...]` text a second time, from the
+    frames, whatever the handler had cut from the message.
+
+    `backtrace=True` stays, written out so it is a decision: it extends the
+    stack ABOVE the frame that caught the exception -- more `file:line in
+    function` plus source lines, the same kind of text as the stack below it
+    and no values. Turning it off would cost the callers' frames and remove
+    no content.
+
+    🛑 What this does NOT change: a traceback still ends in `str(e)`, i.e. in
+    the raw message with its tail. That is what `error_text_without_content`
+    and `frames_without_content` are for, at the handler.
+
+    Every process calls this once at start: `main.py` at import, each worker
+    in its `__main__` block (a worker never imports `main.py`; without the
+    call it logs through loguru's built-in sink, which has the default).
+    `tests/backend/test_log_safety_structure.py` holds both ends: no sink
+    without `diagnose=False`, no entry point without this call.
+    """
+    from loguru import logger
+
+    logger.remove()
+    logger.add(sys.stderr, level=level, backtrace=True, diagnose=False)
 
 
 # --- Credentials in logged URLs ----------------------------------------------

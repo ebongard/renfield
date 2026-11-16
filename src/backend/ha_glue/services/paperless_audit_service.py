@@ -26,6 +26,7 @@ from sqlalchemy import Float, and_, cast, func, or_, select
 
 from ha_glue.utils.config import ha_glue_settings
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ class PaperlessAuditService:
                 logger.warning("Paperless MCP not reachable — audit service disabled")
                 return
         except Exception as e:
-            logger.warning(f"Paperless MCP connectivity check failed: {e}")
+            logger.warning(f"Paperless MCP connectivity check failed: {error_text_without_content(e)}")
             return
 
         logger.info("Paperless Audit Service started")
@@ -178,7 +179,7 @@ class PaperlessAuditService:
                         f"confidence={result.confidence if result else 'N/A'}"
                     )
                 except Exception as e:
-                    logger.error(f"Audit failed for doc {doc_id}: {e}")
+                    logger.error(f"Audit failed for doc {doc_id}: {error_text_without_content(e)}")
 
                 # Throttle
                 await asyncio.sleep(ha_glue_settings.paperless_audit_batch_delay)
@@ -206,7 +207,7 @@ class PaperlessAuditService:
             try:
                 await self.run_audit(**kwargs)
             except Exception as e:
-                logger.error(f"Background audit failed: {e}")
+                logger.error(f"Background audit failed: {error_text_without_content(e)}")
 
         self._task = asyncio.create_task(_run(), name="paperless-audit")
         return "started"
@@ -326,7 +327,7 @@ class PaperlessAuditService:
             if sp_parsed:
                 storage_paths = [p["path"] for p in sp_parsed.get("paths", [])]
         except Exception as e:
-            logger.warning(f"Failed to fetch storage paths: {e}")
+            logger.warning(f"Failed to fetch storage paths: {error_text_without_content(e)}")
 
         # Fetch custom field definitions via MCP
         custom_fields = []
@@ -336,7 +337,7 @@ class PaperlessAuditService:
             if cf_parsed:
                 custom_fields = cf_parsed.get("fields", [])
         except Exception as e:
-            logger.warning(f"Failed to fetch custom fields: {e}")
+            logger.warning(f"Failed to fetch custom fields: {error_text_without_content(e)}")
 
         return {
             "types": sorted(types),
@@ -505,7 +506,7 @@ class PaperlessAuditService:
             )
             raw_text = extract_response_content(response)
         except Exception as e:
-            logger.error(f"LLM analysis failed: {e}")
+            logger.error(f"LLM analysis failed: {error_text_without_content(e)}")
             return None
 
         if not raw_text:
@@ -535,7 +536,7 @@ class PaperlessAuditService:
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse LLM JSON response: {e}")
+            logger.warning(f"Failed to parse LLM JSON response: {error_text_without_content(e)}")
             return None
 
     async def _fetch_full_taxonomy(self) -> dict:
@@ -806,7 +807,7 @@ class PaperlessAuditService:
         except PaperlessResolveError as e:
             logger.warning(
                 f"_apply_fix: taxonomy resolve failed for doc {result.paperless_doc_id} "
-                f"({e}) — leaving pending for retry, not reporting as applied"
+                f"({error_text_without_content(e)}) — leaving pending for retry, not reporting as applied"
             )
             return False
         date_val = _eff("date", result.suggested_date)
@@ -981,7 +982,7 @@ class PaperlessAuditService:
                 logger.info(f"re-OCR: re-derived + applied metadata for doc {doc_id}")
             return applied
         except Exception as e:
-            logger.warning(f"re-OCR metadata re-derive failed for doc {doc_id}: {e}")
+            logger.warning(f"re-OCR metadata re-derive failed for doc {doc_id}: {error_text_without_content(e)}")
             return False
 
     async def _local_reocr(self, result) -> str:
@@ -1028,7 +1029,7 @@ class PaperlessAuditService:
                 tmp_path, max_chars=1_000_000, force_ocr=True,
             )
         except Exception as e:
-            logger.error(f"re-OCR: local extraction failed for doc {doc_id}: {e}")
+            logger.error(f"re-OCR: local extraction failed for doc {doc_id}: {error_text_without_content(e)}")
             return await self._paperless_reprocess(doc_id)
         finally:
             if tmp_path and os.path.exists(tmp_path):
@@ -1128,7 +1129,7 @@ class PaperlessAuditService:
                 )
         except Exception as e:
             logger.warning(
-                f"re-OCR→KB reindex enqueue failed for paperless {paperless_doc_id}: {e}"
+                f"re-OCR→KB reindex enqueue failed for paperless {paperless_doc_id}: {error_text_without_content(e)}"
             )
 
     async def _paperless_reprocess(self, doc_id: int) -> str:
@@ -1846,7 +1847,7 @@ class PaperlessAuditService:
                     return json.loads(message[:e.pos])
                 except (json.JSONDecodeError, TypeError):
                     pass
-            logger.warning(f"_parse_mcp_result: JSON parse failed: {e}")
+            logger.warning(f"_parse_mcp_result: JSON parse failed: {error_text_without_content(e)}")
             return None
         except TypeError:
             return None
