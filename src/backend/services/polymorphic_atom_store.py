@@ -62,6 +62,12 @@ ASCII query flow:
         |     fan-outs run; see `SourceSessions`. Every source also has a
         |     deadline there (`atom_fanout_source_timeout`).
         |
+        |   🛑 The regime says WHERE a source reads. Whether the fan-out may
+        |   WRITE is a separate statement of the caller: `query(federated=)`.
+        |   A federated call writes nothing in either regime; a call that is
+        |   not federated is refused in regime C (`ValueError`), because a
+        |   `SourceReader` cannot carry its writes.
+        |
         |   A source in regime C has NO caller transaction to lean on, so
         |   each call tree was checked for writes (2026-11-15):
         |
@@ -71,8 +77,8 @@ ASCII query flow:
         |         `retrieve` bumps `access_count` and only `flush()`es -- "the
         |         caller's transaction decides". Neither caller of this store
         |         commits, so in the fan-out the bump was never durable by
-        |         design; it only held row locks until the session closed. In
-        |         regime C it is switched off (`track_access=False`): the
+        |         design; it only held row locks until the session closed. For a
+        |         federated call it is switched off (`track_access=False`): the
         |         fan-out is a PURE READ there, no row locks across sessions,
         |         and a peer's question does not shift the recency ranking of
         |         local memories.
@@ -80,14 +86,16 @@ ASCII query flow:
         |         `find_similar` writes the shadow log and COMMITS on its
         |         session (`skill_shadow_log_enabled`, default on). On a shared
         |         session that commit also decides for whatever the other
-        |         sources have flushed. In regime C it is switched off
+        |         sources have flushed. For a federated call it is switched off
         |         (`record_shadow_log=False`): a paired instance's question
         |         is not a local person's turn and must not write curator
         |         rows under a local account.
         |
         |   With both switched off the fan-out in regime C is a pure read,
-        |   and `SourceReader` enforces it: it has no `add`, `flush` or
-        |   `commit`. None of the sources uses SET LOCAL, an advisory lock
+        |   and it is enforced twice: `SourceReader` has no `add`, `flush`
+        |   or `commit`, and every statement on it runs in a READ ONLY
+        |   transaction, so Postgres refuses DML and row locks sent through
+        |   `execute`. None of the sources uses SET LOCAL, an advisory lock
         |   or a savepoint.
         |   Graph expansion runs AFTER the fan-out, alone, on `self.db`.
         |
@@ -149,6 +157,10 @@ from utils.log_safety import error_text_without_content
 #: second one arriving meanwhile shares the same eight slots instead of taking
 #: eight more.
 SOURCE_SESSION_LIMIT = 8
+
+#: The transaction of every statement on a `SourceReader` (see
+#: `SourceSessions.execute`).
+_READ_ONLY = {"postgresql_readonly": True}
 
 
 class SourceSessions:
@@ -242,6 +254,13 @@ class SourceSessions:
         """
         async with self._slots_for_this_loop():
             async with self._factory() as session:
+                # 🛑 READ ONLY is enforced by the DATABASE, not by what this
+                # class happens to lack. The transaction of this statement is
+                # opened read-only, so an UPDATE ... RETURNING or a SELECT ...
+                # FOR UPDATE is refused by Postgres instead of running and
+                # being rolled back when the session closes. The option
+                # belongs to this checkout: the pool resets it on return.
+                await session.connection(execution_options=_READ_ONLY)
                 result = await session.execute(statement, params, **kwargs)
                 return result.freeze()()
 
@@ -251,11 +270,13 @@ class SourceReader:
     `SourceSessions` works with.
 
     It has `execute` and `bind` and NOTHING ELSE -- no `add`, no `flush`, no
-    `commit`. That is deliberate: the fan-out on own sessions is a pure
-    read, and a source that tries to write there fails loudly (it shows up
-    as crashed in the summary line) instead of writing on a connection
-    nobody decides about. A source that has a write needs an explicit
-    switch for it, as `track_access` and `record_shadow_log` are.
+    `commit` -- and every statement runs in a READ ONLY transaction. The
+    fan-out on own sessions is a pure read, and a source that tries to
+    write there fails loudly either way (`AttributeError`, or Postgres
+    refusing the statement; it shows up as crashed in the summary line)
+    instead of writing on a connection nobody decides about. A source that
+    has a write needs an explicit switch for it, as `track_access` and
+    `record_shadow_log` are.
     """
 
     def __init__(self, sessions: SourceSessions):
@@ -283,6 +304,10 @@ class PolymorphicAtomStore:
         ``None``: all sources share ``db`` -- only for a caller whose session
         has already run a statement. A caller that opens a fresh session and
         queries at once passes a ``SourceSessions``.
+
+        The regime decides WHERE a source reads, not whether the fan-out may
+        write: that follows ``query(federated=...)``. Own sessions are
+        read-only, so ``query`` refuses them for a call that is not federated.
         """
         self.db = db
         self.resolver = CircleResolver(db)
@@ -358,13 +383,31 @@ class PolymorphicAtomStore:
 
         candidate_k = top_k * 3  # over-fetch for RRF fusion across sources
 
-        # A source on a session of its own has no caller transaction that
-        # could decide about its writes, so there the fan-out is a PURE READ.
-        # It has two writes, and both are switched off explicitly: the memory
-        # access bump (row locks) and the skill shadow log (rows inserted and
-        # committed under the asking account). Module docstring, "memory" and
-        # "skill".
-        writes_allowed = self._source_sessions is None
+        # 🛑 Whether the fan-out may WRITE follows what the caller STATES
+        # (`federated`), never the session regime. It has two writes: the
+        # memory access bump and the skill shadow log (rows inserted and
+        # committed under the asking account). A paired instance's question
+        # is not a local person's turn, so a federated call makes neither --
+        # on own sessions and on the caller's session alike.
+        #
+        # Until 2026-11-16 this read `self._source_sessions is None`. The two
+        # happened to coincide for the two callers there are, and would have
+        # parted silently with the next one: a federated call on the caller's
+        # session would have written curator rows again, a local call on own
+        # sessions would have lost both writes without a word.
+        #
+        # That second combination is REFUSED rather than degraded: a
+        # `SourceReader` runs one statement per session and cannot flush, so
+        # a local call there could not track access. A local caller that
+        # wants the parallel regime has to bring a way to write first.
+        if self._source_sessions is not None and not federated:
+            raise ValueError(
+                "PolymorphicAtomStore: `source_sessions` is the read-only "
+                "regime and only serves a call that states `federated=True`. "
+                "A local call there would silently lose the memory access "
+                "bump and the skill shadow log."
+            )
+        writes_allowed = not federated
 
         # 🛑 Every source is built from what it is HANDED (`s`: the caller's
         # session, or a `SourceReader`), and from nothing else. The scope --

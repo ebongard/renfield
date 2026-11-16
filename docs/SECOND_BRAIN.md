@@ -95,13 +95,17 @@ dahinter an. Die Schranke gilt nur, weil der Responder EINE `SourceSessions`-Ins
 Dazu hat jede Quelle dort eine Frist (`ATOM_FANOUT_SOURCE_TIMEOUT`, 20 s): wer sie überschreitet, wird
 abgebrochen und als abgestürzt gezählt, die übrigen tragen die Antwort.
 
-🛑 **Auf eigenen Sitzungen ist der Abruf ein reiner Lesevorgang.** Zwei Quellen schreiben sonst, und beide
-sind dort ausdrücklich abgeschaltet: der Zugriffszähler der Erinnerungen (`access_count`, `last_accessed_at`;
-`track_access=False`) und das Schattenprotokoll der Fertigkeiten (`record_shadow_log=False`) — letzteres
-legte bei einer gemappten Anfrage Kuratorzeilen unter dem verknüpften lokalen Konto an. Eine Quelle ohne
-Transaktion des Aufrufers hat niemanden, der über ihren Schreibvorgang entscheidet, und die Frage einer
-Gegenseite ist kein Zug einer lokalen Person. Der `SourceReader` kann gar nicht schreiben (kein `add`,
-`flush`, `commit`) — eine Quelle, die es versucht, fällt sichtbar aus. Der Geltungsbereich (`asker_id`,
+🛑 **Ein föderierter Abruf ist ein reiner Lesevorgang — und das folgt der ANGABE des Aufrufers
+(`query(federated=True)`), nicht dem Sitzungsregime.** Zwei Quellen schreiben sonst, und beide sind für einen
+föderierten Aufruf ausdrücklich abgeschaltet: der Zugriffszähler der Erinnerungen (`access_count`,
+`last_accessed_at`; `track_access=False`) und das Schattenprotokoll der Fertigkeiten
+(`record_shadow_log=False`) — letzteres legte bei einer gemappten Anfrage Kuratorzeilen unter dem
+verknüpften lokalen Konto an. Die Frage einer Gegenseite ist kein Zug einer lokalen Person, gleich auf
+welcher Sitzung sie läuft. Die umgekehrte Kombination — ein LOKALER Aufruf auf eigenen Sitzungen — wird
+abgelehnt (`ValueError`): er verlöre beide Schreibvorgänge stillschweigend. Der `SourceReader` kann nicht
+schreiben, und zwar doppelt: er hat kein `add`, `flush`, `commit`, und jede Anweisung läuft in einer
+READ-ONLY-Transaktion, sodass Postgres auch ein `UPDATE … RETURNING` oder `SELECT … FOR UPDATE` über
+`execute` zurückweist — eine Quelle, die es versucht, fällt sichtbar aus. Der Geltungsbereich (`asker_id`,
 `PeerScope`) ist in beiden Betriebsarten derselbe — eine eigene Sitzung ändert, über welche Verbindung eine
 Quelle liest, nie, was sie lesen darf. `query` protokolliert je Durchlauf eine Zeile (geliefert / leer /
 abgestürzt, Dauer, Pfad).

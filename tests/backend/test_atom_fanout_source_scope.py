@@ -107,6 +107,9 @@ class _FakeSession:
         self.closed = True
         return False
 
+    async def connection(self, execution_options=None):
+        self._book.setdefault("options", []).append(execution_options)
+
     async def execute(self, statement, params=None, **_kwargs):
         if self._hold is not None:
             await self._hold.wait()
@@ -126,7 +129,9 @@ class TestEverySourceIsHandedItsScope:
         "skill": "asker_id", "document_fact": "asker_id", "note": "asker_id",
     }
 
-    async def _run(self, *, own_sessions: bool, peer):
+    async def _run(self, *, own_sessions: bool, peer, federated: bool | None = None):
+        """`federated` defaults to the two combinations production has: the
+        responder (own sessions, federated) and `GET /api/atoms` (neither)."""
         from services.polymorphic_atom_store import PolymorphicAtomStore, SourceSessions
 
         book = {"open": 0, "peak": 0}
@@ -137,7 +142,8 @@ class TestEverySourceIsHandedItsScope:
                 SourceSessions(lambda: _FakeSession(book)) if own_sessions else None),
         )
         await store.query("what", asker_id=41, max_visible_tier=2, top_k=5,
-                          peer=peer, federated=own_sessions)
+                          peer=peer,
+                          federated=own_sessions if federated is None else federated)
         return caller_session
 
     @pytest.mark.parametrize("own_sessions", [True, False])
@@ -153,24 +159,48 @@ class TestEverySourceIsHandedItsScope:
             assert call["kwargs"]["peer"] is peer, source
             assert call["args"] == ("what",), source
 
-    async def test_a_session_of_its_own_changes_nothing_but_the_two_writes(
+    async def test_the_regime_and_the_statement_change_nothing_but_the_two_writes(
         self, recorded_sources
     ):
-        """Both regimes, argument by argument. The only permitted differences
-        are the two write switches: `track_access` of the memory source and
-        `record_shadow_log` of the skill source."""
+        """Every permitted combination, argument by argument. The only
+        differences allowed are the two write switches: `track_access` of the
+        memory source and `record_shadow_log` of the skill source."""
         peer = PeerScope(owner_id=7, tier=2)
-        await self._run(own_sessions=False, peer=peer)
-        shared = {c["source"]: dict(c["kwargs"]) for c in recorded_sources}
-        recorded_sources.clear()
-        await self._run(own_sessions=True, peer=peer)
-        own = {c["source"]: dict(c["kwargs"]) for c in recorded_sources}
+        seen = {}
+        for own_sessions, federated in ((False, False), (False, True), (True, True)):
+            recorded_sources.clear()
+            await self._run(own_sessions=own_sessions, peer=peer, federated=federated)
+            calls = {c["source"]: dict(c["kwargs"]) for c in recorded_sources}
+            seen[own_sessions, federated] = (
+                calls["memory"].pop("track_access"),
+                calls["skill"].pop("record_shadow_log"),
+                calls,
+            )
+        assert seen[False, False][2] == seen[False, True][2] == seen[True, True][2]
+        assert seen[False, False][:2] == (True, True)
 
-        assert shared["memory"].pop("track_access") is True
-        assert own["memory"].pop("track_access") is False
-        assert shared["skill"].pop("record_shadow_log") is True
-        assert own["skill"].pop("record_shadow_log") is False
-        assert own == shared
+    @pytest.mark.parametrize("own_sessions", [True, False])
+    async def test_a_federated_call_writes_nothing_whatever_session_it_runs_on(
+        self, recorded_sources, own_sessions
+    ):
+        """🛑 The write decision follows what the caller STATES. Until
+        2026-11-16 it was read off the session regime, so a federated call
+        on the caller's session would have bumped memory access counts and
+        written skill shadow rows under a local account."""
+        await self._run(own_sessions=own_sessions, peer=None, federated=True)
+        by_source = {c["source"]: c["kwargs"] for c in recorded_sources}
+        assert by_source["memory"]["track_access"] is False
+        assert by_source["skill"]["record_shadow_log"] is False
+
+    async def test_a_local_call_on_own_sessions_is_refused_before_any_source_runs(
+        self, recorded_sources
+    ):
+        """🛑 The other half: a reader runs one statement per session and
+        cannot flush, so a local call there would lose both writes without a
+        word. It is refused, loudly, and no source has been asked."""
+        with pytest.raises(ValueError, match="federated=True"):
+            await self._run(own_sessions=True, peer=None, federated=False)
+        assert recorded_sources == []
 
     async def test_on_own_sessions_no_source_is_handed_the_callers_session(
         self, recorded_sources
@@ -225,7 +255,9 @@ class TestWhatASourceIsHandedInsteadOfASession:
         # One session PER STATEMENT, each closed: between the two the source
         # held nothing.
         assert len(made) == 2 and all(m.closed for m in made)
-        assert book == {"open": 0, "peak": 1}
+        assert (book["open"], book["peak"]) == (0, 1)
+        # ... and each statement's transaction was opened READ ONLY.
+        assert book["options"] == [{"postgresql_readonly": True}] * 2
 
     async def test_a_failing_statement_closes_its_session_and_frees_its_slot(self):
         book = {"open": 0, "peak": 0}
@@ -259,7 +291,7 @@ class TestWhatASourceIsHandedInsteadOfASession:
         book = {"open": 0, "peak": 0}
         sessions, _ = self._sessions(book, limit=3)
         await asyncio.gather(*(sessions.reader().execute(f"SELECT {i}") for i in range(16)))
-        assert book == {"open": 0, "peak": 3}
+        assert (book["open"], book["peak"]) == (0, 3)
 
     async def test_the_reader_cannot_write(self):
         """🛑 The fan-out on own sessions is a pure read, and this is what
@@ -306,7 +338,8 @@ class TestASourceCannotOutliveItsDeadline:
             source_sessions=(
                 SourceSessions(lambda: _FakeSession(book)) if own_sessions else None),
         )
-        return await store.query("what", asker_id=41, max_visible_tier=2, top_k=5)
+        return await store.query("what", asker_id=41, max_visible_tier=2, top_k=5,
+                                 federated=own_sessions)
 
     async def test_the_stuck_source_is_counted_as_crashed_and_the_rest_delivers(
         self, recorded_sources, monkeypatch

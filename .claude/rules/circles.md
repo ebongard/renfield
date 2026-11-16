@@ -90,8 +90,9 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
 - 🛑 A caller that opens a FRESH session and queries the store at once passes `source_sessions` (one bounded,
   process-wide `SourceSessions`): eight sources on one cold session crash all but one. There the slot (and the
   session) covers ONE STATEMENT, never a source call — sources call model servers in between and must hold
-  nothing meanwhile. The fan-out is then a PURE READ (`SourceReader` cannot write; `track_access`,
-  `record_shadow_log` off — a new writing source needs its own switch). Scope (`asker_id`, `peer`) is identical.
+  nothing meanwhile. Whether the fan-out WRITES follows `query(federated=…)`, never the regime: federated = PURE
+  READ (`track_access`, `record_shadow_log` off — a new writing source needs its own switch); own sessions are
+  READ ONLY transactions and refuse a call that is not federated. Scope (`asker_id`, `peer`) is identical.
 
 ## Extraction WRITES are ownership-gated separately from retrieval
 `_apply_update_v2` / `_apply_delete_v2` and the v1 contradiction path take the row to mutate from an LLM-supplied

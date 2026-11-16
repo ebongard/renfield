@@ -374,7 +374,17 @@ def _store_on(engine, *, limit: int = 8):
 
     maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     sessions = SourceSessions(maker, limit=limit)
-    return maker, lambda db: PolymorphicAtomStore(db, source_sessions=sessions)
+
+    class _Federated:
+        """Own sessions only serve a call that states `federated=True`."""
+
+        def __init__(self, db):
+            self._store = PolymorphicAtomStore(db, source_sessions=sessions)
+
+        async def query(self, *args, **kwargs):
+            return await self._store.query(*args, federated=True, **kwargs)
+
+    return maker, _Federated
 
 
 class TestACrashingSourceStaysAlone:
@@ -644,6 +654,44 @@ class TestTheAccessCountContract:
             await db.commit()
         assert (await _access_counts(pooled_engine.engine, two_owners["ids"]))[own_id] == 1
 
+    async def test_a_federated_call_on_the_callers_session_does_not_bump(
+        self, pooled_engine, two_owners, monkeypatch
+    ):
+        """🛑 The write decision follows `federated`, not the session regime:
+        the same warm caller session as above, the call states that it is
+        federated, and no UPDATE is sent -- visible neither inside the
+        caller's transaction nor after its commit."""
+        from services.polymorphic_atom_store import PolymorphicAtomStore
+
+        monkeypatch.setattr(settings, "skills_enabled", False)
+        statements = _statements_on(pooled_engine.engine)
+        maker = async_sessionmaker(pooled_engine.engine, class_=AsyncSession, expire_on_commit=False)
+        async with maker() as db:
+            await db.execute(text("SELECT 1"))
+            matches = await PolymorphicAtomStore(db).query(
+                _TOKEN, asker_id=two_owners["first"], max_visible_tier=0, top_k=10,
+                federated=True)
+            await db.commit()
+
+        assert _memory_ids(matches), "the memory source found nothing -- no proof"
+        assert [s for s in statements if s.lstrip().upper().startswith("UPDATE")] == []
+        counts = await _access_counts(pooled_engine.engine, two_owners["ids"])
+        assert set(counts.values()) == {0}, counts
+
+    async def test_a_local_call_on_own_sessions_is_refused(self, pooled_engine, two_owners):
+        """A reader cannot flush; a local call there would lose the bump
+        silently. It is refused before a statement is sent."""
+        from services.polymorphic_atom_store import PolymorphicAtomStore, SourceSessions
+
+        statements = _statements_on(pooled_engine.engine)
+        maker = async_sessionmaker(pooled_engine.engine, class_=AsyncSession, expire_on_commit=False)
+        async with maker() as db:
+            store = PolymorphicAtomStore(db, source_sessions=SourceSessions(maker))
+            with pytest.raises(ValueError, match="federated=True"):
+                await store.query(
+                    _TOKEN, asker_id=two_owners["first"], max_visible_tier=0, top_k=10)
+        assert statements == []
+
 
 # --------------------------------------------------------------------------- #
 # 4b. The skill shadow log
@@ -741,6 +789,25 @@ class TestAFederatedQuestionWritesNoShadowLog:
         first = two_owners["first"]
         assert await _shadow_rows(async_engine) == sorted(
             [(skills["draft_self"], first), (skills["draft_household"], first)])
+
+    async def test_a_federated_call_on_the_callers_session_logs_nothing(
+        self, two_owners, skills, async_engine
+    ):
+        """🛑 The same warm caller session as the local path above, asked AS
+        the owner (the mapped shape: `peer=None`), but stated federated: no
+        curator row under the local account."""
+        from services.polymorphic_atom_store import PolymorphicAtomStore
+
+        maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+        async with maker() as db:
+            await db.execute(text("SELECT 1"))
+            matches = await PolymorphicAtomStore(db).query(
+                _TOKEN, asker_id=two_owners["first"], max_visible_tier=0, top_k=10,
+                federated=True)
+            await db.commit()
+
+        assert skills["approved"] in _skill_ids(matches)
+        assert await _shadow_rows(async_engine) == []
 
     async def test_a_peer_scoped_call_never_logs_even_when_asked_to(
         self, two_owners, skills, async_engine
@@ -854,6 +921,48 @@ class TestTheBoundOnSourceSessions:
         took = time.perf_counter() - t0
         assert pooled_engine.book["peak"] == 8
         assert took < 1.0, f"{took:.2f} s -- eight times 0.2 s in a row would be 1.6 s"
+
+    @pytest.mark.parametrize("statement", [
+        "UPDATE conversation_memories SET access_count = access_count + 1 "
+        "WHERE id = :id RETURNING id",
+        "SELECT id FROM conversation_memories WHERE id = :id FOR UPDATE",
+        "DELETE FROM conversation_memories WHERE id = :id",
+    ])
+    async def test_a_statement_that_writes_or_locks_is_refused_by_the_database(
+        self, pg_url, async_engine, two_owners, statement
+    ):
+        """🛑 "A source cannot write on a reader" used to rest on the reader
+        lacking `add`/`flush`/`commit` -- DML sent through `execute` ran and
+        was rolled back with the session, and `FOR UPDATE` took its row lock.
+        The statement's transaction is READ ONLY now, so Postgres refuses.
+
+        A pool of ONE connection: the write afterwards runs on the very
+        connection the reader used, so the option did not stick to it."""
+        from sqlalchemy.exc import DBAPIError
+
+        from services.polymorphic_atom_store import SourceSessions
+
+        engine = create_async_engine(pg_url, pool_size=1, max_overflow=0)
+        try:
+            maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+            own_id = two_owners["ids"]["first_self"]
+            reader = SourceSessions(maker).reader()
+
+            with pytest.raises(DBAPIError, match="read-only transaction"):
+                await reader.execute(text(statement), {"id": own_id})
+            # A plain read still works through the same reader ...
+            assert (await reader.execute(text("SELECT 41 + 1"))).scalar_one() == 42
+            # ... the row is untouched ...
+            assert (await _access_counts(engine, two_owners["ids"]))[own_id] == 0
+            # ... and an ordinary session on the same connection writes.
+            async with maker() as db:
+                await db.execute(text(
+                    "UPDATE conversation_memories SET access_count = 7 WHERE id = :id"),
+                    {"id": own_id})
+                await db.commit()
+            assert (await _access_counts(engine, two_owners["ids"]))[own_id] == 7
+        finally:
+            await engine.dispose()
 
     async def test_two_real_fan_outs_stay_within_the_slots(
         self, pooled_engine, two_owners
