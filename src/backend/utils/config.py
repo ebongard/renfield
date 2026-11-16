@@ -40,6 +40,11 @@ FEDERATION_REQUEST_TTL_SECONDS = 60
 #: (three short sessions), storing the answer, the audit row, and the asker's
 #: next poll (interval 0.5 s plus its round trip).
 FEDERATION_ANSWER_HEADROOM_SECONDS = 5.0
+#: How much earlier than the retrieval step's deadline the retrieval's own
+#: budget ends (at most a tenth of the step): a graph expansion cancelled at
+#: the budget needs a moment to let go of its statement, and the step's
+#: backstop must not fire into that.
+FEDERATION_RETRIEVE_CANCEL_MARGIN_SECONDS = 1.0
 
 
 class Settings(BaseSettings):
@@ -528,7 +533,7 @@ class Settings(BaseSettings):
     (today: the federated retrieval). A source over it is cancelled and
     counted as crashed; the others still make the answer. The sources run
     side by side, so this is also the bound of the fan-out. It must not
-    exceed `federation_retrieve_deadline` (validated at startup)."""
+    exceed `federation_retrieve_budget` (validated at startup)."""
 
     # Agent Advanced
     agent_history_limit: int = Field(default=20, ge=1, le=100)       # Max history steps in agent loop
@@ -2613,30 +2618,44 @@ class Settings(BaseSettings):
     @property
     def federation_retrieve_deadline(self) -> float:
         """Seconds the WHOLE retrieval step of an inbound federated query may
-        take: the fan-out and everything after it (graph expansion), which
-        has no deadline of its own. What the request window leaves once the
-        synthesis and the headroom are taken out -- derived, not configured,
-        so the three numbers cannot drift apart."""
+        take: the fan-out and graph expansion after it. What the request
+        window leaves once the synthesis and the headroom are taken out --
+        derived, not configured, so the three numbers cannot drift apart.
+        The backstop; the retrieval works to `federation_retrieve_budget`."""
         return (
             FEDERATION_REQUEST_TTL_SECONDS
             - self.federation_synthesis_timeout
             - FEDERATION_ANSWER_HEADROOM_SECONDS
         )
 
+    @property
+    def federation_retrieve_budget(self) -> float:
+        """Seconds the retrieval itself is given inside
+        `federation_retrieve_deadline`: the fan-out must finish within it
+        (else the query fails), graph expansion gets what the fan-out leaves
+        of it (else the answer is unexpanded). The step deadline behind it is
+        only the backstop."""
+        step = self.federation_retrieve_deadline
+        return step - min(FEDERATION_RETRIEVE_CANCEL_MARGIN_SECONDS, step / 10)
+
     @model_validator(mode="after")
     def assert_federated_answer_fits_its_window(self) -> "Settings":
         """Retrieval plus synthesis must end inside the window the far side
         polls in. Each field's own range allowed 29 s + 59 s against a window
         of 60 s; the relation was only written in a comment."""
-        if self.atom_fanout_source_timeout > self.federation_retrieve_deadline:
+        # Against the BUDGET, not the step deadline: a source allowed to run
+        # longer than the fan-out may would turn every slow source into a
+        # failed query instead of one crashed source.
+        if self.atom_fanout_source_timeout > self.federation_retrieve_budget:
             raise ValueError(
-                f"ATOM_FANOUT_SOURCE_TIMEOUT={self.atom_fanout_source_timeout:g} + "
-                f"FEDERATION_SYNTHESIS_TIMEOUT={self.federation_synthesis_timeout:g} + "
-                f"{FEDERATION_ANSWER_HEADROOM_SECONDS:g} s headroom exceed the "
-                f"{FEDERATION_REQUEST_TTL_SECONDS} s a federated request lives: the "
-                "far side would stop polling before the answer is ready. Lower "
-                "one of the two (their sum may be at most "
-                f"{FEDERATION_REQUEST_TTL_SECONDS - FEDERATION_ANSWER_HEADROOM_SECONDS:g})."
+                f"ATOM_FANOUT_SOURCE_TIMEOUT={self.atom_fanout_source_timeout:g} "
+                f"exceeds the {self.federation_retrieve_budget:g} s the retrieval "
+                f"of a federated query is given: the {FEDERATION_REQUEST_TTL_SECONDS} s "
+                "a request lives, less FEDERATION_SYNTHESIS_TIMEOUT="
+                f"{self.federation_synthesis_timeout:g}, "
+                f"{FEDERATION_ANSWER_HEADROOM_SECONDS:g} s headroom and a "
+                "cancellation margin. The far side would stop polling before "
+                "the answer is ready. Lower one of the two."
             )
         return self
 

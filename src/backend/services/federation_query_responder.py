@@ -117,7 +117,7 @@ from services.mcp_streaming import (
     PROGRESS_LABEL_SYNTHESIZING,
 )
 from services.pairing_service import _canonical_bytes
-from services.polymorphic_atom_store import SourceSessions
+from services.polymorphic_atom_store import RetrievalDeadlineExceeded, SourceSessions
 from utils.config import settings
 from utils.log_safety import error_text_without_content
 
@@ -249,7 +249,10 @@ async def _write_responder_audit(
         # failure. And `None` there means "aborted", not "failed"; the real
         # reason would be lost.
         final_item=(
-            {"success": True, "message": pending.answer or ""}
+            {"success": True, "message": pending.answer or "",
+             # A thinner answer than usual is still a delivered one; the row
+             # says which it was.
+             "note": _UNEXPANDED_NOTE if pending.unexpanded else None}
             if success
             # 🛑 `aborted` is a status of its own, not `failed`: a cancellation
             # AFTER the retrieval is not a failed access but a successful one
@@ -263,6 +266,14 @@ async def _write_responder_audit(
         request_id=pending.request_id,
     )
 
+
+#: An answer that was made WITHOUT graph expansion, because expansion ran out
+#: of its time budget. Stored with the success row.
+_UNEXPANDED = "graph_expansion_skipped"
+_UNEXPANDED_NOTE = outcome_note(
+    _UNEXPANDED,
+    "Antwort ohne Graph-Erweiterung: sie wurde in der verbleibenden Zeit "
+    "nicht fertig und ist entfallen.")
 
 #: Why a request is no longer served. `_GONE` is all the code knows when only
 #: the pending record is missing: purged by a revocation (the purge also hits
@@ -869,15 +880,25 @@ class FederationQueryResponder:
 
             # Fresh session scoped to this bg task only.
             #
-            # 🛑 ONE deadline over the whole step. Each source of the fan-out
-            # has its own, but graph expansion runs after it on this session
-            # with none, and the far side stops polling when the request
-            # window closes. Over the deadline the query FAILS (a terminal
-            # status the far side sees) instead of being answered into a
-            # window that has closed; the session is closed on the way out.
+            # 🛑 The step is BOUNDED, and what happens at the bound depends on
+            # what was running. `_retrieve` hands the store a budget: the
+            # fan-out is the answer and must fit (else the query FAILS, with
+            # a reason that says so); graph expansion gets what is left and
+            # is dropped when that runs out -- the answer is then made from
+            # the unexpanded result (`pending.unexpanded`). The timeout here
+            # is the backstop over both, a little later than the store's own
+            # budget so that it never beats the graceful path to the line.
+            step_deadline = settings.federation_retrieve_deadline
             async with AsyncSessionLocal() as session:
-                async with asyncio.timeout(settings.federation_retrieve_deadline):
-                    matches = await self._retrieve(session, pending)
+                try:
+                    async with asyncio.timeout(step_deadline):
+                        matches = await self._retrieve(session, pending)
+                except RetrievalDeadlineExceeded:
+                    raise
+                except TimeoutError:
+                    raise RetrievalDeadlineExceeded(
+                        f"retrieval step did not finish within {step_deadline:g} s"
+                    ) from None
             # 🛑 From here on foreign data sat in memory. If the query is
             # cancelled now that is still an access -- and only this record
             # tells it apart afterwards from a cancellation before it.
@@ -981,6 +1002,7 @@ class FederationQueryResponder:
         Takes a session parameter rather than reading `self.db` — the bg
         task opens its own session (see _run_query docstring).
         """
+
         from services.polymorphic_atom_store import PolymorphicAtomStore
 
         # 🛑 `session` is FRESH (see `_run_query`), and the store fans out at
@@ -992,7 +1014,7 @@ class FederationQueryResponder:
         # own. `session` itself serves only what runs after the fan-out
         # (graph expansion).
         store = PolymorphicAtomStore(session, source_sessions=_SOURCE_SESSIONS)
-        return await store.query(
+        matches = await store.query(
             query_text=pending.query,
             asker_id=pending.asker_local_user_id or 0,
             max_visible_tier=pending.max_visible_tier,
@@ -1013,7 +1035,12 @@ class FederationQueryResponder:
             # unmarked: the cold one, where the session is fresh and seven of
             # eight sources break off.
             federated=True,
+            # Ends a little before the step's backstop in `_run_query`, so
+            # the store's own handling of the bound gets there first.
+            deadline=settings.federation_retrieve_budget,
         )
+        pending.unexpanded = store.expansion_skipped
+        return matches
 
     async def _synthesize(self, query: str, matches: list) -> str:
         """

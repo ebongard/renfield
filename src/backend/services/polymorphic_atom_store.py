@@ -163,6 +163,15 @@ SOURCE_SESSION_LIMIT = 8
 _READ_ONLY = {"postgresql_readonly": True}
 
 
+class RetrievalDeadlineExceeded(TimeoutError):
+    """The retrieval did not produce a result inside the time it was given.
+
+    A class of its own because `str(TimeoutError())` is EMPTY: the reason of
+    a failed query read `TimeoutError: ` with nothing after the colon. The
+    message names the step and the deadline.
+    """
+
+
 class SourceSessions:
     """Database access for the sources of a read-only fan-out -- bounded.
 
@@ -313,6 +322,10 @@ class PolymorphicAtomStore:
         self.resolver = CircleResolver(db)
         self.atom_service = AtomService(db, self.resolver)
         self._source_sessions = source_sessions
+        #: Set by `query` when graph expansion ran out of its budget and the
+        #: result is the UNEXPANDED fusion. After that `db` carries a
+        #: cancelled statement and must not be used again -- close it.
+        self.expansion_skipped = False
 
     async def _run_source(
         self, call: Callable[[Any], Awaitable[Any]]
@@ -341,9 +354,24 @@ class PolymorphicAtomStore:
         top_k: int = 20,
         peer: PeerScope | None = None,
         federated: bool = False,
+        deadline: float | None = None,
     ) -> Sequence[AtomMatch]:
         """
         Query each source in parallel; merge with RRF; return top_k.
+
+        ``deadline`` (seconds, ``None`` = unbounded, the local path): the
+        budget of the WHOLE call, spent in two parts that fail differently.
+
+        * The FAN-OUT is the answer. If it has not finished by the deadline
+          the call raises ``RetrievalDeadlineExceeded``. (Each source has its
+          own deadline on own sessions, so this only fires when the
+          configuration lets a source outlive the call.)
+        * GRAPH EXPANSION is an enrichment of that answer. It gets what the
+          fan-out left of the budget; when that runs out it is cancelled, a
+          warning is logged, ``expansion_skipped`` is set and the UNEXPANDED
+          fusion is returned. A source that ran to its deadline must not
+          cost the other seven their results because expansion then had no
+          time left.
 
         Circle filtering (Lane C) is applied per source: rag / kg / memory /
         lexical / document-fact retrieval all receive ``asker_id`` and constrain
@@ -507,18 +535,28 @@ class PolymorphicAtomStore:
         # it cannot even disturb them: they share no session. A cancellation
         # of this task cancels all eight; a statement in flight closes its
         # session on the way.
+        self.expansion_skipped = False
         _t0 = time.perf_counter()
-        (
-            rag_results, kg_atoms, memory_results,
-            lexical_chunks_results, lexical_memories_results, skill_results,
-            document_fact_results, note_results,
-        ) = await asyncio.gather(
-            *(
-                _not_asked() if name in off else self._run_source(call)
-                for name, call in calls
-            ),
-            return_exceptions=True,
-        )
+        try:
+            # `timeout(None)` is no deadline at all.
+            async with asyncio.timeout(deadline):
+                (
+                    rag_results, kg_atoms, memory_results,
+                    lexical_chunks_results, lexical_memories_results, skill_results,
+                    document_fact_results, note_results,
+                ) = await asyncio.gather(
+                    *(
+                        _not_asked() if name in off else self._run_source(call)
+                        for name, call in calls
+                    ),
+                    return_exceptions=True,
+                )
+        except TimeoutError:
+            # The sources are cancelled with the gather; a statement in
+            # flight closes its session and frees its slot on the way.
+            raise RetrievalDeadlineExceeded(
+                f"atom fan-out did not finish within {deadline:g} s"
+            ) from None
 
         # 🛑 Wrap AND classify in one pass. Emptiness must not be decided with
         # `not value`: `kg` returns `{"entities": [], "relations": []}` when it
@@ -566,13 +604,33 @@ class PolymorphicAtomStore:
         # the decay survives and it runs once.
         if settings.graph_expansion_enabled:
             from services.graph_expansion import expand_fused
-            extra = await expand_fused(
-                list(merged), asker_id, self.db,
-                max_pivots=settings.graph_expansion_max_pivots,
-                max_hops=settings.graph_expansion_max_hops,
-                max_expanded=settings.graph_expansion_max_expanded,
-                peer=peer,
-            )
+
+            # What the fan-out left of the budget. Nothing left counts as
+            # run out: expansion is not started at all.
+            budget = None if deadline is None else deadline - (time.perf_counter() - _t0)
+            extra: list[AtomMatch] = []
+            try:
+                if budget is not None and budget <= 0:
+                    raise TimeoutError
+                async with asyncio.timeout(budget):
+                    extra = await expand_fused(
+                        list(merged), asker_id, self.db,
+                        max_pivots=settings.graph_expansion_max_pivots,
+                        max_hops=settings.graph_expansion_max_hops,
+                        max_expanded=settings.graph_expansion_max_expanded,
+                        peer=peer,
+                    )
+            except TimeoutError:
+                if budget is None:
+                    raise           # not our deadline: a timeout of its own
+                self.expansion_skipped = True
+                extra = []
+                logger.warning(
+                    f"🔍 Atom retrieval{' (federated)' if federated else ''}: "
+                    f"graph expansion did not finish within the "
+                    f"{max(budget, 0.0):.1f} s the fan-out left of {deadline:g} s "
+                    f"— the result is UNEXPANDED ({len(merged)} fused hits)"
+                )
             if extra:
                 have = {m.atom.atom_id for m in merged}
                 merged = list(merged) + [m for m in extra if m.atom.atom_id not in have]

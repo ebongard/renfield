@@ -144,6 +144,10 @@ class _PendingRequest:
     #: out. `None` means "not read", `0` means "read, found nothing". The two
     #: must not collapse into one; hence `int | None` and not `int = 0`.
     retrieved_count: int | None = None
+    #: The answer rests on the UNEXPANDED retrieval: graph expansion ran out
+    #: of its time budget and was dropped (`PolymorphicAtomStore.query`).
+    #: The answer is still an answer; the audit row says it is a thinner one.
+    unexpanded: bool = False
     #: When a COMPLETE answer was first handed to a poll -- `None` until then.
     #: It is what lets a poll that is REFUSED later (pairing or link revoked)
     #: tell an answer nobody collected from one that had already gone out:

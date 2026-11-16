@@ -626,7 +626,11 @@ class TestTheRetrievalStepIsBounded:
         responder._synthesize.assert_not_awaited()
         after = await get_pending_store().get(pending.request_id)
         assert after.status == STATUS_FAILED
-        assert after.error_message.startswith("TimeoutError")
+        # The backstop names the step and the deadline. It read
+        # `TimeoutError: ` with nothing after the colon: `str(TimeoutError())`
+        # is empty.
+        assert after.error_message == (
+            "RetrievalDeadlineExceeded: retrieval step did not finish within 0.2 s")
         assert after.retrieved_count is None      # nothing was handed on
 
     @pytest.mark.unit
@@ -647,12 +651,24 @@ class TestTheRetrievalStepIsBounded:
             - FEDERATION_ANSWER_HEADROOM_SECONDS)
         # The defaults fit, with room for the fan-out's own deadline.
         assert s.atom_fanout_source_timeout <= s.federation_retrieve_deadline
+        # The retrieval's own budget ends a margin before the step does; the
+        # sources must fit into THAT, and the defaults leave expansion time.
+        assert s.federation_retrieve_budget == pytest.approx(
+            s.federation_retrieve_deadline - 1.0)
+        assert s.atom_fanout_source_timeout < s.federation_retrieve_budget
+        # A short step keeps most of itself: the margin is at most a tenth.
+        short = Settings(_env_file=None, federation_synthesis_timeout=54.0,
+                         atom_fanout_source_timeout=0.5)
+        assert short.federation_retrieve_budget == pytest.approx(0.9)
 
     @pytest.mark.unit
     @pytest.mark.parametrize("source, synthesis", [
         (29.0, 59.0),      # both field maxima: 88 s into a 60 s window
         (20.0, 35.5),      # the default source deadline, synthesis a little long
         (25.1, 30.0),      # the default synthesis, source a little long
+        (24.5, 30.0),      # inside the step, but over the retrieval's budget
+        (25.0, 30.0),      # exactly the step: a tie between a crashed source
+                           # and a failed query, decided by the scheduler
     ])
     def test_a_configuration_that_cannot_fit_refuses_to_start(self, source, synthesis):
         from pydantic import ValidationError
@@ -668,15 +684,16 @@ class TestTheRetrievalStepIsBounded:
 
     @pytest.mark.unit
     @pytest.mark.parametrize("source, synthesis", [
-        (20.0, 30.0), (25.0, 30.0), (20.0, 35.0), (0.1, 54.9), (29.0, 26.0),
+        (20.0, 30.0), (24.0, 30.0), (20.0, 34.0), (0.1, 54.8), (28.0, 26.0),
     ])
     def test_a_configuration_that_fits_starts(self, source, synthesis):
-        """Negative control, the boundary included."""
+        """Negative control, the boundary included: a source may use the
+        retrieval's whole budget, not more."""
         from utils.config import Settings
 
         s = Settings(_env_file=None, atom_fanout_source_timeout=source,
                      federation_synthesis_timeout=synthesis)
-        assert s.atom_fanout_source_timeout <= s.federation_retrieve_deadline
+        assert s.atom_fanout_source_timeout <= s.federation_retrieve_budget
 
 
 class TestProgressRateLimit:
@@ -718,11 +735,14 @@ class TestEnforceCirclesOnRetrieve:
         captured = {}
 
         class _FakeStore:
+            expansion_skipped = False
+
             def __init__(self, session, *, source_sessions=None):
                 captured["source_sessions"] = source_sessions
 
             async def query(self, query_text, *, asker_id, max_visible_tier, top_k,
-                            peer=None, federated=False):
+                            peer=None, federated=False, deadline=None):
+                captured["deadline"] = deadline
                 captured["peer"] = peer
                 captured["federated"] = federated
                 captured["asker_id"] = asker_id
@@ -773,6 +793,9 @@ class TestEnforceCirclesOnRetrieve:
         # and cold against warm is the whole difference (measured: 1 of 8
         # sources against 8 of 8).
         assert captured["federated"] is True
+        # The store gets the retrieval's budget, so it handles the bound
+        # itself before the step's backstop does.
+        assert captured["deadline"] == settings.federation_retrieve_budget
         # 🛑 The session handed to `_retrieve` is fresh, so the fan-out must
         # NOT share it: every source gets a session of its own, from the one
         # process-wide `SourceSessions` (which is what bounds them).
