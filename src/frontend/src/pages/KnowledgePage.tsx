@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 import { useSearchParams, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -43,6 +43,7 @@ import type { KbDocument } from '../hooks/useDocumentPolling';
 import type { DocPages } from '../components/knowledge/StatusBadge';
 import { useInflightTabTitle } from '../hooks/useInflightTabTitle';
 import {
+  useDocumentQuery,
   useKnowledgeDocumentsQuery,
   useKnowledgeBasesQuery,
   useKnowledgeStatsQuery,
@@ -199,7 +200,33 @@ export default function KnowledgePage() {
   });
   const basesQuery = useKnowledgeBasesQuery();
   const statsQuery = useKnowledgeStatsQuery();
-  const documents = documentsQuery.data ?? [];
+  // Inbound deep link: /knowledge?doc={id} (chat source chips, obligations
+  // agenda). The list is ONE page (the backend's default limit), ordered and
+  // filtered -- a linked document beyond it used to be a dead end: the page
+  // opened and nothing happened. So a target the loaded list does not contain
+  // is fetched BY ID and shown as the first row. The endpoint enforces access
+  // (401/403/404 → `isError`), and then there is simply no extra row.
+  const [searchParams] = useSearchParams();
+  const deepLinkDoc = searchParams.get('doc');
+  const deepLinkId = deepLinkDoc !== null && /^\d+$/.test(deepLinkDoc) ? Number(deepLinkDoc) : null;
+  const listedDocuments = documentsQuery.data;
+  const deepLinkOutsideList =
+    deepLinkId !== null
+    && listedDocuments !== undefined
+    && !documentsQuery.isFetching
+    // The deep-link effect below first widens the KB/status filter; only a
+    // target missing from the UNFILTERED page is really outside the list.
+    && selectedKnowledgeBase === null
+    && statusFilter === 'all'
+    && !listedDocuments.some((d) => d.id === deepLinkId);
+  const deepLinkQuery = useDocumentQuery(deepLinkId ?? 0, deepLinkOutsideList);
+  const deepLinkedDocument = deepLinkOutsideList ? deepLinkQuery.data : undefined;
+  const documents = useMemo(
+    () => (deepLinkedDocument
+      ? [deepLinkedDocument, ...(listedDocuments ?? [])]
+      : listedDocuments ?? []),
+    [deepLinkedDocument, listedDocuments],
+  );
   const knowledgeBases = basesQuery.data ?? [];
   // The KB whose share dialog is open; null = closed.
   const [shareKb, setShareKb] = useState<KnowledgeBaseRow | null>(null);
@@ -384,8 +411,6 @@ export default function KnowledgePage() {
   // contains it — scroll to it and auto-expand its Fakten panel. Async-race
   // safe: we gate the scroll/expand on the query having resolved with the row
   // present, and fire exactly once via the ref so it can't loop.
-  const [searchParams] = useSearchParams();
-  const deepLinkDoc = searchParams.get('doc');
   const deepLinkHandled = useRef(false);
 
   // D9 (embedded): drive the chunk search from the workspace omnisearch `?q=`,
@@ -439,7 +464,9 @@ export default function KnowledgePage() {
     if (statusFilter !== 'all') setStatusFilter('all');
     // Wait for the (possibly refetched) list before touching the DOM.
     if (documentsQuery.isLoading || documentsQuery.isFetching) return;
-    if (!documents.some((d) => d.id === id)) return; // not reachable — fail quietly
+    // Not in the list: the by-id fetch above prepends it; until it resolves
+    // (or when the document does not exist / is not readable) there is no row.
+    if (!documents.some((d) => d.id === id)) return;
     deepLinkHandled.current = true;
     setExpandedFacts((prev) => ({ ...prev, [id]: true }));
     requestAnimationFrame(() => {

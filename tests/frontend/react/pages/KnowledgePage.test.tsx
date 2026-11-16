@@ -60,6 +60,72 @@ describe('KnowledgePage Schicht A integration', () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
+  // The chat's source chips link here. The list is one page of the corpus;
+  // a document beyond it used to open the page and do nothing.
+  it('loads a deep-linked document that is NOT in the fetched list, by its id', async () => {
+    const FAR = { ...DOC, id: 977, filename: 'alt.pdf', title: 'Alter Vertrag' };
+    const byId: string[] = [];
+    mockedGet.mockImplementation((url: string) => {
+      if (url === '/api/knowledge/documents/977') {
+        byId.push(url);
+        return Promise.resolve(createMockResponse(FAR));
+      }
+      if (url.includes('/api/knowledge/documents')) return Promise.resolve(createMockResponse([DOC]));
+      if (url.includes('/api/knowledge/stats')) {
+        return Promise.resolve(createMockResponse({
+          document_count: 500, completed_documents: 500, chunk_count: 3, knowledge_base_count: 0,
+        }));
+      }
+      if (url.includes('/api/config/features')) {
+        return Promise.resolve(createMockResponse({ schicht_a_extraction_enabled: true }));
+      }
+      return Promise.resolve(createMockResponse([]));
+    });
+
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge?doc=977' });
+
+    // The row exists, is the FIRST row, and its Fakten panel is open.
+    await waitFor(() => expect(document.getElementById('doc-977')).not.toBeNull());
+    expect(byId).toEqual(['/api/knowledge/documents/977']);
+    const rows = Array.from(document.querySelectorAll('[id^="doc-"]')).map((el) => el.id);
+    expect(rows).toEqual(['doc-977', 'doc-5']);
+    const target = document.getElementById('doc-977') as HTMLElement;
+    await waitFor(() => {
+      const toggle = target.querySelector('button[aria-expanded]');
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    });
+    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
+  });
+
+  it('does not fetch by id when the deep-linked document is already in the list', async () => {
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge?doc=5' });
+    const toggle = await screen.findByRole('button', { name: /Fakten/ });
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'true'));
+    const urls = mockedGet.mock.calls.map((c) => String(c[0]));
+    expect(urls.filter((u) => /\/api\/knowledge\/documents\/\d+$/.test(u))).toEqual([]);
+  });
+
+  it('shows no extra row when the deep-linked document is not readable', async () => {
+    mockedGet.mockImplementation((url: string) => {
+      if (url === '/api/knowledge/documents/977') {
+        return Promise.reject(Object.assign(new Error('forbidden'), { response: { status: 403 } }));
+      }
+      if (url.includes('/api/knowledge/documents')) return Promise.resolve(createMockResponse([DOC]));
+      if (url.includes('/api/config/features')) {
+        return Promise.resolve(createMockResponse({ schicht_a_extraction_enabled: true }));
+      }
+      return Promise.resolve(createMockResponse([]));
+    });
+
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge?doc=977' });
+
+    await waitFor(() => expect(document.getElementById('doc-5')).not.toBeNull());
+    await waitFor(() => expect(
+      mockedGet.mock.calls.some((c) => c[0] === '/api/knowledge/documents/977'),
+    ).toBe(true));
+    expect(document.getElementById('doc-977')).toBeNull();
+  });
+
   it('does not auto-expand without a deep link', async () => {
     renderWithProviders(<KnowledgePage />, { route: '/knowledge' });
     const toggle = await screen.findByRole('button', { name: /Fakten/ });
