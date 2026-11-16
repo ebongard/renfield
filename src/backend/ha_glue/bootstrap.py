@@ -43,6 +43,8 @@ from typing import Any
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content, frames_without_content
+
 # Asyncio tasks owned by ha_glue (background schedulers started during
 # `ha_glue_on_startup`). The `shutdown` hook cancels each task so the
 # pod can exit cleanly. Kept separate from platform's `_startup_tasks`
@@ -114,9 +116,10 @@ def register() -> None:
         logger.info(
             "ha_glue.bootstrap: registered 19 handlers across 19 events"
         )
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: hook registration failed — HA features disabled"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
 
@@ -157,9 +160,10 @@ async def ha_glue_on_startup(*, app: Any) -> None:
 
         intent_registry.add_integration(PRESENCE_INTENTS)
         logger.info("✅ ha_glue: registered PRESENCE_INTENTS with intent_registry")
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: PRESENCE_INTENTS registration failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
     # --- Paperless audit ---
@@ -170,18 +174,20 @@ async def ha_glue_on_startup(*, app: Any) -> None:
     # --- HA keyword preload (background) ---
     try:
         _schedule_ha_keywords_preload()
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: HA keyword preload scheduling failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
     # --- Presence system (webhooks, analytics, BLE device registry, room cache) ---
     if ha_glue_settings.presence_enabled:
         try:
             await _init_presence(app)
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "ha_glue.bootstrap: presence init failed"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
 
     # --- Conversation handoff (requires presence for room-change detection) ---
@@ -192,9 +198,10 @@ async def ha_glue_on_startup(*, app: Any) -> None:
 
             register_hook("presence_enter_room", on_presence_enter_room)
             logger.info("✅ Conversation handoff hook registered")
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "ha_glue.bootstrap: conversation handoff registration failed"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
 
     # --- Media Follow Me (requires both presence and media_follow enabled) ---
@@ -208,25 +215,28 @@ async def ha_glue_on_startup(*, app: Any) -> None:
             register_hook("presence_enter_room", mf_service.on_user_enter_room)
             register_hook("presence_last_left", mf_service.on_last_left)
             logger.info("✅ Media Follow Me hooks registered")
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "ha_glue.bootstrap: media follow registration failed"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
 
     # --- Zeroconf service discovery (for satellite auto-registration) ---
     try:
         await _init_zeroconf(app)
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: Zeroconf init failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
     # --- Satellite stale sweep (heartbeat timeout + stuck OTA runs) ---
     try:
         _schedule_satellite_cleanup()
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: satellite cleanup scheduling failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
     # --- Satellite LED night-dimming (backend-driven brightness push) ---
@@ -236,9 +246,10 @@ async def ha_glue_on_startup(*, app: Any) -> None:
         from ha_glue.services.led_dimming_service import get_led_dimming_service
 
         await get_led_dimming_service().initialize()
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: LED dimming init failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
 
@@ -270,12 +281,12 @@ def _schedule_ha_keywords_preload() -> None:
                     f"✅ Home Assistant keywords preloaded: {len(keywords)} keywords"
                 )
             except Exception as e:
-                logger.warning(f"⚠️  Could not preload keywords: {e}")
+                logger.warning(f"⚠️  Could not preload keywords: {error_text_without_content(e)}")
 
         task = asyncio.create_task(preload_keywords())
         _ha_glue_tasks.append(task)
     except Exception as e:
-        logger.warning(f"⚠️  Keyword preloading failed: {e}")
+        logger.warning(f"⚠️  Keyword preloading failed: {error_text_without_content(e)}")
 
 
 async def _init_presence(app: Any) -> None:
@@ -334,7 +345,7 @@ def _schedule_satellite_cleanup() -> None:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"Satellite cleanup failed: {e}")
+                logger.warning(f"Satellite cleanup failed: {error_text_without_content(e)}")
 
     task = asyncio.create_task(cleanup_loop())
     _ha_glue_tasks.append(task)
@@ -358,7 +369,7 @@ def _schedule_presence_event_cleanup() -> None:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"Presence event cleanup failed: {e}")
+                logger.warning(f"Presence event cleanup failed: {error_text_without_content(e)}")
 
     task = asyncio.create_task(cleanup_loop())
     _ha_glue_tasks.append(task)
@@ -405,9 +416,10 @@ async def ha_glue_on_shutdown(*, app: Any) -> None:
         try:
             await zeroconf_svc.stop()
             logger.info("ha_glue.bootstrap: Zeroconf service stopped")
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "ha_glue.bootstrap: Zeroconf stop failed"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
 
     # --- Notify connected devices about server shutdown ---
@@ -426,7 +438,7 @@ async def ha_glue_on_shutdown(*, app: Any) -> None:
                 pass
         logger.info(f"👋 ha_glue: notified {len(dm.devices)} devices about shutdown")
     except Exception as e:
-        logger.warning(f"⚠️  ha_glue device shutdown broadcast failed: {e}")
+        logger.warning(f"⚠️  ha_glue device shutdown broadcast failed: {error_text_without_content(e)}")
 
 
 async def ha_glue_on_shutdown_finalize(*, app: Any) -> None:
@@ -443,16 +455,18 @@ async def ha_glue_on_shutdown_finalize(*, app: Any) -> None:
     try:
         from ha_glue.integrations.homeassistant import close_ha_client
         await close_ha_client()
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: close_ha_client failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
     try:
         from ha_glue.integrations.frigate import close_frigate_client
         await close_frigate_client()
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: close_frigate_client failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
 
@@ -589,9 +603,10 @@ async def ha_glue_register_routes(*, app: Any) -> None:
         from ha_glue.api.admin import router as admin_router
         app.include_router(admin_router)
         logger.info("✅ ha_glue: mounted /admin/refresh-keywords")
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: admin router mount failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
     # --- Camera REST router (Frigate NVR) ---
@@ -600,9 +615,10 @@ async def ha_glue_register_routes(*, app: Any) -> None:
             from ha_glue.api.routes.camera import router as camera_router
             app.include_router(camera_router, prefix="/api/camera", tags=["Camera"])
             logger.info("✅ ha_glue: mounted /api/camera")
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "ha_glue.bootstrap: camera router mount failed"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
 
     # --- Home Assistant REST router ---
@@ -613,9 +629,10 @@ async def ha_glue_register_routes(*, app: Any) -> None:
                 ha_router, prefix="/api/homeassistant", tags=["Home Assistant"]
             )
             logger.info("✅ ha_glue: mounted /api/homeassistant")
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "ha_glue.bootstrap: homeassistant router mount failed"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
 
     # --- Satellites REST router (registration, status, OTA) ---
@@ -626,9 +643,10 @@ async def ha_glue_register_routes(*, app: Any) -> None:
                 satellites_router, prefix="/api/satellites", tags=["Satellites"]
             )
             logger.info("✅ ha_glue: mounted /api/satellites")
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "ha_glue.bootstrap: satellites router mount failed"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
 
         # --- Satellite enrollment admin router (security review H1) ---
@@ -636,9 +654,10 @@ async def ha_glue_register_routes(*, app: Any) -> None:
             from ha_glue.api.routes.satellite_enrollment import router as sat_enroll_router
             app.include_router(sat_enroll_router, tags=["Satellites"])
             logger.info("✅ ha_glue: mounted /api/satellite-enrollment")
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "ha_glue.bootstrap: satellite_enrollment router mount failed"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
 
     # --- Rooms REST router ---
@@ -646,9 +665,10 @@ async def ha_glue_register_routes(*, app: Any) -> None:
         from ha_glue.api.routes.rooms import router as rooms_router
         app.include_router(rooms_router, prefix="/api/rooms", tags=["Rooms"])
         logger.info("✅ ha_glue: mounted /api/rooms")
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: rooms router mount failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
     # --- Presence REST router (BLE + user location queries) ---
@@ -656,9 +676,10 @@ async def ha_glue_register_routes(*, app: Any) -> None:
         from ha_glue.api.routes.presence import router as presence_router
         app.include_router(presence_router, tags=["Presence"])
         logger.info("✅ ha_glue: mounted presence router")
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: presence router mount failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
     # --- Presence diagnostics WebSocket (/ws/presence-debug, ADMIN) ---
@@ -666,9 +687,10 @@ async def ha_glue_register_routes(*, app: Any) -> None:
         from ha_glue.api.websocket.presence_debug_handler import router as presence_debug_router
         app.include_router(presence_debug_router, tags=["WebSocket Presence Debug"])
         logger.info("✅ ha_glue: mounted /ws/presence-debug")
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: presence_debug_router mount failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
     # --- Paperless audit REST router ---
@@ -681,9 +703,10 @@ async def ha_glue_register_routes(*, app: Any) -> None:
         from ha_glue.api.websocket.device_handler import router as device_router
         app.include_router(device_router, tags=["WebSocket Device"])
         logger.info("✅ ha_glue: mounted /ws/device")
-    except Exception:
-        logger.opt(exception=True).warning(
+    except Exception as e:
+        logger.warning(
             "ha_glue.bootstrap: device_router mount failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
         )
 
     # --- Satellite WebSocket (/ws/satellite) — Pi Zero audio stream ---
@@ -692,7 +715,8 @@ async def ha_glue_register_routes(*, app: Any) -> None:
             from ha_glue.api.websocket.satellite_handler import router as satellite_router
             app.include_router(satellite_router, tags=["WebSocket Satellite"])
             logger.info("✅ ha_glue: mounted /ws/satellite")
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "ha_glue.bootstrap: satellite_router mount failed"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )

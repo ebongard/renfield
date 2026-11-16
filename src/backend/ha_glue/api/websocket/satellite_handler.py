@@ -43,6 +43,7 @@ from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
 from utils.config import settings
+from utils.log_safety import error_text_without_content, frames_without_content
 
 router = APIRouter()
 
@@ -97,9 +98,8 @@ async def _route_satellite_tts_output(
                 await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
 
     except Exception as e:
-        logger.error(f"❌ Satellite output routing failed: {e}, falling back to satellite")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Satellite output routing failed: {error_text_without_content(e)}, falling back to satellite")
+        logger.error(f"at {frames_without_content(e)}")
         # Fallback to satellite on error
         await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
 
@@ -281,7 +281,7 @@ def _spawn_satellite_extraction(
             )
         return spawn
     except Exception as e:
-        logger.warning(f"⚠️ Could not start the satellite extraction: {e}")
+        logger.warning(f"⚠️ Could not start the satellite extraction: {error_text_without_content(e)}")
         return None
 
 
@@ -544,7 +544,7 @@ async def _load_device_account() -> tuple[int, list[str]] | None:
             _device_account_warned = False
             return usr.id, usr.get_permissions()
     except Exception as e:
-        logger.warning(f"⚠️ Could not load the device account: {e}")
+        logger.warning(f"⚠️ Could not load the device account: {error_text_without_content(e)}")
         return None
 
 
@@ -641,11 +641,11 @@ async def _end_empty_turn(manager, websocket, session_id: str, detail: dict) -> 
         await manager.end_session(session_id, reason="empty_transcription", detail=detail)
         return
     except Exception as e:
-        logger.error(f"❌ Ending empty turn {session_id} failed: {e!r}")
+        logger.error(f"❌ Ending empty turn {session_id} failed: {type(e).__name__}: {error_text_without_content(e)}")
     try:
         await manager.end_session(session_id, reason="end_failed", detail=detail)
     except Exception as e:
-        logger.error(f"❌ Fallback end of {session_id} failed: {e!r}")
+        logger.error(f"❌ Fallback end of {session_id} failed: {type(e).__name__}: {error_text_without_content(e)}")
         manager.force_release(session_id, reason="end_failed", detail=detail)
         try:
             await websocket.send_json({"type": "state", "state": "idle"})
@@ -668,7 +668,7 @@ async def _send_feedback_cue(websocket, detail: dict | None) -> None:
     try:
         await websocket.send_json({"type": "feedback_cue", "cue": cue})
     except Exception as e:
-        logger.warning(f"⚠️ Could not send feedback cue: {e!r}")
+        logger.warning(f"⚠️ Could not send feedback cue: {type(e).__name__}: {error_text_without_content(e)}")
 
 
 @router.websocket("/ws/satellite")
@@ -887,7 +887,7 @@ async def satellite_websocket(
                             if authz.reject:
                                 reject_reason = authz.reason
                     except Exception as e:
-                        logger.error(f"⚠️ Satellite enrollment check errored (fail-closed): {e}")
+                        logger.error(f"⚠️ Satellite enrollment check errored (fail-closed): {error_text_without_content(e)}")
                         satellite_authenticated = False
                         reject_reason = "enrollment-unavailable"
                     if reject_reason:
@@ -966,7 +966,7 @@ async def satellite_websocket(
                                 satellite_manager.set_room_id(satellite_id, room_id)
                                 logger.info(f"📍 Satellite {satellite_id} linked to room '{db_room.name}' (id: {room_id})")
                     except Exception as e:
-                        logger.warning(f"⚠️ Failed to persist room for satellite: {e}")
+                        logger.warning(f"⚠️ Failed to persist room for satellite: {error_text_without_content(e)}")
 
                 # Generate daily DB session ID for conversation persistence
                 satellite_db_session_id = f"satellite-{satellite_id}-{date.today().isoformat()}"
@@ -1039,7 +1039,7 @@ async def satellite_websocket(
                             logger.debug(f"Pushed {len(ble_macs)} BLE + {len(classic_macs)} Classic BT MACs "
                                          f"+ {len(irks)} IRK(s) to {satellite_id}")
                     except Exception as e:
-                        logger.warning(f"Failed to push MACs/IRKs: {e}")
+                        logger.warning(f"Failed to push MACs/IRKs: {error_text_without_content(e)}")
 
             # Handle config acknowledgment from satellite
             elif msg_type == "config_ack":
@@ -1249,9 +1249,8 @@ async def satellite_websocket(
                         await satellite_manager.send_transcription(session_id, text)
 
                 except Exception as e:
-                    logger.error(f"❌ Whisper transcription failed: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
+                    logger.error(f"❌ Whisper transcription failed: {error_text_without_content(e)}")
+                    logger.error(f"at {frames_without_content(e)}")
                     # A fault AFTER the text arrived is not a turn without
                     # text: it is neither counted nor called an stt_error.
                     await satellite_manager.end_session(
@@ -1288,7 +1287,7 @@ async def satellite_websocket(
                                 )
                                 spk = _spk_r.scalar_one_or_none()
                         except Exception as e:
-                            logger.warning(f"⚠️ Speaker lookup for handoff failed: {e}")
+                            logger.warning(f"⚠️ Speaker lookup for handoff failed: {error_text_without_content(e)}")
 
                     # Conversation handoff: copy context from another satellite if speaker moved
                     if spk and satellite_db_session_id and not satellite_history_loaded:
@@ -1308,7 +1307,7 @@ async def satellite_websocket(
                                     _sat = satellite_manager.get_satellite(satellite_id)
                                     await emit_continued_handoff_frame(_sat.room if _sat else None)
                         except Exception as e:
-                            logger.warning(f"⚠️ Conversation handoff failed: {e}")
+                            logger.warning(f"⚠️ Conversation handoff failed: {error_text_without_content(e)}")
 
                     # Load conversation history from DB if not already loaded (once per day)
                     if satellite_db_session_id and not satellite_history_loaded:
@@ -1322,7 +1321,7 @@ async def satellite_websocket(
                                     logger.info(f"📚 Satellite conversation history loaded: {len(db_history)} messages")
                                 satellite_history_loaded = True
                         except Exception as e:
-                            logger.warning(f"⚠️ Failed to load satellite conversation history: {e}")
+                            logger.warning(f"⚠️ Failed to load satellite conversation history: {error_text_without_content(e)}")
 
                     # Build room context for satellite
                     satellite = satellite_manager.get_satellite(satellite_id)
@@ -1393,7 +1392,7 @@ async def satellite_websocket(
                                             usr.is_device_account
                                         )
                         except Exception as e:
-                            logger.warning(f"⚠️ Failed to load satellite user permissions: {e}")
+                            logger.warning(f"⚠️ Failed to load satellite user permissions: {error_text_without_content(e)}")
                             if settings.auth_enabled:
                                 # Recognised but unresolvable → deny, never fall
                                 # back to the anonymous set (mirrors chat.py:137).
@@ -1442,7 +1441,7 @@ async def satellite_websocket(
                                     satellite_db_session_id, spk.id, user_id=room_owner_id
                                 )
                         except Exception as e:
-                            logger.warning(f"⚠️ Failed to associate speaker with conversation: {e}")
+                            logger.warning(f"⚠️ Failed to associate speaker with conversation: {error_text_without_content(e)}")
 
                     # Register voice presence if speaker was recognized. NEVER
                     # for a device account: presence says "this person is in
@@ -1466,7 +1465,7 @@ async def satellite_websocket(
                                 satellite_id=satellite_id,
                             )
                         except Exception as e:
-                            logger.warning(f"⚠️ Voice presence update failed: {e}")
+                            logger.warning(f"⚠️ Voice presence update failed: {error_text_without_content(e)}")
 
                     # Which room this voice turn came from — lets work that finishes
                     # later (a scan) speak its outcome back here. Reset after the
@@ -1603,7 +1602,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                             action_result.get("success") if action_result else None,
                         )
                     except Exception as e:
-                        logger.debug(f"kiosk turn_activity (voice) broadcast failed: {e}")
+                        logger.debug(f"kiosk turn_activity (voice) broadcast failed: {error_text_without_content(e)}")
 
                     # Update in-memory conversation history (keep max 5 exchanges = 10 messages)
                     satellite_conversation_history.append({"role": "user", "content": text})
@@ -1661,7 +1660,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                                 )
                                 logger.debug(f"💾 Satellite messages saved to DB: {satellite_db_session_id}")
                         except Exception as e:
-                            logger.warning(f"⚠️ Failed to save satellite messages to DB: {e}")
+                            logger.warning(f"⚠️ Failed to save satellite messages to DB: {error_text_without_content(e)}")
 
                     # Background: memory + KG extraction for this spoken turn —
                     # the same seam the browser chat path uses, scheduled (never
@@ -1696,9 +1695,8 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                         logger.warning(f"⚠️ TTS synthesis failed for session {session_id}")
 
                 except Exception as e:
-                    logger.error(f"❌ Processing failed: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
+                    logger.error(f"❌ Processing failed: {error_text_without_content(e)}")
+                    logger.error(f"at {frames_without_content(e)}")
 
                 # End session
                 await satellite_manager.end_session(session_id, reason="completed")
@@ -1816,9 +1814,8 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
     except WebSocketDisconnect:
         logger.info(f"👋 Satellite WebSocket disconnected: {satellite_id}")
     except Exception as e:
-        logger.error(f"❌ Satellite WebSocket error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Satellite WebSocket error: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
     finally:
         # Clean up connection limiter
         if satellite_id and ip_address:
@@ -1833,7 +1830,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     room_service = RoomService(db_session)
                     await room_service.set_satellite_online(satellite_id, False)
             except Exception as e:
-                logger.warning(f"⚠️ Failed to mark satellite offline: {e}")
+                logger.warning(f"⚠️ Failed to mark satellite offline: {error_text_without_content(e)}")
 
             # Unsubscribe from wake word config updates
             wakeword_config_manager = get_wakeword_config_manager()

@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 
 async def ha_chat_context_established(
     *,
@@ -55,7 +57,7 @@ async def ha_chat_context_established(
             room_name=room_name,
         )
     except Exception as e:
-        logger.warning(f"⚠️  ha_glue chat_context_established: voice presence update failed: {e}")
+        logger.warning(f"⚠️  ha_glue chat_context_established: voice presence update failed: {error_text_without_content(e)}")
 
 
 async def ha_resolve_user_current_room(
@@ -82,7 +84,7 @@ async def ha_resolve_user_current_room(
         presence = get_presence_service()
         user_p = presence.get_user_presence(user_id)
     except Exception as e:
-        logger.debug(f"ha_glue resolve_user_current_room: presence lookup failed: {e}")
+        logger.debug(f"ha_glue resolve_user_current_room: presence lookup failed: {error_text_without_content(e)}")
         return None
 
     if not user_p or not user_p.room_id:
@@ -125,7 +127,7 @@ async def ha_resolve_room_occupants(
         presence = get_presence_service()
         occupants = presence.get_room_occupants(room_id)
     except Exception as e:
-        logger.debug(f"ha_glue resolve_room_occupants: presence lookup failed: {e}")
+        logger.debug(f"ha_glue resolve_room_occupants: presence lookup failed: {error_text_without_content(e)}")
         return None
 
     return [p.user_id for p in occupants]

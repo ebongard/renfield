@@ -55,7 +55,7 @@ async def _sync_links_best_effort(db: AsyncSession, note: Note, owner_id: int | 
         async with db.begin_nested():
             await sync_note_links(db, note, owner_id=owner_id)
     except Exception as e:
-        logger.warning(f"note {note.id}: [[link]] sync failed (note saved anyway): {e}")
+        logger.warning(f"note {note.id}: [[link]] sync failed (note saved anyway): {error_text_without_content(e)}")
 
 
 async def embed_note_by_id(note_id: int) -> None:
@@ -211,7 +211,7 @@ async def delete_note(db: AsyncSession, note: Note) -> None:
             from services.note_links import deactivate_note_links
             await deactivate_note_links(db, note, owner_id=note.owner_user_id)
     except Exception as e:
-        logger.warning(f"note {note.id}: link teardown failed (deleting anyway): {e}")
+        logger.warning(f"note {note.id}: link teardown failed (deleting anyway): {error_text_without_content(e)}")
 
     atom_id = note.atom_id
     await db.delete(note)

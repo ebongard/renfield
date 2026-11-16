@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ha_glue.services.presence_debug import note_ble_report
 from ha_glue.utils.config import ha_glue_settings
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Security (review H1): IRKs permanently de-anonymize a resident's rotating BLE
 # address. Only push them to allowlisted satellites. Track which satellites we've
@@ -102,7 +103,7 @@ def _build_placement_shadow():
         return PlacementShadow.from_settings()
     except Exception as e:
         logger.error(
-            f"Presence v2 shadow: could not be built, stays OFF ({type(e).__name__}: {e}). "
+            f"Presence v2 shadow: could not be built, stays OFF ({type(e).__name__}: {error_text_without_content(e)}). "
             "Presence tracking is unaffected."
         )
         return None
@@ -617,7 +618,7 @@ class PresenceService:
             payload = build_presence_payload(self)
             await broadcast_kiosk_event({"type": "presence_changed", **payload})
         except Exception as e:
-            logger.debug(f"kiosk presence_changed broadcast failed: {e}")
+            logger.debug(f"kiosk presence_changed broadcast failed: {error_text_without_content(e)}")
 
     async def register_voice_presence(
         self,
@@ -856,7 +857,7 @@ class PresenceService:
                 logger.debug(f"Pushed {len(ble_macs)} BLE + {len(classic_macs)} Classic BT MACs "
                              f"+ {len(irks)} IRK(s) to {sat_id}")
             except Exception as e:
-                logger.warning(f"Failed to push MACs/IRKs to {sat_id}: {e}")
+                logger.warning(f"Failed to push MACs/IRKs to {sat_id}: {error_text_without_content(e)}")
 
     async def add_device(
         self,

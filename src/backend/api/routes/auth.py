@@ -40,6 +40,7 @@ from services.auth_service import (
 )
 from services.database import get_db
 from utils.config import settings
+from utils.log_safety import error_text_without_content, frames_without_content
 
 router = APIRouter()
 
@@ -1098,7 +1099,7 @@ async def voice_authenticate(
         except VoiceServerError as e:
             # Not `_refused`: this is an operational error, not a failed
             # attempt by the person. It must not be counted against them.
-            logger.error(f"Voice second factor: voice-server unavailable ({e})")
+            logger.error(f"Voice second factor: voice-server unavailable ({error_text_without_content(e)})")
             return VoiceAuthResponse(
                 success=False,
                 message="Voice authentication temporarily unavailable",
@@ -1171,9 +1172,8 @@ async def voice_authenticate(
         )
 
     except Exception as e:
-        logger.error(f"Voice second factor error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"Voice second factor error: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
         return VoiceAuthResponse(
             success=False,
             message="Voice authentication failed"

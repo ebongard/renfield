@@ -38,7 +38,7 @@ from services.turn_extraction import (
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, frames_without_content
 from utils.prompt_safety import neutralize_delimiters
 from utils.request_context import request_id as request_id_var
 from utils.voice_context import voice_originated
@@ -205,7 +205,7 @@ async def _resolve_wire_speaker(
             )
         return speaker_info
     except Exception as e:
-        logger.warning(f"⚠️ Speaker resolution from wire-embedding failed: {e}")
+        logger.warning(f"⚠️ Speaker resolution from wire-embedding failed: {error_text_without_content(e)}")
         return None
 
 
@@ -273,7 +273,7 @@ async def _session_registerable_by(session_id: str, auth_user_id: int | None) ->
         logger.warning(
             f"⚠️ WS session check failed for session {session_id}; "
             f"{'refusing' if reach_applies else 'allowing'} push-register "
-            f"(connection kept alive): {e}"
+            f"(connection kept alive): {error_text_without_content(e)}"
         )
         return not reach_applies
 
@@ -296,7 +296,7 @@ async def _probe_session_freshness(session_id: str) -> tuple[int | None, bool]:
                 return newest, False
             return None, await is_deleted_session(db, session_id)
     except Exception as e:
-        logger.warning(f"⚠️ Freshness check failed: {e}")
+        logger.warning(f"⚠️ Freshness check failed: {error_text_without_content(e)}")
         return None, False
 
 
@@ -322,7 +322,7 @@ async def _carry_uploads_to_replacement(
         if moved:
             logger.info(f"📎 {moved} upload(s) moved to the replacement session")
     except Exception as e:
-        logger.warning(f"⚠️ Moving uploads to the replacement session failed: {e}")
+        logger.warning(f"⚠️ Moving uploads to the replacement session failed: {error_text_without_content(e)}")
 
 
 async def _replacement_session_for(
@@ -694,7 +694,7 @@ async def _route_chat_tts_output(
                 f"unexpected shape (type={type(result).__name__}); ignoring"
             )
     except Exception as e:
-        logger.error(f"❌ Chat TTS routing hook failed: {e}")
+        logger.error(f"❌ Chat TTS routing hook failed: {error_text_without_content(e)}")
     return False
 
 
@@ -726,7 +726,7 @@ async def _followup_chips_background(
         if chips:
             await websocket.send_json({"type": "followups", "suggested_followups": chips})
     except Exception as e:
-        logger.debug(f"follow-up chips skipped: {e}")
+        logger.debug(f"follow-up chips skipped: {error_text_without_content(e)}")
 
 
 def _format_file_size(size_bytes: int | None) -> str:
@@ -788,7 +788,7 @@ async def _pending_paperless_confirm(session_id: str) -> str | None:
             )).scalar_one_or_none()
             return str(row.confirm_token) if row else None
     except Exception as e:
-        logger.warning(f"⚠️ Pending-confirm lookup failed: {e}")
+        logger.warning(f"⚠️ Pending-confirm lookup failed: {error_text_without_content(e)}")
         return None
 
 
@@ -875,7 +875,7 @@ async def _fetch_document_context(
         )
 
     except Exception as e:
-        logger.warning(f"Document context fetch failed: {e}")
+        logger.warning(f"Document context fetch failed: {error_text_without_content(e)}")
         return ""
 
 
@@ -929,7 +929,7 @@ async def _retrieve_memory_context(content: str, user_id: int | None, lang: str)
                         memories=memories_str
                     ))
         except Exception as e:
-            logger.warning(f"Memory retrieval failed: {e}")
+            logger.warning(f"Memory retrieval failed: {error_text_without_content(e)}")
 
     # Hook: retrieve_context — plugins can inject additional context (e.g. graph)
     try:
@@ -940,7 +940,7 @@ async def _retrieve_memory_context(content: str, user_id: int | None, lang: str)
             if isinstance(r, str) and r.strip():
                 sections.append(r)
     except Exception as e:
-        logger.warning(f"retrieve_context hook failed: {e}")
+        logger.warning(f"retrieve_context hook failed: {error_text_without_content(e)}")
 
     return "\n\n".join(sections)
 
@@ -1039,9 +1039,8 @@ async def _stream_rag_response(
                     "knowledge_base_id": knowledge_base_id
                 })
         except Exception as e:
-            logger.error(f"❌ RAG error, falling back to plain conversation: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"❌ RAG error, falling back to plain conversation: {error_text_without_content(e)}")
+            logger.error(f"at {frames_without_content(e)}")
 
     # Fallback: plain conversation
     from services.output_gate import stream_or_gate
@@ -1113,7 +1112,7 @@ async def websocket_endpoint(
             else:
                 logger.debug(f"📍 No room context for IP {ip_address}")
     except Exception as e:
-        logger.warning(f"⚠️ Failed to detect room context: {e}")
+        logger.warning(f"⚠️ Failed to detect room context: {error_text_without_content(e)}")
 
     # Kiosk core-activity: True between marking THIS connection's in-flight chat
     # turn active and clearing it, so a mid-turn disconnect/error still decrements
@@ -1239,7 +1238,7 @@ async def websocket_endpoint(
                         f"{str(confirm_token)[:8]} (session {confirm_sid})"
                     )
                 except Exception as e:
-                    logger.warning(f"⚠️ Paperless confirm card handoff failed: {e}")
+                    logger.warning(f"⚠️ Paperless confirm card handoff failed: {error_text_without_content(e)}")
                     await send_ws_error(
                         websocket, WSErrorCode.INTERNAL_ERROR,
                         "Bestätigung konnte nicht verarbeitet werden.",
@@ -1342,7 +1341,7 @@ async def websocket_endpoint(
                         _frame["targetTemp"] = _rdata["targetTemp"]
                     await websocket.send_json(_frame)
                 except Exception as e:
-                    logger.warning(f"⚠️ device_action failed: {e}")
+                    logger.warning(f"⚠️ device_action failed: {error_text_without_content(e)}")
                     await websocket.send_json({
                         "type": "device_action_result",
                         "entity_id": entity_id, "success": False,
@@ -1523,7 +1522,7 @@ async def websocket_endpoint(
                             session_state.history_watermark = await _CS(
                                 db_session).latest_message_id(msg_session_id)
                     except Exception as e:
-                        logger.warning(f"⚠️ Failed to load conversation history: {e}")
+                        logger.warning(f"⚠️ Failed to load conversation history: {error_text_without_content(e)}")
 
             # Retrieve user info and permissions
             user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
@@ -1569,7 +1568,7 @@ async def websocket_endpoint(
                             f"→ user_id={user_id}"
                         )
                 except Exception as e:
-                    logger.warning(f"⚠️ speaker→user identity lookup failed: {e}")
+                    logger.warning(f"⚠️ speaker→user identity lookup failed: {error_text_without_content(e)}")
             elif (
                 user_id is None
                 and speaker_info
@@ -1605,7 +1604,7 @@ async def websocket_endpoint(
                             user_personality_style = user_obj.personality_style
                             user_personality_prompt = user_obj.personality_prompt
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to load user permissions: {e}")
+                    logger.warning(f"⚠️ Failed to load user permissions: {error_text_without_content(e)}")
                     # Fail closed: an authenticated turn whose permissions could
                     # not be loaded must NOT fall through to the None=allow-all
                     # path. Empty list = no permissions = deny. (#690, defense in
@@ -1773,7 +1772,7 @@ async def websocket_endpoint(
                             f"{pending_confirm_token[:8]} (session {msg_session_id})"
                         )
                     except Exception as e:
-                        logger.warning(f"⚠️ Paperless confirm handoff failed: {e}")
+                        logger.warning(f"⚠️ Paperless confirm handoff failed: {error_text_without_content(e)}")
 
             # Retrieve memory + document context (skipped for transport shortcuts)
             memory_context = ""
@@ -1860,7 +1859,7 @@ async def websocket_endpoint(
                                 enforce_ownership=settings.auth_enabled,
                             ) or ""
                     except Exception as _e:
-                        logger.warning(f"Failed to load context vars/summary: {_e}")
+                        logger.warning(f"Failed to load context vars/summary: {error_text_without_content(_e)}")
 
                 # Entity ID recognition (pre-routing)
                 _resolved = None
@@ -1869,7 +1868,7 @@ async def websocket_endpoint(
                     if _compiled:
                         _resolved = resolve_references(content)
                 except Exception as _e:
-                    logger.debug(f"Entity resolution skipped: {_e}")
+                    logger.debug(f"Entity resolution skipped: {error_text_without_content(_e)}")
 
                 # Effective role hint: an explicit palette role_hint wins; else a
                 # "Korrigieren & neu beantworten" regenerate maps its corrected
@@ -1990,7 +1989,7 @@ async def websocket_endpoint(
                             except Exception as _e:
                                 logger.debug(
                                     f"Sub-intent dispatch: username lookup "
-                                    f"for user_id={user_id} failed: {_e}"
+                                    f"for user_id={user_id} failed: {error_text_without_content(_e)}"
                                 )
                         si_results = await run_hooks(
                             "dispatch_sub_intent",
@@ -2200,7 +2199,7 @@ async def websocket_endpoint(
                                 content, ollama, lang=turn_lang,
                             )
                         except Exception as _orch_err:
-                            logger.warning(f"Orchestrator detection failed, falling back to single-role: {_orch_err}")
+                            logger.warning(f"Orchestrator detection failed, falling back to single-role: {error_text_without_content(_orch_err)}")
                             sub_queries = None
 
                     if sub_queries and len(sub_queries) >= 2:
@@ -2456,7 +2455,7 @@ async def websocket_endpoint(
                                 logger.warning(
                                     f"agent_federation_progress send failed "
                                     f"(peer={str(payload.get('peer_pubkey', '?'))[:12]}…, "
-                                    f"label={payload.get('label')}): {send_err}"
+                                    f"label={payload.get('label')}): {error_text_without_content(send_err)}"
                                 )
 
                     async for step in agent.run(
@@ -2880,7 +2879,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                         await db_session.commit()
                             except Exception as _re:
                                 logger.warning(
-                                    f"⚠️ Fork memory recompute failed: {_re}"
+                                    f"⚠️ Fork memory recompute failed: {error_text_without_content(_re)}"
                                 )
 
                         # Trigger summary generation if conversation is long enough
@@ -2931,10 +2930,10 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             register_ws_connection(_replacement_sid, websocket)
                     except Exception as e:
                         logger.warning(
-                            f"⚠️ Failed to open a replacement conversation: {e}"
+                            f"⚠️ Failed to open a replacement conversation: {error_text_without_content(e)}"
                         )
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to save messages to DB: {e}")
+                    logger.warning(f"⚠️ Failed to save messages to DB: {error_text_without_content(e)}")
 
             # Context variables of this turn (#1447) — only once the turn LANDED:
             # a saved assistant message proves the conversation exists and that
@@ -3006,7 +3005,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                     # Never block `done` on a card-build/send failure.
                     logger.warning(
                         f"[{request_id_var.get('--------')}] "
-                        f"card_emit_inline failed: {e}"
+                        f"card_emit_inline failed: {error_text_without_content(e)}"
                     )
 
             # Stream finished - tell frontend if TTS was handled server-side
@@ -3159,9 +3158,8 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
     except Exception as e:
         if session_state.db_session_id:
             unregister_ws_connection(session_state.db_session_id, websocket)
-        logger.error(f"❌ WebSocket error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ WebSocket error: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
         await websocket.close()
     finally:
         # Crash-safe: a turn interrupted between its start-mark and the `done`

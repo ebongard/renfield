@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ha_glue.integrations.homeassistant import HomeAssistantClient
 from models.database import OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL, RoomDevice, RoomOutputDevice
+from utils.log_safety import error_text_without_content
 
 # Provider preference when the SAME physical device is exposed by several
 # protocols (lower = preferred): dlna first (gapless album playback), then HA,
@@ -394,7 +395,7 @@ class OutputRoutingService:
                 return DeviceAvailability.UNAVAILABLE
 
         except Exception as e:
-            logger.error(f"Failed to check HA device availability for {entity_id}: {e}")
+            logger.error(f"Failed to check HA device availability for {entity_id}: {error_text_without_content(e)}")
             return DeviceAvailability.UNAVAILABLE
 
     # --- CRUD Operations ---
@@ -609,7 +610,7 @@ class OutputRoutingService:
             entities = await self.ha_client.get_entities_by_domain("media_player")
             return entities
         except Exception as e:
-            logger.error(f"Failed to get HA media players: {e}")
+            logger.error(f"Failed to get HA media players: {error_text_without_content(e)}")
             return []
 
     async def get_available_renfield_devices(self, room_id: int) -> list[RoomDevice]:
@@ -681,7 +682,7 @@ class OutputRoutingService:
                     found = await asyncio.wait_for(provider.discover(room_id), timeout=timeout)
                     return [t.to_dict() for t in found]
                 except (TimeoutError, OutputProviderError, Exception) as e:
-                    logger.warning(f"output provider '{provider.key}' discover failed: {e}")
+                    logger.warning(f"output provider '{provider.key}' discover failed: {error_text_without_content(e)}")
                     return [{
                         "provider": provider.key, "target_id": "",
                         "name": f"{provider.key} (unreachable)",
@@ -741,5 +742,5 @@ class OutputRoutingService:
             ]
 
         except Exception as e:
-            logger.error(f"Failed to get DLNA renderers: {e}")
+            logger.error(f"Failed to get DLNA renderers: {error_text_without_content(e)}")
             return []

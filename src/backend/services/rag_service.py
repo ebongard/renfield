@@ -548,7 +548,7 @@ class RAGService(AtomOwnerResolverMixin):
                                     np.array(embs, dtype=float), axis=0
                                 ).tolist()
                     except Exception as e:
-                        logger.warning(f"content_embedding mean failed for doc {doc.id}: {e}")
+                        logger.warning(f"content_embedding mean failed for doc {doc.id}: {error_text_without_content(e)}")
 
                     doc.status = DOC_STATUS_COMPLETED
                     doc.processed_at = datetime.now(UTC).replace(tzinfo=None)

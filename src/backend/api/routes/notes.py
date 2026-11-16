@@ -31,6 +31,7 @@ from services.note_service import (
     update_note,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -121,7 +122,7 @@ async def create_note_route(
         # because this used to arrive here as an IntegrityError and was reported
         # as a duplicate title — a message pointing at the wrong cause entirely.
         await db.rollback()
-        logger.error(f"Could not create the note: {e}")
+        logger.error(f"Could not create the note: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503, detail="No user exists to own a note"
         )
@@ -130,7 +131,7 @@ async def create_note_route(
         # LOGGED: every other constraint violation lands here too and would
         # otherwise be reported to the user as a duplicate title.
         await db.rollback()
-        logger.warning(f"Note creation: IntegrityError interpreted as a title conflict: {e}")
+        logger.warning(f"Note creation: IntegrityError interpreted as a title conflict: {error_text_without_content(e)}")
         raise HTTPException(status_code=409, detail="A note with this title already exists")
     await db.refresh(note)
     # Dense embedding runs AFTER the response (own session) — never on the request tx.

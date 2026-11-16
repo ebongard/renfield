@@ -49,6 +49,7 @@ from services.database import get_db
 from services.skill_curator_service import SkillCuratorService
 from services.skill_service import SkillService
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -337,7 +338,7 @@ async def create_skill(
         )
         return _to_response(skill, is_owner=True)
     except Exception as e:
-        logger.error(f"❌ Skill create failed for user={user.id}: {e}")
+        logger.error(f"❌ Skill create failed for user={user.id}: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail="Skill create failed")
 
 

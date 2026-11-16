@@ -41,6 +41,7 @@ from services.federation_query_schemas import (
     QueryBrainRetrieveResponse,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 #: Bodies larger than this are not a ping. Checked before parsing, so the
 #: route cannot be used to make the backend parse megabytes.
@@ -146,7 +147,7 @@ async def peer_query_brain_initiate(
     except FederationQueryError as e:
         logger.warning(
             f"Federation query_brain/initiate rejected "
-            f"(asker={body.asker_pubkey[:12]}...): {e}"
+            f"(asker={body.asker_pubkey[:12]}...): {error_text_without_content(e)}"
         )
         raise HTTPException(status_code=400, detail="Federation query failed")
 
@@ -163,7 +164,7 @@ async def peer_query_brain_retrieve(
     except FederationQueryError as e:
         logger.warning(
             f"Federation query_brain/retrieve rejected "
-            f"(asker={body.asker_pubkey[:12]}..., request_id={body.request_id}): {e}"
+            f"(asker={body.asker_pubkey[:12]}..., request_id={body.request_id}): {error_text_without_content(e)}"
         )
         raise HTTPException(status_code=400, detail="Federation query failed")
     # Serialised by hand so that the name attachment is OMITTED when this
@@ -208,7 +209,7 @@ async def peer_ping(request: Request, db: AsyncSession = Depends(get_db)):
         resp = await responder.handle_ping(body)
     except FederationQueryError as e:
         logger.warning(
-            f"Federation ping rejected (asker={body.asker_pubkey[:12]}...): {e}"
+            f"Federation ping rejected (asker={body.asker_pubkey[:12]}...): {error_text_without_content(e)}"
         )
         raise HTTPException(status_code=400, detail="Federation query failed")
     return JSONResponse(content=wire_body(resp))

@@ -271,7 +271,7 @@ async def _purge_parent_facts(db: AsyncSession, parent_id: int) -> int:
             # by this point.
             logger.warning(
                 f"pdf-split: fact atom {atom_id} of doc {parent_id} not "
-                f"cleared: {exc!r}"
+                f"cleared: {type(exc).__name__}: {error_text_without_content(exc)}"
             )
     if deleted:
         logger.info(
@@ -708,7 +708,7 @@ async def act_on_verdict(
         except Exception as e:
             logger.warning(
                 f"pdf-split: could not file review proposal for doc {doc.id} "
-                f"({e}) — processing as a single document"
+                f"({error_text_without_content(e)}) — processing as a single document"
             )
             await db.rollback()
             return "single"

@@ -13,6 +13,7 @@ from models.database import Task, User
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -56,7 +57,7 @@ async def create_task(
             "status": new_task.status
         }
     except Exception as e:
-        logger.error(f"❌ Task creation error: {e}")
+        logger.error(f"❌ Task creation error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/list")
@@ -95,7 +96,7 @@ async def list_tasks(
             ]
         }
     except Exception as e:
-        logger.error(f"❌ Task list error: {e}")
+        logger.error(f"❌ Task list error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{task_id}")
@@ -129,7 +130,7 @@ async def get_task(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Get task error: {e}")
+        logger.error(f"❌ Get task error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.patch("/{task_id}")
@@ -166,7 +167,7 @@ async def update_task(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Update task error: {e}")
+        logger.error(f"❌ Update task error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{task_id}")
@@ -188,5 +189,5 @@ async def delete_task(
 
         return {"success": True}
     except Exception as e:
-        logger.error(f"❌ Delete task error: {e}")
+        logger.error(f"❌ Delete task error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -45,6 +45,7 @@ from services.knowledge_graph_service import (
     KnowledgeGraphService,
     is_generic_person_description,
 )
+from utils.log_safety import error_text_without_content
 
 logger = logging.getLogger("kg_demagnetize")
 
@@ -133,5 +134,5 @@ async def run(db: AsyncSession, user_id: int | None = None) -> DemagnetizeReport
         except Exception as exc:
             await db.rollback()
             rep.failed += 1
-            logger.warning("skip entity #%d %r: %s", e.id, e.name, exc)
+            logger.warning("skip entity #%d %r: %s", e.id, e.name, error_text_without_content(exc))
     return rep

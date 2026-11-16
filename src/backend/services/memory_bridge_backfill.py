@@ -31,6 +31,7 @@ from models.database import (
     KGEntity,
 )
 from services.knowledge_graph_service import KnowledgeGraphService
+from utils.log_safety import error_text_without_content
 
 logger = logging.getLogger("memory_bridge_backfill")
 
@@ -130,5 +131,5 @@ async def run_backfill(db: AsyncSession, user_id: int | None = None, limit: int 
         except Exception as e:
             await db.rollback()
             rep.failed += 1
-            logger.warning("skip memory #%d subject=%r: %s", m.id, m.subject_name, e)
+            logger.warning("skip memory #%d subject=%r: %s", m.id, m.subject_name, error_text_without_content(e))
     return rep

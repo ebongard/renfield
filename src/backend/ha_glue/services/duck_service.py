@@ -30,6 +30,7 @@ import json
 from loguru import logger
 
 from ha_glue.utils.config import ha_glue_settings
+from utils.log_safety import error_text_without_content
 
 
 def _get_mcp_manager():
@@ -127,7 +128,7 @@ class DuckService:
                 f"({original}→{target}) for a voice turn"
             )
         except Exception as e:
-            logger.debug(f"duck_room failed for room {room_id}: {e}")
+            logger.debug(f"duck_room failed for room {room_id}: {error_text_without_content(e)}")
 
     async def restore_room(self, room_id: int | None) -> None:
         """Restore the pre-duck volume for ``room_id`` (no-op if it wasn't ducked)."""
@@ -149,7 +150,7 @@ class DuckService:
                 await self._set_volume(mgr, stash.renderer, stash.original)
             logger.info(f"🔊 Restored '{stash.renderer}' in room {room_id} → {stash.original}")
         except Exception as e:
-            logger.debug(f"restore_room failed for room {room_id}: {e}")
+            logger.debug(f"restore_room failed for room {room_id}: {error_text_without_content(e)}")
 
     async def _safety_restore(self, room_id: int) -> None:
         """Restore even if the turn never returns to IDLE (satellite dropped mid-turn)."""
@@ -172,7 +173,7 @@ class DuckService:
             res = await mgr.execute_tool("mcp.dlna.get_volume", {"renderer_name": renderer})
             return _parse_volume(res if isinstance(res, dict) else {})
         except Exception as e:
-            logger.debug(f"duck get_volume failed for '{renderer}': {e}")
+            logger.debug(f"duck get_volume failed for '{renderer}': {error_text_without_content(e)}")
             return None
 
     @staticmethod
@@ -183,7 +184,7 @@ class DuckService:
             )
             return True
         except Exception as e:
-            logger.debug(f"duck set_volume failed for '{renderer}': {e}")
+            logger.debug(f"duck set_volume failed for '{renderer}': {error_text_without_content(e)}")
             return False
 
 

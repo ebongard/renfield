@@ -589,8 +589,8 @@ class QueryOrchestrator:
                     internal_filter=role.internal_tools,
                 )
             except Exception as e:
-                # No traceback: it would end in the raw message and carry
-                # the frames' variable values (`frames_without_content`).
+                # No traceback: it would end in the raw message
+                # (`frames_without_content`).
                 logger.error(
                     f"Tool registry init failed for [{role_name}]: "
                     f"{type(e).__name__}: {error_text_without_content(e)} "

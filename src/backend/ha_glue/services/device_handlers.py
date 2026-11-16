@@ -25,6 +25,8 @@ from typing import Any
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 # ---------------------------------------------------------------------------
 # /health device count
 # ---------------------------------------------------------------------------
@@ -45,7 +47,7 @@ async def ha_get_connected_device_summary() -> dict | None:
             "active_sessions": len(dm.sessions),
         }
     except Exception as e:
-        logger.debug(f"ha_glue get_connected_device_summary failed: {e}")
+        logger.debug(f"ha_glue get_connected_device_summary failed: {error_text_without_content(e)}")
         return None
 
 
@@ -110,7 +112,7 @@ async def ha_deliver_notification(
                     surface_allowed = r
                     break
         except Exception as e:
-            logger.warning(f"Privacy gate error, suppressing delivery: {e}")
+            logger.warning(f"Privacy gate error, suppressing delivery: {error_text_without_content(e)}")
             surface_allowed = False
 
     # Determine target devices
@@ -129,7 +131,7 @@ async def ha_deliver_notification(
                     await device.websocket.send_json(ws_message)
                     delivered_ids.append(device.device_id)
                 except Exception as e:
-                    logger.warning(f"⚠️ Notification delivery failed for {device.device_id}: {e}")
+                    logger.warning(f"⚠️ Notification delivery failed for {device.device_id}: {error_text_without_content(e)}")
         logger.info(f"📤 Notification #{notification.id} sent to {len(delivered_ids)} devices")
     else:
         logger.info(
@@ -211,10 +213,10 @@ async def _deliver_notification_tts(notification: Any) -> bool:
                     logger.info(f"🔊 TTS sent to {device.device_id}")
                     return True
                 except Exception as e:
-                    logger.warning(f"⚠️ TTS delivery to {device.device_id} failed: {e}")
+                    logger.warning(f"⚠️ TTS delivery to {device.device_id} failed: {error_text_without_content(e)}")
 
         return False
 
     except Exception as e:
-        logger.error(f"❌ TTS delivery failed for notification #{notification.id}: {e}")
+        logger.error(f"❌ TTS delivery failed for notification #{notification.id}: {error_text_without_content(e)}")
         return False

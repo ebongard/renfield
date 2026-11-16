@@ -23,6 +23,7 @@ from typing import Any, Protocol, runtime_checkable
 from loguru import logger
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # ---------------------------------------------------------------------------
 # Thinking-capable models (Option C: Model-specific configuration)
@@ -137,7 +138,7 @@ class _FallbackLLMClient:
             return await getattr(self._primary, method)(*args, **kwargs)
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             logger.warning(
-                f"Primary Ollama unreachable ({exc!r}), "
+                f"Primary Ollama unreachable ({type(exc).__name__}: {error_text_without_content(exc)}), "
                 f"retrying on fallback {self._fallback_url}"
             )
             return await getattr(self._fallback, method)(*args, **kwargs)

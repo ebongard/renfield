@@ -373,9 +373,8 @@ class ActionExecutor:
                 except Exception as e:  # mirror run_hooks fail-open semantics
                     # A silently-skipped SECURITY handler must be diagnosable
                     # from the log alone: type, message and the stack. NOT a
-                    # full traceback -- the sink prints the variable values of
-                    # every frame, and the frame above holds `parameters`,
-                    # the tool call's arguments (`frames_without_content`).
+                    # full traceback -- it ends in the raw message
+                    # (`frames_without_content`).
                     logger.warning(
                         f"pre_mcp_call handler "
                         f"{getattr(pre_call_handler, '__name__', '?')} failed "

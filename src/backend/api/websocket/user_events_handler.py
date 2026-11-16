@@ -18,6 +18,7 @@ from loguru import logger
 
 from services.user_events import ALL, get_registry
 from services.websocket_auth import WSAuthError, authenticate_websocket
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -33,7 +34,7 @@ async def _is_admin(user_id: int) -> bool:
         async with AsyncSessionLocal() as db:
             return user_id in await active_admin_ids(db)
     except Exception as exc:
-        logger.debug(f"user-events: admin check failed for {user_id}: {exc}")
+        logger.debug(f"user-events: admin check failed for {user_id}: {error_text_without_content(exc)}")
         return False
 
 
@@ -73,7 +74,7 @@ async def user_events_ws(websocket: WebSocket, token: str = Query(None)) -> None
     except WebSocketDisconnect:
         pass
     except Exception as exc:
-        logger.debug(f"user-events: receive loop ended: {exc}")
+        logger.debug(f"user-events: receive loop ended: {error_text_without_content(exc)}")
     finally:
         registry.unregister(websocket)
         logger.debug(f"user-events: client disconnected (total={registry.client_count()})")

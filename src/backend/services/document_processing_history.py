@@ -58,6 +58,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import DocumentProcessingHistory
+from utils.log_safety import error_text_without_content, frames_without_content
 
 logger = logging.getLogger(__name__)
 
@@ -395,9 +396,9 @@ class DocumentProcessingHistoryService:
                 await self.close_failure(hid, str(exc))
             except Exception as close_exc:
                 logger.error(
-                    "Failed to write history close_failure for hid=%s (doc_id=%s): %s",
-                    hid, document_id, close_exc,
-                    exc_info=True,
+                    "Failed to write history close_failure for hid=%s (doc_id=%s): %s: %s | at %s",
+                    hid, document_id, type(close_exc).__name__,
+                    error_text_without_content(close_exc), frames_without_content(close_exc),
                 )
             raise
         else:

@@ -48,6 +48,7 @@ from services.auth_service import get_current_user, require_permission
 from services.database import get_db
 from services.notification_service import NotificationService
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -138,7 +139,7 @@ async def receive_webhook(
         # Dedup / suppression
         raise HTTPException(status_code=429, detail=str(e))
     except Exception as e:
-        logger.error(f"❌ Webhook processing error: {e}")
+        logger.error(f"❌ Webhook processing error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail="Internal error processing notification")
 
 

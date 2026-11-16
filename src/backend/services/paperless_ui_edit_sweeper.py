@@ -41,6 +41,8 @@ from typing import Any
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 # Serialise sweep ticks within a single process. The hourly lifecycle
 # loop is already serial with itself, but admin-triggered manual runs
 # could otherwise overlap a scheduled tick — both would SELECT the
@@ -253,7 +255,7 @@ async def _run_sweep_tick_locked(
                 db.add(row)
                 await db.commit()
         except Exception as exc:
-            logger.warning("ui-edit sweep persist failed for row: {}", exc)
+            logger.warning("ui-edit sweep persist failed for row: {}", error_text_without_content(exc))
             counters["errors"] += 1
 
     # Swept_at stamps land in their own transaction so a persist failure
@@ -515,7 +517,7 @@ async def run_abandoned_confirm_sweep(
                     # blocks future sweeps.
                     logger.warning(
                         "abandoned-confirm sweep: unlink {} failed: {}",
-                        upload.file_path, exc,
+                        upload.file_path, error_text_without_content(exc),
                     )
                     file_errors += 1
             await db.delete(upload)

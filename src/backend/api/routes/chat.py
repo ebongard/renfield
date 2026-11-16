@@ -20,6 +20,7 @@ from services.database import get_db
 from services.input_guard import detect_injection
 from services.ollama_service import OllamaService
 from utils.config import settings
+from utils.log_safety import error_text_without_content, frames_without_content
 
 router = APIRouter()
 
@@ -61,7 +62,7 @@ def _has_chat_all(current_user) -> bool:
         # MissingGreenlet. Swallowed, that reads as "this admin has no chat.all"
         # and the shared room history becomes undeletable by anyone — the exact
         # failure mode that hid the satellite speaker-permission bug (P0 Nr. 3).
-        logger.warning(f"⚠️ `chat.all` could not be read, refusing: {e}")
+        logger.warning(f"⚠️ `chat.all` could not be read, refusing: {error_text_without_content(e)}")
         return False
 
 
@@ -228,7 +229,7 @@ async def send_message(
                 if _u is not None:
                     user_permissions = _u.get_permissions()
             except Exception as e:
-                logger.warning(f"Failed to load user permissions for /api/chat/send: {e}")
+                logger.warning(f"Failed to load user permissions for /api/chat/send: {error_text_without_content(e)}")
             if user_permissions is None and settings.auth_enabled:
                 user_permissions = []  # authenticated but unresolved → deny
 
@@ -406,9 +407,8 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
             intent=intent
         )
     except Exception as e:
-        logger.error(f"❌ Chat error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Chat error: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/history/{session_id}")
@@ -504,7 +504,7 @@ async def get_history(
             ]
         }
     except Exception as e:
-        logger.error(f"❌ Failed to load the history: {e}")
+        logger.error(f"❌ Failed to load the history: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/session/{session_id}")
@@ -530,7 +530,7 @@ async def delete_session(
 
         return {"success": True}
     except Exception as e:
-        logger.error(f"❌ Failed to delete the session: {e}")
+        logger.error(f"❌ Failed to delete the session: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/conversations")
@@ -564,7 +564,7 @@ async def list_conversations(
             "count": len(conversations)
         }
     except Exception as e:
-        logger.error(f"❌ Failed to load the conversations: {e}")
+        logger.error(f"❌ Failed to load the conversations: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/conversation/{session_id}/summary")
@@ -598,7 +598,7 @@ async def get_conversation_summary(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Failed to load the summary: {e}")
+        logger.error(f"❌ Failed to load the summary: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/search")
@@ -637,7 +637,7 @@ async def search_conversations(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Search failed: {e}")
+        logger.error(f"❌ Search failed: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/messages/search")
@@ -692,7 +692,7 @@ async def search_messages(
         )
         return {"query": q, **payload}
     except Exception as e:
-        logger.error(f"❌ Message search failed: {e}")
+        logger.error(f"❌ Message search failed: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -726,7 +726,7 @@ async def set_active_leaf(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Failed to set the active branch: {e}")
+        logger.error(f"❌ Failed to set the active branch: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -766,7 +766,7 @@ async def delete_branch(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Failed to delete the branch: {e}")
+        logger.error(f"❌ Failed to delete the branch: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -813,7 +813,7 @@ async def get_conversation_stats(
             "latest_activity": latest_conversation.updated_at.isoformat() if latest_conversation else None
         }
     except Exception as e:
-        logger.error(f"❌ Failed to load the statistics: {e}")
+        logger.error(f"❌ Failed to load the statistics: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/conversations/cleanup")
@@ -849,6 +849,6 @@ async def cleanup_old_conversations(
             "cutoff_days": days
         }
     except Exception as e:
-        logger.error(f"❌ Cleanup failed: {e}")
+        logger.error(f"❌ Cleanup failed: {error_text_without_content(e)}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

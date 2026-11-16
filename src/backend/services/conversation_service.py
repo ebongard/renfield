@@ -180,7 +180,7 @@ class ConversationService:
                 conversation.atom_id = atom_id
         except Exception as e:
             conversation.atom_id = None
-            logger.warning(f"⚠️ Conversation created without an atom (id={conversation.id}): {e}")
+            logger.warning(f"⚠️ Conversation created without an atom (id={conversation.id}): {error_text_without_content(e)}")
 
     async def active_path_message_ids(self, conversation: Conversation) -> list[int]:
         """Return the ids of the messages on the conversation's ACTIVE branch,

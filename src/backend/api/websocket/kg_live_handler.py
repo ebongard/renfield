@@ -20,6 +20,7 @@ from loguru import logger
 
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -97,7 +98,7 @@ async def knowledge_graph_live(
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        logger.debug(f"KG viewer connection error: {e}")
+        logger.debug(f"KG viewer connection error: {error_text_without_content(e)}")
     finally:
         _viewers.pop(websocket, None)
         logger.info(f"📊 KG graph viewer disconnected ({len(_viewers)} total)")

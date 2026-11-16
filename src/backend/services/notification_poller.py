@@ -21,6 +21,7 @@ import json
 import logging
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content, frames_without_content
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +100,11 @@ class NotificationPollerService:
                 await self._poll_once(name, tool_name, lookahead)
             except asyncio.CancelledError:
                 break
-            except Exception:
-                logger.warning("Poll failed for '%s'", name, exc_info=True)
+            except Exception as e:
+                logger.warning(
+                    "Poll failed for '%s': %s: %s | at %s", name, type(e).__name__,
+                    error_text_without_content(e), frames_without_content(e),
+                )
 
             try:
                 await asyncio.sleep(interval)
@@ -197,10 +201,10 @@ class NotificationPollerService:
                 )
         except ValueError as e:
             # Dedup/suppression — expected, not an error
-            logger.debug("Notification suppressed for '%s': %s", server_name, e)
-        except Exception:
+            logger.debug("Notification suppressed for '%s': %s", server_name, error_text_without_content(e))
+        except Exception as e:
             logger.warning(
-                "Failed to process notification from '%s'",
-                server_name,
-                exc_info=True,
+                "Failed to process notification from '%s': %s: %s | at %s",
+                server_name, type(e).__name__,
+                error_text_without_content(e), frames_without_content(e),
             )

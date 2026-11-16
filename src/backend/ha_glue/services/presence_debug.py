@@ -29,6 +29,7 @@ from fastapi import WebSocket
 from loguru import logger
 
 from ha_glue.utils.config import ha_glue_settings
+from utils.log_safety import error_text_without_content
 
 # At most one pushed snapshot per this many seconds, however many satellites report.
 PUSH_MIN_INTERVAL_SECONDS = 1.0
@@ -88,7 +89,7 @@ def _connected_satellites() -> list[dict[str, Any]]:
             for sat_id, sat in get_satellite_manager().satellites.items()
         ]
     except Exception as e:
-        logger.debug(f"presence debug: satellite roster unavailable: {e}")
+        logger.debug(f"presence debug: satellite roster unavailable: {error_text_without_content(e)}")
         return []
 
 
@@ -228,14 +229,14 @@ def note_ble_report() -> None:
         if _flush_task is None or _flush_task.done():
             _flush_task = asyncio.get_running_loop().create_task(_flush())
     except Exception as e:
-        logger.debug(f"presence debug: could not schedule push: {e}")
+        logger.debug(f"presence debug: could not schedule push: {error_text_without_content(e)}")
 
 
 async def _close_quietly(ws: WebSocket) -> None:
     try:
         await asyncio.wait_for(ws.close(code=_DROP_CLOSE_CODE), timeout=_SEND_TIMEOUT_SECONDS)
     except Exception as e:
-        logger.debug(f"presence debug: closing a dropped viewer failed: {e}")
+        logger.debug(f"presence debug: closing a dropped viewer failed: {error_text_without_content(e)}")
 
 
 def _drop_viewer(ws: WebSocket) -> None:
@@ -250,7 +251,7 @@ def _drop_viewer(ws: WebSocket) -> None:
         _close_tasks.add(task)
         task.add_done_callback(_close_tasks.discard)
     except Exception as e:
-        logger.debug(f"presence debug: could not schedule viewer close: {e}")
+        logger.debug(f"presence debug: could not schedule viewer close: {error_text_without_content(e)}")
 
 
 async def _send_one(ws: WebSocket, message: dict[str, Any]) -> None:
@@ -281,5 +282,5 @@ async def _flush() -> None:
                 if isinstance(result, Exception):
                     _drop_viewer(ws)
         except Exception as e:
-            logger.debug(f"presence debug: push failed: {e}")
+            logger.debug(f"presence debug: push failed: {error_text_without_content(e)}")
         _last_push_monotonic = time.monotonic()

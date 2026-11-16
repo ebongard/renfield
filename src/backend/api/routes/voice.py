@@ -19,6 +19,7 @@ from services.auth_service import get_current_user, oauth2_scheme
 from services.database import AsyncSessionLocal, get_db
 from services.piper_service import get_piper_service
 from utils.config import settings
+from utils.log_safety import error_text_without_content, frames_without_content
 
 router = APIRouter()
 
@@ -134,9 +135,8 @@ async def speech_to_text(
             "speaker_confidence": speaker_confidence
         }
     except Exception as e:
-        logger.error(f"❌ STT error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ STT error: {error_text_without_content(e)}")
+        logger.error(f"at {frames_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/tts")
@@ -172,7 +172,7 @@ async def text_to_speech(request: Request, tts_request: TTSRequest, _user=Depend
             }
         )
     except Exception as e:
-        logger.error(f"❌ TTS error: {e}")
+        logger.error(f"❌ TTS error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.api_route("/tts-cache/{audio_id}", methods=["GET", "HEAD"])
@@ -340,7 +340,7 @@ async def voice_chat(
             "speaker_confidence": speaker_confidence
         }
     except Exception as e:
-        logger.error(f"❌ Voice chat error: {e}")
+        logger.error(f"❌ Voice chat error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -373,7 +373,7 @@ async def _voice_chat_via_voice_server(
             auth_token=bearer_token,
         )
     except VoiceServerError as e:
-        logger.error(f"voice-server STT failed: {e}")
+        logger.error(f"voice-server STT failed: {error_text_without_content(e)}")
         raise HTTPException(status_code=502, detail="voice-server STT unavailable") from e
 
     user_text: str = stt_result.get("text") or ""
@@ -395,7 +395,7 @@ async def _voice_chat_via_voice_server(
                     audio_duration_s=stt_result.get("audio_duration_s"),
                 )
         except Exception as e:
-            logger.warning(f"⚠️ wire-embedding speaker resolve failed: {e}")
+            logger.warning(f"⚠️ wire-embedding speaker resolve failed: {error_text_without_content(e)}")
 
     if speaker_info.get("speaker_name"):
         logger.info(f"🎤 Voice-Chat (orchestrated): {speaker_info['speaker_name']}")
@@ -413,7 +413,7 @@ async def _voice_chat_via_voice_server(
             auth_token=bearer_token,
         )
     except VoiceServerError as e:
-        logger.error(f"voice-server TTS failed: {e}")
+        logger.error(f"voice-server TTS failed: {error_text_without_content(e)}")
         raise HTTPException(status_code=502, detail="voice-server TTS unavailable") from e
 
     return {

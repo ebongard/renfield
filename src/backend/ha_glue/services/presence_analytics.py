@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ha_glue.utils.config import ha_glue_settings
 from models.database import PresenceEvent, Room
 from utils.hooks import register_hook
+from utils.log_safety import error_text_without_content, frames_without_content
 
 
 def _analytics_tz() -> ZoneInfo:
@@ -77,8 +78,8 @@ async def _persist_event(event_type: str, **kwargs):
             )
             db.add(event)
             await db.commit()
-    except Exception:
-        logger.opt(exception=True).warning(f"Failed to persist presence event ({event_type})")
+    except Exception as e:
+        logger.warning(f"Failed to persist presence event ({event_type})" f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}")
 
 
 def register_presence_analytics_hooks():

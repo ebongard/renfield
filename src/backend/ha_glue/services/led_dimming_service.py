@@ -21,6 +21,7 @@ from __future__ import annotations
 from loguru import logger
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content, frames_without_content
 
 
 class LedDimmingService:
@@ -53,9 +54,10 @@ class LedDimmingService:
 
         try:
             night = is_night()
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as e:
+            logger.warning(
                 "LedDimmingService: is_night() failed, assuming day"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
             )
             night = False
 
@@ -103,7 +105,7 @@ class LedDimmingService:
                 sent += 1
             except Exception as e:
                 logger.warning(
-                    f"💡 Failed to push LED brightness to {sat.satellite_id}: {e}"
+                    f"💡 Failed to push LED brightness to {sat.satellite_id}: {error_text_without_content(e)}"
                 )
 
         logger.info(

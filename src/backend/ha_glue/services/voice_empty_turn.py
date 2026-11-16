@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
 from utils.metrics import VOICE_EMPTY_TURN_KINDS, VOICE_EMPTY_TURN_SOURCES
 
 #: Satellite capture chunk: 1280 samples at 16 kHz (`audio.chunk_size`).
@@ -191,5 +192,5 @@ def record_empty_turn(
 
         record_voice_empty_turn(source, kind)
     except Exception as e:
-        logger.warning(f"⚠️ Could not record empty voice turn: {e!r}")
+        logger.warning(f"⚠️ Could not record empty voice turn: {type(e).__name__}: {error_text_without_content(e)}")
     return {"empty_kind": kind, "audio_seconds": round(audio_seconds, 2)}

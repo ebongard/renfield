@@ -28,7 +28,7 @@ from loguru import logger
 
 from services.database import AsyncSessionLocal
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, frames_without_content
 
 # Prevent background tasks from being garbage-collected mid-flight.
 _background_tasks: set[asyncio.Task] = set()
@@ -106,7 +106,12 @@ async def extract_memories_background(
                         f"⚠️ Post-extraction branch recompute failed: {error_text_without_content(_ge)}"
                     )
     except Exception as e:
-        logger.warning(f"Memory extraction failed: {error_text_without_content(e)}", exc_info=True)
+        # `exc_info=True` was a stdlib habit: loguru prints no traceback for it
+        # and, given ANY keyword, runs `str.format` over the finished message.
+        logger.warning(
+            f"Memory extraction failed: {type(e).__name__}: {error_text_without_content(e)} "
+            f"| at {frames_without_content(e)}"
+        )
 
 
 async def extract_structured_background(

@@ -53,6 +53,7 @@ from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ async def verify_token(
             async with AsyncSessionLocal() as db:
                 user = await get_user_by_id(db, user_id_int)
         except Exception as e:
-            logger.warning("verify_token: user lookup failed: %s", e)
+            logger.warning("verify_token: user lookup failed: %s", error_text_without_content(e))
             raise _unauthorized() from e
 
         if user is None or not user.is_active:

@@ -18,6 +18,7 @@ from loguru import logger
 
 from models.permissions import Permission
 from services.auth_service import require_permission
+from utils.log_safety import error_text_without_content
 
 router = APIRouter(tags=["admin"])
 
@@ -41,5 +42,5 @@ async def refresh_keywords(user=Depends(require_permission(Permission.ADMIN))):
             "sample_keywords": list(keywords)[:20],
         }
     except Exception as e:
-        logger.error(f"❌ Keyword refresh error: {e}")
+        logger.error(f"❌ Keyword refresh error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e)) from e

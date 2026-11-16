@@ -34,6 +34,7 @@ from models.database import (
     DEVICE_TYPE_WEB_TABLET,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 
 class DeviceState(str, Enum):
@@ -359,7 +360,7 @@ class DeviceManager:
         try:
             audio_bytes = base64.b64decode(chunk_b64)
         except Exception as e:
-            logger.error(f"❌ Failed to decode audio chunk: {e}")
+            logger.error(f"❌ Failed to decode audio chunk: {error_text_without_content(e)}")
             return False, "Invalid base64 encoding"
 
         # Check buffer size limit
@@ -410,7 +411,7 @@ class DeviceManager:
                     "state": state.value
                 })
             except Exception as e:
-                logger.error(f"❌ Failed to send state to device: {e}")
+                logger.error(f"❌ Failed to send state to device: {error_text_without_content(e)}")
 
     async def send_transcription(
         self,
@@ -439,7 +440,7 @@ class DeviceManager:
                     "speaker_alias": speaker_alias
                 })
             except Exception as e:
-                logger.error(f"❌ Failed to send transcription: {e}")
+                logger.error(f"❌ Failed to send transcription: {error_text_without_content(e)}")
 
     async def send_action_result(
         self,
@@ -463,7 +464,7 @@ class DeviceManager:
                     "success": success
                 })
             except Exception as e:
-                logger.error(f"❌ Failed to send action result: {e}")
+                logger.error(f"❌ Failed to send action result: {error_text_without_content(e)}")
 
     async def send_tts_audio(
         self,
@@ -506,7 +507,7 @@ class DeviceManager:
                 logger.info(f"🔊 Sent TTS audio to {device.device_id} ({len(audio_bytes)} bytes)")
 
             except Exception as e:
-                logger.error(f"❌ Failed to send TTS audio: {e}")
+                logger.error(f"❌ Failed to send TTS audio: {error_text_without_content(e)}")
 
     async def send_response_text(
         self,
@@ -536,7 +537,7 @@ class DeviceManager:
                     "is_final": is_final
                 })
             except Exception as e:
-                logger.error(f"❌ Failed to send response text: {e}")
+                logger.error(f"❌ Failed to send response text: {error_text_without_content(e)}")
 
     async def send_stream_chunk(
         self,
@@ -559,7 +560,7 @@ class DeviceManager:
                     "content": chunk
                 })
             except Exception as e:
-                logger.error(f"❌ Failed to send stream chunk: {e}")
+                logger.error(f"❌ Failed to send stream chunk: {error_text_without_content(e)}")
 
     async def end_session(self, session_id: str, reason: str = "completed"):
         """End an active session."""
@@ -659,7 +660,7 @@ class DeviceManager:
             try:
                 await device.websocket.send_json(message)
             except Exception as e:
-                logger.error(f"❌ Failed to broadcast to {device.device_id}: {e}")
+                logger.error(f"❌ Failed to broadcast to {device.device_id}: {error_text_without_content(e)}")
 
     def get_all_devices(self) -> list[dict[str, Any]]:
         """Get status of all connected devices"""

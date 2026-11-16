@@ -95,6 +95,7 @@ _BOOTSTRAP_SQL: tuple[str, ...] = (
 # Import platform models (the 22-class Base.metadata after W1.2).
 from models.database import Base
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Conditionally register ha_glue models with Base.metadata. If ha_glue
 # is on disk (monorepo or ha-glue flavor deploy), importing
@@ -150,7 +151,7 @@ for _mod_spec in _plugin_modules_env.split(","):
         _plugin_mod = importlib.import_module(_spec)
     except ImportError as _exc:
         logger.warning(
-            f"alembic/env.py: plugin metadata module {_spec!r} not importable: {_exc}"
+            f"alembic/env.py: plugin metadata module {_spec!r} not importable: {error_text_without_content(_exc)}"
         )
         continue
     _plugin_base = getattr(_plugin_mod, "Base", None)

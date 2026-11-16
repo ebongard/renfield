@@ -9,6 +9,7 @@ import paho.mqtt.client as mqtt
 from loguru import logger
 
 from ha_glue.utils.config import ha_glue_settings
+from utils.log_safety import error_text_without_content
 
 _shared_frigate_client: httpx.AsyncClient | None = None
 
@@ -62,7 +63,7 @@ class FrigateClient:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"❌ Failed to fetch the Frigate events: {e}")
+            logger.error(f"❌ Failed to fetch the Frigate events: {error_text_without_content(e)}")
             return []
 
     async def get_snapshot(self, event_id: str) -> bytes | None:
@@ -76,7 +77,7 @@ class FrigateClient:
             response.raise_for_status()
             return response.content
         except Exception as e:
-            logger.error(f"❌ Failed to load the snapshot: {e}")
+            logger.error(f"❌ Failed to load the snapshot: {error_text_without_content(e)}")
             return None
 
     async def get_cameras(self) -> list[str]:
@@ -91,7 +92,7 @@ class FrigateClient:
             config = response.json()
             return list(config.get("cameras", {}).keys())
         except Exception as e:
-            logger.error(f"❌ Failed to fetch the camera list: {e}")
+            logger.error(f"❌ Failed to fetch the camera list: {error_text_without_content(e)}")
             return []
 
     def setup_mqtt(self, broker: str | None = None, port: int | None = None):
@@ -128,7 +129,7 @@ class FrigateClient:
                 for callback in self.event_callbacks:
                     callback(topic, payload)
             except Exception as e:
-                logger.error(f"❌ MQTT message error: {e}")
+                logger.error(f"❌ MQTT message error: {error_text_without_content(e)}")
 
         self.mqtt_client = mqtt.Client()
         self.mqtt_client.on_connect = on_connect
@@ -139,7 +140,7 @@ class FrigateClient:
             self.mqtt_client.loop_start()
             logger.info("✅ MQTT client started")
         except Exception as e:
-            logger.error(f"❌ MQTT connection error: {e}")
+            logger.error(f"❌ MQTT connection error: {error_text_without_content(e)}")
 
     def _handle_new_object(self, payload: dict):
         """Handler for new objects"""

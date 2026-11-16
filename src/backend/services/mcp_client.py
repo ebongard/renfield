@@ -1806,11 +1806,11 @@ class MCPManager:
             if state.backoff:
                 next_delay = state.backoff.record_failure()
                 logger.warning(
-                    f"MCP server '{config.name}' connection failed: {e} "
+                    f"MCP server '{config.name}' connection failed: {error_text_without_content(e)} "
                     f"(attempt {state.backoff.attempt_count}, next retry in {next_delay:.1f}s)"
                 )
             else:
-                logger.warning(f"MCP server '{config.name}' connection failed: {e}")
+                logger.warning(f"MCP server '{config.name}' connection failed: {error_text_without_content(e)}")
 
             # Clean up BOTH stacks on failure, bounded: the LOCAL partially-
             # entered one (previously leaked — only state.exit_stack was closed,
@@ -2643,7 +2643,7 @@ class MCPManager:
                     break
                 if attempt == 0:
                     logger.warning(
-                        f"MCP session died on {namespaced_name}: {type(e).__name__}: {e}; "
+                        f"MCP session died on {namespaced_name}: {type(e).__name__}: {error_text_without_content(e)}; "
                         f"reconnecting and retrying once"
                     )
                     self._set_connected(state, False)
@@ -2653,7 +2653,7 @@ class MCPManager:
                         break
                     continue
                 logger.error(
-                    f"MCP tool call failed after reconnect: {namespaced_name}: {e}"
+                    f"MCP tool call failed after reconnect: {namespaced_name}: {error_text_without_content(e)}"
                 )
                 self._set_connected(state, False)
                 state.last_error = str(e)
@@ -3346,7 +3346,7 @@ class MCPManager:
                     self._install_discovered_tools(state, tools_result.tools)
 
                 except Exception as e:
-                    logger.warning(f"MCP refresh failed for '{state.config.name}': {e}")
+                    logger.warning(f"MCP refresh failed for '{state.config.name}': {error_text_without_content(e)}")
                     self._set_connected(state, False)
                     state.last_error = str(e)
             elif not state.connected:
@@ -3492,7 +3492,7 @@ class MCPManager:
                 try:
                     await self.refresh_tools()
                 except Exception as e:
-                    logger.error(f"MCP refresh loop error: {e}")
+                    logger.error(f"MCP refresh loop error: {error_text_without_content(e)}")
 
         self._refresh_task = asyncio.create_task(_loop())
 

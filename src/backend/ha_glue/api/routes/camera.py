@@ -13,6 +13,7 @@ from ha_glue.integrations.frigate import FrigateClient
 from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 frigate = FrigateClient()
@@ -38,7 +39,7 @@ async def get_camera_events(
         )
         return {"events": events}
     except Exception as e:
-        logger.error(f"❌ Camera events error: {e}")
+        logger.error(f"❌ Camera events error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -55,7 +56,7 @@ async def list_cameras(
         cameras = await frigate.get_cameras()
         return {"cameras": cameras}
     except Exception as e:
-        logger.error(f"❌ Camera list error: {e}")
+        logger.error(f"❌ Camera list error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -83,7 +84,7 @@ async def get_snapshot(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Snapshot error: {e}")
+        logger.error(f"❌ Snapshot error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -101,5 +102,5 @@ async def get_latest_by_label(
         events = await frigate.get_latest_events_by_type(label)
         return {"events": events}
     except Exception as e:
-        logger.error(f"❌ Latest events error: {e}")
+        logger.error(f"❌ Latest events error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))

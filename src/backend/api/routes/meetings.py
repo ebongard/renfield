@@ -31,6 +31,7 @@ from services.database import get_db
 from services.redis_client import get_redis
 from services.task_queue import MeetingTaskQueue
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -64,7 +65,7 @@ async def _meeting_worker_is_alive() -> bool:
     try:
         value = await redis.get(_MEETING_WORKER_HEARTBEAT_KEY)
     except Exception as e:
-        logger.warning(f"meeting worker heartbeat check failed: {e}; treating as unavailable")
+        logger.warning(f"meeting worker heartbeat check failed: {error_text_without_content(e)}; treating as unavailable")
         return False
     return value is not None
 
@@ -81,7 +82,7 @@ def _safe_unlink(path: str) -> None:
     except FileNotFoundError:
         pass
     except OSError as e:
-        logger.warning(f"could not remove partial meeting audio {path}: {e}")
+        logger.warning(f"could not remove partial meeting audio {path}: {error_text_without_content(e)}")
 
 
 class MeetingResponse(BaseModel):
@@ -138,7 +139,7 @@ async def _ensure_meeting_atom(db: AsyncSession, meeting: Meeting) -> None:
             )
     except Exception as e:
         meeting.atom_id = None
-        logger.warning(f"⚠️ Meeting ohne Atom angelegt (id={meeting.id}): {e}")
+        logger.warning(f"⚠️ Meeting ohne Atom angelegt (id={meeting.id}): {error_text_without_content(e)}")
 
 
 @router.post("/transcribe", status_code=202, response_model=MeetingResponse)
@@ -281,7 +282,7 @@ async def transcribe_meeting(
         meeting.status = "failed"
         meeting.error = f"enqueue failed: {e}"
         await db.commit()
-        logger.error(f"meeting {meeting.id}: enqueue failed: {e}")
+        logger.error(f"meeting {meeting.id}: enqueue failed: {error_text_without_content(e)}")
         raise HTTPException(
             status_code=503,
             detail={"message": "could not queue meeting", "retryable": True},
@@ -475,7 +476,7 @@ async def relabel_speaker(
             )
             cross_meeting_applied = len(affected)
         except Exception as e:
-            logger.warning(f"meeting {meeting_id}: merge-on-enroll propagation failed: {e}")
+            logger.warning(f"meeting {meeting_id}: merge-on-enroll propagation failed: {error_text_without_content(e)}")
 
     return RelabelResponse(**_to_response(meeting).model_dump(),
                            cross_meeting_applied=cross_meeting_applied)

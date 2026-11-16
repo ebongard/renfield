@@ -37,6 +37,7 @@ from loguru import logger
 from auth.provider_contract import ProviderResult
 from auth.providers.base import make_result
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 _LDAP_ESCAPE_RE = re.compile(r"([\\*\(\)\x00/])")
 
@@ -205,10 +206,10 @@ class LDAPProvider:
         except ldap3.core.exceptions.LDAPSocketOpenError as e:
             # Directory unreachable → let the registry treat this as
             # provider-unreachable (fail-open skip + counter + continue walk).
-            logger.error(f"LDAP auth: server unreachable at {settings.ldap_url}: {e}")
+            logger.error(f"LDAP auth: server unreachable at {settings.ldap_url}: {error_text_without_content(e)}")
             raise
         except ldap3.core.exceptions.LDAPException as e:
-            logger.error(f"LDAP auth: directory error for {username!r}: {e}")
+            logger.error(f"LDAP auth: directory error for {username!r}: {error_text_without_content(e)}")
             raise
 
         # Step 3: build the contract result. subject = strong directory id.

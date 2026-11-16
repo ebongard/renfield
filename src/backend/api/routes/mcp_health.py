@@ -16,6 +16,7 @@ from services.database import get_db
 from services.email_ingest import resolve_email_ingest_client
 from services.folder_ingest import resolve_folder_ingest_client
 from services.mcp_health_monitor import ingest_report
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -48,5 +49,5 @@ async def report_mcp_health(
     try:
         await ingest_report(payload if isinstance(payload, dict) else {})
     except Exception as e:
-        logger.warning(f"mcp-health report handling failed: {e}")
+        logger.warning(f"mcp-health report handling failed: {error_text_without_content(e)}")
     return {"status": "recorded"}

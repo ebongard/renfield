@@ -47,6 +47,7 @@ from services.folder_ingest import (
     target_kb_exists,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -153,7 +154,7 @@ async def ingest_pushed_document(
     try:
         meta = IngestMeta.from_dict(json.loads(metadata))
     except (json.JSONDecodeError, ValueError, TypeError) as exc:
-        logger.warning(f"folder-ingest: malformed metadata: {exc}")
+        logger.warning(f"folder-ingest: malformed metadata: {error_text_without_content(exc)}")
         return FolderIngestResponse(status=IngestStatus.FAILED.value, detail="malformed_metadata")
 
     # 5. Stream the body with an early size abort — never clone an unbounded
@@ -207,7 +208,7 @@ async def ingest_pushed_document(
             source=FOLDER_INGEST_SOURCE,  # provenance for the Simba review flow
         )
     except Exception as exc:
-        logger.error(f"folder-ingest: unexpected error processing {meta.filename!r}: {exc}")
+        logger.error(f"folder-ingest: unexpected error processing {meta.filename!r}: {error_text_without_content(exc)}")
         raise HTTPException(
             status_code=503,
             detail={"message": "Transient ingest error", "reason": "internal_error"},

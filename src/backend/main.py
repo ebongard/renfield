@@ -18,7 +18,7 @@ logger.remove()
 logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # No credential from a URL (`/ws?token=...`) in uvicorn's access/WebSocket lines.
-from utils.log_safety import install_uvicorn_url_redaction
+from utils.log_safety import error_text_without_content, install_uvicorn_url_redaction
 
 install_uvicorn_url_redaction()
 
@@ -394,7 +394,7 @@ async def wakeword_websocket(websocket: WebSocket, token: str | None = Query(Non
     except WebSocketDisconnect:
         logger.info("👋 Wake word WebSocket connection closed")
     except Exception as e:
-        logger.error(f"❌ Wake word WebSocket error: {e}")
+        logger.error(f"❌ Wake word WebSocket error: {error_text_without_content(e)}")
         try:
             await websocket.send_json({
                 "type": "error",
@@ -466,7 +466,7 @@ async def readiness_check():
         else:
             checks["ollama"] = {"status": "degraded", "error": "not initialized"}
     except Exception as e:
-        logger.warning(f"Health check: ollama unhealthy: {e}")
+        logger.warning(f"Health check: ollama unhealthy: {error_text_without_content(e)}")
         checks["ollama"] = {"status": "unhealthy", "error": "connection failed"}
         overall_healthy = False
 
@@ -660,7 +660,7 @@ async def reembed_all(
                     except Exception as e:
                         error_count += 1
                         logger.warning(
-                            f"⚠️ {label} id={record.id}: embedding failed: {e}"
+                            f"⚠️ {label} id={record.id}: embedding failed: {error_text_without_content(e)}"
                         )
 
                 await db.commit()
@@ -700,7 +700,7 @@ async def debug_intent(
             "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat()
         }
     except Exception as e:
-        logger.error(f"❌ Intent debug error: {e}")
+        logger.error(f"❌ Intent debug error: {error_text_without_content(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
