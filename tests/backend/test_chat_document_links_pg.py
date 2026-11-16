@@ -161,3 +161,155 @@ class TestKnowledgeSearchSourcesGetNoLinkOutsideTheCircles:
             "kind": "paperless", "paperless_document_id": PAPERLESS_ID, "title": "Treffer",
             "paperless_url": f"{PUBLIC}/documents/{PAPERLESS_ID}/details",
         }]
+
+
+# --------------------------------------------------------------------------- #
+# Read side: a shared conversation is read by people who did not ask
+# --------------------------------------------------------------------------- #
+async def _reader(db: AsyncSession, user_id: int):
+    """The user as `get_current_user` hands it to a route: role loaded."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from models.database import User
+
+    return (await db.execute(
+        select(User).options(selectinload(User.role)).where(User.id == user_id)
+    )).scalar_one()
+
+
+@pytest.fixture
+async def kitchen(db_session: AsyncSession, monkeypatch):
+    """The shared room thread (auth-on §8.1): owned by the device account at
+    tier 2, read by every member. Anna asked a turn in it; her answer's sources
+    name HER private document and two Paperless documents. Bert is a member of
+    the room but not of Anna's circles, and holds no Paperless permission."""
+    from sqlalchemy import text
+
+    from services.conversation_service import ConversationService
+
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(settings, "paperless_public_url", PUBLIC, raising=False)
+    device = await ensure_user(db_session, 1, username="haushalt")
+    device.is_device_account = True
+    anna = await ensure_user(
+        db_session, 2, username="anna", role_name="mit-paperless",
+        permissions=["mcp.paperless.read"],
+    )
+    bert = await ensure_user(db_session, 3, username="bert", role_name="ohne-paperless")
+    cleo = await ensure_user(
+        db_session, 4, username="cleo", role_name="mit-paperless",
+    )
+    await db_session.commit()
+    for member in (anna, bert, cleo):
+        await db_session.execute(
+            text(
+                "INSERT INTO circle_memberships "
+                "(circle_owner_id, member_user_id, dimension, value, granted_by, granted_at) "
+                "VALUES (:o, :m, 'tier', '2', :o, NOW())"
+            ),
+            {"o": device.id, "m": member.id},
+        )
+    await db_session.commit()
+
+    _kb, doc = await _private_document(db_session, anna.id)
+    sources = [
+        {"document_id": doc.id, "filename": "doclinks.pdf", "title": "Privater Bescheid",
+         "tier": TIER_SELF, "paperless_url": f"{PUBLIC}/documents/{PAPERLESS_ID}/details"},
+        {"kind": "paperless", "paperless_document_id": 8001, "title": "Annas Beleg",
+         "paperless_url": f"{PUBLIC}/documents/8001/details"},
+        {"kind": "paperless", "paperless_document_id": 8002, "title": "Annas Vertrag"},
+    ]
+    svc = ConversationService(db_session)
+    await svc.save_message("kueche", "user", "Was steht im Bescheid?",
+                           user_id=device.id, circle_tier=2)
+    await svc.save_message(
+        "kueche", "assistant", "Im Bescheid steht …",
+        metadata={"agent_role": "documents", "action_success": True, "sources": sources},
+        user_id=device.id,
+    )
+    await db_session.commit()
+    return {"anna": anna.id, "bert": bert.id, "cleo": cleo.id, "doc": doc, "sources": sources}
+
+
+async def _history_sources(db: AsyncSession, reader_id: int | None) -> tuple[dict, list]:
+    """What `GET /api/chat/history/kueche` serves this reader: the assistant
+    message's metadata and its sources."""
+    from api.routes.chat import get_history
+
+    reader = await _reader(db, reader_id) if reader_id is not None else None
+    payload = await get_history("kueche", limit=50, db=db, current_user=reader)
+    [answer] = [m for m in payload["messages"] if m["role"] == "assistant"]
+    return answer["metadata"], answer["metadata"].get("sources", [])
+
+
+class TestAReaderOfASharedConversation:
+    async def test_the_asker_reads_her_own_sources(self, db_session, kitchen):
+        meta, sources = await _history_sources(db_session, kitchen["anna"])
+
+        assert sources == kitchen["sources"]
+        assert meta["agent_role"] == "documents"
+
+    async def test_another_member_gets_no_source_he_could_not_have_got_himself(
+        self, db_session, kitchen,
+    ):
+        """Bert reaches the THREAD (and reads the answer text) -- but neither
+        Anna's private document nor Paperless."""
+        # Control: Bert really reads this conversation ...
+        meta, sources = await _history_sources(db_session, kitchen["bert"])
+        assert meta["agent_role"] == "documents" and meta["action_success"] is True
+        # ... and the same call serves the asker all three sources.
+        assert len((await _history_sources(db_session, kitchen["anna"]))[1]) == 3
+
+        assert sources == []
+        assert "sources" not in meta
+        served = repr(meta)
+        assert "Privater Bescheid" not in served and "Annas" not in served
+        assert str(PAPERLESS_ID) not in served
+
+    async def test_the_paperless_permission_opens_paperless_sources_only(
+        self, db_session, kitchen,
+    ):
+        """Cleo may read Paperless herself, so those chips are hers to see;
+        Anna's private knowledge-base document still is not."""
+        _meta, sources = await _history_sources(db_session, kitchen["cleo"])
+
+        assert sources == kitchen["sources"][1:]
+
+    async def test_a_share_opens_the_knowledge_base_source(self, db_session, kitchen):
+        kb_id = kitchen["doc"].knowledge_base_id
+        await ks.share_kb(db_session, kb_id, kitchen["bert"], "read", granted_by=kitchen["anna"])
+
+        _meta, sources = await _history_sources(db_session, kitchen["bert"])
+
+        assert sources == kitchen["sources"][:1]
+
+    async def test_the_stored_row_is_not_touched(self, db_session, kitchen):
+        from sqlalchemy import select
+
+        from models.database import Message
+
+        await _history_sources(db_session, kitchen["bert"])
+        await db_session.commit()
+        db_session.expire_all()
+
+        stored = (await db_session.execute(
+            select(Message.message_metadata).where(Message.role == "assistant")
+        )).scalar_one()
+        assert stored["sources"] == kitchen["sources"]
+
+    async def test_auth_off_is_one_trust_domain(self, db_session, kitchen, monkeypatch):
+        monkeypatch.setattr(settings, "auth_enabled", False)
+
+        _meta, sources = await _history_sources(db_session, None)
+
+        assert sources == kitchen["sources"]
+
+    async def test_the_flag_does_not_matter_for_the_read_side(
+        self, db_session, kitchen, monkeypatch,
+    ):
+        """Knowledge-base sources were persisted long before the flag existed,
+        and were served to every reader of the thread."""
+        monkeypatch.setattr(settings, "chat_document_links_enabled", False, raising=False)
+
+        assert (await _history_sources(db_session, kitchen["bert"]))[1] == []

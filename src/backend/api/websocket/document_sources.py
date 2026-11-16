@@ -267,3 +267,105 @@ async def turn_sources(
         if s["paperless_document_id"] not in filed
     )
     return sources
+
+
+# --------------------------------------------------------------------------- #
+# Read side: persisted sources, served to whoever reads the conversation
+# --------------------------------------------------------------------------- #
+PAPERLESS_READ_PERMISSION = "mcp.paperless.read"
+
+
+def _may_read_paperless(reader: Any) -> bool:
+    """Does this reader hold the permission the two Paperless reads require?
+
+    The same check the tool call makes (`mcp_servers.yaml` maps both tools to
+    `mcp.paperless.read`; `has_mcp_permission` honours `mcp.*` and the
+    server-wide `mcp.paperless`). Any failure to read the permissions denies.
+    """
+    if reader is None:
+        return False
+    try:
+        from models.permissions import has_mcp_permission
+
+        return has_mcp_permission(list(reader.get_permissions() or []), PAPERLESS_READ_PERMISSION)
+    except Exception as e:
+        logger.warning(
+            f"chat sources: reader permissions unreadable, Paperless sources withheld: "
+            f"{error_text_without_content(e)}"
+        )
+        return False
+
+
+def _message_sources(meta: Any) -> list | None:
+    sources = meta.get("sources") if isinstance(meta, dict) else None
+    return sources if isinstance(sources, list) and sources else None
+
+
+async def metadata_for_reader(db: Any, metadatas: list, reader: Any) -> list:
+    """The message metadata of a history page as THIS reader may see it.
+
+    A conversation is a shared artifact (auth-on §8.1): a room history is read
+    by every member its tier reaches, and any of them may have asked the turn.
+    `sources` are per-ASKER -- built from the asker's circle reach and Paperless
+    permission -- and they name more than the answer text does (every fetched
+    document, up to three search hits, every retrieved document). Messages do
+    not record who asked, so the rule is applied to EVERY reader, the asker
+    included, by the reader's own rights:
+
+    * a knowledge-base source only if the document passes
+      `documents_circles_filter` for the reader (`_visible_document_meta`);
+    * a Paperless source only with `mcp.paperless.read`.
+
+    For the asker this changes nothing unless access was lost or the document
+    is gone -- and then the chip led nowhere anyway. `AUTH_ENABLED=false` is one
+    trust domain: untouched. A failed lookup withholds the knowledge-base
+    sources (fail-closed); it never fails the history.
+
+    Returns a list parallel to `metadatas`. Nothing is modified in place (the
+    dicts are ORM column values); a metadata without sources is returned as is.
+    """
+    from utils.config import settings
+
+    if not settings.auth_enabled or not any(_message_sources(m) for m in metadatas):
+        return list(metadatas)
+
+    wanted: set[int] = set()
+    for meta in metadatas:
+        for source in _message_sources(meta) or []:
+            if isinstance(source, dict) and source.get("kind") != "paperless":
+                doc_id = _document_id(source.get("document_id"))
+                if doc_id is not None:
+                    wanted.add(doc_id)
+
+    visible: set = set()
+    if wanted:
+        try:
+            from services.knowledge_tool import _visible_document_meta
+
+            visible = set(await _visible_document_meta(db, wanted, getattr(reader, "id", None)))
+        except Exception as e:
+            logger.warning(
+                "chat sources: visibility lookup for a history reader failed, "
+                f"knowledge-base sources withheld: {error_text_without_content(e)}"
+            )
+    paperless_ok = _may_read_paperless(reader)
+
+    def _keep(source: Any) -> bool:
+        if not isinstance(source, dict):
+            return False
+        if source.get("kind") == "paperless":
+            return paperless_ok
+        return _document_id(source.get("document_id")) in visible
+
+    out: list = []
+    for meta in metadatas:
+        sources = _message_sources(meta)
+        if sources is None:
+            out.append(meta)
+            continue
+        kept = [s for s in sources if _keep(s)]
+        filtered = {k: v for k, v in meta.items() if k != "sources"}
+        if kept:
+            filtered["sources"] = kept
+        out.append(filtered)
+    return out

@@ -482,6 +482,19 @@ async def get_history(
                     "status": upload.status,
                 }
 
+        # `metadata.sources` name documents by the ASKER's rights, and a shared
+        # conversation is read by others: every reader gets the sources their
+        # own rights cover (`document_sources.metadata_for_reader`).
+        from api.websocket.document_sources import metadata_for_reader
+
+        reader_metadata = dict(zip(
+            (msg.id for msg in messages),
+            await metadata_for_reader(
+                db, [msg.message_metadata for msg in messages], current_user,
+            ),
+            strict=True,
+        ))
+
         return {
             "messages": [
                 {
@@ -489,7 +502,7 @@ async def get_history(
                     "role": msg.role,
                     "content": msg.content,
                     "timestamp": msg.timestamp.isoformat(),
-                    "metadata": msg.message_metadata,  # the column is called message_metadata
+                    "metadata": reader_metadata[msg.id],  # the column is called message_metadata
                     # Chat branching (Phase 2): {index,count,sibling_ids} when this
                     # message has sibling branches; absent otherwise.
                     **({"branch": branch_meta[msg.id]} if msg.id in branch_meta else {}),
