@@ -310,6 +310,36 @@ class TestRevokedWhileInFlight:
         assert [r.final_status for r in rows] == ["aborted"]
         assert all(_ANSWER not in (r.answer_excerpt or "") for r in rows)
 
+    async def test_purged_between_the_last_look_and_the_save(
+        self, responder, maker, pairing, far_side, monkeypatch
+    ):
+        """The narrowest window: the record is there at the last check and
+        gone when the result is stored. `save` does not create, so the
+        answer is not stored, and the row says it was read."""
+        import services.federation_query_responder as fqr
+
+        look = fqr._request_is_still_wanted
+        looks = {"n": 0}
+
+        async def look_then_purge(pending):
+            wanted = await look(pending)
+            looks["n"] += 1
+            if looks["n"] == 2:
+                await fqr.purge_requests_for_pubkey(far_side.public_key_hex())
+            return wanted
+
+        monkeypatch.setattr(fqr, "_request_is_still_wanted", look_then_purge)
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+
+        await finish()
+
+        assert looks["n"] == 2
+        assert await get_pending_store().get(rid) is None
+        rows = await _answered_rows(maker)
+        assert [r.final_status for r in rows] == ["aborted"]
+        assert "nach dem Abruf" in rows[0].error_message
+
     async def test_a_failing_query_does_not_bring_the_record_back_either(
         self, responder, maker, pairing, far_side
     ):
