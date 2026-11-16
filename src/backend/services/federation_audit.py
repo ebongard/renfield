@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import FederationQueryLog, PeerUser
@@ -161,6 +161,7 @@ async def write_federation_audit(
     direction: str = "asked",
     identity_basis: str | None = None,
     peer_instance_name_snapshot: str | None = None,
+    request_id: str | None = None,
 ) -> None:
     """
     Write one audit row for a completed federated query.
@@ -198,6 +199,9 @@ async def write_federation_audit(
                 # The instance part of the label as it stood at query time; a
                 # snapshot like the two above, never looked up later.
                 peer_instance_name_snapshot=peer_instance_name_snapshot or None,
+                # The responder names its request so the row can be found
+                # again (`mark_answer_not_handed_over`).
+                request_id=request_id,
                 query_text=_truncate(query_text, MAX_QUERY_TEXT_LEN),
                 initiated_at=initiated_at,
                 finalized_at=datetime.now(UTC).replace(tzinfo=None),
@@ -213,6 +217,56 @@ async def write_federation_audit(
             f"Federation audit write failed (peer={peer_pubkey_snapshot[:12]}…, "
             f"status={final_status}): {error_text_without_content(e)}"
         )
+
+
+async def mark_answer_not_handed_over(*, request_id: str, error_message: str) -> bool:
+    """Correct the responder's row of `request_id` from "answered" to
+    "answer made, NOT handed over". Returns whether a row was corrected.
+
+    The responder writes its `success` row when the answer is ready. If the
+    pairing or the link is revoked before the far side collects it, the
+    answer is refused at the poll -- and the log would still say it was
+    delivered. The EXISTING row is corrected rather than a second one
+    written: the view lists one entry per query, and two rows would show
+    the same question once as answered and once as not.
+
+    The shape is the one an `aborted` access already has (`_classify_final`):
+    status `aborted`, no answer excerpt, not verified, the reason in
+    `error_message`. An access that happened and was not delivered is not a
+    failure.
+
+    🛑 IDEMPOTENT, and it has to be: the far side polls about twice a second.
+    The update only matches a row that still says `success`, so the second
+    call changes nothing and returns False.
+
+    Best-effort like every write here: a refusal must not fail because its
+    record could not be written.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                update(FederationQueryLog)
+                .where(
+                    FederationQueryLog.request_id == request_id,
+                    FederationQueryLog.direction == "answered",
+                    FederationQueryLog.final_status == "success",
+                )
+                .values(
+                    final_status="aborted",
+                    verified_signature=False,
+                    answer_excerpt=None,
+                    error_message=_truncate(error_message, MAX_ERROR_MESSAGE_LEN),
+                    finalized_at=datetime.now(UTC).replace(tzinfo=None),
+                )
+            )
+            await session.commit()
+            return bool(result.rowcount)
+    except Exception as e:
+        logger.warning(
+            f"Federation audit correction failed (request_id={request_id}): "
+            f"{error_text_without_content(e)}"
+        )
+        return False
 
 
 def record_revocation(

@@ -685,6 +685,16 @@ read, and what it knows about the cause: the pairing revoked, the link gone,
 or only that the request was no longer there (discarded with the other
 requests of that far side, or lapsed).
 
+An answer that was already MADE when the revocation arrived is a case of its
+own. The responder writes its `success` row when the answer is ready, before
+the far side collects it; if the poll is then refused, that same row is
+corrected to `aborted` with stage `after_answer` (answer made, not handed
+over), its excerpt removed -- one row per query, never a second one, and
+written once however often the far side polls again. An answer that had
+already been handed over when the revocation came stays recorded as
+delivered (`handed_over_at` on the pending record tells the two apart). The
+row carries the responder's `request_id` so it can be found for this.
+
 That cause is stored as a CODE, at the head of the row's `error_message`:
 `[link_revoked/after_read] …`, with the cause (`pairing_revoked`,
 `link_revoked`, `gone`, `cancelled`) and how far the access had got

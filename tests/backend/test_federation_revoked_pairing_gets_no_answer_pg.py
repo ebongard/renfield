@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from models.database import FederationQueryLog, FederationUserLink, PeerUser, Role, User
 from services.federation_audit import (
+    STAGE_AFTER_ANSWER,
     STAGE_AFTER_READ,
     STAGE_BEFORE_READ,
     outcome_code,
@@ -58,7 +59,7 @@ from services.federation_pending_store import (
 from services.federation_query_responder import _REFUSED_GONE as GONE
 from services.federation_query_responder import _REFUSED_LINK as LINK
 from services.federation_query_responder import _REFUSED_PAIRING as PAIRING
-from services.federation_query_responder import _unserved_note
+from services.federation_query_responder import _undelivered_note, _unserved_note
 from services.federation_query_schemas import (
     STATUS_COMPLETE,
     STATUS_EXPIRED,
@@ -372,7 +373,10 @@ class TestRevokedWhileInFlight:
         assert await get_pending_store().get(rid) is None
         rows = await _answered_rows(maker)
         assert [r.final_status for r in rows] == ["aborted"]
-        assert _what_happened(rows[0]) == (GONE, STAGE_AFTER_READ)
+        # The answer had been made: its row is corrected, not left as
+        # "answered" and not doubled.
+        assert _what_happened(rows[0]) == (GONE, STAGE_AFTER_ANSWER)
+        assert rows[0].answer_excerpt is None
 
     async def test_a_failing_query_does_not_bring_the_record_back_either(
         self, responder, maker, pairing, far_side
@@ -703,3 +707,180 @@ class TestTheRecordSaysWhatTheCodeKnows:
 
         rows = await _answered_rows(maker)
         assert _what_happened(rows[0]) == (PAIRING, STAGE_BEFORE_READ)
+
+
+# --------------------------------------------------------------------------- #
+# The log does not call a refused answer delivered
+# --------------------------------------------------------------------------- #
+
+
+def _row_state(row: FederationQueryLog) -> tuple:
+    return (row.id, row.final_status, row.verified_signature, row.answer_excerpt,
+            row.error_message, row.finalized_at)
+
+
+class TestAnAnswerRefusedAtThePollIsNotRecordedAsDelivered:
+    """🛑 The responder writes its `success` row when the answer is READY. A
+    pairing or link revoked between that moment and the far side's poll is
+    refused at the poll -- and the row went on saying "answered", excerpt
+    included, for an answer nobody received."""
+
+    async def test_pairing_revoked_between_the_answer_and_the_poll(
+        self, responder, maker, pairing, far_side
+    ):
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        await finish()
+        (before,) = await _answered_rows(maker)
+        # The premise: the row says delivered, and names its request.
+        assert (before.final_status, before.answer_excerpt) == ("success", _ANSWER)
+        assert before.request_id == rid
+        await _revoke(maker, pairing, far_side, purge=False)
+
+        resp = await responder.handle_retrieve(_poll(far_side, rid))
+
+        assert resp.model_dump() == await _unknown_poll_response(responder, far_side)
+        (after,) = await _answered_rows(maker)       # still ONE row -- the same
+        assert after.id == before.id
+        assert after.final_status == "aborted"
+        assert _what_happened(after) == (PAIRING, STAGE_AFTER_ANSWER)
+        assert after.error_message == _undelivered_note(
+            PAIRING, SimpleNamespace(retrieved_count=2))
+        assert after.answer_excerpt is None and after.verified_signature is False
+        # Who and what stay as they were written.
+        assert (after.user_id, after.identity_basis, after.query_text) == (
+            before.user_id, before.identity_basis, before.query_text)
+
+    async def test_link_revoked_between_the_answer_and_the_poll(
+        self, responder, maker, linked, far_side
+    ):
+        """The widest reach, both pending-store backends."""
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side, querier_ref=_REF)
+        await finish()
+        await _revoke_link(maker, linked, far_side, purge=False)
+
+        resp = await responder.handle_retrieve(_poll(far_side, rid))
+
+        assert resp.status == STATUS_EXPIRED
+        (row,) = await _answered_rows(maker)
+        assert (row.final_status, row.identity_basis, row.user_id) == (
+            "aborted", "mapped", linked["person"])
+        assert _what_happened(row) == (LINK, STAGE_AFTER_ANSWER)
+        assert row.answer_excerpt is None
+
+    async def test_repeated_polls_leave_one_record_written_once(
+        self, responder, maker, pairing, far_side
+    ):
+        """The far side polls about twice a second and does not stop because
+        it was refused."""
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        await finish()
+        await _revoke(maker, pairing, far_side, purge=False)
+
+        await responder.handle_retrieve(_poll(far_side, rid))
+        (first,) = await _answered_rows(maker)
+        for _ in range(5):
+            resp = await responder.handle_retrieve(_poll(far_side, rid))
+            assert resp.status == STATUS_EXPIRED
+
+        (last,) = await _answered_rows(maker)
+        assert _row_state(last) == _row_state(first)
+
+    async def test_two_polls_refused_at_the_same_moment_leave_one_record(
+        self, responder, maker, pairing, far_side
+    ):
+        """Both have read the pending record before either deleted it -- two
+        workers, or two requests on one. Staged, not left to the scheduler:
+        each poll is held right after its look at the database."""
+        import asyncio
+
+        import services.federation_query_responder as fqr
+        from services.federation_query_responder import FederationQueryResponder
+
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        await finish()
+        await _revoke(maker, pairing, far_side, purge=False)
+
+        looked = asyncio.Semaphore(0)
+        go = asyncio.Event()
+        look = fqr._standing_refusal
+
+        async def look_and_wait(db, pending):
+            why = await look(db, pending)
+            looked.release()
+            await go.wait()
+            return why
+
+        fqr._standing_refusal = look_and_wait
+        try:
+            async with maker() as second_session:
+                other = FederationQueryResponder(db=second_session)
+                polls = [
+                    asyncio.create_task(r.handle_retrieve(_poll(far_side, rid)))
+                    for r in (responder, other)]
+                await asyncio.wait_for(looked.acquire(), 10)
+                await asyncio.wait_for(looked.acquire(), 10)
+                go.set()
+                answers = await asyncio.gather(*polls)
+        finally:
+            fqr._standing_refusal = look
+
+        assert [a.status for a in answers] == [STATUS_EXPIRED, STATUS_EXPIRED]
+        rows = await _answered_rows(maker)
+        assert [r.final_status for r in rows] == ["aborted"]
+        assert _what_happened(rows[0]) == (PAIRING, STAGE_AFTER_ANSWER)
+
+    async def test_an_answer_that_was_handed_over_stays_recorded_as_delivered(
+        self, responder, maker, pairing, far_side
+    ):
+        """Negative control: collected first, revoked afterwards, polled
+        again. The second poll is refused -- and the row is NOT rewritten,
+        because the answer did go out."""
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        await finish()
+        delivered = await responder.handle_retrieve(_poll(far_side, rid))
+        assert delivered.status == STATUS_COMPLETE and delivered.answer == _ANSWER
+        (before,) = await _answered_rows(maker)
+        await _revoke(maker, pairing, far_side, purge=False)
+
+        resp = await responder.handle_retrieve(_poll(far_side, rid))
+
+        assert resp.status == STATUS_EXPIRED
+        (after,) = await _answered_rows(maker)
+        assert _row_state(after) == _row_state(before)
+        assert after.final_status == "success" and after.answer_excerpt == _ANSWER
+
+    async def test_a_poll_on_the_normal_path_writes_no_record(
+        self, responder, maker, pairing, far_side, monkeypatch
+    ):
+        """Polling stays a read of the audit log: while the answer is being
+        made, when it is handed over, and on every poll after that."""
+        import services.federation_audit as audit
+
+        corrections = []
+
+        async def spy(**kwargs):
+            corrections.append(kwargs)
+            return False
+
+        monkeypatch.setattr(audit, "mark_answer_not_handed_over", spy)
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        while_processing = await responder.handle_retrieve(_poll(far_side, rid))
+        assert while_processing.status == "processing"
+        assert await _answered_rows(maker) == []
+        await finish()
+        (before,) = await _answered_rows(maker)
+
+        for _ in range(3):
+            resp = await responder.handle_retrieve(_poll(far_side, rid))
+            assert resp.status == STATUS_COMPLETE
+
+        (after,) = await _answered_rows(maker)
+        assert _row_state(after) == _row_state(before)
+        assert corrections == []
+        assert (await get_pending_store().get(rid)).handed_over_at is not None

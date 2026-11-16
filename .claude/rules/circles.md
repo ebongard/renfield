@@ -136,6 +136,9 @@ FREMDEN Zugriff verzeichnet, die Zeile. Die Trennlinie ist `_retrieve`: `pending
 solange nichts gelesen wurde, danach die Trefferzahl (`0` = gelesen, nichts gefunden — nicht dasselbe).
 Ein Abbruch NACH dem Abruf ist kein Fehlschlag, sondern ein geglückter Zugriff ohne Auslieferung; unter den
 Fehlschlägen begraben sähe das Protokoll ruhiger aus, als es war.
+🛑 **Eine beim Poll abgelehnte FERTIGE Antwort wird in DERSELBEN Zeile berichtigt** (`mark_answer_not_handed_over`:
+`success` → `aborted`, Stufe `after_answer`, Auszug entfernt) — nie eine zweite Zeile, idempotent (nur `success`
+passt). Die Ursache steht als CODE am Kopf von `error_message` (`outcome_code`); der Satz dahinter ist Anzeige.
 🛑 **Ein WIDERRUF (Kopplung, Verknüpfung) ist eine Zeile mit `direction='revoke'`, in DERSELBEN Transaktion**
 (`federation_audit.record_revocation`): `identity_basis` = `owner`/`self`/`admin`, `query_text` = JSON nur aus
 Kennungen, kein Text der Gegenseite; je entfernter Verknüpfung EINE Zeile. 🛑 `user_id` bleibt dort NULL — der

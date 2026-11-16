@@ -144,6 +144,11 @@ class _PendingRequest:
     #: out. `None` means "not read", `0` means "read, found nothing". The two
     #: must not collapse into one; hence `int | None` and not `int = 0`.
     retrieved_count: int | None = None
+    #: When a COMPLETE answer was first handed to a poll -- `None` until then.
+    #: It is what lets a poll that is REFUSED later (pairing or link revoked)
+    #: tell an answer nobody collected from one that had already gone out:
+    #: only the first is corrected in the audit log.
+    handed_over_at: float | None = None
     status: str = STATUS_PROCESSING
     progress_label: str = PROGRESS_LABEL_RETRIEVING
     progress_count: int = 0

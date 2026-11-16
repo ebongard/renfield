@@ -71,6 +71,7 @@ from services.atom_types import Provenance
 from services.circle_sql import PeerScope
 from services.database import AsyncSessionLocal
 from services.federation_audit import (
+    STAGE_AFTER_ANSWER,
     STAGE_AFTER_READ,
     STAGE_BEFORE_READ,
     outcome_note,
@@ -259,6 +260,7 @@ async def _write_responder_audit(
         ),
         direction="answered",
         identity_basis="mapped" if pending.mapped else "peer_tier",
+        request_id=pending.request_id,
     )
 
 
@@ -299,6 +301,38 @@ def _unserved_note(code: str, pending: _PendingRequest) -> str:
         f"{what} nach dem Abruf — {pending.retrieved_count} Treffer "
         "gelesen, keine Antwort ausgeliefert.",
         stage=STAGE_AFTER_READ)
+
+
+def _undelivered_note(code: str, pending: _PendingRequest) -> str:
+    """The audit text for an answer that was MADE and never handed over."""
+    return outcome_note(
+        code,
+        f"{_OUTCOME_TEXT[code]} nach der Antwort — {pending.retrieved_count} "
+        "Treffer gelesen, Antwort erzeugt, aber nicht ausgeliefert.",
+        stage=STAGE_AFTER_ANSWER)
+
+
+async def _record_undelivered_answer(
+    pending: _PendingRequest, why: str, *, sole_writer: bool = False,
+) -> None:
+    """The answer of `pending` exists and will not be handed over: put that
+    into the row that so far says it was answered.
+
+    `sole_writer` (the background task, which is the only one working on its
+    request): if there is no row to correct -- its write is best-effort --
+    the access is recorded the way every other unserved one is; better a row
+    that says "read, not delivered" than none. A POLL must not do that: two
+    polls can be refused at the same moment, the second finds the row
+    already corrected, and a fallback would add a second row.
+    """
+    from services.federation_audit import mark_answer_not_handed_over
+
+    corrected = await mark_answer_not_handed_over(
+        request_id=pending.request_id,
+        error_message=_undelivered_note(why, pending),
+    )
+    if not corrected and sole_writer:
+        await _record_refused_access(pending, why)
 
 
 async def _record_cancelled_access(pending: _PendingRequest) -> None:
@@ -772,7 +806,25 @@ class FederationQueryResponder:
                 f"Federation query_brain: poll refused ({why}) "
                 f"(request_id={req.request_id}, peer_id={pending.peer_user_id})"
             )
+            # 🛑 An answer that was ready and is refused HERE stood in the
+            # audit log as delivered: its row was written when the answer was
+            # made. The row is corrected -- once: the record is deleted
+            # above, so the far side's next poll (it polls twice a second)
+            # finds nothing and writes nothing, and the correction itself
+            # only matches a row that still says `success`. An answer that
+            # had already been handed over stays recorded as delivered,
+            # because it was. A request still PROCESSING is recorded by its
+            # background task at the task's next check.
+            if pending.status == STATUS_COMPLETE and pending.handed_over_at is None:
+                await _record_undelivered_answer(pending, why)
             return QueryBrainRetrieveResponse(status=STATUS_EXPIRED)
+
+        # The first hand-over of a finished answer is noted on the pending
+        # record (a store update, no database write): it is what a later
+        # refused poll needs to know.
+        if pending.status == STATUS_COMPLETE and pending.handed_over_at is None:
+            pending.handed_over_at = now
+            await get_pending_store().save(pending)
 
         return self._serialize_pending(pending)
 
@@ -865,12 +917,18 @@ class FederationQueryResponder:
             # status=COMPLETE is guaranteed to see answer/provenance.
             pending.progress_label = PROGRESS_LABEL_COMPLETE
             pending.status = STATUS_COMPLETE
+            # 🛑 The row is written BEFORE the answer becomes collectable.
+            # The other order left a moment in which a poll could be refused
+            # (and find no row to correct) while this task then wrote
+            # `success` for an answer nobody got.
+            await _write_responder_audit(pending, success=True)
             if not await store.save(pending):
                 # Gone between the check above and this line: `save` does
-                # not create, so nothing can be polled. Record it as it was.
-                await _record_refused_access(pending, _REFUSED_GONE)
+                # not create, so nothing can be polled. The row just written
+                # is corrected: an answer was made, not handed over.
+                await _record_undelivered_answer(
+                    pending, _REFUSED_GONE, sole_writer=True)
                 return
-            await _write_responder_audit(pending, success=True)
         except asyncio.CancelledError:
             # 🛑 A cancellation is no reason to keep the access quiet.
             #
