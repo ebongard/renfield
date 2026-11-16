@@ -375,6 +375,7 @@ WEBSOCKET_TYPES = {
     "/ws/user": "user",
     "/ws/knowledge-graph": "knowledge_graph",
     "/ws/wakeword": "wakeword",
+    "/ws/presence-debug": "presence_debug",
 }
 WEBSOCKET_TYPE_OTHER = "other"
 _WEBSOCKET_TYPE_VALUES = frozenset({*WEBSOCKET_TYPES.values(), WEBSOCKET_TYPE_OTHER})

@@ -244,7 +244,7 @@ Segmente zu `{id}` (Kardinalitätsschutz).
 - HTTP Request Counter + Latency Histogram
 - `renfield_websocket_connections{type}`: offene WebSocket-Verbindungen je Art
   (`chat`, `satellite`, `device`, `kiosk`, `user`, `knowledge_graph`,
-  `wakeword`, sonst `other`). Gezählt an EINER Stelle
+  `wakeword`, `presence_debug`, sonst `other`). Gezählt an EINER Stelle
   (`utils/metrics.py::WebSocketGaugeMiddleware`): ab dem `accept`, bis der
   Endpunkt zurückkehrt; ein abgelehnter Handshake zählt nie (#82)
 - `renfield_llm_call_duration_seconds{model,call_type,outcome}`: Dauer der
