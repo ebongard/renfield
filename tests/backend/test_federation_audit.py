@@ -683,6 +683,30 @@ class TestTheRouteCarriesTheIdentityBasis:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_the_reader_gets_the_sentence_and_the_code_apart(self, monkeypatch):
+        """The row stores `[code/stage] sentence`; the view is handed the
+        sentence to show and the code to go by."""
+        from services.federation_audit import STAGE_AFTER_ANSWER, outcome_note
+
+        e = await self._call(self._row(
+            final_status="aborted", answer_excerpt=None,
+            error_message=outcome_note(
+                "link_revoked", "Der Satz für den Menschen.", stage=STAGE_AFTER_ANSWER),
+        ), monkeypatch)
+        assert e.error_message == "Der Satz für den Menschen."
+        assert (e.outcome_code, e.outcome_stage) == ("link_revoked", "after_answer")
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    @pytest.mark.parametrize("stored", [None, "Responder signature verification failed"])
+    async def test_a_row_without_a_code_is_passed_through(self, monkeypatch, stored):
+        """Negative control: a plain failure text and an older row."""
+        e = await self._call(self._row(error_message=stored), monkeypatch)
+        assert e.error_message == stored
+        assert (e.outcome_code, e.outcome_stage) == (None, None)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_a_legacy_row_keeps_its_None(self, monkeypatch):
         """🛑 Existing rows and asking-side rows carry `None`. The route must
         NOT turn that into "peer_tier" -- that would assert the narrower tier
@@ -754,3 +778,22 @@ class TestTheOutcomeIsACodeNotASentence:
             {"success": False, "aborted": True, "message": long})
         assert len(error) == MAX_ERROR_MESSAGE_LEN
         assert outcome_code(error) == ("gone", "before_read")
+
+    @pytest.mark.unit
+    def test_a_delivered_answer_can_carry_a_note(self):
+        """`success` with a note about how the answer came about: still a
+        delivered, verified answer -- and the note is readable as a code."""
+        from services.federation_audit import (
+            _classify_final,
+            outcome_code,
+            outcome_note,
+        )
+
+        note = outcome_note("graph_expansion_skipped", "Antwort ohne …")
+        status, verified, excerpt, error = _classify_final(
+            {"success": True, "message": "the answer", "note": note})
+        assert (status, verified, excerpt) == ("success", True, "the answer")
+        assert outcome_code(error) == ("graph_expansion_skipped", None)
+        # Negative control: no note, nothing in the column.
+        assert _classify_final({"success": True, "message": "a"})[3] is None
+        assert _classify_final({"success": True, "message": "a", "note": None})[3] is None

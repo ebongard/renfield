@@ -2284,6 +2284,7 @@
     "queryLabel": "Votre question",
     "answerLabel": "Réponse",
     "errorLabel": "Erreur",
+    "noteLabel": "Remarque",
     "durationSubSecond": "< 1 s",
     "durationSeconds": "{{n}} s",
     "durationMinutes": "{{n}} min",

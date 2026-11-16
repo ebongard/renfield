@@ -288,7 +288,20 @@ export default function FederationAuditPage() {
                         </p>
                       </div>
                     )}
-                    {entry.error_message && (
+                    {/* A delivered answer can carry a NOTE (made without
+                        graph expansion, say). That is not an error and must
+                        not be dressed as one. */}
+                    {entry.error_message && entry.final_status === 'success' && (
+                      <div>
+                        <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                          {t('federationAudit.noteLabel')}
+                        </div>
+                        <p className="text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap">
+                          {entry.error_message}
+                        </p>
+                      </div>
+                    )}
+                    {entry.error_message && entry.final_status !== 'success' && (
                       <div>
                         <div className="text-xs font-medium text-red-500 dark:text-red-400 mb-1">
                           {t('federationAudit.errorLabel')}

@@ -99,6 +99,12 @@ def outcome_code(text: str | None) -> tuple[str, str | None] | None:
     return (match.group(1), match.group(2)) if match else None
 
 
+def outcome_sentence(text: str | None) -> str | None:
+    """`text` without a leading code -- what a person is shown. Any other
+    text comes back unchanged."""
+    return _OUTCOME_NOTE.sub("", text, count=1) if text else text
+
+
 def _truncate(s: str | None, max_len: int) -> str | None:
     if s is None:
         return None
@@ -128,7 +134,11 @@ def _classify_final(final: dict[str, Any] | None) -> tuple[str, bool, str | None
             "success",
             True,
             _truncate(final.get("message") or "", MAX_ANSWER_EXCERPT_LEN),
-            None,
+            # A delivered answer can still carry a NOTE about how it came
+            # about (`outcome_note`, e.g. made without graph expansion). It
+            # shares the column with the error text; the status says which
+            # of the two a row holds.
+            _truncate(final.get("note") or None, MAX_ERROR_MESSAGE_LEN),
         )
 
     # 🛑 Check aborted BEFORE failed. A cancelled query carries `success=False`
