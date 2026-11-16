@@ -655,24 +655,38 @@ bucket; the ping path answering 405 / a redirect with reachability off; the
 inbound body read having no deadline; peer endpoints being stored and used
 unchecked.
 
-**A revoked pairing gets no answer.** The pairing is looked up when a request
-is admitted, again by the background task before it retrieves and before it
-stores its result, and again on every poll. The purge on revocation is final:
-the pending store's `save` only updates an existing record, so a task that was
-queued or in flight cannot bring a purged request back. A poll on a revoked
-pairing is answered exactly like a poll for an unknown request. The responder
-records such a query as `aborted`, stating whether data had been read before
-the revocation arrived.
+**A revoked pairing gets no answer, and neither does a revoked person link.**
+Both things a request is admitted on are asked of the database again, each by
+its id: by the background task before it retrieves, before it hands what it
+read to the model and before it stores its result, and on every poll. A mapped
+request carries the id of the link it was admitted on (`link_id` on the
+pending record -- an id, no content); the link has to exist still, name the
+same account, and the account has to be active. A link deleted and created
+anew is another row: consent given afresh does not reach back to a request in
+flight.
+
+A request whose link is gone is REFUSED. It does not fall back to the
+pairing's tier -- the far side asked as a person and would get an answer
+with another reach than the one it was admitted on. Its next request takes
+the fallback openly, at `initiate`.
+
+The purge on revocation is cleanup, no longer the protection. It misses a
+record stored after it (link resolved, revocation committed and purged, record
+stored); the database check does not, in either pending-store backend. And it
+is final: the store's `save` only updates an existing record, so a task that
+was queued or in flight cannot bring a purged request back. A poll that is
+refused is answered exactly like a poll for an unknown request. A mapped
+record without `link_id` -- written by a version before 2026-11-16, possible
+with the Redis store during a rolling deploy -- cannot be re-checked and is
+refused the same way.
+
+The responder records such a query as `aborted`, stating whether data had been
+read, and what it knows about the cause: the pairing revoked, the link gone,
+or only that the request was no longer there (discarded with the other
+requests of that far side, or lapsed).
 
 Reviewed on 2026-11-14 and left as they are:
 
-- **A request can outlive the LINK it was admitted on, by one retrieval.** A
-  link revocation commits and then discards the pending requests of that far
-  side. A request that resolved its link just before the commit but was stored
-  just after the purge can still be collected once, with the reach it was
-  admitted on. The window is the gap between those two steps; closing it means
-  carrying the link on the pending record and re-checking at retrieve time.
-  For a revoked PAIRING this no longer holds, see below.
 - **ZERO WIDTH JOINER and NON-JOINER are removed from a name**, with every
   other format character. Scripts that shape with them (Persian, several Indic
   conjuncts) and emoji sequences built on them lose that shaping; the letters

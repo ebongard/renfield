@@ -17,6 +17,15 @@ What is pinned down here:
   cancellation has: read or not read;
 - an ACTIVE pairing is still answered (the negative control).
 
+The same for a revoked PERSON LINK (2026-11-16, second half of the file). The
+link is the widest reach there is -- the request runs AS a local person -- and
+only the pairing was asked about again: `resolve_linked_user` ran once, at
+`initiate`. A link revoked after that was covered by the purge alone, and the
+purge misses a record stored after it (link resolved, link revoked and purged,
+record `put`). Pinned down there: every one of those moments, both pending
+store backends, and that the request is REFUSED -- it does not come back
+answered on the pairing's tier.
+
 Applies only with `RENFIELD_TEST_PG_URL` (skipped otherwise).
 """
 from __future__ import annotations
@@ -27,10 +36,10 @@ from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from models.database import FederationQueryLog, PeerUser, Role, User
+from models.database import FederationQueryLog, FederationUserLink, PeerUser, Role, User
 from services.federation_identity import (
     FederationIdentity,
     init_federation_identity,
@@ -48,6 +57,7 @@ from services.federation_query_schemas import (
     QueryBrainRetrieveRequest,
 )
 from services.pairing_service import _canonical_bytes
+from utils.config import settings
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
@@ -113,7 +123,7 @@ def _request(pairing: dict, far_side: FederationIdentity, rid: str) -> _PendingR
     )
 
 
-async def _admit(responder, far_side: FederationIdentity):
+async def _admit(responder, far_side: FederationIdentity, *, querier_ref: str | None = None):
     """A request through the REAL entry point. Returns its id and a
     coroutine function that lets the background task run to its end.
 
@@ -142,6 +152,8 @@ async def _admit(responder, far_side: FederationIdentity):
         "nonce": secrets.token_hex(16), "timestamp": int(time.time()),
         "depth": 3, "path": [me],
     }
+    if querier_ref is not None:
+        unsigned["querier_ref"] = querier_ref
     before = set(fqr._background_tasks)
     resp = await responder.handle_initiate(QueryBrainInitiateRequest(
         **unsigned, signature=far_side.sign(_canonical_bytes(unsigned)).hex()))
@@ -318,23 +330,23 @@ class TestRevokedWhileInFlight:
         answer is not stored, and the row says it was read."""
         import services.federation_query_responder as fqr
 
-        look = fqr._request_is_still_wanted
+        look = fqr._refusal_for
         looks = {"n": 0}
 
         async def look_then_purge(pending):
-            wanted = await look(pending)
+            why = await look(pending)
             looks["n"] += 1
-            if looks["n"] == 2:
+            if looks["n"] == 3:       # start, before synthesis, before the save
                 await fqr.purge_requests_for_pubkey(far_side.public_key_hex())
-            return wanted
+            return why
 
-        monkeypatch.setattr(fqr, "_request_is_still_wanted", look_then_purge)
+        monkeypatch.setattr(fqr, "_refusal_for", look_then_purge)
         _stub_work(responder)
         rid, finish = await _admit(responder, far_side)
 
         await finish()
 
-        assert looks["n"] == 2
+        assert looks["n"] == 3
         assert await get_pending_store().get(rid) is None
         rows = await _answered_rows(maker)
         assert [r.final_status for r in rows] == ["aborted"]
@@ -387,3 +399,287 @@ class TestThePollChecksThePairingItself:
 
         resp = await responder.handle_retrieve(_poll(far_side, "late-2"))
         assert resp.status == STATUS_COMPLETE and resp.answer == _ANSWER
+
+
+# --------------------------------------------------------------------------- #
+# A revoked PERSON LINK gets no answer either
+# --------------------------------------------------------------------------- #
+
+_REF = "ab" * 32
+
+
+@pytest.fixture(params=["memory", "redis"])
+async def linked(request, maker, pairing, responder, monkeypatch) -> dict:
+    """The pairing plus an ACTIVE local person linked to the far side's
+    `querier_ref`, links switched on -- for BOTH pending store backends.
+
+    `responder` is requested so the store is replaced AFTER its reset.
+    """
+    import services.federation_pending_store as fps
+    from tests.backend.test_federation_pending_store import FakeRedis
+
+    monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    if request.param == "redis":
+        monkeypatch.setattr(fps, "_store", fps.RedisPendingStore(FakeRedis()))
+
+    async with maker() as seed:
+        role_id = (await seed.execute(select(Role.id))).scalars().first()
+        person = User(username="linked-person", password_hash="x", is_active=True,
+                      role_id=role_id)
+        seed.add(person)
+        await seed.flush()
+        link = FederationUserLink(
+            peer_id=pairing["peer"], querier_ref=_REF, local_user_id=person.id)
+        seed.add(link)
+        await seed.commit()
+        return {**pairing, "person": person.id, "link": link.id}
+
+
+async def _revoke_link(maker, linked: dict, far_side: FederationIdentity, *, purge: bool) -> None:
+    """What both link routes do: delete the row, commit, THEN purge."""
+    from services.federation_query_responder import purge_requests_for_pubkey
+
+    async with maker() as db:
+        await db.execute(delete(FederationUserLink).where(FederationUserLink.id == linked["link"]))
+        await db.commit()
+    if purge:
+        await purge_requests_for_pubkey(far_side.public_key_hex())
+
+
+def _mapped_complete(linked: dict, far_side: FederationIdentity, rid: str) -> _PendingRequest:
+    return _PendingRequest(
+        request_id=rid, asker_pubkey=far_side.public_key_hex(),
+        peer_user_id=linked["peer"], asker_local_user_id=linked["person"],
+        max_visible_tier=0, query="what do you know?", initiated_at=time.time(),
+        peer_owner_id=None, mapped=True, link_id=linked["link"],
+        peer_display_name="far side", status=STATUS_COMPLETE, answer=_ANSWER,
+        answered_at=time.time(),
+    )
+
+
+class TestAStandingLinkIsStillAnswered:
+    async def test_the_negative_control(self, responder, maker, linked, far_side):
+        """Admitted through the real entry point as the linked person,
+        answered, and recorded with that person's reach."""
+        seen = {}
+        calls = _stub_work(responder)
+        retrieve = responder._retrieve
+
+        async def retrieve_and_look(session, pending):
+            seen.update(mapped=pending.mapped, person=pending.asker_local_user_id,
+                        link=pending.link_id, owner=pending.peer_owner_id)
+            return await retrieve(session, pending)
+
+        responder._retrieve = retrieve_and_look
+        rid, finish = await _admit(responder, far_side, querier_ref=_REF)
+
+        await finish()
+
+        assert seen == {"mapped": True, "person": linked["person"],
+                        "link": linked["link"], "owner": None}
+        assert calls == {"retrieve": 1, "synthesize": 1}
+        resp = await responder.handle_retrieve(_poll(far_side, rid))
+        assert resp.status == STATUS_COMPLETE and resp.answer == _ANSWER
+        rows = await _answered_rows(maker)
+        assert [(r.final_status, r.identity_basis, r.user_id) for r in rows] == [
+            ("success", "mapped", linked["person"])]
+
+
+class TestALinkRevokedBeforeTheTaskGotToWork:
+    @pytest.mark.parametrize("purge", [True, False])
+    async def test_nothing_is_read_and_nothing_falls_back_to_the_pairing_tier(
+        self, responder, maker, linked, far_side, purge
+    ):
+        """🛑 The pairing itself is still active -- a request refused only on
+        the pairing would run. It must not run at all: neither as the person
+        nor, silently, on the pairing's tier."""
+        calls = _stub_work(responder)
+        rid, finish = await _admit(responder, far_side, querier_ref=_REF)
+        await _revoke_link(maker, linked, far_side, purge=purge)
+
+        await finish()
+
+        assert calls == {"retrieve": 0, "synthesize": 0}
+        assert await get_pending_store().get(rid) is None
+        resp = await responder.handle_retrieve(_poll(far_side, rid))
+        assert resp.model_dump() == await _unknown_poll_response(responder, far_side)
+        rows = await _answered_rows(maker)
+        assert [(r.final_status, r.identity_basis, r.user_id) for r in rows] == [
+            ("aborted", "mapped", linked["person"])]
+        assert "Verknüpfung" in rows[0].error_message
+        assert "vor dem Abruf" in rows[0].error_message
+
+    async def test_revoked_and_purged_between_resolving_the_link_and_storing_the_record(
+        self, responder, maker, linked, far_side
+    ):
+        """🛑 The `initiate` race. The link is resolved, then the revocation
+        commits and purges -- and finds nothing, because the record is only
+        stored afterwards. No purge will ever reach that record; it carries
+        `mapped=True` and the person's id."""
+        store = get_pending_store()
+        put = store.put
+        stored = []
+
+        async def revoke_then_put(pending):
+            await _revoke_link(maker, linked, far_side, purge=True)
+            await put(pending)
+            stored.append((pending.mapped, pending.asker_local_user_id))
+
+        store.put = revoke_then_put
+        calls = _stub_work(responder)
+        rid, finish = await _admit(responder, far_side, querier_ref=_REF)
+        # The staging worked: a mapped record was stored AFTER the purge.
+        assert stored == [(True, linked["person"])]
+        assert await store.get(rid) is not None
+
+        await finish()
+
+        assert calls == {"retrieve": 0, "synthesize": 0}
+        assert await store.get(rid) is None
+        rows = await _answered_rows(maker)
+        assert [r.final_status for r in rows] == ["aborted"]
+        assert "Verknüpfung" in rows[0].error_message
+
+    async def test_a_deactivated_account_lends_nothing_any_more(
+        self, responder, maker, linked, far_side
+    ):
+        """The link row is still there; the account behind it is not active.
+        `resolve_link` would not have admitted it -- the re-check must not
+        be weaker than the admission."""
+        calls = _stub_work(responder)
+        _rid, finish = await _admit(responder, far_side, querier_ref=_REF)
+        async with maker() as db:
+            await db.execute(update(User).where(User.id == linked["person"])
+                             .values(is_active=False))
+            await db.commit()
+
+        await finish()
+
+        assert calls == {"retrieve": 0, "synthesize": 0}
+        assert [r.final_status for r in await _answered_rows(maker)] == ["aborted"]
+
+
+class TestALinkRevokedWhileInFlight:
+    @pytest.mark.parametrize("purge", [True, False])
+    async def test_during_retrieval_the_model_is_not_asked_and_nothing_is_stored(
+        self, responder, maker, linked, far_side, purge
+    ):
+        async def revoke_now():
+            await _revoke_link(maker, linked, far_side, purge=purge)
+
+        calls = _stub_work(responder, during_retrieval=revoke_now)
+        rid, finish = await _admit(responder, far_side, querier_ref=_REF)
+
+        await finish()
+
+        assert calls == {"retrieve": 1, "synthesize": 0}
+        assert await get_pending_store().get(rid) is None
+        rows = await _answered_rows(maker)
+        assert [r.final_status for r in rows] == ["aborted"]
+        assert "Verknüpfung" in rows[0].error_message
+        assert "nach dem Abruf" in rows[0].error_message and "2 Treffer" in rows[0].error_message
+        assert rows[0].answer_excerpt is None
+
+    @pytest.mark.parametrize("purge", [True, False])
+    async def test_during_synthesis_the_finished_answer_is_not_stored(
+        self, responder, maker, linked, far_side, purge
+    ):
+        async def revoke_now():
+            await _revoke_link(maker, linked, far_side, purge=purge)
+
+        _stub_work(responder, during_synthesis=revoke_now)
+        rid, finish = await _admit(responder, far_side, querier_ref=_REF)
+
+        await finish()
+
+        assert await get_pending_store().get(rid) is None
+        resp = await responder.handle_retrieve(_poll(far_side, rid))
+        assert resp.status == STATUS_EXPIRED and resp.answer is None
+        rows = await _answered_rows(maker)
+        assert [r.final_status for r in rows] == ["aborted"]
+        assert all(_ANSWER not in (r.answer_excerpt or "") for r in rows)
+
+
+class TestThePollChecksTheLinkItself:
+    async def test_a_complete_mapped_record_of_a_revoked_link_is_refused_like_an_unknown_one(
+        self, responder, maker, linked, far_side
+    ):
+        await get_pending_store().put(_mapped_complete(linked, far_side, "late-link-1"))
+        await _revoke_link(maker, linked, far_side, purge=False)
+
+        resp = await responder.handle_retrieve(_poll(far_side, "late-link-1"))
+
+        assert resp.model_dump() == await _unknown_poll_response(responder, far_side)
+        assert _ANSWER not in resp.model_dump_json()
+        assert await get_pending_store().get("late-link-1") is None
+
+    async def test_a_link_created_anew_does_not_reach_back(
+        self, responder, maker, linked, far_side
+    ):
+        """Revoked and linked again with the same ref and the same account:
+        consent given afresh is a NEW row. The old request stays refused."""
+        await get_pending_store().put(_mapped_complete(linked, far_side, "late-link-2"))
+        await _revoke_link(maker, linked, far_side, purge=False)
+        async with maker() as db:
+            db.add(FederationUserLink(
+                peer_id=linked["peer"], querier_ref=_REF, local_user_id=linked["person"]))
+            await db.commit()
+
+        resp = await responder.handle_retrieve(_poll(far_side, "late-link-2"))
+        assert resp.status == STATUS_EXPIRED
+
+    async def test_a_mapped_record_without_a_link_id_is_refused(
+        self, responder, maker, linked, far_side
+    ):
+        """A row from a version that did not carry the field: its link cannot
+        be asked about, so it is not answered."""
+        pending = _mapped_complete(linked, far_side, "late-link-3")
+        pending.link_id = None
+        await get_pending_store().put(pending)
+
+        resp = await responder.handle_retrieve(_poll(far_side, "late-link-3"))
+        assert resp.status == STATUS_EXPIRED
+
+    async def test_the_same_record_on_a_standing_link_is_handed_out(
+        self, responder, maker, linked, far_side
+    ):
+        """Negative control for the three tests above."""
+        await get_pending_store().put(_mapped_complete(linked, far_side, "late-link-4"))
+
+        resp = await responder.handle_retrieve(_poll(far_side, "late-link-4"))
+        assert resp.status == STATUS_COMPLETE and resp.answer == _ANSWER
+
+
+class TestTheRecordSaysWhatTheCodeKnows:
+    async def test_a_record_that_is_merely_gone_is_not_called_revoked(
+        self, responder, maker, pairing, far_side
+    ):
+        """🛑 The purge is coarse (a link revocation discards every request of
+        that far side) and a record can lapse. With pairing and link intact,
+        all the code knows is that the record is gone -- the row used to say
+        "Widerrufen" regardless."""
+        calls = _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        await get_pending_store().delete_many([rid])
+
+        await finish()
+
+        assert calls == {"retrieve": 0, "synthesize": 0}
+        rows = await _answered_rows(maker)
+        assert [r.final_status for r in rows] == ["aborted"]
+        assert "nicht mehr vorhanden" in rows[0].error_message
+        assert "iderruf" not in rows[0].error_message
+
+    async def test_a_revoked_pairing_is_named_even_after_the_purge(
+        self, responder, maker, pairing, far_side
+    ):
+        """The record is gone AND the database says why: the row names it."""
+        _stub_work(responder)
+        _rid, finish = await _admit(responder, far_side)
+        await _revoke(maker, pairing, far_side, purge=True)
+
+        await finish()
+
+        rows = await _answered_rows(maker)
+        assert "Kopplung widerrufen" in rows[0].error_message

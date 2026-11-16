@@ -233,7 +233,7 @@ class FakeRedisPipeline:
 
 class FakeRedis:
     """Tiny in-memory aioredis-alike covering the subset we use:
-    get/set(NX,EX)/delete/keys/sadd/smembers/expire/pipeline."""
+    get/set(NX,XX,EX)/exists/delete/keys/sadd/smembers/expire/pipeline."""
 
     def __init__(self):
         self._strings: dict[str, str] = {}
@@ -249,6 +249,9 @@ class FakeRedis:
             return None
         self._strings[key] = value
         return True
+
+    async def exists(self, *keys):
+        return sum(k in self._strings or k in self._sets for k in keys)
 
     async def delete(self, *keys):
         n = 0

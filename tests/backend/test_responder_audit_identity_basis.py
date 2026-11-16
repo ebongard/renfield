@@ -42,6 +42,9 @@ def _pending(*, mapped: bool, asker_local_user_id=None, peer_owner_id=None,
         initiated_at=time.time(),
         peer_owner_id=peer_owner_id,
         mapped=mapped,
+        # A mapped record names the link it was admitted on (re-checked while
+        # the query runs); the fallback has none.
+        link_id=41 if mapped else None,
         peer_display_name=peer_display_name,
     )
 
@@ -460,7 +463,7 @@ class TestAFailureTextCarriesNoQuery:
         store.get = AsyncMock(return_value=p)
         store.save = AsyncMock(return_value=True)
         monkeypatch.setattr(fqr, "get_pending_store", lambda: store)
-        monkeypatch.setattr(fqr, "_request_is_still_wanted", AsyncMock(return_value=True))
+        monkeypatch.setattr(fqr, "_refusal_for", AsyncMock(return_value=None))
         monkeypatch.setattr(fqr, "AsyncSessionLocal", lambda: AsyncMock())
 
         responder = fqr.FederationQueryResponder(db=AsyncMock())

@@ -62,6 +62,9 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   (`POST /user-links`: `admin` nur für sich selbst; Handschlag: nur der Eigentümer der Kopplung). Einen fremden
   `querier_ref` gibt keine Route heraus. Widerruf der Kopplung LÖSCHT ihre Verknüpfungen, ebenso das
   Neukoppeln einer WIDERRUFENEN (die Zeile lebt unter derselben `id` wieder auf); ein deaktiviertes Konto wird nicht bedient. `docs/FEDERATION_PAIRING.md` §3b.
+- 🛑 **Eine laufende Anfrage überlebt weder ihre Kopplung noch ihre Verknüpfung.** Der gemappte Pending-Satz trägt
+  `link_id`; beides wird vor dem Abruf, vor der Synthese, vor dem Speichern und bei jedem Poll erneut an der DB
+  geprüft (`_standing_refusal`). Verknüpfung weg = ABGELEHNT wie eine unbekannte Anfrage, NIE Rückfall auf die Stufe.
 - 🛑 **Der Instanzname (`remote_instance_name`) ist ANZEIGETEXT der GEGENSEITE** — nie Kennung oder Teil von
   `peer_<id>`; einziger Schreiber `federation_instance_name.py`, erst NACH Signatur und Peer-Nachschlag. In den
   Prompt nur mit eigenem Schalter je Prompt (`…_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED`, `…_IN_ROUTER_PROMPT_ENABLED`; beide aus): begrenzt Form und Länge, nicht Inhalt.

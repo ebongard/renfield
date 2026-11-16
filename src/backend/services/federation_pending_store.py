@@ -106,6 +106,18 @@ class _PendingRequest:
     #: onto the wider path. The default lands on the safe side.
     mapped: bool = False
 
+    #: The id of the person link (`federation_user_links.id`) a MAPPED request
+    #: was admitted on -- an id, no content. It is what lets the answering
+    #: side ask again whether that link still stands: at the start of the
+    #: background task, before synthesis, before the answer is stored and on
+    #: every poll (`federation_query_responder._standing_refusal`).
+    #:
+    #: 🛑 A mapped record WITHOUT it is refused, not answered: it is a row
+    #: from a version that did not carry the field (rolling deploy, Redis
+    #: store), and its link cannot be re-checked. The mapped path is the
+    #: widest reach there is; a request lost for one TTL is the cheaper error.
+    link_id: int | None = None
+
     #: Display name of the far side, for the snapshot in the audit log.
     #: 🛑 Carried here rather than looked up at write time: the log records the
     #: name that applied AT THE TIME OF THE ACCESS. If the pairing is renamed

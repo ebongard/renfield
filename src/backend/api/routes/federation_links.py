@@ -218,9 +218,10 @@ async def revoke_my_link(
     )
     await db.commit()
 
-    # 🛑 Clean up requests in flight, the way `revoke_peer` does:
-    # `handle_retrieve` does NOT re-check the link, so a request started before
-    # the revocation could still be collected with full reach.
+    # Clean up requests in flight, the way `revoke_peer` does. No longer the
+    # only protection: the responder asks the database for the link again
+    # before it reads, before it stores the answer and on every poll
+    # (`_standing_refusal`).
     # Deliberately too coarse -- it also hits unlinked requests from the same
     # peer -- and in exchange it cannot miss the mapped one.
     from services.federation_query_responder import purge_requests_for_pubkey

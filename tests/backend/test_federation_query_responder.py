@@ -535,8 +535,9 @@ class TestBackgroundTaskSession:
         await responder._run_query(pending.request_id)
 
         # One for the retrieval, and one per look at whether the pairing is
-        # still active (before the work and before the result is stored).
-        assert factory_calls == 3, (
+        # still active (before the work, before synthesis and before the
+        # result is stored).
+        assert factory_calls == 4, (
             "bg task did not open its own session via AsyncSessionLocal — "
             "the request-scoped session from handle_initiate would already "
             "be closed. CRITICAL regression."
@@ -718,9 +719,9 @@ class TestPersonScopedMapping:
     ):
         monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
         monkeypatch.setattr(settings, "auth_enabled", True)
-        # resolve_linked_user is imported inside _handle_initiate — patch at source.
+        # resolve_link is imported inside _handle_initiate — patch at source.
         import services.federation_identity_link as fil
-        monkeypatch.setattr(fil, "resolve_linked_user", AsyncMock(return_value=None))
+        monkeypatch.setattr(fil, "resolve_link", AsyncMock(return_value=None))
 
         responder = FederationQueryResponder(db=mock_db_with_peer)
         responder._run_query = AsyncMock()
@@ -740,7 +741,7 @@ class TestPersonScopedMapping:
         monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
         monkeypatch.setattr(settings, "auth_enabled", True)
         import services.federation_identity_link as fil
-        monkeypatch.setattr(fil, "resolve_linked_user", AsyncMock(return_value=99))
+        monkeypatch.setattr(fil, "resolve_link", AsyncMock(return_value=(5, 99)))
 
         responder = FederationQueryResponder(db=mock_db_with_peer)
         responder._run_query = AsyncMock()
@@ -751,6 +752,8 @@ class TestPersonScopedMapping:
         pending = await get_pending_store().get(resp.request_id)
         assert pending.peer_owner_id is None                   # MAPPED -- runs as the person
         assert pending.asker_local_user_id == 99               # the linked local user
+        # ... and the link it was admitted on, so it can be asked about again.
+        assert pending.link_id == 5 and pending.mapped is True
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -763,8 +766,8 @@ class TestPersonScopedMapping:
         monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
         monkeypatch.setattr(settings, "auth_enabled", False)
         import services.federation_identity_link as fil
-        spy = AsyncMock(return_value=99)
-        monkeypatch.setattr(fil, "resolve_linked_user", spy)
+        spy = AsyncMock(return_value=(5, 99))
+        monkeypatch.setattr(fil, "resolve_link", spy)
 
         responder = FederationQueryResponder(db=mock_db_with_peer)
         responder._run_query = AsyncMock()
@@ -786,8 +789,8 @@ class TestPersonScopedMapping:
     ):
         monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
         import services.federation_identity_link as fil
-        spy = AsyncMock(return_value=99)
-        monkeypatch.setattr(fil, "resolve_linked_user", spy)
+        spy = AsyncMock(return_value=(5, 99))
+        monkeypatch.setattr(fil, "resolve_link", spy)
 
         responder = FederationQueryResponder(db=mock_db_with_peer)
         responder._run_query = AsyncMock()

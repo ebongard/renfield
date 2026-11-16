@@ -168,7 +168,7 @@ async def purge_requests_for_pubkey(asker_pubkey: str) -> int:
     Called by `revoke_peer` so a revoked peer cannot poll /retrieve
     and receive an answer for a request they initiated before the
     revocation. A background task that is already running finds the
-    record gone at its next check (`_request_is_still_wanted`) and
+    record gone at its next check (`_refusal_for`) and
     cannot bring it back: `save` only updates an existing record.
 
     Returns count of discarded requests.
@@ -284,18 +284,37 @@ async def _record_cancelled_access(pending: _PendingRequest) -> None:
         logger.warning(f"Federation: cancellation record not written: {error_text_without_content(e)}")
 
 
-async def _record_revoked_access(pending: _PendingRequest) -> None:
-    """Write the record for a query whose pairing or link was revoked under it.
+#: Why a request is no longer served. `_GONE` is all the code knows when only
+#: the pending record is missing: purged by a revocation (the purge also hits
+#: the other requests of the same far side) or lapsed -- it cannot tell which.
+_REFUSED_GONE = "gone"
+_REFUSED_PAIRING = "pairing_revoked"
+_REFUSED_LINK = "link_revoked"
+
+_REFUSAL_TEXT = {
+    _REFUSED_GONE: "Anfrage nicht mehr vorhanden (verworfen oder abgelaufen)",
+    _REFUSED_PAIRING: "Kopplung widerrufen",
+    _REFUSED_LINK: "Verknüpfung besteht nicht mehr",
+}
+
+
+async def _record_refused_access(pending: _PendingRequest, why: str) -> None:
+    """Write the record for a query that stopped being served under way.
 
     `aborted`, like a cancellation, and for the same reason: after the
     retrieval this is not a failed access but one that happened and was not
     delivered. `retrieved_count` is the dividing line here as well.
+
+    The text says what the code KNOWS (`why`): a revoked pairing and a link
+    that no longer stands were read from the database; a record that is merely
+    gone is called gone, not revoked.
     """
+    what = _REFUSAL_TEXT[why]
     if pending.retrieved_count is None:
-        reason = "Widerrufen vor dem Abruf — es wurden keine Daten gelesen."
+        reason = f"{what} vor dem Abruf — es wurden keine Daten gelesen."
     else:
         reason = (
-            f"Widerrufen nach dem Abruf — {pending.retrieved_count} Treffer "
+            f"{what} nach dem Abruf — {pending.retrieved_count} Treffer "
             "gelesen, keine Antwort ausgeliefert."
         )
     await _write_responder_audit(pending, success=False, error=reason, aborted=True)
@@ -311,26 +330,69 @@ async def _pairing_is_active(db: AsyncSession, peer_user_id: int) -> bool:
     )).scalar_one_or_none() is not None
 
 
-async def _request_is_still_wanted(pending: _PendingRequest) -> bool:
-    """May the background task go on working for this request?
+async def _standing_refusal(db: AsyncSession, pending: _PendingRequest) -> str | None:
+    """What the DATABASE says against serving `pending` -- or `None`.
 
-    Two independent signals, and either one ends it:
+    Both things a request was admitted on are asked again, each by its id:
 
-    * the pending record is GONE -- a revocation (pairing or link) purges the
-      records of that far side, and `save` never brings one back;
-    * the pairing is revoked in the database -- the purge runs AFTER the
-      revocation commits, so for a moment the record is still there.
+    * the pairing is not revoked;
+    * for a MAPPED request, the person link it was admitted on still stands
+      (`link_still_lends`: the row exists, names the same account, and the
+      account is active).
+
+    🛑 A link that is gone REFUSES the request. It does not fall back to the
+    pairing's tier: the far side asked as a person and was admitted as that
+    person; answering the same request with another reach would be an answer
+    nobody asked for, and the audit row would have to describe two identities.
+    A new request from the far side takes the fallback at `initiate`, openly.
+
+    A mapped record without `link_id` (a row from an older version) cannot be
+    re-checked and is refused for the same reason.
+    """
+    if not await _pairing_is_active(db, pending.peer_user_id):
+        return _REFUSED_PAIRING
+    if pending.mapped:
+        from services.federation_identity_link import link_still_lends
+
+        if (
+            pending.link_id is None
+            or pending.asker_local_user_id is None
+            or not await link_still_lends(
+                db, link_id=pending.link_id, peer_id=pending.peer_user_id,
+                local_user_id=pending.asker_local_user_id,
+            )
+        ):
+            return _REFUSED_LINK
+    return None
+
+
+async def _refusal_for(pending: _PendingRequest) -> str | None:
+    """Why the background task must stop working for this request -- or
+    `None` while it may go on.
+
+    Independent signals, and any one ends it:
+
+    * the pairing is revoked, or the person link of a mapped request no
+      longer stands, in the DATABASE (`_standing_refusal`). A revocation
+      purges AFTER it commits, so for a moment the record is still there --
+      and a record `put` after the purge (the `initiate` race: link resolved,
+      link revoked and purged, record stored) is never purged at all. The
+      database is asked every time, so neither order gets an answer;
+    * the pending record is GONE -- purged or lapsed; `save` never brings one
+      back.
+
+    The database is asked even when the record is gone: it is what tells a
+    revocation from a record that merely lapsed, and the audit row says which.
 
     Opens a short session of its own: the task has no request session.
     """
     store = get_pending_store()
-    if await store.get(pending.request_id) is None:
-        return False
+    gone = await store.get(pending.request_id) is None
     async with AsyncSessionLocal() as session:
-        if await _pairing_is_active(session, pending.peer_user_id):
-            return True
-    await store.delete_many([pending.request_id])
-    return False
+        why = await _standing_refusal(session, pending)
+    if why is not None and not gone:
+        await store.delete_many([pending.request_id])
+    return why or (_REFUSED_GONE if gone else None)
 
 
 def _peer_scope_for(pending: _PendingRequest) -> PeerScope | None:
@@ -556,15 +618,18 @@ class FederationQueryResponder:
         # was built to prevent, so on an auth-off responder we refuse to map and
         # serve the peer-scoped fallback instead.
         mapped_user_id: int | None = None
+        link_id: int | None = None
         if (
             settings.federation_identity_links_enabled
             and settings.auth_enabled
             and req.querier_ref
         ):
-            from services.federation_identity_link import resolve_linked_user
-            mapped_user_id = await resolve_linked_user(
+            from services.federation_identity_link import resolve_link
+            link = await resolve_link(
                 self.db, peer_id=peer.id, querier_ref=req.querier_ref,
             )
+            if link is not None:
+                link_id, mapped_user_id = link
 
         if mapped_user_id is not None:
             # MAPPED — run as the local user with full circle semantics.
@@ -599,6 +664,12 @@ class FederationQueryResponder:
             initiated_at=now,
             peer_owner_id=peer_owner_id,
             mapped=mapped,
+            # 🛑 The link is resolved above and the record stored below; a
+            # revocation that commits AND purges in between finds no record
+            # to purge. That window is closed by the background task, which
+            # asks the database for THIS link before it reads anything
+            # (`_refusal_for`), and by the poll, which asks again.
+            link_id=link_id if mapped else None,
             peer_display_name=peer.remote_display_name or "",
             # 🛑 A verified name or nothing -- never the endpoint host: this
             # is what the audit row of the access stores for good.
@@ -670,16 +741,18 @@ class FederationQueryResponder:
             )
             return QueryBrainRetrieveResponse(status=STATUS_EXPIRED)
 
-        # 🛑 The pairing is looked up AGAIN. Until 2026-11-15 only `initiate`
-        # checked it, and the purge on revocation was the sole protection of
-        # the poll -- a record stored after the purge, or brought back by the
-        # background task, was handed out to a revoked key. The refusal is
-        # the one an unknown request gets: nothing tells the far side that
-        # there was a request and a revocation.
-        if not await _pairing_is_active(self.db, pending.peer_user_id):
+        # 🛑 The pairing is looked up AGAIN, and so is the person link of a
+        # mapped request. Until 2026-11-15 only `initiate` checked either, and
+        # the purge on revocation was the sole protection of the poll -- a
+        # record stored after the purge, or brought back by the background
+        # task, was handed out to a revoked key. The refusal is the one an
+        # unknown request gets: nothing tells the far side that there was a
+        # request and a revocation.
+        why = await _standing_refusal(self.db, pending)
+        if why is not None:
             await get_pending_store().delete_many([pending.request_id])
             logger.warning(
-                f"Federation query_brain: poll on a revoked pairing refused "
+                f"Federation query_brain: poll refused ({why}) "
                 f"(request_id={req.request_id}, peer_id={pending.peer_user_id})"
             )
             return QueryBrainRetrieveResponse(status=STATUS_EXPIRED)
@@ -714,12 +787,12 @@ class FederationQueryResponder:
             return
 
         try:
-            # 🛑 A revoked pairing gets no answer -- and no retrieval either,
-            # where that can still be avoided. The task may have waited (event
+            # 🛑 A revoked pairing or person link gets no answer -- and no
+            # retrieval either, where that can still be avoided. The task may have waited (event
             # loop, model server) since `initiate` admitted the request; the
             # check at its start alone left everything after it unguarded.
-            if not await _request_is_still_wanted(pending):
-                await _record_revoked_access(pending)
+            if why := await _refusal_for(pending):
+                await _record_refused_access(pending, why)
                 return
 
             # Transition: retrieving (chunk+KG+memory RRF).
@@ -733,14 +806,20 @@ class FederationQueryResponder:
             # tells it apart afterwards from a cancellation before it.
             pending.retrieved_count = len(matches)
 
+            # A revocation during the retrieval: the model is not handed what
+            # was read, and its call (up to the synthesis timeout) is saved.
+            if why := await _refusal_for(pending):
+                await _record_refused_access(pending, why)
+                return
+
             # Transition: synthesizing (Ollama call).
             await self._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
             answer = await self._synthesize(pending.query, matches)
 
             # Retrieval and synthesis take seconds; a revocation in that time
             # must not be answered. Checked BEFORE the result is stored.
-            if not await _request_is_still_wanted(pending):
-                await _record_revoked_access(pending)
+            if why := await _refusal_for(pending):
+                await _record_refused_access(pending, why)
                 return
 
             # Build redacted provenance list for the response.
@@ -762,9 +841,9 @@ class FederationQueryResponder:
             pending.progress_label = PROGRESS_LABEL_COMPLETE
             pending.status = STATUS_COMPLETE
             if not await store.save(pending):
-                # Purged between the check above and this line: `save` does
+                # Gone between the check above and this line: `save` does
                 # not create, so nothing can be polled. Record it as it was.
-                await _record_revoked_access(pending)
+                await _record_refused_access(pending, _REFUSED_GONE)
                 return
             await _write_responder_audit(pending, success=True)
         except asyncio.CancelledError:
