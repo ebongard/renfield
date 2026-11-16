@@ -1413,7 +1413,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
                 all_entities.extend(entities)
                 all_relations.extend(relations)
             except Exception as e:
-                logger.warning(f"KG: Chunk {i} extraction failed: {e}")
+                logger.warning(f"KG: Chunk {i} extraction failed: {error_text_without_content(e)}")
 
         if all_entities or all_relations:
             logger.info(
@@ -1983,7 +1983,7 @@ async def kg_post_message_hook(
                             (name, subject_id, getattr(ent, "user_id", None))
                         )
     except Exception as e:
-        logger.warning(f"KG post_message hook failed: {e}")
+        logger.warning(f"KG post_message hook failed: {error_text_without_content(e)}")
 
 
 async def kg_retrieve_context_hook(
@@ -2061,4 +2061,4 @@ async def kg_post_document_ingest_hook(
                 chunks, user_id=user_id, source_ref=source_ref, lang=lang,
             )
     except Exception as e:
-        logger.warning(f"KG post_document_ingest hook failed: {e}")
+        logger.warning(f"KG post_document_ingest hook failed: {error_text_without_content(e)}")

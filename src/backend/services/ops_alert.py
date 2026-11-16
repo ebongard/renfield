@@ -34,6 +34,7 @@ from typing import Any
 from loguru import logger
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Issue-key → last-alert monotonic time.
 _alerted: dict[str, float] = {}
@@ -237,10 +238,10 @@ async def notify_admin(
             target_user_id=target, since=started,
         ):
             logger.warning(
-                f"ops_alert: {dedup_key} persisted but delivery failed ({e}) — "
+                f"ops_alert: {dedup_key} persisted but delivery failed ({error_text_without_content(e)}) — "
                 "counted as told, not retried"
             )
             return True
-        logger.warning(f"ops_alert: notify failed for {dedup_key}: {e}")
+        logger.warning(f"ops_alert: notify failed for {dedup_key}: {error_text_without_content(e)}")
         return False
     return True

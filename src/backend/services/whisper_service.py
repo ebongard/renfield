@@ -754,6 +754,6 @@ class WhisperService:
                         audio_duration_s=result.get("audio_duration_s"),
                     )
             except Exception as e:
-                logger.warning(f"⚠️ wire-embedding speaker resolve failed: {e}")
+                logger.warning(f"⚠️ wire-embedding speaker resolve failed: {error_text_without_content(e)}")
 
         return {"text": text, **speaker_info}

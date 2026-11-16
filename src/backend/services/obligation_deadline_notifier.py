@@ -49,6 +49,7 @@ from models.database import (
 from services.kg_reconciler_service import _resolve_lock_engine
 from services.notification_service import NotificationService
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Lead-time milestones (days before the printed Frist) the scan fires, plus the
 # implicit "due" (==0) and "overdue" (<0) buckets. ASCENDING so
@@ -271,7 +272,7 @@ class ObligationDeadlineNotifier:
                 acks.add((fact_id, ms))
             except Exception as e:  # one bad obligation must not abort the user
                 report.errors += 1
-                logger.warning(f"Obligation notifier: fact {fact_id} failed: {e}")
+                logger.warning(f"Obligation notifier: fact {fact_id} failed: {error_text_without_content(e)}")
         return report
 
     async def _record(self, user_id: int, fact_id: int, milestone: str) -> None:
@@ -304,5 +305,5 @@ async def scan_all_users() -> NotifyReport | None:
                         f"skipped_ledger={report.skipped_ledger} errors={report.errors}"
                     )
         except Exception as e:
-            logger.warning(f"Obligation notifier failed for user {uid}: {e}")
+            logger.warning(f"Obligation notifier failed for user {uid}: {error_text_without_content(e)}")
     return None

@@ -25,6 +25,7 @@ from __future__ import annotations
 from loguru import logger
 
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Registered with the agent tool registry by
 # `services/agent_tools.py::_register_internal_tools()`.
@@ -163,7 +164,7 @@ async def create_reminder(
         # Unparseable time or a time in the past — a user-actionable message, not a crash.
         return {"success": False, "message": str(e), "action_taken": False}
     except Exception as e:
-        logger.error(f"Error in create_reminder tool: {e}")
+        logger.error(f"Error in create_reminder tool: {error_text_without_content(e)}")
         return {"success": False, "message": f"Reminder error: {e!s}", "action_taken": False}
 
 
@@ -203,7 +204,7 @@ async def list_reminders(params: dict, user_id: int | None = None) -> dict:
             "data": {"reminders": items},
         }
     except Exception as e:
-        logger.error(f"Error in list_reminders tool: {e}")
+        logger.error(f"Error in list_reminders tool: {error_text_without_content(e)}")
         return {"success": False, "message": f"Reminder error: {e!s}", "action_taken": False}
 
 
@@ -290,5 +291,5 @@ async def cancel_reminder(params: dict, user_id: int | None = None) -> dict:
             "data": target,
         }
     except Exception as e:
-        logger.error(f"Error in cancel_reminder tool: {e}")
+        logger.error(f"Error in cancel_reminder tool: {error_text_without_content(e)}")
         return {"success": False, "message": f"Reminder error: {e!s}", "action_taken": False}

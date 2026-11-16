@@ -47,6 +47,7 @@ from services.folder_ingest_paperless import (
     resolve_tags_from_metadata,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 REEXTRACT_DEFAULT_CAP = 50
 REEXTRACT_MAX_CAP = 200
@@ -237,7 +238,7 @@ async def reextract_paperless_metadata(
             "data": {"fixed": fixed, "already": already, "skipped": skipped, "unmatched": unmatched},
         }
     except Exception as e:
-        logger.warning(f"reextract_paperless_metadata failed: {e}")
+        logger.warning(f"reextract_paperless_metadata failed: {error_text_without_content(e)}")
         return {
             "success": False,
             "message": f"Nachziehen der Paperless-Metadaten fehlgeschlagen: {e!s}",

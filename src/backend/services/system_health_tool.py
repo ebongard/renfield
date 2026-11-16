@@ -39,6 +39,7 @@ from models.permissions import Permission, has_permission
 from services.database import AsyncSessionLocal
 from services.ingest_common import get_ingest_token
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 SYSTEM_HEALTH_TOOL: dict = {
     "internal.system_health": {
@@ -215,7 +216,7 @@ async def system_health(
                 problems.append(pl)
             data["config_state_problems"] = cfg
     except Exception as e:
-        logger.warning(f"system_health: config/paperless probe failed: {e}")
+        logger.warning(f"system_health: config/paperless probe failed: {error_text_without_content(e)}")
 
     try:
         async with AsyncSessionLocal() as db:
@@ -223,7 +224,7 @@ async def system_health(
         problems += failing
         data["scheduled_task_problems"] = failing
     except Exception as e:
-        logger.warning(f"system_health: scheduled-task probe failed: {e}")
+        logger.warning(f"system_health: scheduled-task probe failed: {error_text_without_content(e)}")
 
     try:
         mcp_problems, mcp_ok = _check_mcp(mcp_manager)
@@ -286,7 +287,7 @@ async def system_health(
     try:
         problems += await _check_infra()
     except Exception as e:
-        logger.warning(f"system_health: infra probe failed: {e}")
+        logger.warning(f"system_health: infra probe failed: {error_text_without_content(e)}")
 
     data["problem_count"] = len(problems)
     if problems:

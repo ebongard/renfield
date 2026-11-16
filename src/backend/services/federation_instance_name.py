@@ -55,6 +55,7 @@ from loguru import logger
 
 from services.federation_identity import FederationIdentity, canonical_bytes
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 #: Domain separation: the attachment payload can never be mistaken for any
 #: other structure this key signs.
@@ -418,7 +419,7 @@ async def remember_remote_instance_name(
             await session.commit()
             changed = bool(result.rowcount)
     except Exception as e:
-        logger.warning(f"Federation: instance name for peer {peer_id} not stored: {e}")
+        logger.warning(f"Federation: instance name for peer {peer_id} not stored: {error_text_without_content(e)}")
         return False
     if changed:
         # Pairing id and lengths only: the line is written on text the far
@@ -439,4 +440,4 @@ async def _refresh_tool_description() -> None:
 
         await resync_bound_manager()
     except Exception as e:
-        logger.warning(f"Federation: peer registry resync after a name change failed: {e}")
+        logger.warning(f"Federation: peer registry resync after a name change failed: {error_text_without_content(e)}")

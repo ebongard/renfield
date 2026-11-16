@@ -31,6 +31,7 @@ from models.database import (
     Document,
 )
 from services.database import AsyncSessionLocal
+from utils.log_safety import error_text_without_content
 
 
 async def paperless_filing_post_ingest_hook(
@@ -74,7 +75,7 @@ async def paperless_filing_post_ingest_hook(
             await db.commit()
             logger.warning(
                 f"paperless-filing-hook: doc {document_id} recovery bytes "
-                f"unreadable ({exc}); marked paperless_state=failed"
+                f"unreadable ({error_text_without_content(exc)}); marked paperless_state=failed"
             )
             return
 
@@ -89,7 +90,7 @@ async def paperless_filing_post_ingest_hook(
         except Exception as exc:
             logger.warning(
                 f"paperless-filing-hook: leg error for doc {document_id} "
-                f"(left pending for retry): {exc}"
+                f"(left pending for retry): {error_text_without_content(exc)}"
             )
 
 
@@ -126,7 +127,7 @@ async def refile_document_paperless(
             await db.commit()
             logger.warning(
                 f"paperless-refile: doc {document_id} recovery bytes unreadable "
-                f"({exc}); marked paperless_state=failed"
+                f"({error_text_without_content(exc)}); marked paperless_state=failed"
             )
             return
 
@@ -151,5 +152,5 @@ async def refile_document_paperless(
             await leg(db, doc, file_bytes, IngestMeta(filename=doc.filename), None)
         except Exception as exc:
             logger.warning(
-                f"paperless-refile: leg error for doc {document_id}: {exc}"
+                f"paperless-refile: leg error for doc {document_id}: {error_text_without_content(exc)}"
             )

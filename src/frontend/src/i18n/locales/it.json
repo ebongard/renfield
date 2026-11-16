@@ -1871,6 +1871,7 @@
     "queryLabel": "La tua domanda",
     "answerLabel": "Risposta",
     "errorLabel": "Errore",
+    "noteLabel": "Nota",
     "durationSubSecond": "< 1 sec",
     "durationSeconds": "{{n}} sec",
     "durationMinutes": "{{n}} min",

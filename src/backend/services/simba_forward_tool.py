@@ -28,6 +28,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from utils.log_safety import error_text_without_content
+
 _PENDING_PREFIX = "simba:pending:"
 _PENDING_TTL_SECONDS = 900  # 15 minutes to answer the confirm
 
@@ -311,7 +313,7 @@ async def forward_attachment_to_simba(
             },
         }
     except Exception as e:
-        logger.error(f"forward_attachment_to_simba error: {e}")
+        logger.error(f"forward_attachment_to_simba error: {error_text_without_content(e)}")
         return {"success": False, "message": f"Vorbereitung fehlgeschlagen: {e!s}", "action_taken": False}
 
 
@@ -414,5 +416,5 @@ async def simba_commit_upload(
         })
         return outcome
     except Exception as e:
-        logger.error(f"simba_commit_upload error: {e}")
+        logger.error(f"simba_commit_upload error: {error_text_without_content(e)}")
         return {"success": False, "message": f"Upload fehlgeschlagen: {e!s}", "action_taken": False}

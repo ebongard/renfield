@@ -62,6 +62,9 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   (`POST /user-links`: `admin` nur für sich selbst; Handschlag: nur der Eigentümer der Kopplung). Einen fremden
   `querier_ref` gibt keine Route heraus. Widerruf der Kopplung LÖSCHT ihre Verknüpfungen, ebenso das
   Neukoppeln einer WIDERRUFENEN (die Zeile lebt unter derselben `id` wieder auf); ein deaktiviertes Konto wird nicht bedient. `docs/FEDERATION_PAIRING.md` §3b.
+- 🛑 **Eine laufende Anfrage überlebt weder ihre Kopplung noch ihre Verknüpfung.** Der gemappte Pending-Satz trägt
+  `link_id`; beides wird vor dem Abruf, vor der Synthese, vor dem Speichern und bei jedem Poll erneut an der DB
+  geprüft (`_standing_refusal`). Verknüpfung weg = ABGELEHNT wie eine unbekannte Anfrage, NIE Rückfall auf die Stufe.
 - 🛑 **Der Instanzname (`remote_instance_name`) ist ANZEIGETEXT der GEGENSEITE** — nie Kennung oder Teil von
   `peer_<id>`; einziger Schreiber `federation_instance_name.py`, erst NACH Signatur und Peer-Nachschlag. In den
   Prompt nur mit eigenem Schalter je Prompt (`…_PEER_NAME_IN_TOOL_DESCRIPTION_ENABLED`, `…_IN_ROUTER_PROMPT_ENABLED`; beide aus): begrenzt Form und Länge, nicht Inhalt.
@@ -87,6 +90,12 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
 - `services/circle_resolver.py` = `PolicyEvaluator` + cache, for access checks outside the SQL paths.
 - `services/polymorphic_atom_store.py` = cross-source RRF; it emits per-entity `kg_node` + per-relation `kg_edge`
   atoms (`KGRetrieval.get_relevant_atoms`), while the agent's string context (`get_relevant_context`) is unchanged.
+- 🛑 A caller that opens a FRESH session and queries the store at once passes `source_sessions` (one bounded,
+  process-wide `SourceSessions`): eight sources on one cold session crash all but one. There the slot (and the
+  session) covers ONE STATEMENT, never a source call — sources call model servers in between and must hold
+  nothing meanwhile. Whether the fan-out WRITES follows `query(federated=…)`, never the regime: federated = PURE
+  READ (`track_access`, `record_shadow_log` off — a new writing source needs its own switch); own sessions are
+  READ ONLY transactions and refuse a call that is not federated. Scope (`asker_id`, `peer`) is identical.
 
 ## Extraction WRITES are ownership-gated separately from retrieval
 `_apply_update_v2` / `_apply_delete_v2` and the v1 contradiction path take the row to mutate from an LLM-supplied
@@ -127,6 +136,10 @@ FREMDEN Zugriff verzeichnet, die Zeile. Die Trennlinie ist `_retrieve`: `pending
 solange nichts gelesen wurde, danach die Trefferzahl (`0` = gelesen, nichts gefunden — nicht dasselbe).
 Ein Abbruch NACH dem Abruf ist kein Fehlschlag, sondern ein geglückter Zugriff ohne Auslieferung; unter den
 Fehlschlägen begraben sähe das Protokoll ruhiger aus, als es war.
+🛑 **Eine FERTIGE, nicht abgeholte Antwort, die ein Widerruf wegnimmt (Purge nach dem Commit — der Regelfall —,
+abgelehnter Poll, Speicherfehler), wird in DERSELBEN Zeile berichtigt** (`mark_answer_not_handed_over`:
+`success` → `aborted`, Stufe `after_answer`, Auszug entfernt) — nie eine zweite Zeile, idempotent (nur `success`
+passt). Die Ursache steht als CODE am Kopf von `error_message` (`outcome_code`); der Satz dahinter ist Anzeige.
 🛑 **Ein WIDERRUF (Kopplung, Verknüpfung) ist eine Zeile mit `direction='revoke'`, in DERSELBEN Transaktion**
 (`federation_audit.record_revocation`): `identity_basis` = `owner`/`self`/`admin`, `query_text` = JSON nur aus
 Kennungen, kein Text der Gegenseite; je entfernter Verknüpfung EINE Zeile. 🛑 `user_id` bleibt dort NULL — der

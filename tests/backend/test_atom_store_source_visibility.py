@@ -20,6 +20,10 @@ document retrieval and the knowledge graph.
 This file tests VISIBILITY (step 1), not the fix. Without it the effect of
 step 2 would not be provable in production.
 
+Step 2 landed on 2026-11-15: the federated path gives every source a session of
+its own. That is tested against real Postgres in
+`test_atom_fanout_source_sessions_pg.py`; this file stays the test of the line.
+
 🛑 The first version was taken apart in review, and two of the findings were
 HERE:
 
@@ -116,17 +120,119 @@ def _count(**overrides):
 
 def _raw_db_error_logs(tree) -> list[int]:
     """Line numbers where an `except ... as <name>` handler around a `try`
-    that calls `.execute(...)` formats `<name>` raw into a LOGGER call.
+    that REACHES THE DATABASE formats `<name>` raw into a LOGGER call.
 
     Only logger calls: a tool result handed back to the asking user's own
-    agent is a different question (what the model sees), not a log leak."""
+    agent is a different question (what the model sees), not a log leak.
+
+    🛑 "Reaches the database" was `.execute(...)` written out inside the `try`
+    until 2026-11-15. That missed the responder's own background task: its
+    `try` opens a session and calls `self._retrieve(...)`, the query sits two
+    calls further down, and the handler put the raw exception into the log
+    AND into the audit row. A `try` now counts when its body
+
+      * calls `.execute(...)`, `.commit(...)` or `.flush(...)`, or
+      * opens a session (`async with <...Session...>(...)`), or
+      * calls a function or method of the SAME module that does any of this,
+        directly or through further functions of that module.
+
+    A `try` also counts when it is WRITTEN INSIDE an `async with
+    <...Session...>()` block, whatever it calls (2026-11-16: the handler
+    around `svc.record_outcome(...)` -- a SELECT FOR UPDATE plus commit on
+    another object -- sat inside such a block and was not seen).
+
+    🛑 WHAT THIS DOES NOT SEE. It is a floor under one shape, not a proof
+    that no database text reaches a log:
+
+      * a call on ANOTHER OBJECT or into another module is not followed
+        (`svc.save(...)`, `other_module.work(db)`) unless the `try` sits
+        inside a session block -- that would need the whole program;
+      * only an f-string that formats the handler's name DIRECTLY is found:
+        not `{str(e)}`, `{repr(e)}`, `{e.args}`, not a variable assigned
+        from `str(e)` and logged later, not positional arguments
+        (`logger.error("{}", e)`), not `%`-formatting or `+`;
+      * no traceback: `logger.opt(exception=True)`, `logger.exception(...)`,
+        `traceback.format_exc()` carry the raw message in their last line
+        (and, with the app's sink, the variable values of every frame);
+      * only a logger NAMED `logger` -- not `log`, `self.logger`, `_l`;
+      * only LOG calls: an `error_message` column, a pending record, a tool
+        result, a health-page detail are other sinks with the same text;
+      * only `services/` is scanned by the test below. `api/`, `ha_glue/`,
+        `workers/` have raw exception log lines of their own (107 counted on
+        2026-11-15) and are a sweep of their own.
+
+    🛑 AND IT OVER-MATCHES. Any `.execute(` / `.commit(` / `.flush(` counts,
+    so a Redis pipeline, a thread-pool executor or a file handle make their
+    `try` look like a database one, and so does a session block around a
+    handler whose own `try` only reads a file. Wrapping such a handler is
+    harmless but not free: the text is capped at 200 characters. That is the
+    price of a check without an exemption list -- a list is what rotted last
+    time.
+    """
     import ast
 
     levels = {"debug", "info", "warning", "error", "exception", "critical"}
+    db_calls = {"execute", "commit", "flush"}
 
-    def has_execute(node) -> bool:
-        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                   and n.func.attr == "execute" for n in ast.walk(node))
+    functions: dict[str, list] = {}
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.setdefault(n.name, []).append(n)
+
+    def opens_session(n) -> bool:
+        if not isinstance(n, ast.AsyncWith):
+            return False
+        for item in n.items:
+            ctx = item.context_expr
+            if isinstance(ctx, ast.Call):
+                callee = getattr(ctx.func, "id", getattr(ctx.func, "attr", ""))
+                if "session" in callee.lower():
+                    return True
+        return False
+
+    def touches_db(node) -> bool:
+        for n in ast.walk(node):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr in db_calls):
+                return True
+            if opens_session(n):
+                return True
+        return False
+
+    # Every `try` written INSIDE an `async with <Session>()` block: whatever
+    # it calls there works on that session, also where the call goes into
+    # another object (`svc.record_outcome(...)`), which is not followed.
+    inside_a_session = {
+        id(t)
+        for block in ast.walk(tree) if opens_session(block)
+        for t in ast.walk(block) if isinstance(t, ast.Try)
+    }
+
+    def module_calls(node) -> set[str]:
+        called = set()
+        for n in ast.walk(node):
+            if not isinstance(n, ast.Call):
+                continue
+            f = n.func
+            if isinstance(f, ast.Name) and f.id in functions:
+                called.add(f.id)
+            elif (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
+                  and f.value.id in ("self", "cls") and f.attr in functions):
+                called.add(f.attr)
+        return called
+
+    reaching = {name for name, defs in functions.items()
+                if any(touches_db(d) for d in defs)}
+    grew = True
+    while grew:
+        grew = False
+        for name, defs in functions.items():
+            if name not in reaching and any(module_calls(d) & reaching for d in defs):
+                reaching.add(name)
+                grew = True
+
+    def reaches_db(node) -> bool:
+        return touches_db(node) or bool(module_calls(node) & reaching)
 
     def is_log(call) -> bool:
         f = call.func
@@ -135,7 +241,8 @@ def _raw_db_error_logs(tree) -> list[int]:
 
     lines = []
     for try_node in (n for n in ast.walk(tree) if isinstance(n, ast.Try)):
-        if not any(has_execute(a) for a in try_node.body):
+        if id(try_node) not in inside_a_session and not any(
+                reaches_db(a) for a in try_node.body):
             continue
         for handler in try_node.handlers:
             if not handler.name:
@@ -147,7 +254,7 @@ def _raw_db_error_logs(tree) -> list[int]:
                     if isinstance(n, ast.FormattedValue)
                     and isinstance(n.value, ast.Name)
                     and n.value.id == handler.name)
-    return sorted(lines)
+    return sorted(set(lines))
 
 
 class TestItTellsCrashApartFromEmpty:
@@ -294,6 +401,21 @@ class TestTheGuardAgainstContentInTheLog:
         assert error_text_without_content(
             RuntimeError("Verbindung abgelehnt")) == "Verbindung abgelehnt"
 
+    @pytest.mark.parametrize("label", ["DETAIL", "HINT", "CONTEXT"])
+    def test_the_lines_postgres_puts_row_values_in_are_cut_off(self, label):
+        """They sit BEFORE the SQL tail. The real errors are raised in
+        `test_log_safety_pg.py`; this is the shape, without a database."""
+        text = error_text_without_content(RuntimeError(
+            'duplicate key value violates unique constraint "uq_x"\n'
+            f"{label}:  Key (name)=(Scheidungsurteil) already exists.\n"
+            "[SQL: INSERT INTO x (name) VALUES (%(n)s)]"))
+        assert text == 'duplicate key value violates unique constraint "uq_x"'
+
+    def test_a_word_that_merely_contains_a_label_is_not_a_cut(self):
+        """Negative control: `DETAILS` or a lower-case `detail:` is prose."""
+        plain = "upstream said: detail: none, DETAILS follow, HINTS too"
+        assert error_text_without_content(RuntimeError(plain)) == plain
+
     def test_it_is_capped(self):
         from utils.log_safety import MAX_LEN
 
@@ -337,11 +459,12 @@ class TestTheGuardAgainstContentInTheLog:
         user query included.
 
         What is checked: every `except ... as <name>` handler whose `try`
-        body contains a `.execute(...)` -- there and only there can a SQL
-        tail arise, and only there does the cut help -- must not put
-        `<name>` raw into a log call. An embedding or LLM error carries no
-        `[SQL:` tail; the guard would be theatre there. (Closing THAT gap
-        needs a different guard, not the same one in more places.)
+        body reaches the database (see `_raw_db_error_logs` for what that
+        means) -- there and only there can a SQL tail arise, and only there
+        does the cut help -- must not put `<name>` raw into a log call. An
+        embedding or LLM error carries no `[SQL:` tail; the guard would be
+        theatre there. (Closing THAT gap needs a different guard, not the
+        same one in more places.)
 
         🛑 The scope is ALL of `services/`. Until 2026-10-30 it was a hard
         list of seven retrieval modules whose comment claimed it was
@@ -390,6 +513,126 @@ class TestTheGuardAgainstContentInTheLog:
             "        logger.warning(f'not a query: {e}')\n"
         )
         assert _raw_db_error_logs(ast.parse(source)) == [5]
+
+    def test_the_sweep_sees_a_query_that_is_REACHED_not_written_out(self):
+        """🛑 The shape that got past the first guard: the handler sits in a
+        function that never says `.execute` itself. Each case below is one
+        way a `try` reaches the database; the last two are the negative
+        controls -- a helper that touches nothing, and a call into another
+        module, which is deliberately not followed."""
+        import ast
+
+        source = (
+            "class R:\n"
+            "    async def _retrieve(self, session):\n"
+            "        return await session.execute('q')\n"
+            "    async def _middle(self, session):\n"
+            "        return await self._retrieve(session)\n"
+            "    async def via_two_calls(self, session):\n"
+            "        try:\n"
+            "            await self._middle(session)\n"
+            "        except Exception as e:\n"
+            "            logger.error(f'two calls down: {e}')\n"          # 10
+            "    async def via_own_session(self):\n"
+            "        try:\n"
+            "            async with AsyncSessionLocal() as session:\n"
+            "                await other_module.work(session)\n"
+            "        except Exception as e:\n"
+            "            logger.error(f'own session: {e!r}')\n"           # 16
+            "    async def via_commit(self, peer):\n"
+            "        try:\n"
+            "            peer.seen = 1\n"
+            "            await self.db.commit()\n"
+            "        except Exception as e:\n"
+            "            logger.warning(f'commit: {e}')\n"                # 22
+            "    async def inside_a_session_block(self, ids):\n"
+            "        async with AsyncSessionLocal() as db:\n"
+            "            svc = Service(db)\n"
+            "            for i in ids:\n"
+            "                try:\n"
+            "                    await svc.record(i)\n"
+            "                except Exception as e:\n"
+            "                    logger.warning(f'other object: {e}')\n"      # 30
+            "    async def harmless_helper(self):\n"
+            "        return 1\n"
+            "    async def no_database(self):\n"
+            "        try:\n"
+            "            await self.harmless_helper()\n"
+            "        except Exception as e:\n"
+            "            logger.warning(f'nothing to cut: {e}')\n"
+            "    async def another_module(self):\n"
+            "        try:\n"
+            "            await other_module.work()\n"
+            "        except Exception as e:\n"
+            "            logger.warning(f'not followed: {e}')\n"
+        )
+        assert _raw_db_error_logs(ast.parse(source)) == [10, 16, 22, 30]
+
+    def test_the_stack_is_kept_and_everything_else_dropped(self):
+        """`frames_without_content`: where it was raised, without the message,
+        the source lines or any value -- what replaces a full traceback at
+        the handlers around database work."""
+        from utils.log_safety import frames_without_content
+
+        def inner(secret):
+            raise RuntimeError(f"primary {secret} [SQL: SELECT 1] [parameters: ('{secret}',)]")
+
+        def outer(secret):
+            inner(secret)
+
+        try:
+            outer("zz-private-value-zz")
+        except RuntimeError as e:
+            text = frames_without_content(e)
+        assert "zz-private-value-zz" not in text and "SQL" not in text
+        # Outermost first, file and function named.
+        assert text.index("in outer") < text.index("in inner")
+        assert "test_atom_store_source_visibility.py:" in text
+        assert frames_without_content(RuntimeError("never raised")) == "no stack"
+
+    def test_no_traceback_is_logged_around_database_work_in_the_named_handlers(self):
+        """🛑 The four handlers that logged `logger.opt(exception=True)` around
+        work that can raise a database error (three in the orchestrator's
+        sub-agent run, the `pre_mcp_call` handler loop): a traceback ends in
+        the raw message. Checked on the body, per function."""
+        import ast
+        import pathlib as _pl
+
+        services = _pl.Path(__file__).resolve().parents[2] / "src/backend/services"
+        for file, function in (("orchestrator.py", "_run_sub_agent"),
+                               ("action_executor.py", "execute")):
+            tree = ast.parse((services / file).read_text())
+            found = [n for n in ast.walk(tree)
+                     if isinstance(n, ast.AsyncFunctionDef) and n.name == function]
+            assert found, f"{file}: no function {function} -- renamed?"
+            for fn in found:
+                tracebacks = [
+                    n.lineno for n in ast.walk(fn)
+                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "opt"
+                    and any(k.arg == "exception" for k in n.keywords)]
+                assert tracebacks == [], f"{file}:{tracebacks}"
+
+    def test_the_responder_task_is_inside_the_sweep(self):
+        """The function this widening was made for is actually reached by it
+        -- on its BODY: with its handler put back to the raw form the sweep
+        reports it."""
+        import ast
+        import pathlib as _pl
+
+        path = (_pl.Path(__file__).resolve().parents[2]
+                / "src/backend/services/federation_query_responder.py")
+        tree = ast.parse(path.read_text())
+        (task,) = [n for n in ast.walk(tree)
+                   if isinstance(n, ast.AsyncFunctionDef) and n.name == "_run_query"]
+        assert _raw_db_error_logs(tree) == []
+
+        handler = next(h for t in ast.walk(task) if isinstance(t, ast.Try)
+                       for h in t.handlers if h.name == "e")
+        raw = ast.parse("logger.error(f'failed: {e}')").body[0]
+        handler.body.insert(0, ast.copy_location(raw, handler.body[0]))
+        ast.fix_missing_locations(tree)
+        assert _raw_db_error_logs(tree) != []
 
 
 class TestTheSummaryLine:

@@ -70,6 +70,18 @@ from models.database import PeerUser
 from services.atom_types import Provenance
 from services.circle_sql import PeerScope
 from services.database import AsyncSessionLocal
+from services.federation_audit import (
+    OUTCOME_CANCELLED,
+    OUTCOME_GONE,
+    OUTCOME_LINK_REVOKED,
+    OUTCOME_NOT_STORED,
+    OUTCOME_PAIRING_REVOKED,
+    OUTCOME_UNEXPANDED,
+    STAGE_AFTER_ANSWER,
+    STAGE_AFTER_READ,
+    STAGE_BEFORE_READ,
+    outcome_note,
+)
 from services.federation_identity import (
     FederationIdentity,
     get_federation_identity,
@@ -111,10 +123,18 @@ from services.mcp_streaming import (
     PROGRESS_LABEL_SYNTHESIZING,
 )
 from services.pairing_service import _canonical_bytes
+from services.polymorphic_atom_store import RetrievalDeadlineExceeded, SourceSessions
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Max progress transitions per request (traffic-analysis defence).
 MAX_PROGRESS_UPDATES = 4
+
+# One instance for the whole process: the bound on concurrent statements of
+# the fan-outs (`SourceSessions`) only holds across retrievals that share it. The
+# factory is looked up at call time, not bound here, so it is always the same
+# name `_run_query` opens its own session from.
+_SOURCE_SESSIONS = SourceSessions(lambda: AsyncSessionLocal())
 
 
 # =============================================================================
@@ -159,9 +179,9 @@ async def purge_requests_for_pubkey(asker_pubkey: str) -> int:
 
     Called by `revoke_peer` so a revoked peer cannot poll /retrieve
     and receive an answer for a request they initiated before the
-    revocation. Bg tasks whose pending entry has vanished will find
-    `pending is None` at the top of _run_query and return quietly —
-    no cancellation needed.
+    revocation. A background task that is already running finds the
+    record gone at its next check (`_refusal_for`) and
+    cannot bring it back: `save` only updates an existing record.
 
     Returns count of discarded requests.
     """
@@ -169,7 +189,52 @@ async def purge_requests_for_pubkey(asker_pubkey: str) -> int:
     pending = await store.list_for_pubkey(asker_pubkey)
     rids = [pr.request_id for pr in pending]
     await store.delete_many(rids)
+    await _record_purged_answers(pending)
     return len(rids)
+
+
+async def _record_purged_answers(purged: list[_PendingRequest]) -> None:
+    """Correct the audit rows of answers that were purged BEFORE the far side
+    collected them.
+
+    🛑 This is the path a real revocation takes: the route commits, then
+    purges. The far side's next poll finds no record and learns nothing --
+    and writes nothing. Without this the row of a finished, uncollected
+    answer went on saying `success`, excerpt included, for an answer nobody
+    received. (The poll's own correction only covers a record that outlived
+    the purge.)
+
+    Only records that were COMPLETE and never handed over: an answer that
+    was collected stays recorded as delivered, a request still in work is
+    recorded by its task at the task's next check, a failed one already is.
+
+    The reason is asked of the DATABASE for each record, not taken from the
+    caller: a link revocation purges ALL requests of that far side, and one
+    that was not admitted on the revoked link is recorded as discarded
+    (`gone`), not as revoked.
+
+    Best-effort: the revocation has been committed, and it must not fail
+    because a record of it could not be written.
+    """
+    uncollected = [
+        pr for pr in purged
+        if pr.status == STATUS_COMPLETE and pr.handed_over_at is None
+    ]
+    if not uncollected:
+        return
+    try:
+        async with AsyncSessionLocal() as session:
+            reasons = [
+                await _standing_refusal(session, pr) or _REFUSED_GONE
+                for pr in uncollected
+            ]
+        for pr, why in zip(uncollected, reasons, strict=True):
+            await _record_undelivered_answer(pr, why)
+    except Exception as e:
+        logger.warning(
+            f"Federation: {len(uncollected)} purged answer(s) not corrected in "
+            f"the audit log: {type(e).__name__}: {error_text_without_content(e)}"
+        )
 
 
 async def _prune_expired(now: float | None = None) -> None:
@@ -235,7 +300,10 @@ async def _write_responder_audit(
         # failure. And `None` there means "aborted", not "failed"; the real
         # reason would be lost.
         final_item=(
-            {"success": True, "message": pending.answer or ""}
+            {"success": True, "message": pending.answer or "",
+             # A thinner answer than usual is still a delivered one; the row
+             # says which it was.
+             "note": _UNEXPANDED_NOTE if pending.unexpanded else None}
             if success
             # 🛑 `aborted` is a status of its own, not `failed`: a cancellation
             # AFTER the retrieval is not a failed access but a successful one
@@ -246,34 +314,225 @@ async def _write_responder_audit(
         ),
         direction="answered",
         identity_basis="mapped" if pending.mapped else "peer_tier",
+        request_id=pending.request_id,
     )
 
 
-async def _record_cancelled_access(pending: _PendingRequest) -> None:
+#: An answer that was made WITHOUT graph expansion, because expansion ran out
+#: of its time budget. Stored with the success row.
+_UNEXPANDED = OUTCOME_UNEXPANDED
+_UNEXPANDED_NOTE = outcome_note(
+    _UNEXPANDED,
+    "Antwort ohne Graph-Erweiterung: sie wurde in der verbleibenden Zeit "
+    "nicht fertig und ist entfallen.")
+
+#: Why a request is no longer served. `_GONE` is all the code knows when only
+#: the pending record is missing: purged by a revocation (the purge also hits
+#: the other requests of the same far side) or lapsed -- it cannot tell which.
+_REFUSED_GONE = OUTCOME_GONE
+_REFUSED_PAIRING = OUTCOME_PAIRING_REVOKED
+_REFUSED_LINK = OUTCOME_LINK_REVOKED
+#: The background task was cancelled (shutdown, a test reset).
+_CANCELLED = OUTCOME_CANCELLED
+#: The answer was made and could not be stored for collection.
+_NOT_STORED = OUTCOME_NOT_STORED
+
+#: The German sentence for each code -- presentation. The code itself leads
+#: the stored text (`federation_audit.outcome_note`) and is what tests and
+#: later readers of the log go by.
+_OUTCOME_TEXT = {
+    _REFUSED_GONE: "Anfrage nicht mehr vorhanden (verworfen oder abgelaufen)",
+    _REFUSED_PAIRING: "Kopplung widerrufen",
+    _REFUSED_LINK: "Verknüpfung besteht nicht mehr",
+    _CANCELLED: "Abgebrochen",
+    _NOT_STORED: "Antwort konnte nicht bereitgestellt werden",
+}
+
+
+def _unserved_note(code: str, pending: _PendingRequest) -> str:
+    """The audit text for an access that stopped being served: the code, how
+    far it had got, and the sentence saying the same.
+
+    `retrieved_count` is the dividing line: `None` = nothing was read, a
+    number = foreign data sat in memory, even though no answer went out.
+    """
+    what = _OUTCOME_TEXT[code]
+    if pending.retrieved_count is None:
+        return outcome_note(
+            code, f"{what} vor dem Abruf — es wurden keine Daten gelesen.",
+            stage=STAGE_BEFORE_READ)
+    return outcome_note(
+        code,
+        f"{what} nach dem Abruf — {pending.retrieved_count} Treffer "
+        "gelesen, keine Antwort ausgeliefert.",
+        stage=STAGE_AFTER_READ)
+
+
+def _undelivered_note(code: str, pending: _PendingRequest) -> str:
+    """The audit text for an answer that was MADE and never handed over."""
+    return outcome_note(
+        code,
+        f"{_OUTCOME_TEXT[code]} nach der Antwort — {pending.retrieved_count} "
+        "Treffer gelesen, Antwort erzeugt, aber nicht ausgeliefert.",
+        stage=STAGE_AFTER_ANSWER)
+
+
+async def _record_undelivered_answer(
+    pending: _PendingRequest, why: str, *, sole_writer: bool = False,
+) -> None:
+    """The answer of `pending` exists and will not be handed over: put that
+    into the row that so far says it was answered.
+
+    `sole_writer` (the background task, which is the only one working on its
+    request): if there is no row to correct -- its write is best-effort --
+    the access is recorded the way every other unserved one is; better a row
+    that says "read, not delivered" than none. A POLL must not do that: two
+    polls can be refused at the same moment, the second finds the row
+    already corrected, and a fallback would add a second row.
+    """
+    from services.federation_audit import mark_answer_not_handed_over
+
+    corrected = await mark_answer_not_handed_over(
+        request_id=pending.request_id,
+        error_message=_undelivered_note(why, pending),
+    )
+    if not corrected and sole_writer:
+        await _record_refused_access(pending, why)
+
+
+async def _record_cancelled_access(
+    pending: _PendingRequest, *, answer_recorded: bool = False,
+) -> None:
     """Write the record for a cancelled foreign access.
 
     A separate function so the cancellation branch above stays readable and
     the write is testable without staging a race.
+
+    `answer_recorded`: the cancellation came after the row for the finished
+    answer was written and before the answer could be collected -- that row
+    is corrected instead of a second one written.
     """
-    if pending.retrieved_count is None:
-        reason = "Abgebrochen vor dem Abruf — es wurden keine Daten gelesen."
+    if answer_recorded:
+        write = _withdraw_recorded_answer(pending)
     else:
-        reason = (
-            f"Abgebrochen nach dem Abruf — {pending.retrieved_count} Treffer "
-            "gelesen, keine Antwort ausgeliefert."
-        )
+        write = _write_responder_audit(
+            pending, success=False, error=_unserved_note(_CANCELLED, pending),
+            aborted=True)
     try:
         # `shield`: a SECOND cancel() ends the wait here, not the write
         # itself. Against a closing event loop nothing helps -- then there is
         # no row, i.e. exactly the old behaviour.
-        await asyncio.shield(
-            _write_responder_audit(pending, success=False, error=reason,
-                                   aborted=True)
-        )
+        await asyncio.shield(write)
     except asyncio.CancelledError:
         raise
     except Exception as e:  # pragma: no cover -- must never mask the cancellation
-        logger.warning(f"Federation: cancellation record not written: {e}")
+        logger.warning(f"Federation: cancellation record not written: {error_text_without_content(e)}")
+
+
+async def _withdraw_recorded_answer(pending: _PendingRequest) -> None:
+    """A cancellation between recording the answer and storing it: the row
+    is corrected, and the record is removed so the answer the row now calls
+    undelivered cannot be collected after all (the in-memory store hands out
+    the very object this task has just completed)."""
+    store = get_pending_store()
+    stored = await store.get(pending.request_id)
+    if (stored or pending).handed_over_at is not None:
+        # A poll got there first: the answer WAS delivered, and the row that
+        # says so is right. (Belt and braces -- the record only turns
+        # COMPLETE after its row is written, see `_run_query`.)
+        return
+    await _record_undelivered_answer(pending, _CANCELLED, sole_writer=True)
+    await store.delete_many([pending.request_id])
+
+
+async def _record_refused_access(pending: _PendingRequest, why: str) -> None:
+    """Write the record for a query that stopped being served under way.
+
+    `aborted`, like a cancellation, and for the same reason: after the
+    retrieval this is not a failed access but one that happened and was not
+    delivered.
+
+    The record says what the code KNOWS (`why`): a revoked pairing and a link
+    that no longer stands were read from the database; a record that is merely
+    gone is called gone, not revoked.
+    """
+    await _write_responder_audit(
+        pending, success=False, error=_unserved_note(why, pending), aborted=True)
+
+
+async def _pairing_is_active(db: AsyncSession, peer_user_id: int) -> bool:
+    """Is the pairing a pending record was admitted on still not revoked?"""
+    return (await db.execute(
+        select(PeerUser.id).where(
+            PeerUser.id == peer_user_id,
+            PeerUser.revoked_at.is_(None),
+        )
+    )).scalar_one_or_none() is not None
+
+
+async def _standing_refusal(db: AsyncSession, pending: _PendingRequest) -> str | None:
+    """What the DATABASE says against serving `pending` -- or `None`.
+
+    Both things a request was admitted on are asked again, each by its id:
+
+    * the pairing is not revoked;
+    * for a MAPPED request, the person link it was admitted on still stands
+      (`link_still_lends`: the row exists, names the same account, and the
+      account is active).
+
+    🛑 A link that is gone REFUSES the request. It does not fall back to the
+    pairing's tier: the far side asked as a person and was admitted as that
+    person; answering the same request with another reach would be an answer
+    nobody asked for, and the audit row would have to describe two identities.
+    A new request from the far side takes the fallback at `initiate`, openly.
+
+    A mapped record without `link_id` (a row from an older version) cannot be
+    re-checked and is refused for the same reason.
+    """
+    if not await _pairing_is_active(db, pending.peer_user_id):
+        return _REFUSED_PAIRING
+    if pending.mapped:
+        from services.federation_identity_link import link_still_lends
+
+        if (
+            pending.link_id is None
+            or pending.asker_local_user_id is None
+            or not await link_still_lends(
+                db, link_id=pending.link_id, peer_id=pending.peer_user_id,
+                local_user_id=pending.asker_local_user_id,
+            )
+        ):
+            return _REFUSED_LINK
+    return None
+
+
+async def _refusal_for(pending: _PendingRequest) -> str | None:
+    """Why the background task must stop working for this request -- or
+    `None` while it may go on.
+
+    Independent signals, and any one ends it:
+
+    * the pairing is revoked, or the person link of a mapped request no
+      longer stands, in the DATABASE (`_standing_refusal`). A revocation
+      purges AFTER it commits, so for a moment the record is still there --
+      and a record `put` after the purge (the `initiate` race: link resolved,
+      link revoked and purged, record stored) is never purged at all. The
+      database is asked every time, so neither order gets an answer;
+    * the pending record is GONE -- purged or lapsed; `save` never brings one
+      back.
+
+    The database is asked even when the record is gone: it is what tells a
+    revocation from a record that merely lapsed, and the audit row says which.
+
+    Opens a short session of its own: the task has no request session.
+    """
+    store = get_pending_store()
+    gone = await store.get(pending.request_id) is None
+    async with AsyncSessionLocal() as session:
+        why = await _standing_refusal(session, pending)
+    if why is not None and not gone:
+        await store.delete_many([pending.request_id])
+    return why or (_REFUSED_GONE if gone else None)
 
 
 def _peer_scope_for(pending: _PendingRequest) -> PeerScope | None:
@@ -393,7 +652,7 @@ class FederationQueryResponder:
         try:
             return await self._handle_initiate(req)
         except RedisError as e:
-            logger.error(f"Federation pending-store unavailable on initiate: {e}")
+            logger.error(f"Federation pending-store unavailable on initiate: {error_text_without_content(e)}")
             raise FederationQueryError("Federation store unavailable") from e
 
     async def _handle_initiate(
@@ -499,15 +758,18 @@ class FederationQueryResponder:
         # was built to prevent, so on an auth-off responder we refuse to map and
         # serve the peer-scoped fallback instead.
         mapped_user_id: int | None = None
+        link_id: int | None = None
         if (
             settings.federation_identity_links_enabled
             and settings.auth_enabled
             and req.querier_ref
         ):
-            from services.federation_identity_link import resolve_linked_user
-            mapped_user_id = await resolve_linked_user(
+            from services.federation_identity_link import resolve_link
+            link = await resolve_link(
                 self.db, peer_id=peer.id, querier_ref=req.querier_ref,
             )
+            if link is not None:
+                link_id, mapped_user_id = link
 
         if mapped_user_id is not None:
             # MAPPED — run as the local user with full circle semantics.
@@ -532,7 +794,7 @@ class FederationQueryResponder:
 
         request_id = str(uuid.uuid4())
         await _prune_expired(now=now)
-        await get_pending_store().put(_PendingRequest(
+        pending = _PendingRequest(
             request_id=request_id,
             asker_pubkey=req.asker_pubkey,
             peer_user_id=peer.id,
@@ -542,17 +804,24 @@ class FederationQueryResponder:
             initiated_at=now,
             peer_owner_id=peer_owner_id,
             mapped=mapped,
+            # 🛑 The link is resolved above and the record stored below; a
+            # revocation that commits AND purges in between finds no record
+            # to purge. That window is closed by the background task, which
+            # asks the database for THIS link before it reads anything
+            # (`_refusal_for`), and by the poll, which asks again.
+            link_id=link_id if mapped else None,
             peer_display_name=peer.remote_display_name or "",
             # 🛑 A verified name or nothing -- never the endpoint host: this
             # is what the audit row of the access stores for good.
             peer_instance_name=learned_name or stored_instance_name(peer) or "",
-        ))
+        )
+        await get_pending_store().put(pending)
 
         # Schedule the background work. The task is fire-and-forget —
         # asker polls via handle_retrieve. We keep a strong reference
         # in `_background_tasks` so asyncio's GC doesn't collect it
         # mid-run (add_done_callback removes the ref on completion).
-        task = asyncio.create_task(self._run_query(request_id))
+        task = asyncio.create_task(self._run_query(request_id, pending))
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
 
@@ -576,7 +845,7 @@ class FederationQueryResponder:
         try:
             return await self._handle_retrieve(req)
         except RedisError as e:
-            logger.error(f"Federation pending-store unavailable on retrieve: {e}")
+            logger.error(f"Federation pending-store unavailable on retrieve: {error_text_without_content(e)}")
             raise FederationQueryError("Federation store unavailable") from e
 
     async def _handle_retrieve(
@@ -612,13 +881,49 @@ class FederationQueryResponder:
             )
             return QueryBrainRetrieveResponse(status=STATUS_EXPIRED)
 
+        # 🛑 The pairing is looked up AGAIN, and so is the person link of a
+        # mapped request. Until 2026-11-15 only `initiate` checked either, and
+        # the purge on revocation was the sole protection of the poll -- a
+        # record stored after the purge, or brought back by the background
+        # task, was handed out to a revoked key. The refusal is the one an
+        # unknown request gets: nothing tells the far side that there was a
+        # request and a revocation.
+        why = await _standing_refusal(self.db, pending)
+        if why is not None:
+            await get_pending_store().delete_many([pending.request_id])
+            logger.warning(
+                f"Federation query_brain: poll refused ({why}) "
+                f"(request_id={req.request_id}, peer_id={pending.peer_user_id})"
+            )
+            # 🛑 An answer that was ready and is refused HERE stood in the
+            # audit log as delivered: its row was written when the answer was
+            # made. The row is corrected -- once: the record is deleted
+            # above, so the far side's next poll (it polls twice a second)
+            # finds nothing and writes nothing, and the correction itself
+            # only matches a row that still says `success`. An answer that
+            # had already been handed over stays recorded as delivered,
+            # because it was. A request still PROCESSING is recorded by its
+            # background task at the task's next check.
+            if pending.status == STATUS_COMPLETE and pending.handed_over_at is None:
+                await _record_undelivered_answer(pending, why)
+            return QueryBrainRetrieveResponse(status=STATUS_EXPIRED)
+
+        # The first hand-over of a finished answer is noted on the pending
+        # record (a store update, no database write): it is what a later
+        # refused poll needs to know.
+        if pending.status == STATUS_COMPLETE and pending.handed_over_at is None:
+            pending.handed_over_at = now
+            await get_pending_store().save(pending)
+
         return self._serialize_pending(pending)
 
     # -------------------------------------------------------------------------
     # Background work
     # -------------------------------------------------------------------------
 
-    async def _run_query(self, request_id: str) -> None:
+    async def _run_query(
+        self, request_id: str, pending: _PendingRequest | None = None,
+    ) -> None:
         """Execute retrieval + synthesis in the background. Never raises —
         the outer try/except catches everything (including AttributeError
         on a None pending or ImportError inside _retrieve) and transitions
@@ -631,25 +936,70 @@ class FederationQueryResponder:
         runs. Using `self.db` here would hit a closed session every time.
         """
         store = get_pending_store()
-        pending = await store.get(request_id)
+        # `handle_initiate` hands the record over. A task that only knew the
+        # id could not even RECORD a request that was purged while it waited
+        # to start -- the record is the only place its identity is kept.
+        if pending is None:
+            pending = await store.get(request_id)
         if pending is None:
             return
 
+        answer_recorded = False
         try:
+            # 🛑 A revoked pairing or person link gets no answer -- and no
+            # retrieval either, where that can still be avoided. The task may have waited (event
+            # loop, model server) since `initiate` admitted the request; the
+            # check at its start alone left everything after it unguarded.
+            if why := await _refusal_for(pending):
+                await _record_refused_access(pending, why)
+                return
+
             # Transition: retrieving (chunk+KG+memory RRF).
             await self._emit_progress(pending, PROGRESS_LABEL_RETRIEVING)
 
             # Fresh session scoped to this bg task only.
+            #
+            # 🛑 The step is BOUNDED, and what happens at the bound depends on
+            # what was running. `_retrieve` hands the store a budget: the
+            # fan-out is the answer and must fit (else the query FAILS, with
+            # a reason that says so); graph expansion gets what is left and
+            # is dropped when that runs out -- the answer is then made from
+            # the unexpanded result (`pending.unexpanded`). The timeout here
+            # is the backstop over both, a little later than the store's own
+            # budget so that it never beats the graceful path to the line.
+            step_deadline = settings.federation_retrieve_deadline
             async with AsyncSessionLocal() as session:
-                matches = await self._retrieve(session, pending)
+                try:
+                    async with asyncio.timeout(step_deadline) as backstop:
+                        matches = await self._retrieve(session, pending)
+                except TimeoutError:
+                    if not backstop.expired():
+                        # Not the backstop: the store's own deadline (which
+                        # names itself) or a timeout from further down.
+                        raise
+                    raise RetrievalDeadlineExceeded(
+                        f"retrieval step did not finish within {step_deadline:g} s"
+                    ) from None
             # 🛑 From here on foreign data sat in memory. If the query is
             # cancelled now that is still an access -- and only this record
             # tells it apart afterwards from a cancellation before it.
             pending.retrieved_count = len(matches)
 
+            # A revocation during the retrieval: the model is not handed what
+            # was read, and its call (up to the synthesis timeout) is saved.
+            if why := await _refusal_for(pending):
+                await _record_refused_access(pending, why)
+                return
+
             # Transition: synthesizing (Ollama call).
             await self._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
             answer = await self._synthesize(pending.query, matches)
+
+            # Retrieval and synthesis take seconds; a revocation in that time
+            # must not be answered. Checked BEFORE the result is stored.
+            if why := await _refusal_for(pending):
+                await _record_refused_access(pending, why)
+                return
 
             # Build redacted provenance list for the response.
             provenance = [
@@ -665,12 +1015,33 @@ class FederationQueryResponder:
             pending.answer = answer
             pending.provenance = provenance
             pending.answered_at = time.time()
+            # 🛑 The row is written BEFORE the answer becomes collectable --
+            # and that includes the STATUS: the in-memory store hands out
+            # this very object, so setting COMPLETE first let a poll collect
+            # the answer (or be refused, with no row to correct) while the
+            # row was still being written.
+            # From here on a row says "answered" (or is being written:
+            # the flag is set first, and a correction that finds no row
+            # falls back to an ordinary record). Whatever keeps the answer
+            # from becoming collectable now -- the record gone, the store
+            # failing, a cancellation -- corrects THAT row instead of adding
+            # a second one beside it.
+            answer_recorded = True
+            await _write_responder_audit(pending, success=True)
             # Status set LAST so a concurrent retrieve observing
             # status=COMPLETE is guaranteed to see answer/provenance.
             pending.progress_label = PROGRESS_LABEL_COMPLETE
             pending.status = STATUS_COMPLETE
-            await store.save(pending)
-            await _write_responder_audit(pending, success=True)
+            if not await store.save(pending):
+                # Gone between the check above and this line: `save` does
+                # not create, so nothing can be polled. The row just written
+                # is corrected: an answer was made, not handed over -- with
+                # the reason the database gives (a revocation purged it, or
+                # it merely lapsed).
+                await _record_undelivered_answer(
+                    pending, await _refusal_for(pending) or _REFUSED_GONE,
+                    sole_writer=True)
+                return
         except asyncio.CancelledError:
             # 🛑 A cancellation is no reason to keep the access quiet.
             #
@@ -689,22 +1060,44 @@ class FederationQueryResponder:
             # (a second `cancel()`, or the event loop closing) -- then it falls
             # back to the old behaviour, never to anything worse. Hence
             # `shield`: a second cancellation ends the wait, not the write.
-            await _record_cancelled_access(pending)
+            await _record_cancelled_access(pending, answer_recorded=answer_recorded)
             raise
         except Exception as e:
             logger.error(
                 f"Federation query_brain: background work failed "
-                f"(request_id={request_id}): {e}"
+                f"(request_id={request_id}): {error_text_without_content(e)}"
             )
-            pending.error_message = str(e)
+            # 🛑 The text goes into the pending record AND, for good, into the
+            # audit row. A database error here (graph expansion runs on this
+            # task's session) would carry `[SQL: ...] [parameters: ...]` --
+            # the far side's question and local rows -- so it is cut like
+            # every log line. The far side never sees it: a FAILED poll
+            # carries no message.
+            reason = f"{type(e).__name__}: {error_text_without_content(e)}"
+            pending.error_message = reason
             # Fill in answered_at on failure too so _serialize_pending's
             # `int(pending.answered_at or time.time())` reports the
             # actual failure moment instead of the poll moment.
             pending.answered_at = time.time()
             pending.progress_label = PROGRESS_LABEL_FAILED
             pending.status = STATUS_FAILED
-            await store.save(pending)
-            await _write_responder_audit(pending, success=False, error=str(e))
+            # The audit record FIRST: the store may be what failed, and may
+            # well fail again below.
+            if answer_recorded:
+                # The answer was made and recorded; storing it failed.
+                await _record_undelivered_answer(pending, _NOT_STORED, sole_writer=True)
+            else:
+                await _write_responder_audit(pending, success=False, error=reason)
+            try:
+                await store.save(pending)
+            except Exception as save_error:
+                # This function never raises. Without the terminal status
+                # the far side polls until the request lapses.
+                logger.error(
+                    f"Federation query_brain: terminal status not stored "
+                    f"(request_id={request_id}): {type(save_error).__name__}: "
+                    f"{error_text_without_content(save_error)}"
+                )
 
     async def _retrieve(
         self,
@@ -716,9 +1109,19 @@ class FederationQueryResponder:
         Takes a session parameter rather than reading `self.db` — the bg
         task opens its own session (see _run_query docstring).
         """
+
         from services.polymorphic_atom_store import PolymorphicAtomStore
-        store = PolymorphicAtomStore(session)
-        return await store.query(
+
+        # 🛑 `session` is FRESH (see `_run_query`), and the store fans out at
+        # once. Eight sources on one cold session is the defect that ran live
+        # until 2026-11-15: all of them try to provision the same connection,
+        # one wins, the rest end in `InvalidRequestError` -- "2/8 sources
+        # delivered, 3 crashed" on every inbound query. So no source touches
+        # `session`: each statement of each source runs on a session of its
+        # own. `session` itself serves only what runs after the fan-out
+        # (graph expansion).
+        store = PolymorphicAtomStore(session, source_sessions=_SOURCE_SESSIONS)
+        matches = await store.query(
             query_text=pending.query,
             asker_id=pending.asker_local_user_id or 0,
             max_visible_tier=pending.max_visible_tier,
@@ -739,7 +1142,12 @@ class FederationQueryResponder:
             # unmarked: the cold one, where the session is fresh and seven of
             # eight sources break off.
             federated=True,
+            # Ends a little before the step's backstop in `_run_query`, so
+            # the store's own handling of the bound gets there first.
+            deadline=settings.federation_retrieve_budget,
         )
+        pending.unexpanded = store.expansion_skipped
+        return matches
 
     async def _synthesize(self, query: str, matches: list) -> str:
         """
@@ -800,7 +1208,7 @@ class FederationQueryResponder:
                         "num_predict": 512,    # hard cap on generated tokens
                     },
                 ),
-                timeout=settings.federation_synthesis_timeout,  # constraint validated in config: must be <60 (responder TTL)
+                timeout=settings.federation_synthesis_timeout,  # fits the request window together with the retrieval: validated in config
             )
             answer = extract_response_content(response) or ""
         except Exception as e:
@@ -909,7 +1317,7 @@ class FederationQueryResponder:
         try:
             return await self._handle_ping(req)
         except RedisError as e:
-            logger.error(f"Federation pending-store unavailable on ping: {e}")
+            logger.error(f"Federation pending-store unavailable on ping: {error_text_without_content(e)}")
             raise FederationQueryError("Federation store unavailable") from e
 
     async def _handle_ping(self, req: PeerPingRequest) -> PeerPingResponse:
@@ -1063,7 +1471,7 @@ class FederationQueryResponder:
         except Exception as e:
             logger.warning(
                 f"Federation query_brain: last_seen_at update failed "
-                f"(peer_id={peer.id}, non-fatal): {e}"
+                f"(peer_id={peer.id}, non-fatal): {error_text_without_content(e)}"
             )
             await self.db.rollback()
 

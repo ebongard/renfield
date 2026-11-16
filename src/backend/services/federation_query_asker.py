@@ -85,6 +85,7 @@ from services.mcp_streaming import (
 )
 from services.pairing_service import _canonical_bytes
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Timeouts (seconds) — responder-side TTL is 60s (F3a), so we cap here.
 POLL_INTERVAL_SECONDS = 0.5
@@ -185,7 +186,7 @@ class FederationQueryAsker:
                         session, peer_id=peer.id, local_user_id=user_id,
                     )
             except Exception as e:
-                logger.warning(f"Federation querier_ref resolve failed (fallback): {e}")
+                logger.warning(f"Federation querier_ref resolve failed (fallback): {error_text_without_content(e)}")
 
         if self._client is not None:
             # Injected client (test path) — don't own its lifecycle.

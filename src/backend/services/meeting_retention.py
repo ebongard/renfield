@@ -24,6 +24,7 @@ from sqlalchemy import select
 from models.database import Meeting
 from services.database import AsyncSessionLocal
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 
 def _audio_glob(meeting_id: int) -> str:
@@ -110,7 +111,7 @@ async def cleanup_meetings() -> tuple[int, int]:
                 await purge_meeting(db, meeting_id, transcript_document_id)
                 meetings_purged += 1
             except Exception as e:
-                logger.warning(f"meeting retention: purge of meeting {meeting_id} failed: {e}")
+                logger.warning(f"meeting retention: purge of meeting {meeting_id} failed: {error_text_without_content(e)}")
                 await db.rollback()
                 continue
 

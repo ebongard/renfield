@@ -12,51 +12,101 @@ ASCII query flow:
         |
         +-- Build per-asker AccessContext (dimensions + memberships) once.
         |
-        +-- Fan-out over EIGHT sources (asyncio.gather), all on `self.db`:
-        |     +-- RAGRetrieval(db).search(text, top_k=top_k*3) -> kb_chunks
-        |     +-- KGRetrieval(db).get_relevant_atoms(text, asker)
-        |     +-- MemoryRetrieval(db).retrieve(text, asker_id)
-        |     +-- LexicalRetrieval(db).search_chunks_lexical / _memories_lexical
-        |     +-- SkillService(db).find_similar          (flag-gated)
-        |     +-- DocumentFactRetrieval(db).search
-        |     +-- NoteRetrieval(db).search               (flag-gated)
+        +-- Fan-out over EIGHT sources (asyncio.gather):
+        |     +-- RAGRetrieval(s).search(text, top_k=top_k*3) -> kb_chunks
+        |     +-- KGRetrieval(s).get_relevant_atoms(text, asker)
+        |     +-- MemoryRetrieval(s).retrieve(text, asker_id)
+        |     +-- LexicalRetrieval(s).search_chunks_lexical / _memories_lexical
+        |     +-- SkillService(s).find_similar          (flag-gated)
+        |     +-- DocumentFactRetrieval(s).search
+        |     +-- NoteRetrieval(s).search               (flag-gated)
         |
-        |   🛑 NOT parallel, and this docstring claimed the opposite until
-        |   2026-10-29. An `AsyncSession` holds ONE connection; eight
-        |   concurrent queries on it are not supported by SQLAlchemy. Measured
-        |   against real Postgres with the project's own session factory,
-        |   eight queries at ~50 ms PURE SQL time, three runs, stable
-        |   (`bin/probe-atom-store-sessions.py`):
+        |   WHICH SESSION `s` IS decides whether this is parallel. An
+        |   `AsyncSession` holds ONE connection; concurrent queries on it are
+        |   not supported by SQLAlchemy. Measured against real Postgres with
+        |   the project's own session factory, eight queries at ~50 ms PURE
+        |   SQL time, three runs, stable (`bin/probe-atom-store-sessions.py`):
         |
-        |       one session, COLD           1 of 8 delivered     52 ms
-        |       one session, pre-warmed     8 of 8              408 ms  (serial)
-        |       one session per source      8 of 8               56 ms
+        |       A) one session, COLD           1 of 8 delivered     52 ms
+        |       B) one session, pre-warmed     8 of 8              408 ms  (serial)
+        |       C) one session per source      8 of 8               56 ms
         |
         |   🛑 These numbers are NOT the duration in the log line. The line times
         |   the whole fan-out, embedding calls to Ollama/llama-server included,
-        |   and those dominate it. You will not find "408 vs 56 ms" there --
-        |   the probe isolates SQL time, the line does not.
+        |   and those dominate it. The probe isolates SQL time, the line does
+        |   not.
         |
-        |   The federated path (`federation_query_responder._retrieve`) opens a
-        |   fresh session and fans out immediately -> 1 of 8. The local path
-        |   gets a warm session from `get_db` -> 8 of 8, but SERIALLY.
-        |   Pre-warming is therefore not a fix: it removes the error message by
-        |   removing the concurrency.
+        |   There are two regimes, chosen by the CALLER through the
+        |   constructor:
         |
-        |   The fix is one session per source (regime C). Before that, each
-        |   source's call tree needs checking for writes:
-        |   `MemoryRetrieval.retrieve` bumps `access_count` and deliberately
-        |   uses `flush()`, not `commit()`, because the caller's transaction
-        |   should decide -- a session of its own would break that contract.
+        |   * `source_sessions=None` -- every source runs on `self.db`. That
+        |     is regime B and only correct on a WARM session. Warm means: a
+        |     transaction is OPEN, so the connection is already there -- a
+        |     commit or rollback makes the session cold again. The one caller
+        |     is `GET /api/atoms`: its auth dependency has queried the same
+        |     request session before the route body runs, without committing
+        |     (`get_current_user` / `get_user_or_default`). A caller with a
+        |     fresh session MUST NOT use this regime -- that is regime A, and
+        |     it is what the federated path did until 2026-11-15 (live: "2/8
+        |     sources delivered, 3 crashed" on every inbound query).
+        |     Pre-warming is not the fix: it removes the error message by
+        |     removing the concurrency.
+        |
+        |   * `source_sessions=SourceSessions(...)` -- no source touches
+        |     `self.db` (regime C). The federated responder uses this. Each
+        |     source is handed a `SourceReader`; every statement on it runs
+        |     on a session of its own that lives exactly as long as the
+        |     statement. While a source waits for a model server it holds
+        |     nothing. At most `SOURCE_SESSION_LIMIT` statements -- and so
+        |     connections -- are on the database at any time, however many
+        |     fan-outs run; see `SourceSessions`. Every source also has a
+        |     deadline there (`atom_fanout_source_timeout`).
+        |
+        |   🛑 The regime says WHERE a source reads. Whether the fan-out may
+        |   WRITE is a separate statement of the caller: `query(federated=)`.
+        |   A federated call writes nothing in either regime; a call that is
+        |   not federated is refused in regime C (`ValueError`), because a
+        |   `SourceReader` cannot carry its writes.
+        |
+        |   A source in regime C has NO caller transaction to lean on, so
+        |   each call tree was checked for writes (2026-11-15):
+        |
+        |     rag, kg, lexical_chunks, lexical_memories, document_fact, note
+        |         read only; return plain dicts, no ORM instances.
+        |     memory
+        |         `retrieve` bumps `access_count` and only `flush()`es -- "the
+        |         caller's transaction decides". Neither caller of this store
+        |         commits, so in the fan-out the bump was never durable by
+        |         design; it only held row locks until the session closed. For a
+        |         federated call it is switched off (`track_access=False`): the
+        |         fan-out is a PURE READ there, no row locks across sessions,
+        |         and a peer's question does not shift the recency ranking of
+        |         local memories.
+        |     skill
+        |         `find_similar` writes the shadow log and COMMITS on its
+        |         session (`skill_shadow_log_enabled`, default on). On a shared
+        |         session that commit also decides for whatever the other
+        |         sources have flushed. For a federated call it is switched off
+        |         (`record_shadow_log=False`): a paired instance's question
+        |         is not a local person's turn and must not write curator
+        |         rows under a local account.
+        |
+        |   With both switched off the fan-out in regime C is a pure read,
+        |   and it is enforced twice: `SourceReader` has no `add`, `flush`
+        |   or `commit`, and every statement on it runs in a READ ONLY
+        |   transaction, so Postgres refuses DML and row locks sent through
+        |   `execute`. None of the sources uses SET LOCAL, an advisory lock
+        |   or a savepoint.
+        |   Graph expansion runs AFTER the fan-out, alone, on `self.db`.
         |
         |   🛑 How many sources CAN report a failure is not the same as eight.
         |   `lexical_chunks`, `lexical_memories` and `note` re-raise to the
         |   fan-out (since 2026-10-29; they have no caller outside it), and so
-        |   do `rag` and `skill`. `memory`, `document_fact` and `kg` catch it
-        |   THEMSELVES and return empty -- they show up in the line as "empty",
-        |   not as "crashed". Those are the three with external callers, and
-        |   converting them is an open decision. Anyone reading the number off
-        |   that line needs to know this.
+        |   do `rag` and `skill`. `memory`, `document_fact` and `kg` catch
+        |   some failures THEMSELVES and return empty -- they show up in the
+        |   line as "empty", not as "crashed". Those are the three with
+        |   external callers, and converting them is an open decision. Anyone
+        |   reading the number off that line needs to know this.
         |
         +-- Wrap each source result list as AtomMatch[] with rank assigned.
         |
@@ -80,7 +130,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Sequence
+import weakref
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -100,14 +151,198 @@ from services.circle_sql import PeerScope
 from utils.config import settings
 from utils.log_safety import error_text_without_content
 
+#: How many statements of read-only fan-outs may be on the database at the
+#: same time in this process -- and with that, how many connections all of
+#: them hold together. Eight = one fan-out runs its SQL fully parallel; a
+#: second one arriving meanwhile shares the same eight slots instead of taking
+#: eight more.
+SOURCE_SESSION_LIMIT = 8
+
+#: The transaction of every statement on a `SourceReader` (see
+#: `SourceSessions.execute`).
+_READ_ONLY = {"postgresql_readonly": True}
+
+
+class RetrievalDeadlineExceeded(TimeoutError):
+    """The retrieval did not produce a result inside the time it was given.
+
+    A class of its own because `str(TimeoutError())` is EMPTY: the reason of
+    a failed query read `TimeoutError: ` with nothing after the colon. The
+    message names the step and the deadline.
+    """
+
+
+class SourceSessions:
+    """Database access for the sources of a read-only fan-out -- bounded.
+
+    One instance per process and session factory (the federated responder
+    keeps one at module level); the bound only holds across fan-outs that
+    share the instance.
+
+    🛑 THE SLOT COVERS ONE STATEMENT, NOT ONE SOURCE. A source is handed a
+    `SourceReader`, and every `execute` on it takes a slot, opens a session,
+    runs the statement, buffers the result, closes the session and gives the
+    slot back. Between two statements a source holds NOTHING -- no slot, no
+    session, no connection, no open transaction.
+
+    That is the point, because the sources do not only query. All of them
+    but the two lexical ones and `document_fact` call a model server in
+    between: `kg` asks an LLM for entity names BEFORE its first statement
+    (read timeout 300 s) and embeds between statements, `rag` reranks
+    between its search and its parent lookup, `memory`, `skill` and `note`
+    embed first. The first version of this class held the slot for the whole
+    source call. Eight sources waiting on a busy model server then held all
+    eight slots without one connection among them, and every SQL source of
+    every other inbound query queued behind them -- one slow model call
+    delayed everybody, where before the change it delayed its own query.
+    A deadline would only have bounded that; this removes it. It needs no
+    knowledge of where a source happens to call its model, and a source
+    that grows a new model call cannot bring the coupling back.
+
+    Why one statement per session is no loss: the fan-out is a pure read,
+    and Postgres' READ COMMITTED gives every statement a snapshot of its own
+    anyway -- two statements of one source never shared a view of the data.
+    No source uses SET LOCAL, an advisory lock, a savepoint or a temp table
+    (checked 2026-11-15), so nothing lives on the connection between them.
+
+    Pool arithmetic (`services/database.py`, `utils/config.py`): a backend
+    process owns `db_pool_size + db_max_overflow` = 10 + 20 = 30 connections
+    by default. Checked on 2026-11-15: the manifests in this repository's
+    `k8s/` override neither, nor `max_connections` (Postgres default 100,
+    shared with the workers' own pools); the second instance's manifests
+    live in another repository and were not checked. All read-only fan-outs
+    TOGETHER hold at most `limit` connections -- 8 of 30 -- whatever the
+    number of inbound queries, and only while a statement runs. The price
+    is a pool checkout per statement (pre-ping and the checkin hook
+    included) instead of one per source.
+    """
+
+    def __init__(
+        self,
+        factory: Callable[[], Any],
+        *,
+        limit: int = SOURCE_SESSION_LIMIT,
+    ):
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        self._factory = factory
+        self._limit = limit
+        # An `asyncio.Semaphore` belongs to the event loop it first waited on,
+        # and this object lives as long as the process. One semaphore per
+        # loop keeps it usable from any loop that comes later; keyed weakly so
+        # a closed loop frees its entry.
+        self._slots: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop, asyncio.Semaphore
+        ] = weakref.WeakKeyDictionary()
+
+    def _slots_for_this_loop(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        slots = self._slots.get(loop)
+        if slots is None:
+            slots = self._slots[loop] = asyncio.Semaphore(self._limit)
+        return slots
+
+    def reader(self) -> SourceReader:
+        """What ONE source is handed in place of a session."""
+        return SourceReader(self)
+
+    @property
+    def bind(self) -> Any:
+        """The engine behind the factory -- the sources ask it for the
+        dialect. A session that is never used takes no connection."""
+        return getattr(self._factory(), "bind", None)
+
+    async def execute(self, statement: Any, params: Any = None, **kwargs: Any) -> Any:
+        """Run ONE statement inside a slot, on a session that lives exactly
+        as long as the statement.
+
+        The session is closed on return, error and cancellation alike
+        (`async with`), and the slot is released after it. The result is
+        frozen first: its rows are in memory, so it stays readable after the
+        connection has gone back to the pool.
+        """
+        async with self._slots_for_this_loop():
+            async with self._factory() as session:
+                # 🛑 READ ONLY is enforced by the DATABASE, not by what this
+                # class happens to lack. The transaction of this statement is
+                # opened read-only, so an UPDATE ... RETURNING or a SELECT ...
+                # FOR UPDATE is refused by Postgres instead of running and
+                # being rolled back when the session closes. The option
+                # belongs to this checkout: the pool resets it on return.
+                await session.connection(execution_options=_READ_ONLY)
+                result = await session.execute(statement, params, **kwargs)
+                return result.freeze()()
+
+
+class SourceReader:
+    """The read-only stand-in for a session that a source of a fan-out on
+    `SourceSessions` works with.
+
+    It has `execute` and `bind` and NOTHING ELSE -- no `add`, no `flush`, no
+    `commit` -- and every statement runs in a READ ONLY transaction. The
+    fan-out on own sessions is a pure read, and a source that tries to
+    write there fails loudly either way (`AttributeError`, or Postgres
+    refusing the statement; it shows up as crashed in the summary line)
+    instead of writing on a connection nobody decides about. A source that
+    has a write needs an explicit switch for it, as `track_access` and
+    `record_shadow_log` are.
+    """
+
+    def __init__(self, sessions: SourceSessions):
+        self._sessions = sessions
+
+    @property
+    def bind(self) -> Any:
+        return self._sessions.bind
+
+    async def execute(self, statement: Any, params: Any = None, **kwargs: Any) -> Any:
+        return await self._sessions.execute(statement, params, **kwargs)
+
 
 class PolymorphicAtomStore:
     """v1 AtomStore implementation. Fans out to the Lane-A retrieval modules."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        source_sessions: SourceSessions | None = None,
+    ):
+        """``source_sessions`` selects the fan-out regime (module docstring).
+
+        ``None``: all sources share ``db`` -- only for a caller whose session
+        has already run a statement. A caller that opens a fresh session and
+        queries at once passes a ``SourceSessions``.
+
+        The regime decides WHERE a source reads, not whether the fan-out may
+        write: that follows ``query(federated=...)``. Own sessions are
+        read-only, so ``query`` refuses them for a call that is not federated.
+        """
         self.db = db
         self.resolver = CircleResolver(db)
         self.atom_service = AtomService(db, self.resolver)
+        self._source_sessions = source_sessions
+        #: Set by `query` when graph expansion ran out of its budget and the
+        #: result is the UNEXPANDED fusion. After that `db` carries a
+        #: cancelled statement and must not be used again -- close it.
+        self.expansion_skipped = False
+
+    async def _run_source(
+        self, call: Callable[[Any], Awaitable[Any]]
+    ) -> Any:
+        """Run one source of the fan-out on what its regime gives it.
+
+        On own sessions every source also gets a DEADLINE
+        (`atom_fanout_source_timeout`). A slow model server holds no slot
+        (see `SourceSessions`), but it would still hold THIS fan-out: the kg
+        source alone can wait 300 s for its LLM, long after the far side
+        stopped polling. A source over its deadline is cancelled and counted
+        as crashed (`TimeoutError`); the others still make the answer.
+        """
+        if self._source_sessions is None:
+            return await call(self.db)
+        async with asyncio.timeout(settings.atom_fanout_source_timeout):
+            return await call(self._source_sessions.reader())
 
     async def query(
         self,
@@ -119,9 +354,24 @@ class PolymorphicAtomStore:
         top_k: int = 20,
         peer: PeerScope | None = None,
         federated: bool = False,
+        deadline: float | None = None,
     ) -> Sequence[AtomMatch]:
         """
         Query each source in parallel; merge with RRF; return top_k.
+
+        ``deadline`` (seconds, ``None`` = unbounded, the local path): the
+        budget of the WHOLE call, spent in two parts that fail differently.
+
+        * The FAN-OUT is the answer. If it has not finished by the deadline
+          the call raises ``RetrievalDeadlineExceeded``. (Each source has its
+          own deadline on own sessions, so this only fires when the
+          configuration lets a source outlive the call.)
+        * GRAPH EXPANSION is an enrichment of that answer. It gets what the
+          fan-out left of the budget; when that runs out it is cancelled, a
+          warning is logged, ``expansion_skipped`` is set and the UNEXPANDED
+          fusion is returned. A source that ran to its deadline must not
+          cost the other seven their results because expansion then had no
+          time left.
 
         Circle filtering (Lane C) is applied per source: rag / kg / memory /
         lexical / document-fact retrieval all receive ``asker_id`` and constrain
@@ -161,19 +411,57 @@ class PolymorphicAtomStore:
 
         candidate_k = top_k * 3  # over-fetch for RRF fusion across sources
 
-        rag_task = RAGRetrieval(self.db).search(
-            query_text, top_k=candidate_k, user_id=asker_id, peer=peer
-        )
+        # 🛑 Whether the fan-out may WRITE follows what the caller STATES
+        # (`federated`), never the session regime. It has two writes: the
+        # memory access bump and the skill shadow log (rows inserted and
+        # committed under the asking account). A paired instance's question
+        # is not a local person's turn, so a federated call makes neither --
+        # on own sessions and on the caller's session alike.
+        #
+        # Until 2026-11-16 this read `self._source_sessions is None`. The two
+        # happened to coincide for the two callers there are, and would have
+        # parted silently with the next one: a federated call on the caller's
+        # session would have written curator rows again, a local call on own
+        # sessions would have lost both writes without a word.
+        #
+        # That second combination is REFUSED rather than degraded: a
+        # `SourceReader` runs one statement per session and cannot flush, so
+        # a local call there could not track access. A local caller that
+        # wants the parallel regime has to bring a way to write first.
+        if self._source_sessions is not None and not federated:
+            raise ValueError(
+                "PolymorphicAtomStore: `source_sessions` is the read-only "
+                "regime and only serves a call that states `federated=True`. "
+                "A local call there would silently lose the memory access "
+                "bump and the skill shadow log."
+            )
+        writes_allowed = not federated
+
+        # 🛑 Every source is built from what it is HANDED (`s`: the caller's
+        # session, or a `SourceReader`), and from nothing else. The scope --
+        # `asker_id`, `peer` -- is closed over here, once, for both regimes:
+        # the regime changes which connection a source reads on, never what
+        # it is allowed to read.
+        def rag(s: Any):
+            return RAGRetrieval(s).search(
+                query_text, top_k=candidate_k, user_id=asker_id, peer=peer
+            )
+
         # Structured per-entity/-relation KG atoms (not the aggregated string):
         # each kg_node/kg_edge carries its source id so the detail drawer can
         # render the entity + edit its tier. The agent path still uses the
         # string form (get_relevant_context) elsewhere.
-        kg_task = KGRetrieval(self.db).get_relevant_atoms(
-            query_text, user_id=asker_id, peer=peer
-        )
-        memory_task = MemoryRetrieval(self.db).retrieve(
-            query_text, user_id=asker_id, limit=candidate_k, peer=peer
-        )
+        def kg(s: Any):
+            return KGRetrieval(s).get_relevant_atoms(
+                query_text, user_id=asker_id, peer=peer
+            )
+
+        def memory(s: Any):
+            return MemoryRetrieval(s).retrieve(
+                query_text, user_id=asker_id, limit=candidate_k, peer=peer,
+                track_access=writes_allowed,
+            )
+
         # Lexical retrievers — keyword / name fallback for queries the
         # vector path mis-ranks (single tokens like "Jutta", short
         # German questions whose embedding sits below
@@ -183,71 +471,92 @@ class PolymorphicAtomStore:
         # vector + lexical lists get an RRF boost from both contributions
         # — exactly the "this is both semantic AND keyword match"
         # behaviour we want.
-        lex = LexicalRetrieval(self.db)
-        lexical_chunks_task = lex.search_chunks_lexical(
-            query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
-        )
-        lexical_memories_task = lex.search_memories_lexical(
-            query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
-        )
+        def lexical_chunks(s: Any):
+            return LexicalRetrieval(s).search_chunks_lexical(
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+            )
+
+        def lexical_memories(s: Any):
+            return LexicalRetrieval(s).search_memories_lexical(
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+            )
+
         # Schicht A document facts — a sixth source so structured facts
         # (Steuernummer, issuer, obligation) surface in /brain search via the
         # same RRF fusion. Keyword/identifier retrieval, not vector (facts are
         # short structured strings; the parent chunk is already embedded).
-        document_fact_task = DocumentFactRetrieval(self.db).search(
-            query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
-        )
-        # Self-learning Phase 1: procedural skills are atoms too — give
-        # them a fourth source for the unified /brain search. Gated on
-        # skills_enabled so the existing three-source RRF behavior is
-        # unchanged for deployments that haven't opted in.
+        def document_fact(s: Any):
+            return DocumentFactRetrieval(s).search(
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+            )
+
+        # Self-learning Phase 1: procedural skills are atoms too. Gated on
+        # skills_enabled so the fusion is unchanged for deployments that
+        # haven't opted in.
+        def skill(s: Any):
+            return SkillService(s).find_similar(
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+                record_shadow_log=writes_allowed,
+            )
+
+        # Phase 4B: hand-authored notes are atoms too (FTS keyword retrieval; a
+        # note's parent has no separate embedding). Gated on notes_enabled.
+        def note(s: Any):
+            return NoteRetrieval(s).search(
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
+            )
+
         # Which sources were not asked AT ALL. They must not count as
         # "empty" -- otherwise an instance with `NOTES_ENABLED=false` looks
-        # like a permanent partial outage.
+        # like a permanent partial outage. They take no session and no slot.
         off: set[str] = set()
-
-        if settings.skills_enabled:
-            skill_task = SkillService(self.db).find_similar(
-                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
-            )
-        else:
+        if not settings.skills_enabled:
             off.add("skill")
-
-            async def _empty():
-                return []
-            skill_task = _empty()
-
-        # Phase 4B: hand-authored notes are atoms too — an eighth source so notes
-        # surface in /brain via the same RRF fusion (FTS keyword retrieval; a
-        # note's parent has no separate embedding). Gated on notes_enabled so the
-        # existing seven-source behavior is unchanged when off.
-        if settings.notes_enabled:
-            note_task = NoteRetrieval(self.db).search(
-                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
-            )
-        else:
+        if not settings.notes_enabled:
             off.add("note")
 
-            async def _empty_notes():
-                return []
-            note_task = _empty_notes()
+        async def _not_asked() -> list:
+            return []
+
+        calls = [
+            ("rag", rag), ("kg", kg), ("memory", memory),
+            ("lexical_chunks", lexical_chunks),
+            ("lexical_memories", lexical_memories),
+            ("skill", skill), ("document_fact", document_fact), ("note", note),
+        ]
 
         # Per PR #402 review SHOULD-FIX #9: gather(return_exceptions=True) does NOT raise,
         # so the previous try/except wrapper around it was dead code that swallowed
         # programmer errors (e.g., import failure on the lazy-imported retrieval modules).
         # Removing the wrapper — exceptions in retrieval modules are converted to []
         # by the _wrap_* helpers, and any actual programmer error now bubbles to FastAPI.
+        #
+        # One crashing source does not take the others down, and in regime C
+        # it cannot even disturb them: they share no session. A cancellation
+        # of this task cancels all eight; a statement in flight closes its
+        # session on the way.
+        self.expansion_skipped = False
         _t0 = time.perf_counter()
-        (
-            rag_results, kg_atoms, memory_results,
-            lexical_chunks, lexical_memories, skill_results, document_fact_results,
-            note_results,
-        ) = await asyncio.gather(
-            rag_task, kg_task, memory_task,
-            lexical_chunks_task, lexical_memories_task, skill_task, document_fact_task,
-            note_task,
-            return_exceptions=True,
-        )
+        try:
+            # `timeout(None)` is no deadline at all.
+            async with asyncio.timeout(deadline):
+                (
+                    rag_results, kg_atoms, memory_results,
+                    lexical_chunks_results, lexical_memories_results, skill_results,
+                    document_fact_results, note_results,
+                ) = await asyncio.gather(
+                    *(
+                        _not_asked() if name in off else self._run_source(call)
+                        for name, call in calls
+                    ),
+                    return_exceptions=True,
+                )
+        except TimeoutError:
+            # The sources are cancelled with the gather; a statement in
+            # flight closes its session and frees its slot on the way.
+            raise RetrievalDeadlineExceeded(
+                f"atom fan-out did not finish within {deadline:g} s"
+            ) from None
 
         # 🛑 Wrap AND classify in one pass. Emptiness must not be decided with
         # `not value`: `kg` returns `{"entities": [], "relations": []}` when it
@@ -267,8 +576,8 @@ class PolymorphicAtomStore:
                 ("rag", rag_results, _wrap_rag_results),
                 ("kg", kg_atoms, _wrap_kg_atoms),
                 ("memory", memory_results, _wrap_memory_results),
-                ("lexical_chunks", lexical_chunks, _wrap_rag_results),
-                ("lexical_memories", lexical_memories, _wrap_memory_results),
+                ("lexical_chunks", lexical_chunks_results, _wrap_rag_results),
+                ("lexical_memories", lexical_memories_results, _wrap_memory_results),
                 ("skill", skill_results, _wrap_skill_results),
                 ("document_fact", document_fact_results, _wrap_document_fact_results),
                 ("note", note_results, _wrap_note_results),
@@ -295,13 +604,42 @@ class PolymorphicAtomStore:
         # the decay survives and it runs once.
         if settings.graph_expansion_enabled:
             from services.graph_expansion import expand_fused
-            extra = await expand_fused(
-                list(merged), asker_id, self.db,
-                max_pivots=settings.graph_expansion_max_pivots,
-                max_hops=settings.graph_expansion_max_hops,
-                max_expanded=settings.graph_expansion_max_expanded,
-                peer=peer,
-            )
+
+            # What the fan-out left of the budget. Nothing left counts as
+            # run out: expansion is not started at all.
+            budget = None if deadline is None else deadline - (time.perf_counter() - _t0)
+            extra: list[AtomMatch] = []
+            out_of_budget = budget is not None and budget <= 0
+            if not out_of_budget:
+                # `timeout(None)` is no deadline at all.
+                async with asyncio.timeout(budget) as own_deadline:
+                    try:
+                        extra = await expand_fused(
+                            list(merged), asker_id, self.db,
+                            max_pivots=settings.graph_expansion_max_pivots,
+                            max_hops=settings.graph_expansion_max_hops,
+                            max_expanded=settings.graph_expansion_max_expanded,
+                            peer=peer,
+                        )
+                    except asyncio.CancelledError:
+                        # 🛑 Only OUR deadline is "the budget ran out". A
+                        # TimeoutError raised inside expansion (a driver, a
+                        # pool) is a failure of its own and propagates as
+                        # one; so does a cancellation from outside.
+                        if not own_deadline.expired():
+                            raise
+                        out_of_budget = True
+                # `timeout` turns the cancellation it caused into a
+                # TimeoutError on the way out -- unless it was caught above.
+            if out_of_budget:
+                self.expansion_skipped = True
+                extra = []
+                logger.warning(
+                    f"🔍 Atom retrieval{' (federated)' if federated else ''}: "
+                    f"graph expansion did not finish within the "
+                    f"{max(budget, 0.0):.1f} s the fan-out left of {deadline:g} s "
+                    f"— the result is UNEXPANDED ({len(merged)} fused hits)"
+                )
             if extra:
                 have = {m.atom.atom_id for m in merged}
                 merged = list(merged) + [m for m in extra if m.atom.atom_id not in have]

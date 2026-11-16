@@ -24,11 +24,12 @@ Retention:
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import FederationQueryLog, PeerUser
@@ -64,6 +65,75 @@ BASIS_SELF = "self"     # the account the link belongs to
 BASIS_ADMIN = "admin"   # an `admin` holder acting on someone else's row
 
 
+# --- The outcome of a query row, as a code -----------------------------------
+#
+# `error_message` is a sentence for the person reading `/brain/audit`. What
+# HAPPENED must not have to be read back out of that sentence -- not by a
+# test, and not by anything that later counts or filters these rows. So the
+# sentence is led by a code:
+#
+#     [link_revoked/after_read] Verknüpfung besteht nicht mehr nach dem ...
+#
+# The code is the record; the sentence is presentation and may be reworded.
+# It lives in the text column because a query row has no structured field
+# (the JSON a revocation row carries sits in `query_text`, which here holds
+# the question). A column of its own would be the cleaner home.
+
+#: How far the access had got when it stopped being served.
+STAGE_BEFORE_READ = "before_read"      # nothing was read
+STAGE_AFTER_READ = "after_read"        # data was read, no answer was made
+STAGE_AFTER_ANSWER = "after_answer"    # an answer was made, never handed over
+
+#: Every code a row can carry. `outcome_code` knows no other: the column also
+#: holds free failure text -- on asker rows the far side's own message -- and
+#: a text that merely LOOKS like `[word] ...` must be neither read as a code
+#: nor have its head cut off.
+OUTCOME_GONE = "gone"
+OUTCOME_PAIRING_REVOKED = "pairing_revoked"
+OUTCOME_LINK_REVOKED = "link_revoked"
+OUTCOME_CANCELLED = "cancelled"
+OUTCOME_NOT_STORED = "not_stored"
+OUTCOME_UNEXPANDED = "graph_expansion_skipped"
+OUTCOME_CODES = frozenset({
+    OUTCOME_GONE, OUTCOME_PAIRING_REVOKED, OUTCOME_LINK_REVOKED,
+    OUTCOME_CANCELLED, OUTCOME_NOT_STORED, OUTCOME_UNEXPANDED,
+})
+OUTCOME_STAGES = frozenset({STAGE_BEFORE_READ, STAGE_AFTER_READ, STAGE_AFTER_ANSWER})
+
+_OUTCOME_NOTE = re.compile(r"^\[([a-z_]+)(?:/([a-z_]+))?\] ")
+
+
+def outcome_note(code: str, sentence: str, *, stage: str | None = None) -> str:
+    """`sentence`, led by its code (and stage) in machine-readable form."""
+    if code not in OUTCOME_CODES or (stage is not None and stage not in OUTCOME_STAGES):
+        raise ValueError(f"unknown outcome code or stage: {code!r}/{stage!r}")
+    return f"[{code}/{stage}] {sentence}" if stage else f"[{code}] {sentence}"
+
+
+def _known_note(text: str | None) -> re.Match[str] | None:
+    match = _OUTCOME_NOTE.match(text or "")
+    if match is None or match.group(1) not in OUTCOME_CODES:
+        return None
+    if match.group(2) is not None and match.group(2) not in OUTCOME_STAGES:
+        return None
+    return match
+
+
+def outcome_code(text: str | None) -> tuple[str, str | None] | None:
+    """`(code, stage)` of a text written by `outcome_note` -- `None` for any
+    other text (a plain failure message, a row from before 2026-11-16, a text
+    in brackets that is not one of the known codes)."""
+    match = _known_note(text)
+    return (match.group(1), match.group(2)) if match else None
+
+
+def outcome_sentence(text: str | None) -> str | None:
+    """`text` without a leading KNOWN code -- what a person is shown. Any
+    other text comes back unchanged."""
+    match = _known_note(text)
+    return text[match.end():] if match and text else text
+
+
 def _truncate(s: str | None, max_len: int) -> str | None:
     if s is None:
         return None
@@ -93,7 +163,11 @@ def _classify_final(final: dict[str, Any] | None) -> tuple[str, bool, str | None
             "success",
             True,
             _truncate(final.get("message") or "", MAX_ANSWER_EXCERPT_LEN),
-            None,
+            # A delivered answer can still carry a NOTE about how it came
+            # about (`outcome_note`, e.g. made without graph expansion). It
+            # shares the column with the error text; the status says which
+            # of the two a row holds.
+            _truncate(final.get("note") or None, MAX_ERROR_MESSAGE_LEN),
         )
 
     # 🛑 Check aborted BEFORE failed. A cancelled query carries `success=False`
@@ -126,6 +200,7 @@ async def write_federation_audit(
     direction: str = "asked",
     identity_basis: str | None = None,
     peer_instance_name_snapshot: str | None = None,
+    request_id: str | None = None,
 ) -> None:
     """
     Write one audit row for a completed federated query.
@@ -163,6 +238,9 @@ async def write_federation_audit(
                 # The instance part of the label as it stood at query time; a
                 # snapshot like the two above, never looked up later.
                 peer_instance_name_snapshot=peer_instance_name_snapshot or None,
+                # The responder names its request so the row can be found
+                # again (`mark_answer_not_handed_over`).
+                request_id=request_id,
                 query_text=_truncate(query_text, MAX_QUERY_TEXT_LEN),
                 initiated_at=initiated_at,
                 finalized_at=datetime.now(UTC).replace(tzinfo=None),
@@ -176,8 +254,58 @@ async def write_federation_audit(
     except Exception as e:
         logger.warning(
             f"Federation audit write failed (peer={peer_pubkey_snapshot[:12]}…, "
-            f"status={final_status}): {e}"
+            f"status={final_status}): {error_text_without_content(e)}"
         )
+
+
+async def mark_answer_not_handed_over(*, request_id: str, error_message: str) -> bool:
+    """Correct the responder's row of `request_id` from "answered" to
+    "answer made, NOT handed over". Returns whether a row was corrected.
+
+    The responder writes its `success` row when the answer is ready. If the
+    pairing or the link is revoked before the far side collects it, the
+    answer is refused at the poll -- and the log would still say it was
+    delivered. The EXISTING row is corrected rather than a second one
+    written: the view lists one entry per query, and two rows would show
+    the same question once as answered and once as not.
+
+    The shape is the one an `aborted` access already has (`_classify_final`):
+    status `aborted`, no answer excerpt, not verified, the reason in
+    `error_message`. An access that happened and was not delivered is not a
+    failure.
+
+    🛑 IDEMPOTENT, and it has to be: the far side polls about twice a second.
+    The update only matches a row that still says `success`, so the second
+    call changes nothing and returns False.
+
+    Best-effort like every write here: a refusal must not fail because its
+    record could not be written.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                update(FederationQueryLog)
+                .where(
+                    FederationQueryLog.request_id == request_id,
+                    FederationQueryLog.direction == "answered",
+                    FederationQueryLog.final_status == "success",
+                )
+                .values(
+                    final_status="aborted",
+                    verified_signature=False,
+                    answer_excerpt=None,
+                    error_message=_truncate(error_message, MAX_ERROR_MESSAGE_LEN),
+                    finalized_at=datetime.now(UTC).replace(tzinfo=None),
+                )
+            )
+            await session.commit()
+            return bool(result.rowcount)
+    except Exception as e:
+        logger.warning(
+            f"Federation audit correction failed (request_id={request_id}): "
+            f"{error_text_without_content(e)}"
+        )
+        return False
 
 
 def record_revocation(

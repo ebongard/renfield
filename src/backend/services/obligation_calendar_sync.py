@@ -298,7 +298,7 @@ class ObligationCalendarSync:
             await self.db.commit()
             return True
         except Exception as e:
-            logger.warning(f"calendar sync: commit failed: {e}")
+            logger.warning(f"calendar sync: commit failed: {error_text_without_content(e)}")
             await self.db.rollback()
             return False
 
@@ -371,4 +371,4 @@ async def reconcile_all_users(mcp_manager: Any) -> None:
                         f"-{rep.deleted} err={rep.errors}"
                     )
         except Exception as e:
-            logger.warning(f"Calendar sync failed for user {uid}: {e}")
+            logger.warning(f"Calendar sync failed for user {uid}: {error_text_without_content(e)}")

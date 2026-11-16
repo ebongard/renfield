@@ -28,6 +28,7 @@ from utils.llm_client import (
     is_llm_unreachable,
     log_llm_unreachable,
 )
+from utils.log_safety import error_text_without_content
 
 _VALID_PERSONALITY_STYLES = {"freundlich", "direkt", "formell", "casual"}
 
@@ -1034,7 +1035,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     logger.info(f"📝 {len(similar_corrections)} correction example(s) injected into intent prompt")
                     return result
         except Exception as e:
-            logger.warning(f"⚠️ Intent correction lookup failed: {e}")
+            logger.warning(f"⚠️ Intent correction lookup failed: {error_text_without_content(e)}")
         return ""
 
     # ========== Context management methods ==========

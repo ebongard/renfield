@@ -41,6 +41,7 @@ from services.pairing_service import (
     PairingService,
 )
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 router = APIRouter()
 
@@ -294,7 +295,7 @@ async def _resync_peer_registry(request: Request, db: AsyncSession, reason: str)
             from services.peer_mcp_registry import sync_peers
             await sync_peers(manager, db)
     except Exception as e:
-        logger.warning(f"Peer registry resync after {reason} failed (non-fatal): {e}")
+        logger.warning(f"Peer registry resync after {reason} failed (non-fatal): {error_text_without_content(e)}")
 
 
 @router.post(
@@ -397,7 +398,7 @@ def _holds_admin(user: User) -> bool:
 
         return has_permission(user.get_permissions(), Permission.ADMIN)
     except Exception as e:
-        logger.warning(f"Admin lookup failed for user {getattr(user, 'id', None)} (denied): {e}")
+        logger.warning(f"Admin lookup failed for user {getattr(user, 'id', None)} (denied): {error_text_without_content(e)}")
         return False
 
 

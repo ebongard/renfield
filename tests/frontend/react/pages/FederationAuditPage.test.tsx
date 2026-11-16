@@ -432,6 +432,65 @@ describe('FederationAuditPage', () => {
     expect(screen.getByText(/3 Treffer gelesen/)).toBeInTheDocument();
   });
 
+  it('shows a note on a delivered answer as a note, not as an error', async () => {
+    // An answer made without graph expansion is still a delivered answer.
+    // The row carries a note about it; dressed in red under "Fehler" it would
+    // tell the reader something went wrong with an access that went through.
+    mockAuditResponse({
+      entries: [
+        {
+          id: '1',
+          peer_pubkey: MOM_PUBKEY,
+          peer_display_name: 'Mom',
+          query_text: 'was liegt im Archiv?',
+          answer_excerpt: 'eine Antwort',
+          initiated_at: '2026-11-16T09:00:00',
+          final_status: 'success',
+          verified_signature: true,
+          error_message: 'Antwort ohne Graph-Erweiterung.',
+          outcome_code: 'graph_expansion_skipped',
+          direction: 'answered',
+          identity_basis: 'peer_tier',
+        },
+      ],
+      limit: 50, offset: 0, peer_pubkey: null,
+    });
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+    fireEvent.click(await screen.findByText(/was liegt im Archiv/i));
+    const note = await screen.findByText('Antwort ohne Graph-Erweiterung.');
+    expect(screen.getByText('Hinweis')).toBeInTheDocument();
+    expect(screen.queryByText('Fehler')).not.toBeInTheDocument();
+    expect(note.className).not.toMatch(/red/);
+  });
+
+  it('keeps the reason of an access that was NOT delivered under the error label', async () => {
+    // Negative control for the test above.
+    mockAuditResponse({
+      entries: [
+        {
+          id: '1',
+          peer_pubkey: MOM_PUBKEY,
+          peer_display_name: 'Mom',
+          query_text: 'was liegt im Archiv?',
+          initiated_at: '2026-11-16T09:00:00',
+          final_status: 'aborted',
+          error_message: 'Kopplung widerrufen nach der Antwort.',
+          outcome_code: 'pairing_revoked',
+          outcome_stage: 'after_answer',
+          direction: 'answered',
+          identity_basis: 'peer_tier',
+        },
+      ],
+      limit: 50, offset: 0, peer_pubkey: null,
+    });
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+    fireEvent.click(await screen.findByText(/was liegt im Archiv/i));
+    const reason = await screen.findByText('Kopplung widerrufen nach der Antwort.');
+    expect(screen.getByText('Fehler')).toBeInTheDocument();
+    expect(screen.queryByText('Hinweis')).not.toBeInTheDocument();
+    expect(reason.className).toMatch(/red/);
+  });
+
   it('filters by peer when ?peer= query param is present', async () => {
     mockAuditResponse({
       entries: [

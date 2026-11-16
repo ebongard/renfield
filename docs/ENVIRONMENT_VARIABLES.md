@@ -244,7 +244,7 @@ Segmente zu `{id}` (Kardinalitätsschutz).
 - HTTP Request Counter + Latency Histogram
 - `renfield_websocket_connections{type}`: offene WebSocket-Verbindungen je Art
   (`chat`, `satellite`, `device`, `kiosk`, `user`, `knowledge_graph`,
-  `wakeword`, sonst `other`). Gezählt an EINER Stelle
+  `wakeword`, `presence_debug`, sonst `other`). Gezählt an EINER Stelle
   (`utils/metrics.py::WebSocketGaugeMiddleware`): ab dem `accept`, bis der
   Endpunkt zurückkehrt; ein abgelehnter Handshake zählt nie (#82)
 - `renfield_llm_call_duration_seconds{model,call_type,outcome}`: Dauer der
@@ -3159,6 +3159,38 @@ FEDERATION_PING_RATE_PER_MINUTE=12
 # Peer-Routen /api/federation/peer/* (1-60)
 # Default: 10
 FEDERATION_INBOUND_READ_TIMEOUT_SECONDS=10
+
+# Frist in Sekunden für EINE Quelle des Atom-Abrufs, wenn er auf eigenen
+# Sitzungen läuft (heute: der föderierte Abruf). Eine Quelle darüber wird
+# abgebrochen und als abgestürzt gezählt; die übrigen tragen die Antwort.
+# (0.1-29)
+# Default: 20
+ATOM_FANOUT_SOURCE_TIMEOUT=20
+
+# Frist in Sekunden für die Synthese der Antwort auf eine eingehende
+# föderierte Anfrage (5-59). Darüber fällt die Antwort auf die Fundstellen
+# zurück.
+# Default: 30
+FEDERATION_SYNTHESIS_TIMEOUT=30
+
+# 🛑 Die beiden Fristen hängen zusammen, und der Start PRÜFT es: eine
+# eingehende Anfrage lebt 60 s, und genau so lange fragt die Gegenseite nach.
+#   ATOM_FANOUT_SOURCE_TIMEOUT + FEDERATION_SYNTHESIS_TIMEOUT + 5 s + 1 s < 60 s
+# (5 s Reserve: Widerrufsprüfungen, Speichern, Protokollzeile, nächste
+# Nachfrage der Gegenseite; 1 s Abbruchspanne, bei kurzem Abrufschritt
+# höchstens ein Zehntel davon.) Eine Konfiguration darüber verweigert den
+# Start mit einer Meldung, die beide Werte nennt — die Wertebereiche der
+# einzelnen Variablen erlauben sie für sich genommen. Mit den Standardwerten
+# muss FEDERATION_SYNTHESIS_TIMEOUT UNTER 34 bleiben (echt kleiner: bei
+# Gleichstand liefen zwei Fristen um die Wette).
+# Der GESAMTE Abrufschritt ist auf 60 - FEDERATION_SYNTHESIS_TIMEOUT - 5
+# Sekunden begrenzt (Standard: 25), der Abruf darin auf die Abbruchspanne
+# weniger (Standard: 24). Werden die QUELLEN in diesem Budget nicht fertig,
+# endet die Anfrage als fehlgeschlagen, statt in ein geschlossenes Fenster zu
+# antworten. Die Graph-Erweiterung danach bekommt, was die Quellen vom Budget
+# übrig lassen; reicht es nicht, entfällt sie, und die Antwort entsteht aus
+# dem nicht erweiterten Ergebnis. Beide Werte werden abgeleitet, nicht
+# eingestellt.
 
 # Peer-Adressen mit http:// zulassen (sonst nur https://)
 # Default: false

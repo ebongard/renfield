@@ -21,6 +21,7 @@ from services.database import AsyncSessionLocal
 from services.ingest_common import get_or_create_owned_kb
 from services.voice_server_client import transcribe_meeting
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Provenance marker on the ingested transcript Document (§2 D14): the Schicht-A
 # hook skips docs with this source (single constant shared with the hook, so a
@@ -359,7 +360,7 @@ async def process_meeting(meeting_id: int, audio_path: str) -> None:
                     if n:
                         logger.info(f"meeting {meeting_id}: auto-named {n} known speaker(s)")
             except Exception as e:
-                logger.warning(f"meeting {meeting_id}: fingerprint matching failed: {e}")
+                logger.warning(f"meeting {meeting_id}: fingerprint matching failed: {error_text_without_content(e)}")
         segments = _set_segments(meeting, segments)
         del raw_segments  # nothing below may read (or persist) the voiceprints
 

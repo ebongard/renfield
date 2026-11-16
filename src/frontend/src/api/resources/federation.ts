@@ -84,7 +84,15 @@ export interface AuditEntry {
   peer_instance_name?: string | null;
   query_text: string;
   answer_excerpt?: string;
-  error_message?: string;
+  /**
+   * The sentence for the reader. On a `success` row it is a NOTE about how
+   * the answer came about (e.g. made without graph expansion), not an error.
+   */
+  error_message?: string | null;
+  /** What happened, as a code; absent/null where the row carries none. */
+  outcome_code?: string | null;
+  /** How far the access had got: before_read | after_read | after_answer. */
+  outcome_stage?: string | null;
   initiated_at: string;
   finalized_at?: string;
   final_status: AuditStatus;

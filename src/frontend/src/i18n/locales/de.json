@@ -2271,6 +2271,7 @@
     "queryLabel": "Deine Frage",
     "answerLabel": "Antwort",
     "errorLabel": "Fehler",
+    "noteLabel": "Hinweis",
     "durationSubSecond": "< 1 Sek.",
     "durationSeconds": "{{n}} Sek.",
     "durationMinutes": "{{n}} Min.",

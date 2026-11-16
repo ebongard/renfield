@@ -30,6 +30,13 @@ from services.federation_query_responder import (
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
+from services.federation_audit import outcome_code as _what_happened
+from services.federation_query_responder import (
+    _CANCELLED,
+    _unserved_note,
+)
+
+
 def _pending(*, mapped: bool, asker_local_user_id=None, peer_owner_id=None,
              peer_display_name="the neighbour's Renfield"):
     return _PendingRequest(
@@ -42,6 +49,9 @@ def _pending(*, mapped: bool, asker_local_user_id=None, peer_owner_id=None,
         initiated_at=time.time(),
         peer_owner_id=peer_owner_id,
         mapped=mapped,
+        # A mapped record names the link it was admitted on (re-checked while
+        # the query runs); the fallback has none.
+        link_id=41 if mapped else None,
         peer_display_name=peer_display_name,
     )
 
@@ -263,7 +273,8 @@ class TestACancelledAccessIsStillAnAccess:
         k = written.await_args.kwargs
         assert k["direction"] == "answered"
         assert k["identity_basis"] == "mapped"
-        assert "3 Treffer" in k["final_item"]["message"]
+        assert _what_happened(k["final_item"]["message"]) == ("cancelled", "after_read")
+        assert k["final_item"]["message"] == _unserved_note(_CANCELLED, p)
 
     @pytest.mark.asyncio
     async def test_a_cancellation_BEFORE_the_read_is_recorded_TOO(self, written):
@@ -278,8 +289,8 @@ class TestACancelledAccessIsStillAnAccess:
         assert p.retrieved_count is None, "default: nothing read yet"
         await _record_cancelled_access(p)
 
-        assert "keine Daten gelesen" in written.await_args.kwargs[
-            "final_item"]["message"]
+        assert _what_happened(written.await_args.kwargs["final_item"]["message"]) == (
+            "cancelled", "before_read")
 
     @pytest.mark.asyncio
     async def test_the_two_cases_do_NOT_collapse(self, written):
@@ -300,9 +311,8 @@ class TestACancelledAccessIsStillAnAccess:
         await _record_cancelled_access(p)
         text_none = written.await_args.kwargs["final_item"]["message"]
 
-        assert text_null != text_none
-        assert "nach dem Abruf" in text_null
-        assert "vor dem Abruf" in text_none
+        assert _what_happened(text_null) == ("cancelled", "after_read")
+        assert _what_happened(text_none) == ("cancelled", "before_read")
 
     @pytest.mark.asyncio
     async def test_it_classifies_as_aborted_NOT_failed(self, written):
@@ -324,7 +334,7 @@ class TestACancelledAccessIsStillAnAccess:
         assert status == "aborted"
         assert verified is False
         assert excerpt is None
-        assert "3 Treffer" in error
+        assert error == _unserved_note(_CANCELLED, p)
 
     def test_a_plain_failure_is_STILL_failed(self):
         """Negative control for the classifier: the new branch must not
@@ -434,3 +444,58 @@ class TestTheCancellationBranchIsACTUALLYWired:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+class TestAFailureTextCarriesNoQuery:
+    """🛑 What a failed query writes down is kept for good.
+
+    `_run_query` put `str(e)` into the log line, the pending record and the
+    audit row. Graph expansion runs on that task's session, so the exception
+    can be SQLAlchemy's -- and its message ends in `[SQL: ...] [parameters:
+    ...]`: the far side's question and local values, in a row that never
+    expires.
+    """
+
+    @pytest.mark.asyncio
+    async def test_log_record_and_audit_row_are_cut_before_the_sql_tail(
+        self, written, monkeypatch
+    ):
+        from loguru import logger as _l
+        from sqlalchemy.exc import ProgrammingError
+
+        from services import federation_query_responder as fqr
+
+        p = _pending(mapped=True, asker_local_user_id=107)
+        store = AsyncMock()
+        store.get = AsyncMock(return_value=p)
+        store.save = AsyncMock(return_value=True)
+        monkeypatch.setattr(fqr, "get_pending_store", lambda: store)
+        monkeypatch.setattr(fqr, "_refusal_for", AsyncMock(return_value=None))
+        monkeypatch.setattr(fqr, "AsyncSessionLocal", lambda: AsyncMock())
+
+        responder = fqr.FederationQueryResponder(db=AsyncMock())
+        monkeypatch.setattr(responder, "_emit_progress", AsyncMock())
+        broken = ProgrammingError(
+            "SELECT name FROM kg_entities WHERE name = %(n)s",
+            {"n": "a very private name"},
+            Exception("relation does not exist"),
+        )
+        assert "a very private name" in str(broken), "the control: the raw text carries it"
+        monkeypatch.setattr(responder, "_retrieve", AsyncMock(side_effect=broken))
+
+        lines: list[str] = []
+        sink = _l.add(lambda m: lines.append(m.record["message"]), level="DEBUG",
+                      format="{message}")
+        try:
+            await responder._run_query(p.request_id)
+        finally:
+            _l.remove(sink)
+
+        recorded = written.await_args.kwargs["final_item"]["message"]
+        for text_ in [*lines, p.error_message, recorded]:
+            assert "a very private name" not in text_, text_
+            assert "[SQL:" not in text_ and "kg_entities" not in text_, text_
+        # Not emptied either: the reason is still placeable.
+        assert "relation does not exist" in recorded
+        assert "ProgrammingError" in recorded
+        assert any("background work failed" in line for line in lines)

@@ -186,10 +186,11 @@ async def delete_user_link(
     )
     await db.commit()
 
-    # 🛑 Same cleanup as `revoke_my_link` and `revoke_peer`: `handle_retrieve`
-    # does not re-check the link, so a request started before this delete could
-    # still be collected with the linked person's full reach. This route did
-    # not have it until 2026-11-14.
+    # Same cleanup as `revoke_my_link` and `revoke_peer`: requests in flight
+    # are discarded at once. It is no longer the only protection -- the
+    # responder asks the database for the link again before it reads, before
+    # it stores the answer and on every poll (`_standing_refusal`) -- but it
+    # frees the records without waiting for the next check.
     from services.federation_query_responder import purge_requests_for_pubkey
     discarded = await purge_requests_for_pubkey(peer.remote_pubkey)
     logger.info(

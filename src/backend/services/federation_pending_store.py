@@ -43,13 +43,15 @@ from services.federation_query_schemas import (
     STATUS_PROCESSING,
 )
 from services.mcp_streaming import PROGRESS_LABEL_RETRIEVING
-from utils.config import settings
+from utils.config import FEDERATION_REQUEST_TTL_SECONDS, settings
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
 
-REQUEST_TTL_SECONDS = 60
+# One number for the store, the settings validator and the retrieval deadline
+# (`utils/config.py`).
+REQUEST_TTL_SECONDS = FEDERATION_REQUEST_TTL_SECONDS
 NONCE_WINDOW_SECONDS = 60
 NONCE_GRACE_SECONDS = 60          # how long past the window we still remember
 # In-memory only — the Redis backend bounds growth via TTL rather than
@@ -106,6 +108,18 @@ class _PendingRequest:
     #: onto the wider path. The default lands on the safe side.
     mapped: bool = False
 
+    #: The id of the person link (`federation_user_links.id`) a MAPPED request
+    #: was admitted on -- an id, no content. It is what lets the answering
+    #: side ask again whether that link still stands: at the start of the
+    #: background task, before synthesis, before the answer is stored and on
+    #: every poll (`federation_query_responder._standing_refusal`).
+    #:
+    #: 🛑 A mapped record WITHOUT it is refused, not answered: it is a row
+    #: from a version that did not carry the field (rolling deploy, Redis
+    #: store), and its link cannot be re-checked. The mapped path is the
+    #: widest reach there is; a request lost for one TTL is the cheaper error.
+    link_id: int | None = None
+
     #: Display name of the far side, for the snapshot in the audit log.
     #: 🛑 Carried here rather than looked up at write time: the log records the
     #: name that applied AT THE TIME OF THE ACCESS. If the pairing is renamed
@@ -130,6 +144,15 @@ class _PendingRequest:
     #: out. `None` means "not read", `0` means "read, found nothing". The two
     #: must not collapse into one; hence `int | None` and not `int = 0`.
     retrieved_count: int | None = None
+    #: The answer rests on the UNEXPANDED retrieval: graph expansion ran out
+    #: of its time budget and was dropped (`PolymorphicAtomStore.query`).
+    #: The answer is still an answer; the audit row says it is a thinner one.
+    unexpanded: bool = False
+    #: When a COMPLETE answer was first handed to a poll -- `None` until then.
+    #: It is what lets a poll that is REFUSED later (pairing or link revoked)
+    #: tell an answer nobody collected from one that had already gone out:
+    #: only the first is corrected in the audit log.
+    handed_over_at: float | None = None
     status: str = STATUS_PROCESSING
     progress_label: str = PROGRESS_LABEL_RETRIEVING
     progress_count: int = 0
@@ -174,7 +197,7 @@ class PendingStore(Protocol):
 
     async def get(self, request_id: str) -> _PendingRequest | None: ...
     async def put(self, pending: _PendingRequest) -> None: ...
-    async def save(self, pending: _PendingRequest) -> None: ...
+    async def save(self, pending: _PendingRequest) -> bool: ...
     async def list_for_pubkey(self, asker_pubkey: str) -> list[_PendingRequest]: ...
     async def delete_many(self, request_ids: list[str]) -> None: ...
     async def prune_expired(self, now: float | None = None) -> int: ...
@@ -202,10 +225,15 @@ class InMemoryPendingStore:
     async def put(self, pending: _PendingRequest) -> None:
         self._pending[pending.request_id] = pending
 
-    async def save(self, pending: _PendingRequest) -> None:
-        # In-memory mutations are aliased — nothing to do; the caller
-        # has been mutating the same instance we already store.
+    async def save(self, pending: _PendingRequest) -> bool:
+        # 🛑 `save` UPDATES, it never creates -- `put` creates. A record that
+        # is gone was purged (revocation) or pruned, and the background task
+        # that still holds the object must not bring it back: until
+        # 2026-11-15 it did, so a revoked key could poll a COMPLETE answer.
+        if pending.request_id not in self._pending:
+            return False
         self._pending[pending.request_id] = pending
+        return True
 
     async def list_for_pubkey(self, asker_pubkey: str) -> list[_PendingRequest]:
         return [
@@ -312,8 +340,10 @@ class RedisPendingStore:
                         REQUEST_TTL_SECONDS + 5)
             await pipe.execute()
 
-    async def save(self, pending: _PendingRequest) -> None:
+    async def save(self, pending: _PendingRequest) -> bool:
         # Mutations from the bg task — re-serialize and write through.
+        # 🛑 `XX`: only if the key still exists. `save` updates, it never
+        # creates -- a purged record stays purged (see the in-memory `save`).
         # The asker-set entry was already created by put(); we don't
         # touch it here.
         #
@@ -329,10 +359,11 @@ class RedisPendingStore:
         # synthesis timeout — a stuck request can't keep claiming
         # storage indefinitely.
         body = json.dumps(_to_jsonable(pending))
-        await self._r.set(
+        written = await self._r.set(
             self._pending_key(pending.request_id), body,
-            ex=REQUEST_TTL_SECONDS + 5,
+            ex=REQUEST_TTL_SECONDS + 5, xx=True,
         )
+        return bool(written)
 
     async def list_for_pubkey(self, asker_pubkey: str) -> list[_PendingRequest]:
         # `services.redis_client` constructs the client with

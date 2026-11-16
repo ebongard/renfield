@@ -63,9 +63,9 @@ Wenn ein Nutzer fragt *„Was weiß ich über Am Stirkenbend 20?"*, will er kein
 3. RRF berechnet einen kombinierten Rang-Score pro Atom anhand der Position in allen Ergebnislisten. Ein Atom, das sowohl semantisch als auch lexikalisch trifft, bekommt den Doppel-Boost — exakt das gewünschte Verhalten für „beides".
 4. Die fusionierte Top-*n*-Liste wandert zurück zum Aufrufer, angereichert mit Source-Metadaten (Dokumenttitel, Entity-Label, Memory-Kategorie).
 
-🛑 **Die acht Quellen laufen NICHT gleichzeitig, obwohl `asyncio.gather` danach aussieht.** Sie teilen
-eine `AsyncSession`, und die hält eine Verbindung. Gemessen am 2026-10-29 gegen echtes Postgres
-(`bin/probe-atom-store-sessions.py`), acht Abrufe à ~50 ms reine SQL-Zeit:
+🛑 **Ob die acht Quellen gleichzeitig laufen, entscheidet die SITZUNG, nicht das `asyncio.gather`.** Eine
+`AsyncSession` hält eine Verbindung; gleichzeitige Abfragen auf ihr unterstützt SQLAlchemy nicht. Gemessen
+am 2026-10-29 gegen echtes Postgres (`bin/probe-atom-store-sessions.py`), acht Abrufe à ~50 ms reine SQL-Zeit:
 
 | Sitzung | geliefert | Dauer |
 |---|---|---|
@@ -73,12 +73,52 @@ eine `AsyncSession`, und die hält eine Verbindung. Gemessen am 2026-10-29 gegen
 | eine, vorgewärmt | 8 von 8 | **408 ms** (reihum) |
 | je Quelle eine eigene | 8 von 8 | 56 ms |
 
-Der **föderierte** Pfad (`federation_query_responder._retrieve`) öffnet eine frische Sitzung und fächert
-sofort — dort beruht die Antwort auf **einer** Quelle. Der **lokale** Pfad bekommt eine warme Sitzung aus
-`get_db` und liefert alle acht, aber nacheinander. Vorwärmen ist deshalb keine Lösung: es beseitigt die
-Meldung, indem es die Nebenläufigkeit beseitigt. Die Reparatur ist eine Sitzung je Quelle und steht aus;
-seit dem 2026-10-29 protokolliert `query` eine Zeile je Durchlauf (geliefert / leer / abgestürzt, Dauer,
-Pfad), damit die Wirkung überhaupt messbar ist.
+Daraus folgen zwei Betriebsarten, die der AUFRUFER über den Konstruktor wählt:
+
+- **Föderiert** (`federation_query_responder._retrieve`): die Sitzung ist frisch, also fasst keine Quelle sie
+  an (`PolymorphicAtomStore(session, source_sessions=…)`). Jede Quelle bekommt einen `SourceReader`; jede
+  einzelne ANWEISUNG darauf läuft in einer eigenen Sitzung, die genau so lange lebt wie die Anweisung. Bis
+  zum 2026-11-15 fächerte dieser Pfad auf der einen kalten Sitzung — live stand bei jeder eingehenden Anfrage
+  „2/8 sources delivered, 3 crashed", und die Antwort an die Gegenseite war fast leer. Vorwärmen wäre keine
+  Reparatur gewesen: es beseitigt die Meldung, indem es die Nebenläufigkeit beseitigt.
+- **Lokal** (`GET /api/atoms`): unverändert eine Sitzung, reihum. Sie ist warm, weil die
+  Anmelde-Abhängigkeit dieselbe Sitzung vor dem Routenrumpf benutzt hat. Bewusst nicht umgestellt: die
+  SQL-Zeit ist dort nicht der bestimmende Anteil, acht Verbindungen je Suche wären es im Pool aber sehr wohl.
+
+🛑 **Gedeckelt ist die Anweisung, nicht die Quelle:** höchstens `SOURCE_SESSION_LIMIT` (8) Anweisungen —
+und damit Verbindungen — zugleich im ganzen Prozess, gleichgültig wie viele Anfragen eingehen: 8 von 30
+Pool-Verbindungen (`db_pool_size` 10 + `db_max_overflow` 20). Zwischen zwei Anweisungen hält eine Quelle
+nichts. Das ist der Punkt, weil fünf der acht Quellen dazwischen einen Modellserver fragen (`kg` vor der
+ersten Anweisung ein LLM, Lesefrist 300 s): hielte die Quelle ihren Platz über den ganzen Aufruf, belegten
+wartende Modellaufrufe alle Plätze ohne eine einzige Verbindung, und das SQL jeder anderen Anfrage stünde
+dahinter an. Die Schranke gilt nur, weil der Responder EINE `SourceSessions`-Instanz für alle Abrufe hält.
+Dazu hat jede Quelle dort eine Frist (`ATOM_FANOUT_SOURCE_TIMEOUT`, 20 s): wer sie überschreitet, wird
+abgebrochen und als abgestürzt gezählt, die übrigen tragen die Antwort. Der GANZE Abrufschritt des
+Responders steht zusätzlich unter einer abgeleiteten Frist (60 s Anfragefenster −
+`FEDERATION_SYNTHESIS_TIMEOUT` − 5 s Reserve, Standard 25 s); der Abruf selbst bekommt davon ein Budget, das
+1 s früher endet (`federation_retrieve_budget`). Was an dieser Grenze geschieht, hängt davon ab, WAS gerade
+läuft: Die Quellen sind die Antwort — werden sie im Budget nicht fertig, endet die Anfrage als fehlgeschlagen,
+mit einem Grund, der Schritt und Frist nennt (`RetrievalDeadlineExceeded`). Die Graph-Erweiterung danach ist
+eine Anreicherung — sie bekommt, was die Quellen vom Budget übrig lassen; reicht das nicht, wird sie
+abgebrochen, und die Antwort entsteht aus dem NICHT erweiterten Ergebnis (WARNING `UNEXPANDED`, in der
+Protokollzeile der Code `graph_expansion_skipped`). Eine Quelle, die ihre Frist ausschöpft, kostet die übrigen
+sieben also nicht mehr ihr Ergebnis. Dass die Quellenfrist ins Budget passt, prüft der Start
+(`docs/ENVIRONMENT_VARIABLES.md`).
+
+🛑 **Ein föderierter Abruf ist ein reiner Lesevorgang — und das folgt der ANGABE des Aufrufers
+(`query(federated=True)`), nicht dem Sitzungsregime.** Zwei Quellen schreiben sonst, und beide sind für einen
+föderierten Aufruf ausdrücklich abgeschaltet: der Zugriffszähler der Erinnerungen (`access_count`,
+`last_accessed_at`; `track_access=False`) und das Schattenprotokoll der Fertigkeiten
+(`record_shadow_log=False`) — letzteres legte bei einer gemappten Anfrage Kuratorzeilen unter dem
+verknüpften lokalen Konto an. Die Frage einer Gegenseite ist kein Zug einer lokalen Person, gleich auf
+welcher Sitzung sie läuft. Die umgekehrte Kombination — ein LOKALER Aufruf auf eigenen Sitzungen — wird
+abgelehnt (`ValueError`): er verlöre beide Schreibvorgänge stillschweigend. Der `SourceReader` kann nicht
+schreiben, und zwar doppelt: er hat kein `add`, `flush`, `commit`, und jede Anweisung läuft in einer
+READ-ONLY-Transaktion, sodass Postgres auch ein `UPDATE … RETURNING` oder `SELECT … FOR UPDATE` über
+`execute` zurückweist — eine Quelle, die es versucht, fällt sichtbar aus. Der Geltungsbereich (`asker_id`,
+`PeerScope`) ist in beiden Betriebsarten derselbe — eine eigene Sitzung ändert, über welche Verbindung eine
+Quelle liest, nie, was sie lesen darf. `query` protokolliert je Durchlauf eine Zeile (geliefert / leer /
+abgestürzt, Dauer, Pfad).
 
 Der API-Endpunkt `/api/atoms` und die `/brain`-Frontend-Seite exponieren genau diesen Weg.
 

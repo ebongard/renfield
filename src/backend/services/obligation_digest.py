@@ -32,6 +32,7 @@ from models.database import (
 from services.kg_reconciler_service import _resolve_lock_engine
 from services.notification_service import NotificationService
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # pg_advisory_lock namespace (int4); objid is the user_id. Distinct from the
 # notifier (0x4F42) and KG reconciler (0x4B47) so the daily/weekly scans never
@@ -230,4 +231,4 @@ async def scan_all_users() -> None:
                         f"Obligation digest user {uid}: sent ({report.obligations} open)"
                     )
         except Exception as e:
-            logger.warning(f"Obligation digest failed for user {uid}: {e}")
+            logger.warning(f"Obligation digest failed for user {uid}: {error_text_without_content(e)}")

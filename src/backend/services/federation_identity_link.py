@@ -4,7 +4,7 @@ The `federation_user_links` table maps an opaque per-(peer, person)
 ``querier_ref`` token to a LOCAL user. The same rows serve both perspectives of
 a pairing:
 
-  * RESPONDER — ``resolve_linked_user(peer_id, querier_ref) -> local_user_id``:
+  * RESPONDER — ``resolve_link(peer_id, querier_ref) -> (link_id, local_user_id)``:
     an incoming federated query carrying ``querier_ref`` is served AS that local
     user (full circle reach), not the peer-scoped public/guest fallback.
   * ASKER — ``resolve_querier_ref(peer_id, local_user_id) -> querier_ref``: when
@@ -36,10 +36,11 @@ def mint_querier_ref() -> str:
     return secrets.token_hex(32)
 
 
-async def resolve_linked_user(
+async def resolve_link(
     db: AsyncSession, *, peer_id: int, querier_ref: str | None
-) -> int | None:
-    """RESPONDER side: (peer_id, querier_ref) -> local user id, or None.
+) -> tuple[int, int] | None:
+    """RESPONDER side: (peer_id, querier_ref) -> `(link_id, local_user_id)`,
+    or None.
 
     None when: no ref, no matching row, the row's local_user_id was NULLed by
     a user delete, or the linked account is deactivated. Callers treat None as
@@ -48,19 +49,53 @@ async def resolve_linked_user(
     The inner join on an ACTIVE account is the point: a link lends the far
     side that account's own reach, and a deactivated account has none -- it
     cannot sign in here either.
+
+    The link id travels with the request (`_PendingRequest.link_id`) so that
+    the answering side can ask again, while the query runs, whether THIS link
+    still stands (`link_still_lends`).
     """
     if not querier_ref:
         return None
     row = (await db.execute(
-        select(FederationUserLink.local_user_id)
+        select(FederationUserLink.id, FederationUserLink.local_user_id)
         .join(User, User.id == FederationUserLink.local_user_id)
         .where(
             FederationUserLink.peer_id == peer_id,
             FederationUserLink.querier_ref == querier_ref,
             User.is_active.is_(True),
         )
-    )).scalar_one_or_none()
-    return row  # int local_user_id, or None (no row / NULLed / deactivated)
+    )).first()
+    return (row[0], row[1]) if row is not None else None
+
+
+async def resolve_linked_user(
+    db: AsyncSession, *, peer_id: int, querier_ref: str | None
+) -> int | None:
+    """`resolve_link`, reduced to the local user id."""
+    link = await resolve_link(db, peer_id=peer_id, querier_ref=querier_ref)
+    return link[1] if link is not None else None
+
+
+async def link_still_lends(
+    db: AsyncSession, *, link_id: int, peer_id: int, local_user_id: int,
+) -> bool:
+    """Does the link a request was admitted on still lend this account's reach?
+
+    The same conditions `resolve_link` applied, asked of the ROW it found: it
+    still exists, still belongs to this pairing, still names this account, and
+    the account is still active. A link deleted and created anew has another
+    id -- consent given afresh does not reach back to a request in flight.
+    """
+    return (await db.execute(
+        select(FederationUserLink.id)
+        .join(User, User.id == FederationUserLink.local_user_id)
+        .where(
+            FederationUserLink.id == link_id,
+            FederationUserLink.peer_id == peer_id,
+            FederationUserLink.local_user_id == local_user_id,
+            User.is_active.is_(True),
+        )
+    )).scalar_one_or_none() is not None
 
 
 async def resolve_querier_ref(

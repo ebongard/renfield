@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from models.database import User
 from services.auth_service import get_user_or_default
-from services.federation_audit import list_audit_for_user
+from services.federation_audit import list_audit_for_user, outcome_code, outcome_sentence
 
 router = APIRouter()
 
@@ -40,7 +40,16 @@ class FederationAuditEntry(BaseModel):
     final_status: str
     verified_signature: bool
     answer_excerpt: str | None
+    #: The SENTENCE for the reader, without the code that leads it in the
+    #: row. On a `success` row it is a note about how the answer came about
+    #: (e.g. made without graph expansion), not an error.
     error_message: str | None
+    #: What happened, as a code (`pairing_revoked`, `link_revoked`, `gone`,
+    #: `cancelled`, `graph_expansion_skipped`) and how far the access had got
+    #: (`before_read`, `after_read`, `after_answer`). `None` where the row
+    #: carries no code: a plain failure, and every row from before 2026-11-16.
+    outcome_code: str | None = None
+    outcome_stage: str | None = None
     #: "asked" = this instance asked, "answered" = this instance answered.
     direction: str
     #: WHICH identity the answer rested on -- "mapped" (as the
@@ -89,6 +98,19 @@ async def list_federation_audit(
         offset=offset,
         peer_pubkey=peer_pubkey,
     )
+    # 🛑 Only rows THIS instance wrote as the responder carry a code. On an
+    # asked row the column holds the far side's message; it is shown as it
+    # came, whatever it looks like.
+    def _outcome(row) -> tuple[str | None, str | None]:
+        if row.direction != "answered":
+            return (None, None)
+        return outcome_code(row.error_message) or (None, None)
+
+    def _sentence(row) -> str | None:
+        if row.direction != "answered":
+            return row.error_message
+        return outcome_sentence(row.error_message)
+
     entries = [
         FederationAuditEntry(
             id=row.id,
@@ -104,7 +126,9 @@ async def list_federation_audit(
             final_status=row.final_status,
             verified_signature=row.verified_signature,
             answer_excerpt=row.answer_excerpt,
-            error_message=row.error_message,
+            error_message=_sentence(row),
+            outcome_code=_outcome(row)[0],
+            outcome_stage=_outcome(row)[1],
         )
         for row in rows
     ]

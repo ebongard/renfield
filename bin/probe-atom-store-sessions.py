@@ -1,5 +1,11 @@
 """Measure: eight concurrent queries on ONE AsyncSession -- cold, warm, separate.
 
+Which regime runs where (`services/polymorphic_atom_store.py`):
+  A) is the defect the federated path had until 2026-11-15,
+  B) is the local path (`GET /api/atoms`, warm request session),
+  C) is the federated path now -- measured through the production class
+     `SourceSessions`, so the bound on open sessions is part of the number.
+
 Measures the project's REAL session factory (`services.database`), only against
 the test database. The connection string is read from the environment inside
 the container and never printed.
@@ -16,6 +22,7 @@ os.environ["DATABASE_URL"] = f"{base}/renfield_test"
 
 from sqlalchemy import text                              # noqa: E402
 from services.database import AsyncSessionLocal          # noqa: E402
+from services.polymorphic_atom_store import SourceSessions  # noqa: E402
 
 N = 8   # as many as `PolymorphicAtomStore.query` fans out
 
@@ -32,9 +39,10 @@ async def one_query(session, i):
 async def regime(name, *, warm, own_session):
     t0 = time.perf_counter()
     if own_session:
+        sessions = SourceSessions(AsyncSessionLocal)
+
         async def leg(i):
-            async with AsyncSessionLocal() as s:
-                return await one_query(s, i)
+            return await one_query(sessions.reader(), i)
         results = await asyncio.gather(*(leg(i) for i in range(N)),
                                        return_exceptions=True)
     else:

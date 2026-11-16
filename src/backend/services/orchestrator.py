@@ -24,6 +24,7 @@ from utils.llm_client import (
     get_classification_chat_kwargs,
     use_openai_for_tier,
 )
+from utils.log_safety import error_text_without_content, frames_without_content
 
 # Strip "_Quelle: ..._" / "_Source: ..._" lines that synthesizer LLMs
 # sometimes write alongside the actual answer. Transports/plugins that
@@ -588,9 +589,12 @@ class QueryOrchestrator:
                     internal_filter=role.internal_tools,
                 )
             except Exception as e:
-                logger.opt(exception=True).error(
+                # No traceback: it would end in the raw message and carry
+                # the frames' variable values (`frames_without_content`).
+                logger.error(
                     f"Tool registry init failed for [{role_name}]: "
-                    f"{type(e).__name__}: {e}"
+                    f"{type(e).__name__}: {error_text_without_content(e)} "
+                    f"| at {frames_without_content(e)}"
                 )
                 msg = (
                     f"Tools für Rolle '{role_name}' konnten nicht geladen werden."
@@ -667,8 +671,10 @@ class QueryOrchestrator:
                         )
                 agent_run_error: str | None = None
             except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Sub-agent [{role_name}] agent.run crashed: {e}"
+                logger.error(
+                    f"Sub-agent [{role_name}] agent.run crashed: "
+                    f"{type(e).__name__}: {error_text_without_content(e)} "
+                    f"| at {frames_without_content(e)}"
                 )
                 agent_run_error = str(e)
                 final_answer = None
@@ -711,8 +717,10 @@ class QueryOrchestrator:
                         result["plugin_data"][k] = v
 
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Sub-agent [{role_name}] crashed in setup/teardown: {e}"
+            logger.error(
+                f"Sub-agent [{role_name}] crashed in setup/teardown: "
+                f"{type(e).__name__}: {error_text_without_content(e)} "
+                f"| at {frames_without_content(e)}"
             )
             return _failed_sub_result(role_name, query, error=str(e))
 
