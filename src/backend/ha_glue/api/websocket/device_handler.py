@@ -87,7 +87,7 @@ async def _route_tts_output(
                     await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
 
     except Exception as e:
-        logger.error(f"❌ Output routing failed: {error_text_without_content(e)}, falling back to input device")
+        logger.error(f"❌ Output routing failed: {type(e).__name__}: {error_text_without_content(e)}, falling back to input device")
         logger.error(f"at {frames_without_content(e)}")
         # Fallback to input device on error
         if device.capabilities.has_speaker:
@@ -213,7 +213,7 @@ async def _process_device_session(
         await _process_text_input(app, device_manager, session_id, text, speaker_name, speaker_alias)
 
     except Exception as e:
-        logger.error(f"❌ Audio processing failed: {error_text_without_content(e)}")
+        logger.error(f"❌ Audio processing failed: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
         if stt_outcome is None:
             empty_turn(stt_failed=True)
@@ -316,7 +316,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                 logger.warning(f"⚠️ TTS synthesis failed for session {session_id}")
 
     except Exception as e:
-        logger.error(f"❌ Text processing failed: {error_text_without_content(e)}")
+        logger.error(f"❌ Text processing failed: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
 
     # End session
@@ -646,7 +646,7 @@ async def device_websocket(
     except WebSocketDisconnect:
         logger.info(f"👋 Device WebSocket disconnected: {device_id}")
     except Exception as e:
-        logger.error(f"❌ Device WebSocket error: {error_text_without_content(e)}")
+        logger.error(f"❌ Device WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
     finally:
         # Clean up connection limiter

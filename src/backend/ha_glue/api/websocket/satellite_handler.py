@@ -98,7 +98,7 @@ async def _route_satellite_tts_output(
                 await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
 
     except Exception as e:
-        logger.error(f"❌ Satellite output routing failed: {error_text_without_content(e)}, falling back to satellite")
+        logger.error(f"❌ Satellite output routing failed: {type(e).__name__}: {error_text_without_content(e)}, falling back to satellite")
         logger.error(f"at {frames_without_content(e)}")
         # Fallback to satellite on error
         await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
@@ -1249,7 +1249,7 @@ async def satellite_websocket(
                         await satellite_manager.send_transcription(session_id, text)
 
                 except Exception as e:
-                    logger.error(f"❌ Whisper transcription failed: {error_text_without_content(e)}")
+                    logger.error(f"❌ Whisper transcription failed: {type(e).__name__}: {error_text_without_content(e)}")
                     logger.error(f"at {frames_without_content(e)}")
                     # A fault AFTER the text arrived is not a turn without
                     # text: it is neither counted nor called an stt_error.
@@ -1695,7 +1695,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                         logger.warning(f"⚠️ TTS synthesis failed for session {session_id}")
 
                 except Exception as e:
-                    logger.error(f"❌ Processing failed: {error_text_without_content(e)}")
+                    logger.error(f"❌ Processing failed: {type(e).__name__}: {error_text_without_content(e)}")
                     logger.error(f"at {frames_without_content(e)}")
 
                 # End session
@@ -1814,7 +1814,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
     except WebSocketDisconnect:
         logger.info(f"👋 Satellite WebSocket disconnected: {satellite_id}")
     except Exception as e:
-        logger.error(f"❌ Satellite WebSocket error: {error_text_without_content(e)}")
+        logger.error(f"❌ Satellite WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
     finally:
         # Clean up connection limiter

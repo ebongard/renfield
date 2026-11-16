@@ -567,7 +567,7 @@ class WhisperService:
                     logger.info("🎤 Speaker not recognized (auto-enroll disabled)")
 
             except Exception as e:
-                logger.warning(f"Speaker identification failed: {error_text_without_content(e)}")
+                logger.warning(f"Speaker identification failed: {type(e).__name__}: {error_text_without_content(e)}")
                 logger.debug(f"at {frames_without_content(e)}")
 
             return {"text": text, **speaker_info}

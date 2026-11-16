@@ -170,7 +170,7 @@ async def _init_auth():
                     f"CHANGE THE PASSWORD IMMEDIATELY!"
                 )
     except Exception as e:
-        logger.error(f"❌ Auth initialisation failed: {error_text_without_content(e)}")
+        logger.error(f"❌ Auth initialisation failed: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
 
 
@@ -448,7 +448,7 @@ async def _init_mcp(app: "FastAPI"):
                 f"Federation peer registry sync skipped at startup: {error_text_without_content(peer_error)}"
             )
     except Exception as e:
-        logger.error(f"MCP client could not be initialised: {error_text_without_content(e)}")
+        logger.error(f"MCP client could not be initialised: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
         app.state.mcp_manager = None
 
@@ -514,7 +514,7 @@ async def _init_agent_router(app: "FastAPI"):
         except Exception as e:
             logger.debug(f"Entity patterns not loaded (non-fatal): {error_text_without_content(e)}")
     except Exception as e:
-        logger.error(f"❌ Agent router could not be initialised: {error_text_without_content(e)}")
+        logger.error(f"❌ Agent router could not be initialised: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
         app.state.agent_router = None
         app.state.agent_roles_config = None
@@ -582,7 +582,8 @@ async def _load_one_plugin(spec: str):
         _plugin_status[spec] = {"ok": True, "error": None}
         logger.info(f"Plugin module loaded: {spec}")
     except Exception as e:
-        _plugin_status[spec] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        _plugin_status[spec] = {
+            "ok": False, "error": f"{type(e).__name__}: {error_text_without_content(e)}"}
         logger.error(
             f"Failed to load plugin module: {spec}"
             f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"

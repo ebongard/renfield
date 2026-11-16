@@ -128,7 +128,7 @@ async def ha_route_chat_tts_to_device_output(
             return False
 
     except Exception as e:
-        logger.error(f"❌ ha_glue chat TTS routing failed: {error_text_without_content(e)}")
+        logger.error(f"❌ ha_glue chat TTS routing failed: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
         return False
 

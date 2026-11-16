@@ -1172,7 +1172,7 @@ async def voice_authenticate(
         )
 
     except Exception as e:
-        logger.error(f"Voice second factor error: {error_text_without_content(e)}")
+        logger.error(f"Voice second factor error: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
         return VoiceAuthResponse(
             success=False,

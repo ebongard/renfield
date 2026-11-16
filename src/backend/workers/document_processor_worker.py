@@ -443,7 +443,7 @@ async def _process_entry(
         logger.info(f"processed doc {doc_id} (entry {entry.entry_id})")
     except Exception as e:
         logger.error(
-            f"task {entry.entry_id} for doc {doc_id} failed: {error_text_without_content(e)}"
+            f"task {entry.entry_id} for doc {doc_id} failed: {type(e).__name__}: {error_text_without_content(e)}"
             f" | at {frames_without_content(e)}"
         )
         if _is_transient_error(e):

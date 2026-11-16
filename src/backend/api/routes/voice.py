@@ -135,7 +135,7 @@ async def speech_to_text(
             "speaker_confidence": speaker_confidence
         }
     except Exception as e:
-        logger.error(f"❌ STT error: {error_text_without_content(e)}")
+        logger.error(f"❌ STT error: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
         raise HTTPException(status_code=500, detail=error_text_without_content(e))
 

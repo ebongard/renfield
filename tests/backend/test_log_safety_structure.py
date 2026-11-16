@@ -807,3 +807,91 @@ class TestNoRawExceptionInAnErrorResponse:
             "        raise fastapi.HTTPException(500, detail=e.args)\n"              # 21
         )
         assert _raw_error_responses(ast.parse(source)) == [9, 13, 21]
+
+
+# --- The type survives the cut ---------------------------------------------------
+
+
+def _stacks_logged_without_the_type(tree) -> list[int]:
+    """Line numbers of log calls that carry `frames_without_content(<x>)` --
+    what replaces a traceback -- without the exception's TYPE.
+
+    A traceback ended in `Type: message`. The cut message alone is often
+    empty or meaningless (`TimeoutError()` -> ``, `KeyError('room')` ->
+    `'room'`), so the type has to be written out: `type(<x>).__name__` in the
+    same call, or in the log call that is the statement directly before it
+    (the two-line form: message at one level, stack at another).
+
+    🛑 Not seen: a message line that cuts the text and logs no stack at all --
+    hundreds of sites that never had a traceback and never named the type.
+    """
+    def names_the_type(node, subject: str) -> bool:
+        return any(
+            isinstance(n, ast.Attribute) and n.attr == "__name__"
+            and isinstance(n.value, ast.Call) and getattr(n.value.func, "id", "") == "type"
+            and n.value.args and ast.unparse(n.value.args[0]) == subject
+            for n in ast.walk(node))
+
+    def is_log_statement(stmt) -> bool:
+        return (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+                and isinstance(stmt.value.func, ast.Attribute)
+                and stmt.value.func.attr in _LEVELS)
+
+    lines = []
+    for block in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            statements = getattr(block, field, None)
+            if not isinstance(statements, list):
+                continue
+            for i, stmt in enumerate(statements):
+                if not is_log_statement(stmt):
+                    continue
+                for call in (c for c in ast.walk(stmt) if isinstance(c, ast.Call)
+                             and getattr(c.func, "id", "") == "frames_without_content"
+                             and c.args):
+                    subject = ast.unparse(call.args[0])
+                    before = statements[i - 1] if i else None
+                    if names_the_type(stmt, subject) or (
+                            before is not None and is_log_statement(before)
+                            and names_the_type(before, subject)):
+                        continue
+                    lines.append(stmt.lineno)
+    return sorted(set(lines))
+
+
+class TestTheTypeSurvivesTheCut:
+
+    def test_every_logged_stack_names_the_exception_type(self):
+        """21 of the 68 converted traceback sites had lost it (review,
+        2026-11-16): a timeout logged an empty message."""
+        found, seen = {}, 0
+        for rel, tree in _backend_modules():
+            seen += sum(1 for n in ast.walk(tree) if isinstance(n, ast.Call)
+                        and getattr(n.func, "id", "") == "frames_without_content")
+            hits = _stacks_logged_without_the_type(tree)
+            if hits:
+                found[rel] = hits
+        assert seen >= 60, f"only {seen} uses of frames_without_content seen"
+        assert not found, (
+            "a stack is logged without the exception's type; add "
+            f"`{{type(e).__name__}}: ` to the message: {found}")
+
+    def test_the_type_check_FINDS_a_stack_without_it(self):
+        """🛑 Negative control, on the same helper."""
+        source = (
+            "def f():\n"
+            "    try:\n"
+            "        work()\n"
+            "    except Exception as e:\n"
+            "        logger.error(f'failed: {error_text_without_content(e)} | at {frames_without_content(e)}')\n"   # 5
+            "        logger.error(f'failed: {error_text_without_content(e)}')\n"
+            "        logger.error(f'at {frames_without_content(e)}')\n"                                              # 7
+            "        logger.error(f'{type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}')\n"
+            "        logger.warning(f'failed: {type(e).__name__}: {error_text_without_content(e)}')\n"
+            "        logger.debug(f'at {frames_without_content(e)}')\n"
+            "        other = 1\n"
+            "        logger.debug(f'at {frames_without_content(e)}')\n"                                              # 12
+            "        logger.error(f'{type(other).__name__} | at {frames_without_content(e)}')\n"                     # 13
+            "        logger.error('%s | at %s', type(e).__name__, frames_without_content(e))\n"
+        )
+        assert _stacks_logged_without_the_type(ast.parse(source)) == [5, 7, 12, 13]

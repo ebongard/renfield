@@ -1039,7 +1039,7 @@ async def _stream_rag_response(
                     "knowledge_base_id": knowledge_base_id
                 })
         except Exception as e:
-            logger.error(f"❌ RAG error, falling back to plain conversation: {error_text_without_content(e)}")
+            logger.error(f"❌ RAG error, falling back to plain conversation: {type(e).__name__}: {error_text_without_content(e)}")
             logger.error(f"at {frames_without_content(e)}")
 
     # Fallback: plain conversation
@@ -3158,7 +3158,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
     except Exception as e:
         if session_state.db_session_id:
             unregister_ws_connection(session_state.db_session_id, websocket)
-        logger.error(f"❌ WebSocket error: {error_text_without_content(e)}")
+        logger.error(f"❌ WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
         await websocket.close()
     finally:
