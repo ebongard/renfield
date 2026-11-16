@@ -356,6 +356,21 @@ class TestTheGuardAgainstContentInTheLog:
         assert error_text_without_content(
             RuntimeError("Verbindung abgelehnt")) == "Verbindung abgelehnt"
 
+    @pytest.mark.parametrize("label", ["DETAIL", "HINT", "CONTEXT"])
+    def test_the_lines_postgres_puts_row_values_in_are_cut_off(self, label):
+        """They sit BEFORE the SQL tail. The real errors are raised in
+        `test_log_safety_pg.py`; this is the shape, without a database."""
+        text = error_text_without_content(RuntimeError(
+            'duplicate key value violates unique constraint "uq_x"\n'
+            f"{label}:  Key (name)=(Scheidungsurteil) already exists.\n"
+            "[SQL: INSERT INTO x (name) VALUES (%(n)s)]"))
+        assert text == 'duplicate key value violates unique constraint "uq_x"'
+
+    def test_a_word_that_merely_contains_a_label_is_not_a_cut(self):
+        """Negative control: `DETAILS` or a lower-case `detail:` is prose."""
+        plain = "upstream said: detail: none, DETAILS follow, HINTS too"
+        assert error_text_without_content(RuntimeError(plain)) == plain
+
     def test_it_is_capped(self):
         from utils.log_safety import MAX_LEN
 

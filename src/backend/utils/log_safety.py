@@ -12,13 +12,33 @@ SQLAlchemy appends this to its messages:
 The bound query IS the user's text. In `lexical_retrieval` it is the search
 string; in `document_fact_retrieval` and `note_retrieval` the same.
 
-🛑 The cut at `[SQL:` is a floor, not a guarantee. Two formats carry the value in the
-PRIMARY message and therefore survive it: `invalid input syntax for type <t>:
-"<value>"` (Postgres) and `invalid input for query argument $N: <repr(value)>`
-(asyncpg). Both only arise from a type error in a binding, not on the search
-paths here. A watertight guard would log `type(e).__name__` plus the sqlstate
-and drop the message entirely -- which costs exactly the diagnosis the line
-exists for. The trade-off is written down here so it is not guessed again.
+🛑 Postgres has a second place for content, BEFORE that tail: the `DETAIL:`
+line of a constraint violation carries the offending row values --
+
+    duplicate key value violates unique constraint "ix_users_username"
+    DETAIL:  Key (username)=(<the value>) already exists.
+
+-- likewise `Key (peer_id)=(...) is not present in table ...` of a foreign
+key and `Failing row contains (...)`, which lists every column of the row.
+`HINT:` and `CONTEXT:` are written by whoever raises (a trigger, a function)
+and can carry the same. So the text is cut at the FIRST of `[SQL:`,
+`DETAIL:`, `HINT:`, `CONTEXT:`. What stays is the primary message with the
+constraint's name -- the diagnostic part. Proven against errors the database
+raises itself: `tests/backend/test_log_safety_pg.py`.
+
+🛑 The cut is a floor, not a guarantee. What still survives it, because the
+value sits in the PRIMARY message:
+
+* `invalid input syntax for type <t>: "<value>"` (Postgres) and `invalid
+  input for query argument $N: <repr(value)>` (asyncpg) -- a type error in a
+  binding, not on the search paths here;
+* `RAISE EXCEPTION '<text>'` of a trigger or function that formats row data
+  into its own message;
+* any non-database exception whose message quotes its input.
+
+A watertight guard would log `type(e).__name__` plus the sqlstate and drop
+the message entirely -- which costs exactly the diagnosis the line exists
+for. The trade-off is written down here so it is not guessed again.
 """
 from __future__ import annotations
 
@@ -31,9 +51,16 @@ from urllib.parse import unquote_plus
 MAX_LEN = 200
 
 
+#: Where content starts in a database error (module docstring). The labels
+#: are matched as Postgres writes them: upper case, colon attached, not as
+#: part of a longer word.
+_CONTENT_STARTS = re.compile(r"\[SQL:|(?<![A-Za-z])(?:DETAIL|HINT|CONTEXT):")
+
+
 def error_text_without_content(e: BaseException) -> str:
-    """The message up to the `[SQL: ...]` tail, truncated."""
-    return str(e).split("[SQL:")[0].strip()[:MAX_LEN]
+    """The primary message: up to the first `DETAIL:` / `HINT:` / `CONTEXT:`
+    line or the `[SQL: ...]` tail, truncated."""
+    return _CONTENT_STARTS.split(str(e), maxsplit=1)[0].strip()[:MAX_LEN]
 
 
 # --- Credentials in logged URLs ----------------------------------------------
