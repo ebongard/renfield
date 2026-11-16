@@ -177,7 +177,10 @@
     },
     "sources": {
       "label": "Fonti",
-      "more": "+{{count}} altre"
+      "more": "+{{count}} altre",
+      "paperlessUntitled": "Documento Paperless {{id}}",
+      "openInPaperless": "{{title}} – apri in Paperless (nuova scheda)",
+      "noLink": "Trovato in Paperless – nessun link disponibile"
     },
     "followups": {
       "label": "Domande di approfondimento"

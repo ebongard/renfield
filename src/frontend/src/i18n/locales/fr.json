@@ -231,7 +231,10 @@
     },
     "sources": {
       "label": "Sources",
-      "more": "+{{count}} de plus"
+      "more": "+{{count}} de plus",
+      "paperlessUntitled": "Document Paperless {{id}}",
+      "openInPaperless": "{{title}} – ouvrir dans Paperless (nouvel onglet)",
+      "noLink": "Trouvé dans Paperless – aucun lien disponible"
     },
     "followups": {
       "label": "Suggestions de suite"
