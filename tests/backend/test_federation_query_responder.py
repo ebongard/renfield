@@ -667,8 +667,10 @@ class TestTheRetrievalStepIsBounded:
         (20.0, 35.5),      # the default source deadline, synthesis a little long
         (25.1, 30.0),      # the default synthesis, source a little long
         (24.5, 30.0),      # inside the step, but over the retrieval's budget
-        (25.0, 30.0),      # exactly the step: a tie between a crashed source
-                           # and a failed query, decided by the scheduler
+        (25.0, 30.0),      # exactly the step
+        (24.0, 30.0),      # exactly the BUDGET: the source's timer and the
+        (20.0, 34.0),      # fan-out's race, and the scheduler decides between
+                           # one crashed source and a failed query
     ])
     def test_a_configuration_that_cannot_fit_refuses_to_start(self, source, synthesis):
         from pydantic import ValidationError
@@ -684,16 +686,16 @@ class TestTheRetrievalStepIsBounded:
 
     @pytest.mark.unit
     @pytest.mark.parametrize("source, synthesis", [
-        (20.0, 30.0), (24.0, 30.0), (20.0, 34.0), (0.1, 54.8), (28.0, 26.0),
+        (20.0, 30.0), (23.9, 30.0), (20.0, 33.9), (0.1, 54.8), (27.9, 26.0),
     ])
     def test_a_configuration_that_fits_starts(self, source, synthesis):
-        """Negative control, the boundary included: a source may use the
-        retrieval's whole budget, not more."""
+        """Negative control, up to the boundary: a source stays BELOW the
+        retrieval's budget."""
         from utils.config import Settings
 
         s = Settings(_env_file=None, atom_fanout_source_timeout=source,
                      federation_synthesis_timeout=synthesis)
-        assert s.atom_fanout_source_timeout <= s.federation_retrieve_budget
+        assert s.atom_fanout_source_timeout < s.federation_retrieve_budget
 
 
 class TestProgressRateLimit:

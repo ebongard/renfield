@@ -255,9 +255,9 @@ class TestASlowExpansionCostsTheEnrichmentNotTheAnswer:
         self, responder, maker, pairing, far_side, pool,  # noqa: F811
         a_model_server_that_never_answers, monkeypatch,
     ):
-        """The sources' deadline IS the budget (the largest value the startup
-        check lets through): nothing is left, expansion is not started, and
-        the answer is made all the same."""
+        """The sources' deadline IS the budget -- a tie the startup check
+        refuses, staged here: nothing is left, and expansion is not started
+        whichever timer wins."""
         _deadlines(monkeypatch, source=0.9, step=1.0)
         assert settings.federation_retrieve_budget == pytest.approx(0.9)
 
@@ -334,3 +334,35 @@ class TestAFanOutOverTheDeadlineFailsAndSaysSo:
         assert took < 5, f"the failure waited for the statement: {took:.1f} s"
         _nothing_left_behind(pool)
         await _no_statement_still_runs(pool, "slow-source")
+
+
+class TestOnlyTheStoresOwnDeadlineIsABudgetRunningOut:
+    async def test_a_timeout_raised_inside_expansion_is_a_failure_of_its_own(
+        self, responder, maker, pairing, far_side, pool,  # noqa: F811
+        a_model_server_that_never_answers, monkeypatch,
+    ):
+        """A TimeoutError from further down (a driver, a pool) is not "the
+        budget ran out": the budget had seconds left. Passing it off as an
+        unexpanded answer would hide a defect behind a degraded result."""
+        _deadlines(monkeypatch, source=0.6, step=6.0)
+
+        async def raises_a_timeout_of_its_own(db):
+            await db.execute(text("SELECT 1"))
+            raise TimeoutError("pool exhausted")
+
+        seen = _expansion(monkeypatch, raises_a_timeout_of_its_own)
+        responder._synthesize = lambda query, matches: _answer()
+        rid, finish = await _admit(responder, far_side)
+
+        t0 = time.perf_counter()
+        with _Warnings() as warnings:
+            await asyncio.wait_for(finish(), 20)
+
+        assert seen["calls"] == 1
+        assert time.perf_counter() - t0 < 4, "this waited for a deadline"
+        pending = await get_pending_store().get(rid)
+        assert pending.status == STATUS_FAILED
+        assert pending.error_message == "TimeoutError: pool exhausted"
+        assert pending.unexpanded is False
+        assert not [w for w in warnings.lines if "UNEXPANDED" in w]
+        _nothing_left_behind(pool)

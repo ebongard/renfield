@@ -3175,13 +3175,14 @@ FEDERATION_SYNTHESIS_TIMEOUT=30
 
 # 🛑 Die beiden Fristen hängen zusammen, und der Start PRÜFT es: eine
 # eingehende Anfrage lebt 60 s, und genau so lange fragt die Gegenseite nach.
-#   ATOM_FANOUT_SOURCE_TIMEOUT + FEDERATION_SYNTHESIS_TIMEOUT + 5 s + 1 s <= 60 s
+#   ATOM_FANOUT_SOURCE_TIMEOUT + FEDERATION_SYNTHESIS_TIMEOUT + 5 s + 1 s < 60 s
 # (5 s Reserve: Widerrufsprüfungen, Speichern, Protokollzeile, nächste
 # Nachfrage der Gegenseite; 1 s Abbruchspanne, bei kurzem Abrufschritt
 # höchstens ein Zehntel davon.) Eine Konfiguration darüber verweigert den
 # Start mit einer Meldung, die beide Werte nennt — die Wertebereiche der
 # einzelnen Variablen erlauben sie für sich genommen. Mit den Standardwerten
-# darf FEDERATION_SYNTHESIS_TIMEOUT höchstens 34 sein.
+# muss FEDERATION_SYNTHESIS_TIMEOUT UNTER 34 bleiben (echt kleiner: bei
+# Gleichstand liefen zwei Fristen um die Wette).
 # Der GESAMTE Abrufschritt ist auf 60 - FEDERATION_SYNTHESIS_TIMEOUT - 5
 # Sekunden begrenzt (Standard: 25), der Abruf darin auf die Abbruchspanne
 # weniger (Standard: 24). Werden die QUELLEN in diesem Budget nicht fertig,

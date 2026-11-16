@@ -369,7 +369,9 @@ class TestRevokedWhileInFlight:
 
         await finish()
 
-        assert looks["n"] == 3
+        # Three checks, and a fourth look once the save found nothing: it is
+        # what names the reason in the row (here: gone, nothing was revoked).
+        assert looks["n"] == 4
         assert await get_pending_store().get(rid) is None
         rows = await _answered_rows(maker)
         assert [r.final_status for r in rows] == ["aborted"]
@@ -959,3 +961,288 @@ class TestAnAnswerThatCouldNotBeStoredIsNotRecordedAsDelivered:
         monkeypatch.setattr(store, "save", save)
         resp = await responder.handle_retrieve(_poll(far_side, rid))
         assert resp.model_dump() == await _unknown_poll_response(responder, far_side)
+
+
+# --------------------------------------------------------------------------- #
+# The path a real revocation takes: commit, THEN purge
+# --------------------------------------------------------------------------- #
+
+
+class TestAPurgedAnswerIsNotRecordedAsDelivered:
+    """🛑 The revoke routes commit and then purge the far side's pending
+    records. The far side's next poll finds nothing -- and the correction in
+    the poll's refusal branch never runs. The row of a finished, uncollected
+    answer stayed `success`, excerpt included, for good. (The tests above
+    stage the rarer order: a record that outlived the purge.)"""
+
+    async def test_a_pairing_revocation_corrects_the_uncollected_answer(
+        self, responder, maker, pairing, far_side
+    ):
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        await finish()
+        (before,) = await _answered_rows(maker)
+        assert (before.final_status, before.answer_excerpt) == ("success", _ANSWER)
+
+        await _revoke(maker, pairing, far_side, purge=True)
+
+        # Corrected by the revocation itself -- before any poll.
+        (after,) = await _answered_rows(maker)
+        assert after.id == before.id
+        assert after.final_status == "aborted"
+        assert _what_happened(after) == (PAIRING, STAGE_AFTER_ANSWER)
+        assert after.answer_excerpt is None and after.verified_signature is False
+
+        # And the polls that follow change nothing and learn nothing.
+        for _ in range(3):
+            resp = await responder.handle_retrieve(_poll(far_side, rid))
+            assert resp.model_dump() == await _unknown_poll_response(responder, far_side)
+        (last,) = await _answered_rows(maker)
+        assert _row_state(last) == _row_state(after)
+
+    async def test_a_link_revocation_corrects_the_uncollected_answer(
+        self, responder, maker, linked, far_side
+    ):
+        """Both pending-store backends."""
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side, querier_ref=_REF)
+        await finish()
+
+        await _revoke_link(maker, linked, far_side, purge=True)
+
+        (row,) = await _answered_rows(maker)
+        assert (row.final_status, row.identity_basis, row.user_id) == (
+            "aborted", "mapped", linked["person"])
+        assert _what_happened(row) == (LINK, STAGE_AFTER_ANSWER)
+        assert row.answer_excerpt is None
+        resp = await responder.handle_retrieve(_poll(far_side, rid))
+        assert resp.status == STATUS_EXPIRED
+
+    async def test_a_link_purge_calls_an_unlinked_answer_discarded_not_revoked(
+        self, responder, maker, linked, far_side
+    ):
+        """The link purge hits EVERY request of that far side. One that was
+        admitted on the pairing's tier is discarded with the rest -- its
+        pairing stands, its row must not say anything was revoked for it."""
+        _stub_work(responder)
+        _mapped_rid, finish_mapped = await _admit(responder, far_side, querier_ref=_REF)
+        await finish_mapped()
+        _stub_work(responder)
+        _plain_rid, finish_plain = await _admit(responder, far_side)
+        await finish_plain()
+
+        await _revoke_link(maker, linked, far_side, purge=True)
+
+        rows = {r.identity_basis: r for r in await _answered_rows(maker)}
+        assert set(rows) == {"mapped", "peer_tier"}
+        assert _what_happened(rows["mapped"]) == (LINK, STAGE_AFTER_ANSWER)
+        assert _what_happened(rows["peer_tier"]) == (GONE, STAGE_AFTER_ANSWER)
+        assert all(r.final_status == "aborted" and r.answer_excerpt is None
+                   for r in rows.values())
+
+    async def test_an_answer_collected_before_the_revocation_stays_delivered(
+        self, responder, maker, pairing, far_side
+    ):
+        """Negative control: the purge removes the record of an answer that
+        DID go out, and its row is not touched."""
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        await finish()
+        delivered = await responder.handle_retrieve(_poll(far_side, rid))
+        assert delivered.status == STATUS_COMPLETE and delivered.answer == _ANSWER
+        (before,) = await _answered_rows(maker)
+
+        await _revoke(maker, pairing, far_side, purge=True)
+
+        (after,) = await _answered_rows(maker)
+        assert _row_state(after) == _row_state(before)
+        assert after.final_status == "success" and after.answer_excerpt == _ANSWER
+
+    async def test_a_purge_of_a_request_still_in_work_is_left_to_its_task(
+        self, responder, maker, pairing, far_side
+    ):
+        """Negative control: nothing is finished, so the purge has nothing to
+        correct; the task records the access at its next check -- once."""
+        calls = _stub_work(responder)
+        _rid, finish = await _admit(responder, far_side)
+
+        await _revoke(maker, pairing, far_side, purge=True)
+        assert await _answered_rows(maker) == []
+        await finish()
+
+        assert calls == {"retrieve": 0, "synthesize": 0}
+        (row,) = await _answered_rows(maker)
+        assert _what_happened(row) == (PAIRING, STAGE_BEFORE_READ)
+
+    async def test_a_revocation_is_not_undone_by_a_record_that_cannot_be_written(
+        self, responder, maker, pairing, far_side, monkeypatch
+    ):
+        import services.federation_audit as audit
+        from services.federation_query_responder import purge_requests_for_pubkey
+
+        async def broken(**_kwargs):
+            raise ConnectionError("audit database unreachable")
+
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        await finish()
+        monkeypatch.setattr(audit, "mark_answer_not_handed_over", broken)
+
+        assert await purge_requests_for_pubkey(far_side.public_key_hex()) == 1
+        assert await get_pending_store().get(rid) is None
+
+
+class TestTheAnswerIsCollectableOnlyOnceItsRowExists:
+    """🛑 The in-memory store hands out the very object the task works on.
+    The task set COMPLETE on it and only then awaited the audit write: a poll
+    in that await collected the answer before its row existed, and a refused
+    poll found no row to correct."""
+
+    async def _held_in_the_audit_write(self, responder, far_side, monkeypatch):
+        import asyncio
+
+        import services.federation_query_responder as fqr
+
+        writing, release = asyncio.Event(), asyncio.Event()
+        write = fqr._write_responder_audit
+
+        async def slow_write(pending, **kwargs):
+            if kwargs.get("success"):
+                writing.set()
+                await release.wait()
+            await write(pending, **kwargs)
+
+        monkeypatch.setattr(fqr, "_write_responder_audit", slow_write)
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        task = asyncio.create_task(finish())
+        await asyncio.wait_for(writing.wait(), 10)
+        return rid, task, release
+
+    async def test_a_poll_during_the_audit_write_gets_no_answer_yet(
+        self, responder, maker, pairing, far_side, monkeypatch
+    ):
+        rid, task, release = await self._held_in_the_audit_write(
+            responder, far_side, monkeypatch)
+
+        early = await responder.handle_retrieve(_poll(far_side, rid))
+
+        assert early.status == "processing" and early.answer is None
+        assert (await get_pending_store().get(rid)).handed_over_at is None
+        release.set()
+        await task
+        late = await responder.handle_retrieve(_poll(far_side, rid))
+        assert (late.status, late.answer) == (STATUS_COMPLETE, _ANSWER)
+        (row,) = await _answered_rows(maker)
+        assert row.final_status == "success"
+
+    async def test_a_revocation_during_the_audit_write_is_recorded_as_one(
+        self, responder, maker, pairing, far_side, monkeypatch
+    ):
+        """The mirror: the record is purged while the row is being written.
+        The row that then exists is corrected -- and says REVOKED, which is
+        what the database says, not merely "gone"."""
+        rid, task, release = await self._held_in_the_audit_write(
+            responder, far_side, monkeypatch)
+
+        await _revoke(maker, pairing, far_side, purge=True)
+        release.set()
+        await task
+
+        (row,) = await _answered_rows(maker)
+        assert row.final_status == "aborted"
+        assert _what_happened(row) == (PAIRING, STAGE_AFTER_ANSWER)
+        assert row.answer_excerpt is None
+        resp = await responder.handle_retrieve(_poll(far_side, rid))
+        assert resp.status == STATUS_EXPIRED
+
+    async def test_a_cancellation_does_not_withdraw_an_answer_that_went_out(
+        self, responder, maker, pairing, far_side
+    ):
+        """The withdrawal asks the STORE whether the answer was collected: a
+        row saying "not handed over" for an answer the far side holds would
+        be the same falsehood the other way round."""
+        from services.federation_query_responder import _withdraw_recorded_answer
+
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        await finish()
+        await responder.handle_retrieve(_poll(far_side, rid))      # collected
+        stored = await get_pending_store().get(rid)
+        assert stored.handed_over_at is not None
+        (before,) = await _answered_rows(maker)
+
+        await _withdraw_recorded_answer(stored)
+
+        (after,) = await _answered_rows(maker)
+        assert _row_state(after) == _row_state(before)
+        assert await get_pending_store().get(rid) is not None
+
+
+class TestTheBackgroundTaskNeverRaises:
+    async def test_a_store_that_stays_down_does_not_escape_the_task(
+        self, responder, maker, pairing, far_side, monkeypatch
+    ):
+        """The failure branch stores the terminal status -- with the store
+        that has just failed. A second failure there used to leave the
+        function, which is documented as never raising."""
+        from services.federation_query_responder import _NOT_STORED
+
+        _stub_work(responder)
+        _rid, finish = await _admit(responder, far_side)
+        store = get_pending_store()
+        save = store.save
+        failures = []
+
+        async def save_fails_from_the_answer_on(pending):
+            if pending.status != "processing":
+                failures.append(pending.status)
+                raise ConnectionError("store unreachable")
+            return await save(pending)
+
+        monkeypatch.setattr(store, "save", save_fails_from_the_answer_on)
+        with _ErrorLines() as errors:
+            await finish()                  # must not raise
+
+        assert failures == [STATUS_COMPLETE, "failed"]
+        (row,) = await _answered_rows(maker)
+        assert _what_happened(row) == (_NOT_STORED, STAGE_AFTER_ANSWER)
+        assert [e for e in errors.lines if "terminal status not stored" in e]
+
+    async def test_a_failed_retrieval_with_the_store_down_is_still_recorded(
+        self, responder, maker, pairing, far_side, monkeypatch
+    ):
+        async def broken():
+            raise RuntimeError("retrieval broke")
+
+        _stub_work(responder, during_retrieval=broken)
+        _rid, finish = await _admit(responder, far_side)
+        store = get_pending_store()
+        save = store.save
+
+        async def save_fails_on_the_terminal_status(pending):
+            if pending.status == "failed":
+                raise ConnectionError("store unreachable")
+            return await save(pending)
+
+        monkeypatch.setattr(store, "save", save_fails_on_the_terminal_status)
+        await finish()                      # must not raise
+
+        (row,) = await _answered_rows(maker)
+        assert (row.final_status, row.error_message) == (
+            "failed", "RuntimeError: retrieval broke")
+
+
+class _ErrorLines:
+    def __enter__(self):
+        from loguru import logger as _loguru
+
+        self._loguru = _loguru
+        self.lines: list[str] = []
+        self._sink = _loguru.add(
+            lambda m: self.lines.append(m.record["message"]), level="ERROR",
+            format="{message}")
+        return self
+
+    def __exit__(self, *_exc):
+        self._loguru.remove(self._sink)

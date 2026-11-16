@@ -609,20 +609,29 @@ class PolymorphicAtomStore:
             # run out: expansion is not started at all.
             budget = None if deadline is None else deadline - (time.perf_counter() - _t0)
             extra: list[AtomMatch] = []
-            try:
-                if budget is not None and budget <= 0:
-                    raise TimeoutError
-                async with asyncio.timeout(budget):
-                    extra = await expand_fused(
-                        list(merged), asker_id, self.db,
-                        max_pivots=settings.graph_expansion_max_pivots,
-                        max_hops=settings.graph_expansion_max_hops,
-                        max_expanded=settings.graph_expansion_max_expanded,
-                        peer=peer,
-                    )
-            except TimeoutError:
-                if budget is None:
-                    raise           # not our deadline: a timeout of its own
+            out_of_budget = budget is not None and budget <= 0
+            if not out_of_budget:
+                # `timeout(None)` is no deadline at all.
+                async with asyncio.timeout(budget) as own_deadline:
+                    try:
+                        extra = await expand_fused(
+                            list(merged), asker_id, self.db,
+                            max_pivots=settings.graph_expansion_max_pivots,
+                            max_hops=settings.graph_expansion_max_hops,
+                            max_expanded=settings.graph_expansion_max_expanded,
+                            peer=peer,
+                        )
+                    except asyncio.CancelledError:
+                        # 🛑 Only OUR deadline is "the budget ran out". A
+                        # TimeoutError raised inside expansion (a driver, a
+                        # pool) is a failure of its own and propagates as
+                        # one; so does a cancellation from outside.
+                        if not own_deadline.expired():
+                            raise
+                        out_of_budget = True
+                # `timeout` turns the cancellation it caused into a
+                # TimeoutError on the way out -- unless it was caught above.
+            if out_of_budget:
                 self.expansion_skipped = True
                 extra = []
                 logger.warning(

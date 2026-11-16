@@ -2646,10 +2646,13 @@ class Settings(BaseSettings):
         # Against the BUDGET, not the step deadline: a source allowed to run
         # longer than the fan-out may would turn every slow source into a
         # failed query instead of one crashed source.
-        if self.atom_fanout_source_timeout > self.federation_retrieve_budget:
+        # STRICTLY less: at equality the source's timer and the fan-out's
+        # race, and the scheduler decides between one crashed source and a
+        # failed query.
+        if self.atom_fanout_source_timeout >= self.federation_retrieve_budget:
             raise ValueError(
                 f"ATOM_FANOUT_SOURCE_TIMEOUT={self.atom_fanout_source_timeout:g} "
-                f"exceeds the {self.federation_retrieve_budget:g} s the retrieval "
+                f"does not stay below the {self.federation_retrieve_budget:g} s the retrieval "
                 f"of a federated query is given: the {FEDERATION_REQUEST_TTL_SECONDS} s "
                 "a request lives, less FEDERATION_SYNTHESIS_TIMEOUT="
                 f"{self.federation_synthesis_timeout:g}, "

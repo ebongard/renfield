@@ -692,7 +692,15 @@ corrected to `aborted` with stage `after_answer` (answer made, not handed
 over), its excerpt removed -- one row per query, never a second one, and
 written once however often the far side polls again. An answer that had
 already been handed over when the revocation came stays recorded as
-delivered (`handed_over_at` on the pending record tells the two apart). The
+delivered (`handed_over_at` on the pending record tells the two apart).
+The correction is made wherever the answer is taken away: by the PURGE that
+follows every revocation (the usual path -- the route commits, then purges,
+and the far side's next poll finds nothing), by a refused poll (a record
+that outlived the purge), and by the background task when storing the
+answer fails or is cancelled. The purge asks the database for the reason of
+each record: a link revocation discards every request of that far side, and
+one admitted on the pairing's tier is recorded as `gone`, not as revoked.
+The record turns COMPLETE only after its row is written. The
 row carries the responder's `request_id` so it can be found for this.
 
 That cause is stored as a CODE, at the head of the row's `error_message`:
