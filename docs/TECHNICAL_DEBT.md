@@ -659,6 +659,24 @@ von `bin/run-backend-tests.sh` gesetzt). Der Harness in `tests/backend/conftest.
 - **Leert zwischen Tests** nur die Tabellen, die Zeilen haben, und setzt benutzte Sequenzen zurück.
 - **Sperrt die Datenbank je Lauf** (Advisory-Lock); ein zweiter Lauf bricht sofort ab.
 
+**Ein Lauf je Datenbank — zwei Wege:**
+
+- **Geteilte `renfield_test`:** Läufe stehen hintereinander an. Wer sie benutzt, hält für die
+  Dauer des Laufs das Sperrverzeichnis `/tmp/renfield-testdb.lock` auf der Build-Box (`mkdir`
+  gelingt = belegt, darin eine Datei `owner`); eine fremde Sperre wird nie entfernt.
+- **Eigene Wegwerf-Datenbank:** `RENFIELD_TEST_DB_SUFFIX=<name>` vor `bin/run-backend-tests.sh`
+  legt `renfield_test_<name>` an (mit `vector`, wie die geteilte sie hat), lässt die Tests dort
+  laufen und löscht sie danach — auch wenn pytest scheitert oder das Skript ein Signal erhält.
+  Ein solcher Lauf nimmt **keine** Sperre; nebenläufige Läufe wählen je ein eigenes Suffix.
+  `bin/throwaway_test_db.py` verweigert jeden Namen außerhalb von `renfield_test_<suffix>`
+  (Kleinbuchstaben, Ziffern, Unterstrich; kein `prod`/`live`), verweigert eine bereits
+  vorhandene Datenbank (weder wiederverwendet noch gelöscht) und löscht nur, was derselbe
+  Aufruf angelegt hat: `create` schreibt ein Zufallstoken in den Kommentar der Datenbank,
+  `drop` vergleicht es. Nach einem `SIGKILL` des Skripts bleibt die Datenbank stehen und
+  sperrt ihr Suffix; sie wird dann von Hand entfernt.
+  Voraussetzung: die Rolle aus `DATABASE_URL` darf Datenbanken anlegen und `vector`
+  installieren (auf der Build-Box: Superuser).
+
 Die Migrationstests arbeiten in eigenen Wegwerf-Schemata neben `public` und finden `vector`
 über `search_path = <schema>, public`; der Neuaufbau berührt sie nicht.
 
