@@ -7,7 +7,7 @@ conversation) have dedicated handlers here.
 """
 from loguru import logger
 
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, frames_without_content
 
 # Identity the SERVER supplies to `internal.*` / `knowledge.*` handlers. The
 # parameter dict of those intents is LLM-built; a key from this set inside it
@@ -370,13 +370,18 @@ class ActionExecutor:
                     rewritten = await pre_call_handler(
                         intent=intent, parameters=parameters, user_id=user_id
                     )
-                except Exception:  # mirror run_hooks fail-open semantics
-                    # Full traceback (like run_hooks): a silently-skipped
-                    # SECURITY handler must be diagnosable from the log alone.
-                    logger.opt(exception=True).warning(
+                except Exception as e:  # mirror run_hooks fail-open semantics
+                    # A silently-skipped SECURITY handler must be diagnosable
+                    # from the log alone: type, message and the stack. NOT a
+                    # full traceback -- the sink prints the variable values of
+                    # every frame, and the frame above holds `parameters`,
+                    # the tool call's arguments (`frames_without_content`).
+                    logger.warning(
                         f"pre_mcp_call handler "
                         f"{getattr(pre_call_handler, '__name__', '?')} failed "
-                        f"(skipped)"
+                        f"(skipped): {type(e).__name__}: "
+                        f"{error_text_without_content(e)} "
+                        f"| at {frames_without_content(e)}"
                     )
                     continue
                 if isinstance(rewritten, dict):

@@ -66,7 +66,7 @@ async def _reconcile_ingest_tokens() -> list[str]:
                     "(DB token was empty — fresh install or DB wipe)"
                 )
             except Exception as e:
-                logger.warning(f"credential-reconciler: {label} check failed: {e}")
+                logger.warning(f"credential-reconciler: {label} check failed: {error_text_without_content(e)}")
     return actions
 
 

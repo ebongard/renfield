@@ -468,7 +468,7 @@ async def _execute_task(app: FastAPI, task_id: int) -> None:
             try:
                 await _handle_failure_streak(task, SCHEDULED_TASK_STATUS_SKIPPED)
             except Exception as e:
-                logger.warning(f"scheduled task '{task.name}': streak reset failed: {e}")
+                logger.warning(f"scheduled task '{task.name}': streak reset failed: {error_text_without_content(e)}")
             await session.commit()
             await _record_run_safe(
                 session, task_id, task.name,
@@ -512,7 +512,7 @@ async def _execute_task(app: FastAPI, task_id: int) -> None:
         try:
             await _handle_failure_streak(task, status)
         except Exception as e:
-            logger.warning(f"scheduled task '{task_name}': failure-streak alerting failed: {e}")
+            logger.warning(f"scheduled task '{task_name}': failure-streak alerting failed: {error_text_without_content(e)}")
         await session.commit()
 
         # Per-run history row (isolated from the task-state commit above).

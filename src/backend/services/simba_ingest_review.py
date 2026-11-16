@@ -175,7 +175,7 @@ async def simba_ingest_post_hook(
                 field_text or "", KNOWN_SIMBA_TAXONOMY, lang=lang or "de"
             )
         except Exception as e:
-            logger.warning(f"simba-ingest: classify failed for doc {document_id}: {e}")
+            logger.warning(f"simba-ingest: classify failed for doc {document_id}: {error_text_without_content(e)}")
 
         try:
             db.add(

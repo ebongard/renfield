@@ -3410,7 +3410,7 @@ async def _post_turn_skill_bookkeeping(
                     try:
                         await svc.record_outcome(sid, turn_success)
                     except Exception as e:
-                        logger.warning(f"⚠️ Skill outcome recording failed (id={sid}): {e}")
+                        logger.warning(f"⚠️ Skill outcome recording failed (id={sid}): {error_text_without_content(e)}")
         except Exception as e:
             logger.warning(f"⚠️ Skill outcome session failed: {error_text_without_content(e)}")
 

@@ -1140,7 +1140,7 @@ async def schicht_a_post_document_ingest_hook(
                 )
             except Exception as e:
                 logger.warning(
-                    f"Schicht A: processed rename failed for doc {document_id}: {e}"
+                    f"Schicht A: processed rename failed for doc {document_id}: {error_text_without_content(e)}"
                 )
 
             # Derive the document's OWN date (invoice/letter date) for sorting on

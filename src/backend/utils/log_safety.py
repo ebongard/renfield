@@ -63,6 +63,35 @@ def error_text_without_content(e: BaseException) -> str:
     return _CONTENT_STARTS.split(str(e), maxsplit=1)[0].strip()[:MAX_LEN]
 
 
+#: Frames of a stack that are worth a log line; the innermost ones are kept.
+MAX_FRAMES = 12
+
+
+def frames_without_content(e: BaseException) -> str:
+    """WHERE an exception was raised -- the stack as `file:line in function`,
+    outermost first -- and nothing else.
+
+    🛑 For the handlers that used to log a full traceback
+    (`logger.opt(exception=True)`). A traceback ends in `str(e)`, i.e. in the
+    `[SQL: ...] [parameters: ...]` tail this module exists to cut, and the
+    app's log sink runs with loguru's default `diagnose=True`, which prints
+    the VALUES of the variables on every source line of every frame
+    (measured on 2026-11-16: `work("<the argument>")` comes out with its
+    argument). The stack itself is the useful part and carries no content.
+
+    What is lost against the traceback: the source lines, the variable
+    values (the point), and the frames of a chained exception (`__cause__` /
+    `__context__`) -- only the outermost exception's own stack is listed.
+    """
+    import traceback
+
+    frames = traceback.extract_tb(e.__traceback__)[-MAX_FRAMES:]
+    return " > ".join(
+        f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno} in {frame.name}"
+        for frame in frames
+    ) or "no stack"
+
+
 # --- Credentials in logged URLs ----------------------------------------------
 #
 # 🛑 Found on 2026-10-31: in Bearer mode (no HttpOnly cookie) the browser opens

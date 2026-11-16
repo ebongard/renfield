@@ -2048,7 +2048,9 @@ class MCPManager:
                 call_timeout=probe["timeout"],
             )
         except Exception as e:
-            state.record_probe_outcome(False, f"{type(e).__name__}: {e}"[:200])
+            # The detail is shown on the health page: cut like the log line.
+            state.record_probe_outcome(
+                False, f"{type(e).__name__}: {error_text_without_content(e)}"[:200])
             logger.warning(f"mcp_health: probe '{namespaced}' raised: {error_text_without_content(e)}")
             return {"ok": False, "detail": state.last_probe_detail, "skipped": False}
 

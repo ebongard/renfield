@@ -317,13 +317,13 @@ async def check_due_reminders():
                     )
                     logger.info(f"⏰ Reminder #{reminder.id} fired")
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to fire reminder #{reminder.id}: {e}")
+                    logger.warning(f"⚠️ Failed to fire reminder #{reminder.id}: {error_text_without_content(e)}")
                     try:
                         await db.rollback()
                         await service.release_claim(reminder.id)
                     except Exception as release_error:
                         logger.warning(
-                            f"⚠️ Reminder #{reminder.id} stays claimed, will not retry: {release_error}"
+                            f"⚠️ Reminder #{reminder.id} stays claimed, will not retry: {error_text_without_content(release_error)}"
                         )
     except Exception as e:
         logger.warning(f"⚠️ Reminder check failed: {error_text_without_content(e)}")
