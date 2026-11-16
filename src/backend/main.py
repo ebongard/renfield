@@ -4,7 +4,6 @@ Main application, FastAPI
 """
 import hmac
 import os
-import sys
 from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -13,13 +12,12 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Configure logging
-logger.remove()
-logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
+# Configure logging: one sink that prints no variable values into a traceback,
+# and no credential from a URL (`/ws?token=...`) in uvicorn's access/WebSocket
+# lines.
+from utils.log_safety import error_text_without_content, install_log_sink, install_uvicorn_url_redaction
 
-# No credential from a URL (`/ws?token=...`) in uvicorn's access/WebSocket lines.
-from utils.log_safety import error_text_without_content, install_uvicorn_url_redaction
-
+install_log_sink(os.getenv("LOG_LEVEL", "INFO"))
 install_uvicorn_url_redaction()
 
 # Local imports

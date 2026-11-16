@@ -47,7 +47,7 @@ from services.task_queue import (
 )
 from services.voice_server_client import VoiceServerError
 from utils.config import settings
-from utils.log_safety import error_text_without_content, frames_without_content
+from utils.log_safety import error_text_without_content, frames_without_content, install_log_sink
 
 HEARTBEAT_KEY = "renfield:worker:meeting:heartbeat"
 HEARTBEAT_INTERVAL_S = 30
@@ -393,4 +393,9 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    # The worker is a process of its own and never imports `main.py`: without
+    # this it logs through loguru's built-in sink, which prints the variable
+    # values of every frame into a traceback (`install_log_sink`). The level
+    # stays what that built-in sink had -- loguru's own, NOT `LOG_LEVEL`.
+    install_log_sink(os.getenv("LOGURU_LEVEL", "DEBUG"))
     asyncio.run(main())
