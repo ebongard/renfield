@@ -129,7 +129,8 @@ async def _visible_document_meta(
 
     sql = text(f"""
         SELECT d.id AS id, d.generated_title AS generated_title, d.title AS title,
-               d.filename AS filename, d.circle_tier AS circle_tier
+               d.filename AS filename, d.circle_tier AS circle_tier,
+               d.paperless_document_id AS paperless_document_id
         FROM documents d
         LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
         WHERE d.id = ANY(:ids) AND ({doc_clause})
@@ -140,6 +141,9 @@ async def _visible_document_meta(
             "title": r.generated_title or r.title or r.filename or f"Dokument {r.id}",
             "filename": r.filename or "",
             "tier": r.circle_tier,
+            # For the chat chips' open target; read through the SAME circle
+            # filter as the title, so it is known only where the title is.
+            "paperless_document_id": r.paperless_document_id,
         }
         for r in rows
     }

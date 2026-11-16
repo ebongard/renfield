@@ -495,6 +495,33 @@ def _extract_agent_sources(tool_results: list) -> list[dict]:
     return sources
 
 
+async def _turn_sources(tool_results: list, rag_results: list, user_id: int | None) -> list[dict]:
+    """The source chips of one turn -- the `done` frame and
+    `message_metadata.sources` both carry exactly this list.
+
+    Flag off (`CHAT_DOCUMENT_LINKS_ENABLED`): `_extract_agent_sources`, as
+    before -- knowledge_search sources only, passed through untouched.
+    Flag on: `document_sources.turn_sources` adds Paperless documents, the
+    direct RAG path and server-built open targets. Building chips must never
+    cost the user the answer, so a failure there falls back to the flag-off
+    list.
+    """
+    if not settings.chat_document_links_enabled:
+        return _extract_agent_sources(tool_results)
+    try:
+        from api.websocket.document_sources import turn_sources
+
+        return await turn_sources(tool_results, rag_results, user_id)
+    except Exception as e:
+        from utils.log_safety import error_text_without_content
+
+        logger.warning(
+            f"chat sources: building open targets failed, falling back to plain "
+            f"knowledge sources: {error_text_without_content(e)}"
+        )
+        return _extract_agent_sources(tool_results)
+
+
 # The kiosk active-subsystem pulse helpers (INTERNAL_SUBSYSTEM_LABELS,
 # extract_subsystems_used, broadcast_turn_activity) moved to
 # ``api.websocket.kiosk_data`` so the voice path (satellite_handler) can emit the
@@ -959,16 +986,23 @@ async def _stream_rag_response(
     time_context: str = "",
     role_name: str | None = None,
     lang: str = "de",
+    rag_results_out: list | None = None,
 ) -> str:
     """Stream a RAG-enhanced or plain conversation response.
 
     Handles RAG context lookup, caching, follow-up detection, and fallback
     to plain conversation if no RAG context is found.
 
+    ``rag_results_out``: filled with the search results the answer was
+    generated FROM (fresh, or the cached ones of a follow-up) -- and only when
+    the answer really was RAG-backed, not on the plain-conversation fallback.
+    The caller turns them into source chips (`document_sources.turn_sources`).
+
     Returns:
         The full response text.
     """
     full_response = ""
+    used_results: list | None = None
 
     if settings.rag_enabled:
         try:
@@ -979,6 +1013,7 @@ async def _stream_rag_response(
 
             if is_followup and session_state.is_rag_context_valid():
                 rag_context = session_state.last_rag_context
+                used_results = session_state.last_rag_results
                 logger.info(f"📚 RAG follow-up detected, using cached context ({len(rag_context)} chars)")
             else:
                 async with AsyncSessionLocal() as db_session:
@@ -993,6 +1028,7 @@ async def _stream_rag_response(
                     )
 
                     if search_results:
+                        used_results = search_results
                         rag_context = rag_service.format_context_from_results(search_results)
                         session_state.update_rag_context(
                             context=rag_context,
@@ -1030,6 +1066,8 @@ async def _stream_rag_response(
 
                 session_state.add_to_history("user", content)
                 session_state.add_to_history("assistant", full_response)
+                if rag_results_out is not None and used_results:
+                    rag_results_out.extend(used_results)
                 return full_response
             else:
                 logger.info("📚 No RAG context found, using plain conversation")
@@ -1650,6 +1688,10 @@ async def websocket_endpoint(
             # Shared init so the persist/done block can reference it on every path
             # (the legacy non-agent path never touches agent_tool_results).
             agent_tool_results: list = []
+            # The search results a direct RAG answer was generated from
+            # (`_stream_rag_response`), for the source chips. Read only under
+            # CHAT_DOCUMENT_LINKS_ENABLED.
+            turn_rag_results: list = []
             # Context variables the agent extracted from this turn's tool
             # results (#1447): filled by agent.run / run_orchestrated through
             # `context_vars_out`, persisted after the turn was saved.
@@ -2370,6 +2412,7 @@ async def websocket_endpoint(
                             time_context=time_context,
                             role_name=role.name if role else None,
                             lang=turn_lang,
+                            rag_results_out=turn_rag_results,
                         )
                     else:
                         from services.output_gate import stream_or_gate
@@ -2395,6 +2438,7 @@ async def websocket_endpoint(
                         time_context=time_context,
                         role_name=role.name if role else None,
                         lang=turn_lang,
+                        rag_results_out=turn_rag_results,
                     )
 
                 else:
@@ -2649,6 +2693,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 time_context=time_context,
                                 role_name=role.name if role else None,
                                 lang=turn_lang,
+                                rag_results_out=turn_rag_results,
                             )
                         else:
                             from services.output_gate import stream_or_gate
@@ -2699,7 +2744,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # Provenance: which documents this answer drew on (circle-filtered at
             # retrieval). Persisted so chips rehydrate on history load; also sent
             # on the `done` frame below for the live turn. Empty → key omitted.
-            agent_sources = _extract_agent_sources(agent_tool_results)
+            agent_sources = await _turn_sources(agent_tool_results, turn_rag_results, user_id)
             if agent_sources:
                 assistant_metadata["sources"] = agent_sources
 
