@@ -428,7 +428,7 @@ class TestUpdatePackageIntegration:
             assert response.status_code == 503
 
     @pytest.mark.unit
-    def test_build_package_from_real_source(self, tmp_path):
+    def test_build_package_from_real_source(self, tmp_path, tmp_path_factory, monkeypatch):
         """With a bundled source on disk, build a real tarball and read its version.
 
         Regression guard for the OTA outage: the backend image shipped WITHOUT
@@ -437,8 +437,15 @@ class TestUpdatePackageIntegration:
         whose version matches the source __version__ (not a config value).
         """
         import tarfile
+        import tempfile
 
         from ha_glue.services.satellite_update_service import SatelliteUpdateService
+
+        # The service writes `renfield-satellite-<version>.tar.gz` into the
+        # temp directory. Under its shared default two runs side by side build
+        # the SAME file, and one reads what the other has half written.
+        out = tmp_path_factory.mktemp("package")
+        monkeypatch.setattr(tempfile, "tempdir", str(out))
 
         # Minimal but realistic bundled layout.
         pkg = tmp_path / "renfield_satellite"
@@ -459,6 +466,7 @@ class TestUpdatePackageIntegration:
             # A real tarball is produced and contains the satellite package.
             package_path = service.build_update_package()
             assert package_path is not None and package_path.exists()
+            assert package_path.parent == out
             with tarfile.open(package_path, "r:gz") as tar:
                 names = tar.getnames()
             assert "renfield_satellite/__init__.py" in names
