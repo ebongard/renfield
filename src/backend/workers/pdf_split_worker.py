@@ -326,7 +326,10 @@ async def _process_entry(
             f"slow-split doc {document_id}: {outcome} (entry {entry.entry_id})"
         )
     except Exception as e:
-        logger.error(f"slow-split doc {document_id} failed: {error_text_without_content(e)}" f" | at {frames_without_content(e)}")
+        logger.error(
+            f"slow-split doc {document_id} failed: {error_text_without_content(e)}"
+            f" | at {frames_without_content(e)}"
+        )
         if _is_transient_error(e):
             try:
                 tkey = _transient_key(entry.entry_id)

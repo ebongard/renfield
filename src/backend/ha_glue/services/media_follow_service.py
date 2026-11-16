@@ -460,7 +460,10 @@ class MediaFollowService:
                     return False
                 return bool(user.media_follow_enabled)
         except Exception as e:
-            logger.error(f"🎵 Error checking media_follow opt-in for user {user_id}" f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}")
+            logger.error(
+                f"🎵 Error checking media_follow opt-in for user {user_id}"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+            )
             return False
 
     async def _get_role_priority(self, user_id: int) -> int:
@@ -476,7 +479,10 @@ class MediaFollowService:
                     if role:
                         return role.priority
         except Exception as e:
-            logger.error(f"🎵 Error looking up role priority for user {user_id}" f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}")
+            logger.error(
+                f"🎵 Error looking up role priority for user {user_id}"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+            )
         return 100
 
     async def _get_room_owner_id(self, room_id: int) -> int | None:
@@ -489,7 +495,10 @@ class MediaFollowService:
                 room = await db.get(Room, room_id)
                 return room.owner_id if room else None
         except Exception as e:
-            logger.error(f"🎵 Error looking up room owner for room {room_id}" f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}")
+            logger.error(
+                f"🎵 Error looking up room owner for room {room_id}"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+            )
             return None
 
     # ------------------------------------------------------------------

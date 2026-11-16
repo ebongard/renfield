@@ -294,7 +294,10 @@ async def _process_entry(
         await _clear_transient(redis, entry.entry_id)
         logger.info(f"transcribed meeting {meeting_id} (entry {entry.entry_id})")
     except Exception as e:
-        logger.error(f"meeting {meeting_id} (entry {entry.entry_id}) failed: {error_text_without_content(e)}" f" | at {frames_without_content(e)}")
+        logger.error(
+            f"meeting {meeting_id} (entry {entry.entry_id}) failed: {error_text_without_content(e)}"
+            f" | at {frames_without_content(e)}"
+        )
         if _is_transient_error(e):
             # Infra blip / voice-server hiccup: leave un-ACKed for reclaim; record
             # the CLEAN leave so it isn't counted as a crash by the poison guard.

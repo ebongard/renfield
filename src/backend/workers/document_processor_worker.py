@@ -442,7 +442,10 @@ async def _process_entry(
         await _clear_transient(redis, entry.entry_id)
         logger.info(f"processed doc {doc_id} (entry {entry.entry_id})")
     except Exception as e:
-        logger.error(f"task {entry.entry_id} for doc {doc_id} failed: {error_text_without_content(e)}" f" | at {frames_without_content(e)}")
+        logger.error(
+            f"task {entry.entry_id} for doc {doc_id} failed: {error_text_without_content(e)}"
+            f" | at {frames_without_content(e)}"
+        )
         if _is_transient_error(e):
             # Infra blip (LLM/embedding host down, DB/Redis dropped). Leave the
             # entry un-ACKed so reclaim_stale re-delivers it. Record this CLEAN

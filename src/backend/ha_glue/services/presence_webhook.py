@@ -26,7 +26,10 @@ async def _dispatch(event: str, **kwargs):
         resp.raise_for_status()
         logger.debug(f"Presence webhook: {event} → {resp.status_code}")
     except Exception as e:
-        logger.warning(f"Presence webhook failed for {event}" f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}")
+        logger.warning(
+            f"Presence webhook failed for {event}"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+        )
 
 
 def register_presence_webhooks():

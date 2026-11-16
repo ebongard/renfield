@@ -583,7 +583,10 @@ async def _load_one_plugin(spec: str):
         logger.info(f"Plugin module loaded: {spec}")
     except Exception as e:
         _plugin_status[spec] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        logger.error(f"Failed to load plugin module: {spec}" f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}")
+        logger.error(
+            f"Failed to load plugin module: {spec}"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+        )
 
 
 async def _load_plugin_module():
@@ -643,7 +646,10 @@ async def _init_paperless_audit(app: "FastAPI") -> None:
         await audit_service.start()
         logger.info("✅ Paperless Audit: routes mounted + service started (platform-core)")
     except Exception as e:
-        logger.warning("Paperless audit init failed" f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}")
+        logger.warning(
+            "Paperless audit init failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+        )
 
 
 async def _setup_task_engine(app):
@@ -704,7 +710,10 @@ async def _setup_task_engine(app):
             run_at_boot=True,
         )
     except Exception as e:
-        logger.error("Scheduled Tasks engine tick loop failed to start" f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}")
+        logger.error(
+            "Scheduled Tasks engine tick loop failed to start"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+        )
 
 
 @asynccontextmanager
@@ -937,7 +946,10 @@ async def lifespan(app: "FastAPI"):
         from services.scheduled_tasks.engine import drain_running_tasks
         await drain_running_tasks()
     except Exception as e:
-        logger.warning("Scheduled Tasks drain failed" f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}")
+        logger.warning(
+            "Scheduled Tasks drain failed"
+            f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+        )
 
     # Stop paperless audit before MCP shutdown
     if getattr(app.state, "paperless_audit", None):

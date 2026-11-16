@@ -57,7 +57,10 @@ def load_translations(config_dir: str | None = None) -> None:
             _translations[lang] = flat
             count += len(flat)
         except Exception as e:
-            logger.warning(f"Failed to load i18n file: {yaml_file}" f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}")
+            logger.warning(
+                f"Failed to load i18n file: {yaml_file}"
+                f": {type(e).__name__}: {error_text_without_content(e)} | at {frames_without_content(e)}"
+            )
 
     logger.info(f"i18n loaded: {count} keys across {len(_translations)} language(s)")
 
