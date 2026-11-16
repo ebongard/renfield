@@ -884,3 +884,78 @@ class TestAnAnswerRefusedAtThePollIsNotRecordedAsDelivered:
         assert _row_state(after) == _row_state(before)
         assert corrections == []
         assert (await get_pending_store().get(rid)).handed_over_at is not None
+
+
+class TestAnAnswerThatCouldNotBeStoredIsNotRecordedAsDelivered:
+    """The row for a finished answer is written before the answer becomes
+    collectable. Whatever goes wrong in between corrects that row -- there is
+    never a `success` row for an answer that could not be collected, and
+    never a second row beside it."""
+
+    async def test_the_store_failing_corrects_the_row(
+        self, responder, maker, pairing, far_side, monkeypatch
+    ):
+        from services.federation_query_responder import _NOT_STORED
+
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        store = get_pending_store()
+        save = store.save
+        failures = []
+
+        async def save_fails_once_the_answer_is_in(pending):
+            if pending.status == STATUS_COMPLETE and not failures:
+                failures.append(1)
+                raise ConnectionError("store unreachable")
+            return await save(pending)
+
+        monkeypatch.setattr(store, "save", save_fails_once_the_answer_is_in)
+        await finish()
+
+        assert failures == [1]
+        (row,) = await _answered_rows(maker)
+        assert row.final_status == "aborted"
+        assert _what_happened(row) == (_NOT_STORED, STAGE_AFTER_ANSWER)
+        assert row.answer_excerpt is None
+        after = await store.get(rid)
+        assert after.status == "failed"
+        resp = await responder.handle_retrieve(_poll(far_side, rid))
+        assert resp.status == "failed" and resp.answer is None
+
+    async def test_a_cancellation_while_storing_corrects_the_row(
+        self, responder, maker, pairing, far_side, monkeypatch
+    ):
+        import asyncio
+
+        from services.federation_query_responder import _CANCELLED
+
+        _stub_work(responder)
+        rid, finish = await _admit(responder, far_side)
+        store = get_pending_store()
+        save = store.save
+        storing = asyncio.Event()
+
+        async def save_hangs_once_the_answer_is_in(pending):
+            if pending.status == STATUS_COMPLETE:
+                storing.set()
+                await asyncio.sleep(3600)
+            return await save(pending)
+
+        monkeypatch.setattr(store, "save", save_hangs_once_the_answer_is_in)
+        task = asyncio.create_task(finish())
+        await asyncio.wait_for(storing.wait(), 10)
+        import services.federation_query_responder as fqr
+
+        (work,) = [t for t in fqr._background_tasks if not t.done()]
+        work.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        (row,) = await _answered_rows(maker)
+        assert row.final_status == "aborted"
+        assert _what_happened(row) == (_CANCELLED, STAGE_AFTER_ANSWER)
+        assert row.answer_excerpt is None
+        # And what the row calls undelivered cannot be collected after all.
+        monkeypatch.setattr(store, "save", save)
+        resp = await responder.handle_retrieve(_poll(far_side, rid))
+        assert resp.model_dump() == await _unknown_poll_response(responder, far_side)

@@ -283,6 +283,8 @@ _REFUSED_PAIRING = "pairing_revoked"
 _REFUSED_LINK = "link_revoked"
 #: The background task was cancelled (shutdown, a test reset).
 _CANCELLED = "cancelled"
+#: The answer was made and could not be stored for collection.
+_NOT_STORED = "not_stored"
 
 #: The German sentence for each code -- presentation. The code itself leads
 #: the stored text (`federation_audit.outcome_note`) and is what tests and
@@ -292,6 +294,7 @@ _OUTCOME_TEXT = {
     _REFUSED_PAIRING: "Kopplung widerrufen",
     _REFUSED_LINK: "Verknüpfung besteht nicht mehr",
     _CANCELLED: "Abgebrochen",
+    _NOT_STORED: "Antwort konnte nicht bereitgestellt werden",
 }
 
 
@@ -346,25 +349,42 @@ async def _record_undelivered_answer(
         await _record_refused_access(pending, why)
 
 
-async def _record_cancelled_access(pending: _PendingRequest) -> None:
+async def _record_cancelled_access(
+    pending: _PendingRequest, *, answer_recorded: bool = False,
+) -> None:
     """Write the record for a cancelled foreign access.
 
     A separate function so the cancellation branch above stays readable and
     the write is testable without staging a race.
+
+    `answer_recorded`: the cancellation came after the row for the finished
+    answer was written and before the answer could be collected -- that row
+    is corrected instead of a second one written.
     """
-    reason = _unserved_note(_CANCELLED, pending)
+    if answer_recorded:
+        write = _withdraw_recorded_answer(pending)
+    else:
+        write = _write_responder_audit(
+            pending, success=False, error=_unserved_note(_CANCELLED, pending),
+            aborted=True)
     try:
         # `shield`: a SECOND cancel() ends the wait here, not the write
         # itself. Against a closing event loop nothing helps -- then there is
         # no row, i.e. exactly the old behaviour.
-        await asyncio.shield(
-            _write_responder_audit(pending, success=False, error=reason,
-                                   aborted=True)
-        )
+        await asyncio.shield(write)
     except asyncio.CancelledError:
         raise
     except Exception as e:  # pragma: no cover -- must never mask the cancellation
         logger.warning(f"Federation: cancellation record not written: {error_text_without_content(e)}")
+
+
+async def _withdraw_recorded_answer(pending: _PendingRequest) -> None:
+    """A cancellation between recording the answer and storing it: the row
+    is corrected, and the record is removed so the answer the row now calls
+    undelivered cannot be collected after all (the in-memory store hands out
+    the very object this task has just completed)."""
+    await _record_undelivered_answer(pending, _CANCELLED, sole_writer=True)
+    await get_pending_store().delete_many([pending.request_id])
 
 
 async def _record_refused_access(pending: _PendingRequest, why: str) -> None:
@@ -866,6 +886,7 @@ class FederationQueryResponder:
         if pending is None:
             return
 
+        answer_recorded = False
         try:
             # 🛑 A revoked pairing or person link gets no answer -- and no
             # retrieval either, where that can still be avoided. The task may have waited (event
@@ -942,6 +963,13 @@ class FederationQueryResponder:
             # The other order left a moment in which a poll could be refused
             # (and find no row to correct) while this task then wrote
             # `success` for an answer nobody got.
+            # From here on a row says "answered" (or is being written:
+            # the flag is set first, and a correction that finds no row
+            # falls back to an ordinary record). Whatever keeps the answer
+            # from becoming collectable now -- the record gone, the store
+            # failing, a cancellation -- corrects THAT row instead of adding
+            # a second one beside it.
+            answer_recorded = True
             await _write_responder_audit(pending, success=True)
             if not await store.save(pending):
                 # Gone between the check above and this line: `save` does
@@ -968,7 +996,7 @@ class FederationQueryResponder:
             # (a second `cancel()`, or the event loop closing) -- then it falls
             # back to the old behaviour, never to anything worse. Hence
             # `shield`: a second cancellation ends the wait, not the write.
-            await _record_cancelled_access(pending)
+            await _record_cancelled_access(pending, answer_recorded=answer_recorded)
             raise
         except Exception as e:
             logger.error(
@@ -989,6 +1017,12 @@ class FederationQueryResponder:
             pending.answered_at = time.time()
             pending.progress_label = PROGRESS_LABEL_FAILED
             pending.status = STATUS_FAILED
+            if answer_recorded:
+                # The answer was made and recorded; storing it failed. The
+                # record first: the store may well fail again below.
+                await _record_undelivered_answer(pending, _NOT_STORED, sole_writer=True)
+                await store.save(pending)
+                return
             await store.save(pending)
             await _write_responder_audit(pending, success=False, error=reason)
 
