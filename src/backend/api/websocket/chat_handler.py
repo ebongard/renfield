@@ -455,7 +455,12 @@ def _parse_mcp_raw_data(data: list) -> any:
         return None
 
     # Concatenate all text blocks and try to parse as JSON
-    combined_text = "\n".join(item.get("text", "") for item in data if item.get("type") == "text")
+    # Only TEXT blocks that carry a string: `mcp_client` stores `text: None`
+    # for a block without text, and a `None` in the join is a TypeError.
+    combined_text = "\n".join(
+        item["text"] for item in data
+        if item.get("type") == "text" and isinstance(item.get("text"), str)
+    )
     if not combined_text:
         return None
 

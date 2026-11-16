@@ -197,6 +197,26 @@ class TestPaperlessSources:
     def test_a_result_of_another_shape_is_no_source_and_no_error(self, public_base, data):
         assert ds.paperless_sources([(SEARCH, data), (GET, data)]) == []
 
+    def test_a_non_text_block_beside_the_json_does_not_cost_the_chips(self, public_base):
+        """`mcp_client` records every content block as {"type", "text"} and
+        stores `text: None` for one without text (image, embedded resource)."""
+        blocks = [
+            {"type": "image", "text": None},
+            {"type": "text", "text": json.dumps({"results": [_hit(11)]})},
+            {"type": "resource", "text": None},
+        ]
+        [source] = ds.paperless_sources([(SEARCH, blocks)])
+        assert source["paperless_document_id"] == 11
+
+    def test_a_text_block_without_text_is_skipped_not_a_type_error(self, public_base):
+        blocks = [
+            {"type": "text", "text": None},
+            {"type": "text", "text": json.dumps(_hit(12))},
+        ]
+        [source] = ds.paperless_sources([(GET, blocks)])
+        assert source["paperless_document_id"] == 12
+        assert ch._parse_mcp_raw_data([{"type": "text", "text": None}]) is None
+
     def test_other_tools_are_not_read_even_with_the_same_shape(self, public_base):
         results = [
             ("mcp.paperless.list_all_documents", _mcp({"results": [_hit(1)]})),
@@ -564,9 +584,17 @@ def _turn(monkeypatch, role_name: str) -> list[dict]:
     monkeypatch.setattr(settings, "followup_chips_enabled", False, raising=False)
 
     app = FastAPI()
-    app.state.ollama = SimpleNamespace(default_lang="de")
+    app.state.ollama = SimpleNamespace(
+        default_lang="de",
+        # Only the legacy path asks the model for ranked intents.
+        extract_ranked_intents=AsyncMock(return_value=[
+            {"intent": "general.conversation", "parameters": {}, "confidence": 1.0},
+        ]),
+    )
     app.state.mcp_manager = None
-    app.state.agent_router = SimpleNamespace(
+    # `LEGACY` = no router: the ranked-intent path, the third caller of
+    # `_stream_rag_response`.
+    app.state.agent_router = None if role_name == LEGACY else SimpleNamespace(
         classify_with_context=AsyncMock(return_value=_Role(role_name)),
         role_for_intent=lambda _intent: None,
         roles={},
@@ -584,8 +612,11 @@ def _turn(monkeypatch, role_name: str) -> list[dict]:
     return frames
 
 
+LEGACY = "<legacy ranked-intent path>"
+
+
 class TestDoneFrame:
-    @pytest.mark.parametrize("role_name", ["knowledge", "conversation"])
+    @pytest.mark.parametrize("role_name", ["knowledge", "conversation", LEGACY])
     def test_a_direct_rag_turn_carries_sources_on_done(
         self, monkeypatch, flag_on, public_base, role_name,
     ):
@@ -599,7 +630,7 @@ class TestDoneFrame:
              "paperless_url": f"{PUBLIC}/documents/210/details"},
         ]
 
-    @pytest.mark.parametrize("role_name", ["knowledge", "conversation"])
+    @pytest.mark.parametrize("role_name", ["knowledge", "conversation", LEGACY])
     def test_with_the_flag_off_done_has_no_sources_key(
         self, monkeypatch, flag_off, public_base, role_name,
     ):
