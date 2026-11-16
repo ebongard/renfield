@@ -676,7 +676,10 @@ class QueryOrchestrator:
                     f"{type(e).__name__}: {error_text_without_content(e)} "
                     f"| at {frames_without_content(e)}"
                 )
-                agent_run_error = str(e)
+                # Shown to the asking person as a step ("Sub-Agent [...]
+                # fehlgeschlagen: ..."): a database error must not bring its
+                # statement and parameters along.
+                agent_run_error = error_text_without_content(e)
                 final_answer = None
 
             result: dict = {
@@ -722,7 +725,7 @@ class QueryOrchestrator:
                 f"{type(e).__name__}: {error_text_without_content(e)} "
                 f"| at {frames_without_content(e)}"
             )
-            return _failed_sub_result(role_name, query, error=str(e))
+            return _failed_sub_result(role_name, query, error=error_text_without_content(e))
 
         logger.info(f"Orchestrator: sub-agent [{role_name}] completed ({len(steps)} steps)")
         return result

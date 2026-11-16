@@ -2055,6 +2055,40 @@ class TestPostSubAgentFiresAfterCrash:
         assert result["error"] is not None
         assert "agent crashed" in result["error"]
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_a_database_crash_reaches_the_person_without_its_statement(self):
+        """The `error` field is shown to the asking person as a step
+        ("Sub-Agent [...] fehlgeschlagen: ..."). A database error brings its
+        statement and bound parameters in the message; they stay out."""
+        from sqlalchemy.exc import StatementError
+
+        primary = _make_role("release", servers=["release"])
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        async def _crashing_run(*args, **kwargs):
+            from services.agent_service import AgentStep
+            yield AgentStep(step_number=1, step_type="tool_call", tool="t1")
+            raise StatementError(message="boom", statement="SELECT 1",
+                                 params={"q": "zz-private-value-zz"}, orig=RuntimeError("o"))
+
+        with patch("services.agent_service.AgentService") as MockAS, \
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            mock_agent = MagicMock()
+            mock_agent.run = _crashing_run
+            MockAS.return_value = mock_agent
+            MockReg.create = AsyncMock(return_value=MagicMock())
+
+            result = await orchestrator._run_sub_agent(
+                {"role": "release", "query": "status"},
+                _make_ollama("ok"), MagicMock(), "de",
+            )
+
+        assert "boom" in result["error"]
+        assert "zz-private-value-zz" not in result["error"]
+        assert "SELECT" not in result["error"]
+
 
 # ============================================================================
 # Phase 1.5 — synthesis hooks (build_synthesis_context, synthesis_prompt_override)
