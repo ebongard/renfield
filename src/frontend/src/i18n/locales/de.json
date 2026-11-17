@@ -235,7 +235,12 @@
       "untitled": "Dokument {{id}}",
       "paperlessUntitled": "Paperless-Dokument {{id}}",
       "openInPaperless": "{{title}} – in Paperless öffnen (neuer Tab)",
-      "noLink": "In Paperless gefunden – kein Link verfügbar"
+      "noLink": "In Paperless gefunden – kein Link verfügbar",
+      "open": "Öffnen",
+      "openDocument": "{{title}} öffnen",
+      "inPaperless": "In Paperless öffnen",
+      "pages_one": "{{count}} S.",
+      "pages_other": "{{count}} S."
     },
     "followups": {
       "label": "Vorschläge für Folgefragen"

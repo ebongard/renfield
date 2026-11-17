@@ -9,6 +9,7 @@ import EmailForwardDialog from './EmailForwardDialog';
 import PaperlessConfirmCard from './PaperlessConfirmCard';
 import ChatSkeleton from './ChatSkeleton';
 import SourceChips from '../../components/chat/SourceChips';
+import DocumentCards from '../../components/chat/DocumentCards';
 import FollowupChips from '../../components/chat/FollowupChips';
 import MediaHandoffIndicator from '../../components/chat/MediaHandoffIndicator';
 import AgentRoleBadge from '../../components/chat/AgentRoleBadge';
@@ -181,6 +182,9 @@ export default function ChatMessages() {
   const { data: features } = useFeatureFlags();
   const roleSurfacingEnabled = features?.role_surfacing_enabled ?? false;
   const artifactsEnabled = features?.artifacts_typed_enabled ?? false;
+  // Document cards replace the source chips where the backend writes the card
+  // fields (CHAT_DOCUMENT_LINKS_ENABLED); elsewhere the chip row stays.
+  const documentCardsEnabled = features?.chat_document_links_enabled ?? false;
   // Chat branching (Phase 1): edit/regenerate fork affordances. Dark by default.
   const branchingEnabled = features?.chat_branching_enabled ?? false;
   // Index of the user message currently being edited inline (null = none).
@@ -541,10 +545,13 @@ export default function ChatMessages() {
               </button>
             )}
 
-            {/* Provenance source chips — KB documents a knowledge-backed answer
-                used. Renders nothing when the turn had no sources. */}
+            {/* The documents the answer drew on: one card each, or -- with the
+                flag off -- the provenance chip row. Both render nothing when
+                the turn had no sources. */}
             {message.role === 'assistant' && !message.streaming && (
-              <SourceChips sources={message.sources} />
+              documentCardsEnabled
+                ? <DocumentCards sources={message.sources} />
+                : <SourceChips sources={message.sources} />
             )}
 
             {/* Follow-up suggestion chips — only under the LAST finished

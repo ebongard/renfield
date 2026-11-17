@@ -181,7 +181,12 @@
       "untitled": "Documento {{id}}",
       "paperlessUntitled": "Documento Paperless {{id}}",
       "openInPaperless": "{{title}} – apri in Paperless (nuova scheda)",
-      "noLink": "Trovato in Paperless – nessun link disponibile"
+      "noLink": "Trovato in Paperless – nessun link disponibile",
+      "open": "Apri",
+      "openDocument": "Apri {{title}}",
+      "inPaperless": "Apri in Paperless",
+      "pages_one": "{{count}} pag.",
+      "pages_other": "{{count}} pagg."
     },
     "followups": {
       "label": "Domande di approfondimento"

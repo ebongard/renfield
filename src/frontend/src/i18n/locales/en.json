@@ -235,7 +235,12 @@
       "untitled": "Document {{id}}",
       "paperlessUntitled": "Paperless document {{id}}",
       "openInPaperless": "{{title}} – open in Paperless (new tab)",
-      "noLink": "Found in Paperless – no link available"
+      "noLink": "Found in Paperless – no link available",
+      "open": "Open",
+      "openDocument": "Open {{title}}",
+      "inPaperless": "Open in Paperless",
+      "pages_one": "{{count}} page",
+      "pages_other": "{{count}} pages"
     },
     "followups": {
       "label": "Follow-up suggestions"
