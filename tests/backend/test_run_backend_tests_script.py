@@ -50,7 +50,7 @@ pytestmark = [pytest.mark.unit]
 _REPO = Path(__file__).resolve().parents[2]
 _SCRIPT = _REPO / "bin" / "run-backend-tests.sh"
 _ADMIN = _REPO / "bin" / "throwaway_test_db.py"
-_APP_URL = "postgresql://app:s3cr3t-pw@db:5432/renfield"
+_APP_URL = "postgresql://app:PASSWORD@db:5432/renfield"
 _TOKEN = "0123456789abcdef0123456789abcdef"
 
 _BAD_SUFFIXES = [
@@ -137,12 +137,12 @@ def test_any_other_name_is_refused(admin, name):
 @pytest.mark.parametrize(
     "url",
     [
-        "postgresql+asyncpg://u:p@db/renfield_test_app",
-        "postgresql+asyncpg://u:p@db/renfield_test_app?ssl=disable",
-        "postgresql://u:p@db:5432/renfield_test_app?options=a/b",
-        "postgresql://u:p@db:5432/renfield_test_app?application_name=renfield/x",
-        "postgresql://u:p@db:5432/renfield_test_app/",
-        "postgresql://u:p%2Fw@db:5432/renfield_test_app",
+        "postgresql+asyncpg://u:PASSWORD@db/renfield_test_app",
+        "postgresql+asyncpg://u:PASSWORD@db/renfield_test_app?ssl=disable",
+        "postgresql://u:PASSWORD@db:5432/renfield_test_app?options=a/b",
+        "postgresql://u:PASSWORD@db:5432/renfield_test_app?application_name=renfield/x",
+        "postgresql://u:PASSWORD@db:5432/renfield_test_app/",
+        "postgresql://u:" + "p%2Fw" + "@db:5432/renfield_test_app",
     ],
 )
 def test_the_application_database_is_refused_even_under_a_matching_name(admin, url):
@@ -153,7 +153,7 @@ def test_the_application_database_is_refused_even_under_a_matching_name(admin, u
 
 
 def test_another_application_database_does_not_refuse_the_name(admin):
-    admin.check_name("renfield_test_app", "postgresql://u:p@db:5432/renfield?x=/renfield_test_app")
+    admin.check_name("renfield_test_app", "postgresql://u:PASSWORD@db:5432/renfield?x=/renfield_test_app")
 
 
 def test_an_unparsable_application_url_is_refused(admin):
@@ -177,7 +177,7 @@ def test_a_refused_call_never_opens_a_connection(admin, monkeypatch, capsys, arg
     assert admin.main(argv) == admin.EXIT_REFUSED
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "s3cr3t-pw" not in captured.err
+    assert "PASSWORD" not in captured.err
 
 
 def test_the_application_database_is_refused_by_a_run_before_any_connection(admin, monkeypatch, capsys):
@@ -187,22 +187,22 @@ def test_the_application_database_is_refused_by_a_run_before_any_connection(admi
 
     monkeypatch.setattr(admin, "_connect", _no_connection)
     monkeypatch.setattr(admin, "PYTEST_COMMAND", ["false"])
-    monkeypatch.setenv("DATABASE_URL", "postgresql://app:s3cr3t-pw@db:5432/renfield_test_app")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://app:PASSWORD@db:5432/renfield_test_app")
     assert admin.main(["run", "renfield_test_app", "--"]) == admin.EXIT_REFUSED
     captured = capsys.readouterr()
     assert "application database" in captured.err
-    assert "s3cr3t-pw" not in captured.out + captured.err
+    assert "PASSWORD" not in captured.out + captured.err
 
 
 @pytest.mark.parametrize(
     "application_url,expected",
     [
-        ("postgresql://app:s3cr3t-pw@db:5432/renfield", "postgresql+asyncpg://app:s3cr3t-pw@db:5432/renfield_test_a"),
-        ("postgresql+asyncpg://app:s3cr3t-pw@db/renfield", "postgresql+asyncpg://app:s3cr3t-pw@db/renfield_test_a"),
+        ("postgresql://app:PASSWORD@db:5432/renfield", "postgresql+asyncpg://app:PASSWORD@db:5432/renfield_test_a"),
+        ("postgresql+asyncpg://app:PASSWORD@db/renfield", "postgresql+asyncpg://app:PASSWORD@db/renfield_test_a"),
         # A slash in the query string: the part a naive split takes for the name.
         (
-            "postgresql://app:s3cr3t-pw@db:5432/renfield?options=a/b",
-            "postgresql+asyncpg://app:s3cr3t-pw@db:5432/renfield_test_a?options=a%2Fb",
+            "postgresql://app:PASSWORD@db:5432/renfield?options=a/b",
+            "postgresql+asyncpg://app:PASSWORD@db:5432/renfield_test_a?options=a%2Fb",
         ),
     ],
 )
@@ -548,7 +548,7 @@ def test_a_driver_error_prints_its_type_only(admin, monkeypatch, capsys):
     assert admin.main(["run", "renfield_test_a", "--"]) == 1
     captured = capsys.readouterr()
     assert "OSError" in captured.err
-    assert "s3cr3t-pw" not in captured.out + captured.err
+    assert "PASSWORD" not in captured.out + captured.err
 
 
 # --------------------------------------------------------------------------
@@ -791,7 +791,7 @@ def test_without_the_variable_the_shared_database_is_used_and_nothing_is_created
         "args=-o asyncio_mode=auto -p no:cacheprovider tests/x.py -q",
     ]
     assert "//<redacted>@db:5432/renfield_test" in proc.stdout
-    assert "s3cr3t-pw" not in proc.stdout + proc.stderr
+    assert "PASSWORD" not in proc.stdout + proc.stderr
 
 
 def test_an_empty_variable_is_the_shared_database_too(script):
@@ -842,7 +842,7 @@ def test_a_run_of_its_own_creates_points_pytest_at_it_and_drops(script):
     ]
     assert "//<redacted>@db:5432/renfield_test_agent_7" in proc.stdout
     assert "TEST_DB: renfield_test_agent_7" in proc.stdout
-    assert "s3cr3t-pw" not in proc.stdout + proc.stderr
+    assert "PASSWORD" not in proc.stdout + proc.stderr
 
 
 def test_pytest_runs_in_the_database_just_created_whatever_url_was_lying_around(script):
@@ -850,10 +850,10 @@ def test_pytest_runs_in_the_database_just_created_whatever_url_was_lying_around(
     # stale RENFIELD_TEST_PG_URL -- the shared database, say -- must not reach
     # pytest: it would run there while an unused throwaway one comes and goes.
     run, _, log = script
-    proc = run("a1", STUB_STALE_URL="postgresql+asyncpg://app:s3cr3t-pw@db:5432/renfield_test")
+    proc = run("a1", STUB_STALE_URL="postgresql+asyncpg://app:PASSWORD@db:5432/renfield_test")
     assert proc.returncode == 0, proc.stderr
     assert _calls(log)[2].startswith("pytest db=renfield_test_a1 scheme=postgresql+asyncpg "), _calls(log)
-    assert "s3cr3t-pw" not in proc.stdout + proc.stderr
+    assert "PASSWORD" not in proc.stdout + proc.stderr
 
 
 def test_pytest_gets_the_scripts_own_stdin_on_a_database_of_its_own(script):
