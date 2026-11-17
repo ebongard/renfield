@@ -255,7 +255,8 @@ async def turn_sources(
         sources.append(_with_open_target({
             "document_id": doc_id,
             "filename": row.get("filename") or "",
-            "title": row.get("title") or f"Dokument {doc_id}",
+            # Empty for a nameless document; the frontend labels it (i18n).
+            "title": row.get("title") or "",
             "tier": row.get("tier"),
         }, row))
 

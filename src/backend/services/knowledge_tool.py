@@ -105,6 +105,11 @@ async def _visible_document_meta(
     """``document_id → {title, filename, tier}`` for ONLY the documents the asker
     may see themselves — CIRCLE-FILTERED, not a raw id lookup.
 
+    ``title`` is the document's own name (generated title, title, filename) or
+    ``None``. No label is invented here: the row feeds a client-facing source
+    chip, whose fallback label is the frontend's to translate, AND the FAKTEN
+    line the model reads, which supplies its own German "Dokument N".
+
     A per-fact tier override (``tier_overridden``) is the one place "fact visible"
     and "document visible" diverge: a fact re-tiered to ``public`` on an otherwise
     private document is returned to an outsider by ``document_facts_circles_filter``
@@ -112,7 +117,7 @@ async def _visible_document_meta(
     ``title``/``filename`` (user-supplied, may name people / case numbers) is NOT
     the outsider's to see. Filtering the title lookup through the DOCUMENT's own
     circle policy keeps the leaked-metadata window closed; a non-visible source
-    document simply falls back to a generic ``Dokument {id}`` label with no chip.
+    document is simply absent here (generic label in the model's context, no chip).
     """
     from sqlalchemy import text
 
@@ -138,7 +143,7 @@ async def _visible_document_meta(
     rows = (await db.execute(sql, {"ids": list(doc_ids), **doc_params})).all()
     return {
         r.id: {
-            "title": r.generated_title or r.title or r.filename or f"Dokument {r.id}",
+            "title": r.generated_title or r.title or r.filename or None,
             "filename": r.filename or "",
             "tier": r.circle_tier,
             # For the chat chips' open target; read through the SAME circle
@@ -227,7 +232,9 @@ async def knowledge_search(params: dict, *, user_id: int | None = None) -> dict:
                 sources.append({
                     "document_id": doc_id,
                     "filename": source,
-                    "title": doc.get("title") or source or f"Dokument {doc_id}",
+                    # Empty when the document has no name: the chip's
+                    # fallback label is the frontend's (i18n), not ours.
+                    "title": doc.get("title") or source or "",
                     "tier": doc.get("circle_tier"),
                 })
 
@@ -238,6 +245,7 @@ async def knowledge_search(params: dict, *, user_id: int | None = None) -> dict:
         fact_struct: list[dict] = []
         for f in facts:
             did = f.get("document_id")
+            # MODEL-facing (the FAKTEN block of the context): German by rule.
             title = (doc_meta.get(did) or {}).get("title") or f"Dokument {did}"
             fact_lines.append(_format_fact_line(f, title))
             fact_struct.append({
@@ -261,7 +269,7 @@ async def knowledge_search(params: dict, *, user_id: int | None = None) -> dict:
                 sources.append({
                     "document_id": did,
                     "filename": meta.get("filename", ""),
-                    "title": meta.get("title") or f"Dokument {did}",
+                    "title": meta.get("title") or "",
                     "tier": meta.get("tier"),
                 })
 

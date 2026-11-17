@@ -531,3 +531,72 @@ class TestKnowledgeSearchFacts:
         assert result["success"] is True
         assert result["data"]["facts_count"] == 0
         assert result["data"]["results_count"] == 1
+
+
+# ============================================================================
+# A document without title and filename: no invented title for the CLIENT
+# ============================================================================
+
+
+class TestUntitledDocumentSources:
+    """The chip label of a nameless document is the frontend's to build (i18n).
+    The source therefore carries an EMPTY title -- never a German "Dokument N"
+    made up by the backend. The text the MODEL reads keeps its German label."""
+
+    @pytest.mark.unit
+    async def test_a_chunk_hit_without_title_and_filename_has_an_empty_title(self):
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[
+            {"chunk": {"content": "chunk"},
+             "document": {"id": 7, "filename": "", "title": None, "circle_tier": 2}},
+        ])
+
+        @asynccontextmanager
+        async def mock_session():
+            yield AsyncMock()
+
+        stubs = _stub_db_and_rag_modules()
+        try:
+            with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+                 patch("services.rag_service.RAGService", return_value=mock_rag, create=True):
+                result = await knowledge_search({"query": "x"})
+        finally:
+            _teardown_stubs(stubs)
+
+        assert result["data"]["sources"] == [
+            {"document_id": 7, "filename": "", "title": "", "tier": 2},
+        ]
+
+    @pytest.mark.unit
+    async def test_a_fact_only_document_without_a_name_has_an_empty_title(self):
+        """... while the FAKTEN line the model reads still names its source."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[])
+        facts = [
+            {"document_id": 42, "category": "identifier", "kind": "steuernummer",
+             "value": "114/5876/5293", "normalized_value": "11458765293",
+             "obligation_date": None, "amount_value": None, "amount_currency": None},
+        ]
+        mock_fact_retrieval = MagicMock()
+        mock_fact_retrieval.search = AsyncMock(return_value=facts)
+        mock_db = _mock_db_with_title_rows([_doc_title_row(42, None, None, "", 0)])
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        stubs = _stub_db_and_rag_modules()
+        try:
+            with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+                 patch("services.rag_service.RAGService", return_value=mock_rag, create=True), \
+                 patch("services.knowledge_tool.settings.schicht_a_extraction_enabled", True), \
+                 patch("services.document_fact_retrieval.DocumentFactRetrieval",
+                       return_value=mock_fact_retrieval, create=True):
+                result = await knowledge_search({"query": "steuernummer"})
+        finally:
+            _teardown_stubs(stubs)
+
+        data = result["data"]
+        assert data["sources"] == [{"document_id": 42, "filename": "", "title": "", "tier": 0}]
+        # Model-facing text: German by rule, and it must still say WHICH document.
+        assert "Dokument 42" in data["context"]

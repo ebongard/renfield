@@ -122,6 +122,22 @@ class TestRagPathSourcesAreCircleFiltered:
         assert await ch._turn_sources([], _rag(doc), carol.id) == []
 
 
+class TestADocumentWithoutAName:
+    async def test_the_lookup_invents_no_title_and_the_chip_carries_none(self, db_session, people):
+        alice, _bob, _carol = people
+        _kb, doc = await _private_document(db_session, alice.id)
+        doc.title = None
+        doc.filename = ""
+        await db_session.commit()
+
+        row = (await ds._visible_meta({doc.id}, alice.id))[doc.id]
+        [source] = await ch._turn_sources([], _rag(doc), alice.id)
+
+        assert not row["title"] and row["filename"] == ""
+        assert source["title"] == "" and source["filename"] == ""
+        assert "Dokument" not in repr(source)
+
+
 class TestKnowledgeSearchSourcesGetNoLinkOutsideTheCircles:
     async def test_the_paperless_id_of_an_invisible_document_is_not_revealed(
         self, db_session, people,

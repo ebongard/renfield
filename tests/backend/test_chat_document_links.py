@@ -426,6 +426,16 @@ class TestRagPathSources:
 
         assert [s["document_id"] for s in sources] == [7, 8]
 
+    async def test_a_document_without_a_name_gets_an_empty_title_not_an_invented_one(
+        self, flag_on, public_base, monkeypatch,
+    ):
+        """The label of a nameless document is built by the frontend (i18n)."""
+        monkeypatch.setattr(ds, "_visible_meta", _meta(d21=_row(title=None, filename="")))
+
+        sources = await ch._turn_sources([], [_rag_result(21)], 42)
+
+        assert sources == [{"document_id": 21, "filename": "", "title": "", "tier": 2}]
+
     @pytest.mark.parametrize("results", [
         None, [], [None], [{"document": None}], [{"document": {"id": "21"}}],
         [{"document": {"id": True}}], [{"chunk": {}}],
