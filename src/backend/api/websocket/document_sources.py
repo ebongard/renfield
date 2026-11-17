@@ -282,7 +282,7 @@ async def _visible_meta(doc_ids: set[int], user_id: int | None) -> dict[Any, dic
         return await _visible_document_meta(db, doc_ids, user_id)
 
 
-def _as_card(source: dict, meta_row: dict | None) -> dict:
+def _as_card(source: dict, meta_row: dict | None, may_link: bool) -> dict:
     """A knowledge-base `source` with what the SERVER knows about its
     document: the card fields and the Paperless link, if any.
 
@@ -290,7 +290,9 @@ def _as_card(source: dict, meta_row: dict | None) -> dict:
     DROPPED first: the only link and the only card fields a source may carry
     are the ones attached here, from the circle-filtered `meta_row`. Without a
     row (the document is not visible to this turn, or the lookup failed) the
-    source keeps its name and gets neither.
+    source keeps its name and gets neither. Without `may_link` (the asker may
+    not read Paperless) it gets the card fields but no link: the link names the
+    document's Paperless id.
     """
     out = {
         k: v for k, v in source.items()
@@ -300,7 +302,7 @@ def _as_card(source: dict, meta_row: dict | None) -> dict:
         if isinstance(out.get(key), str):
             out[key] = _title(out[key])
     out.update(_card_fields(meta_row, _KNOWLEDGE_CARD_FIELDS))
-    url = _paperless_url((meta_row or {}).get("paperless_document_id"))
+    url = _paperless_url((meta_row or {}).get("paperless_document_id")) if may_link else None
     if url:
         out["paperless_url"] = url
     return out
@@ -310,6 +312,7 @@ async def turn_sources(
     tool_results: list,
     rag_search_results: list | None,
     user_id: int | None,
+    user_permissions: list[str] | None,
 ) -> list[dict]:
     """All sources of one turn, flag ON. Called once, before the turn is
     persisted, so the `done` frame and `message_metadata.sources` carry the
@@ -333,6 +336,14 @@ async def turn_sources(
       access may have changed since.
     A failed lookup degrades to: no links, no RAG-path chips. It never fails
     the turn.
+
+    🛑 `user_permissions` are the asker's, loaded server-side for the turn. A
+    knowledge-base source gets its Paperless link only if they include
+    `mcp.paperless.read` (`may_link_paperless`): the link reveals the Paperless
+    id, which is the Paperless permission's to give, not the circles'. With
+    auth off there is one trust domain and the link stays. The `done` frame and
+    the stored metadata are the same list, so a source written without the
+    link stays without it for every later reader of the thread.
     """
     from api.websocket.chat_handler import _extract_agent_sources
 
@@ -351,7 +362,8 @@ async def turn_sources(
                 f"the RAG path gets none): {error_text_without_content(e)}"
             )
 
-    sources = [_as_card(s, meta.get(s.get("document_id"))) for s in kb_sources]
+    may_link = may_link_paperless(user_permissions)
+    sources = [_as_card(s, meta.get(s.get("document_id")), may_link) for s in kb_sources]
     seen = {s.get("document_id") for s in sources}
     for doc_id in rag_ids:
         row = meta.get(doc_id)
@@ -364,7 +376,7 @@ async def turn_sources(
             # Empty for a nameless document; the frontend labels it (i18n).
             "title": row.get("title") or "",
             "tier": row.get("tier"),
-        }, row))
+        }, row, may_link))
 
     filed = {
         meta[doc_id].get("paperless_document_id") for doc_id in seen if doc_id in meta
@@ -422,19 +434,34 @@ _PAPERLESS_SOURCE_FIELDS: dict[str, type | tuple[type, ...]] = {
 }
 
 
+def _holds_paperless_read(permissions: list[str]) -> bool:
+    """The check the tool call makes: `mcp_servers.yaml` maps both Paperless
+    reads to `mcp.paperless.read`; `has_mcp_permission` honours `mcp.*` and the
+    server-wide `mcp.paperless`."""
+    from models.permissions import has_mcp_permission
+
+    return has_mcp_permission(list(permissions), PAPERLESS_READ_PERMISSION)
+
+
+def may_link_paperless(user_permissions: list[str] | None) -> bool:
+    """May the ASKER of a turn get the Paperless link of a knowledge-base
+    source? Auth off: yes, one trust domain. Auth on: only with
+    `mcp.paperless.read`; `None` (an unidentified turn) denies -- fail-closed,
+    unlike the MCP gate, which keeps unidentified voice turns working."""
+    from utils.config import settings
+
+    if not settings.auth_enabled:
+        return True
+    return user_permissions is not None and _holds_paperless_read(user_permissions)
+
+
 def _may_read_paperless(reader: Any) -> bool:
     """Does this reader hold the permission the two Paperless reads require?
-
-    The same check the tool call makes (`mcp_servers.yaml` maps both tools to
-    `mcp.paperless.read`; `has_mcp_permission` honours `mcp.*` and the
-    server-wide `mcp.paperless`). Any failure to read the permissions denies.
-    """
+    Any failure to read the permissions denies."""
     if reader is None:
         return False
     try:
-        from models.permissions import has_mcp_permission
-
-        return has_mcp_permission(list(reader.get_permissions() or []), PAPERLESS_READ_PERMISSION)
+        return _holds_paperless_read(reader.get_permissions() or [])
     except Exception as e:
         logger.warning(
             f"chat sources: reader permissions unreadable, Paperless sources withheld: "
@@ -496,9 +523,12 @@ def _source_for_reader(
       Paperless id of a Paperless source, the looked-up Paperless id of a
       knowledge-base document -- so a changed `PAPERLESS_PUBLIC_URL` moves the
       old chips along, and without a base there is no link.
+    * A knowledge-base source carries its link only to a reader with the
+      Paperless permission: the link names the Paperless id. The source itself
+      is the circles' to give, the link the permission's.
 
     `check_rights=False` (auth off, one trust domain) keeps the shape and link
-    rules and skips the two access rules.
+    rules and skips the three access rules.
     """
     if not isinstance(source, dict):
         return None
@@ -534,7 +564,7 @@ def _source_for_reader(
                 out.pop(key, None)
             out.update(_card_fields(row, _KNOWLEDGE_CARD_FIELDS))
 
-    if _had_link(source):
+    if _had_link(source) and (paperless_ok or not check_rights):
         url = _paperless_url(paperless_id)
         if url:
             out["paperless_url"] = url
@@ -552,7 +582,9 @@ async def metadata_for_reader(metadatas: list, reader: Any) -> list:
        Paperless permission -- while a conversation is a shared artifact
        (auth-on §8.1) that every member its tier reaches reads. Messages do not
        record who asked, so under auth each source is decided for EVERY reader,
-       the asker included, by the reader's own rights (`_source_for_reader`).
+       the asker included, by the reader's own rights (`_source_for_reader`):
+       the circles for a knowledge-base source, the Paperless permission for a
+       Paperless source AND for the Paperless link of a knowledge-base source.
        For the asker this changes nothing unless access was lost or the
        document is gone -- and then the chip led nowhere anyway.
 

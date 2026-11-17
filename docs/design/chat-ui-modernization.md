@@ -354,8 +354,12 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
 - **Access:** knowledge-base metadata (title, tier, Paperless id) is read through `_visible_document_meta`
   (`documents_circles_filter`, server-injected `user_id`). A `knowledge_search` source keeps its chip but gets a
   link only when the document is visible; a RAG-path document gets a chip only when it is visible NOW (cached
-  follow-up results may predate an access change). Paperless is read through ONE backend token and is not
-  circle-filtered — gated by `mcp.paperless.read` when the tool ran; a chip repeats only id + title that tool result
+  follow-up results may predate an access change). 🛑 The Paperless LINK of a knowledge-base source additionally
+  needs the asker's `mcp.paperless.read` under auth (owner decision 2026-11-17; `may_link_paperless`, permissions
+  loaded server-side for the turn, `None` denies): the link names the Paperless id, which is the Paperless
+  permission's to give, not the circles'. The source itself stays. The `done` frame and the stored metadata are
+  one list, so a source written without the link stays without it for later readers too. Auth off: unchanged.
+  Paperless is read through ONE backend token and is not circle-filtered — gated by `mcp.paperless.read` when the tool ran; a chip repeats only id + title that tool result
   already put into the user's turn. No new read path for persisted sources: they sit in `message_metadata` and
   are readable exactly where the answer text of that message is.
 - **Read side (`metadata_for_reader`, independent of the flag):** a conversation is a shared artifact, and
@@ -371,8 +375,10 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
      every reader — the asker included — gets a source rebuilt key by key: the kind is `paperless` or absent
      (anything else is dropped); a `document_id` on ANY kind must pass `documents_circles_filter` for the reader; a
      Paperless source needs a valid `paperless_document_id` and `mcp.paperless.read`, and never carries
-     knowledge-base fields. A `sources` value that is not a list is dropped. Under auth-off the shape rules hold
-     and the two access rules are skipped.
+     knowledge-base fields; a knowledge-base source carries its Paperless link only for a reader with
+     `mcp.paperless.read` (or `mcp.paperless` / `mcp.*`) — a member who sees the document through the circles or
+     a share but lacks the permission gets the source without the link. A `sources` value that is not a list is
+     dropped. Under auth-off the shape rules hold and the three access rules are skipped.
   3. **The stored `paperless_url` is never served**, auth on or off. It only marks that the source had a link; the
      link that goes out is built NOW from the id (the stored Paperless id, or the knowledge-base document's
      looked-up one). A changed `PAPERLESS_PUBLIC_URL` therefore moves old chips along; no base, or a document no

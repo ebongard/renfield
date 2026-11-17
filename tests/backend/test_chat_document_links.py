@@ -80,7 +80,7 @@ class TestPaperlessSources:
     ):
         """THE reported case: the agent searched Paperless, answered, and the
         chat offered nothing to open."""
-        sources = await ch._turn_sources([_search(_hit(11, "Rechnung"), _hit(12, "Vertrag"))], [], 7)
+        sources = await ch._turn_sources([_search(_hit(11, "Rechnung"), _hit(12, "Vertrag"))], [], 7, None)
 
         # `created` is the one card field a hit of this shape carries.
         assert sources == [
@@ -93,7 +93,7 @@ class TestPaperlessSources:
     async def test_no_public_base_means_no_link_and_never_the_internal_name(
         self, flag_on, no_public_base,
     ):
-        sources = await ch._turn_sources([_search(_hit(11)), (GET, _mcp(_hit(12)))], [], 7)
+        sources = await ch._turn_sources([_search(_hit(11)), (GET, _mcp(_hit(12)))], [], 7, None)
 
         assert [s["paperless_document_id"] for s in sources] == [12, 11]
         assert all("paperless_url" not in s for s in sources)
@@ -267,7 +267,7 @@ class TestFlagOff:
         rag_results = [{"document": {"id": 21, "filename": "c.pdf", "title": "C"}}]
 
         before = ch._extract_agent_sources(tool_results)
-        after = await ch._turn_sources(tool_results, rag_results, 7)
+        after = await ch._turn_sources(tool_results, rag_results, 7, None)
 
         assert json.dumps(after, sort_keys=False) == json.dumps(before, sort_keys=False)
         assert after == kb
@@ -276,11 +276,11 @@ class TestFlagOff:
         lookup.assert_not_called()
 
     async def test_a_paperless_only_turn_has_no_sources(self, flag_off, public_base):
-        assert await ch._turn_sources([_search(_hit(11))], [], 7) == []
+        assert await ch._turn_sources([_search(_hit(11))], [], 7, None) == []
 
     async def test_a_direct_rag_turn_has_no_sources(self, flag_off, public_base):
         rag_results = [{"document": {"id": 21, "filename": "c.pdf", "title": "C"}}]
-        assert await ch._turn_sources([], rag_results, 7) == []
+        assert await ch._turn_sources([], rag_results, 7, None) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -309,7 +309,7 @@ class TestKnowledgeBaseTargets:
         ]
 
         sources = await ch._turn_sources(
-            [("internal.knowledge_search", {"sources": kb})], [], 42,
+            [("internal.knowledge_search", {"sources": kb})], [], 42, None
         )
 
         assert sources == [
@@ -324,7 +324,7 @@ class TestKnowledgeBaseTargets:
         kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2,
                "paperless_url": "https://evil.example/x"}]
 
-        [source] = await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1)
+        [source] = await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1, None)
 
         assert "paperless_url" not in source
 
@@ -334,7 +334,7 @@ class TestKnowledgeBaseTargets:
         monkeypatch.setattr(ds, "_visible_meta", _meta())  # nothing visible
         kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}]
 
-        assert await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1) == kb
+        assert await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1, None) == kb
 
     async def test_a_failing_lookup_costs_the_links_not_the_chips(
         self, flag_on, public_base, monkeypatch,
@@ -344,7 +344,7 @@ class TestKnowledgeBaseTargets:
         tool_results = [("internal.knowledge_search", {"sources": kb}), _search(_hit(11))]
         rag_results = [{"document": {"id": 21}}]
 
-        sources = await ch._turn_sources(tool_results, rag_results, 1)
+        sources = await ch._turn_sources(tool_results, rag_results, 1, None)
 
         # KB chip without link, no RAG chip (visibility unknown), Paperless chip intact.
         assert sources == [
@@ -359,7 +359,7 @@ class TestKnowledgeBaseTargets:
         monkeypatch.setattr(ds, "turn_sources", AsyncMock(side_effect=RuntimeError("boom")))
         kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}]
 
-        assert await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1) == kb
+        assert await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1, None) == kb
 
     async def test_the_same_document_from_both_systems_is_one_chip(
         self, flag_on, public_base, monkeypatch,
@@ -372,7 +372,7 @@ class TestKnowledgeBaseTargets:
             _search(_hit(70, "A"), _hit(71, "B")),
         ]
 
-        sources = await ch._turn_sources(tool_results, [], 1)
+        sources = await ch._turn_sources(tool_results, [], 1, None)
 
         assert [(s.get("document_id"), s.get("paperless_document_id")) for s in sources] == [
             (7, None), (None, 71),
@@ -386,7 +386,7 @@ class TestKnowledgeBaseTargets:
         kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}]
         tool_results = [("internal.knowledge_search", {"sources": kb}), _search(_hit(70))]
 
-        assert await ch._turn_sources(tool_results, [], 1) == kb
+        assert await ch._turn_sources(tool_results, [], 1, None) == kb
 
 
 # --------------------------------------------------------------------------- #
@@ -410,7 +410,7 @@ class TestRagPathSources:
         # 21 twice (two chunks of one document), 23 not visible.
         rag_results = [_rag_result(21), _rag_result(23), _rag_result(21), _rag_result(22)]
 
-        sources = await ch._turn_sources([], rag_results, 42)
+        sources = await ch._turn_sources([], rag_results, 42, None)
 
         assert sources == [
             {"document_id": 21, "filename": "21.pdf", "title": "Bescheid", "tier": 1,
@@ -424,7 +424,7 @@ class TestRagPathSources:
         kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}]
 
         sources = await ch._turn_sources(
-            [("internal.knowledge_search", {"sources": kb})], [_rag_result(7), _rag_result(8)], 1,
+            [("internal.knowledge_search", {"sources": kb})], [_rag_result(7), _rag_result(8)], 1, None
         )
 
         assert [s["document_id"] for s in sources] == [7, 8]
@@ -435,7 +435,7 @@ class TestRagPathSources:
         """The label of a nameless document is built by the frontend (i18n)."""
         monkeypatch.setattr(ds, "_visible_meta", _meta(d21=_row(title=None, filename="")))
 
-        sources = await ch._turn_sources([], [_rag_result(21)], 42)
+        sources = await ch._turn_sources([], [_rag_result(21)], 42, None)
 
         assert sources == [{"document_id": 21, "filename": "", "title": "", "tier": 2}]
 
@@ -448,7 +448,7 @@ class TestRagPathSources:
     ):
         lookup = AsyncMock(side_effect=AssertionError("nothing to look up"))
         monkeypatch.setattr(ds, "_visible_meta", lookup)
-        assert await ch._turn_sources([], results, 1) == []
+        assert await ch._turn_sources([], results, 1, None) == []
 
 
 class TestStreamRagResponseHandsOutItsResults:
@@ -1122,7 +1122,7 @@ class TestCardFieldsOfKnowledgeBaseSources:
             {"document_id": 9, "filename": "b.pdf", "title": "B", "tier": 0},
         ]
 
-        sources = await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 42)
+        sources = await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 42, None)
 
         assert sources == [
             {**kb[0], "document_date": "2025-03-14", "page_count": 3,
@@ -1135,7 +1135,7 @@ class TestCardFieldsOfKnowledgeBaseSources:
     async def test_the_direct_rag_path_carries_them_too(self, flag_on, public_base, monkeypatch):
         monkeypatch.setattr(ds, "_visible_meta", _meta(d21=_card_row("2024-12-01", 12)))
 
-        [source] = await ch._turn_sources([], [_rag_result(21)], 42)
+        [source] = await ch._turn_sources([], [_rag_result(21)], 42, None)
 
         assert source["document_date"] == "2024-12-01" and source["page_count"] == 12
 
@@ -1149,7 +1149,7 @@ class TestCardFieldsOfKnowledgeBaseSources:
                "document_date": "1999-01-01", "page_count": 99, "created": "1999-01-01",
                "correspondent": "X", "document_type": "Y"}]
 
-        [source] = await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1)
+        [source] = await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1, None)
 
         assert source == {"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}
 
@@ -1159,7 +1159,7 @@ class TestCardFieldsOfKnowledgeBaseSources:
         monkeypatch.setattr(ds, "_visible_meta", _meta())
         kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}]
 
-        assert await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1) == kb
+        assert await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1, None) == kb
 
     @pytest.mark.parametrize("row", [
         {"document_date": "14.03.2025", "page_count": "3"},
@@ -1172,7 +1172,7 @@ class TestCardFieldsOfKnowledgeBaseSources:
         monkeypatch.setattr(ds, "_visible_meta", _meta(d7={**_row(), **row}))
         kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}]
 
-        assert await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1) == kb
+        assert await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1, None) == kb
 
     async def test_one_card_for_a_document_of_both_systems_and_it_is_the_knowledge_one(
         self, flag_on, public_base, monkeypatch,
@@ -1188,7 +1188,7 @@ class TestCardFieldsOfKnowledgeBaseSources:
             _search(_rich_hit(70), _rich_hit(71)),
         ]
 
-        sources = await ch._turn_sources(tool_results, [], 1)
+        sources = await ch._turn_sources(tool_results, [], 1, None)
 
         assert sources[0] == {
             **kb[0], "document_date": "2025-03-14", "page_count": 3,
@@ -1205,7 +1205,7 @@ class TestCardFieldsOfKnowledgeBaseSources:
             (GET, _mcp(_rich_hit(70))), _search(_rich_hit(71)),
         ]
 
-        after = await ch._turn_sources(tool_results, [_rag_result(21)], 7)
+        after = await ch._turn_sources(tool_results, [_rag_result(21)], 7, None)
 
         assert json.dumps(after) == json.dumps(ch._extract_agent_sources(tool_results))
         assert after == kb and after[0] is kb[0]
@@ -1426,7 +1426,7 @@ class TestNoControlOrFormatCharacters:
     ):
         monkeypatch.setattr(ds, "_visible_meta", _meta(d21=_row(title=HOSTILE, filename="21.pdf")))
 
-        [source] = await ch._turn_sources([], [_rag_result(21)], 42)
+        [source] = await ch._turn_sources([], [_rag_result(21)], 42, None)
 
         assert source["title"] == "Rechnung Amtx"
 

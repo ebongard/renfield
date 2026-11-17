@@ -71,7 +71,7 @@ async def test_flag_off_a_paperless_search_is_still_no_source(monkeypatch):
     monkeypatch.setattr(settings, "chat_document_links_enabled", False, raising=False)
     monkeypatch.setattr(settings, "paperless_public_url", "https://paperless.example.org",
                         raising=False)
-    assert await _turn_sources([_paperless_search(2, 3)], [], 1) == []
+    assert await _turn_sources([_paperless_search(2, 3)], [], 1, None) == []
 
 
 @pytest.mark.unit
@@ -89,7 +89,7 @@ async def test_flag_on_a_paperless_search_is_a_source(monkeypatch):
         _paperless_search(2, 3),
     ]
 
-    sources = await _turn_sources(tool_results, [], 1)
+    sources = await _turn_sources(tool_results, [], 1, None)
 
     assert sources == [
         {"kind": "paperless", "paperless_document_id": 2, "title": "Doc 2",

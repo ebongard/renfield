@@ -167,6 +167,11 @@ bei `CHAT_DOCUMENT_LINKS_ENABLED=true`; früher gespeicherte Quellen tragen sie 
   Formatzeichen (Unicode Cc/Cf: Bidi-Umschalter, Nullbreitenzeichen, NUL).
 - `paperless_url` baut der Server beim Ausliefern aus `PAPERLESS_PUBLIC_URL` und der Kennung neu; der gespeicherte
   Wert wird nie ausgeliefert. Kein Auszug, kein Inhalt, keine Schlagwörter.
+- Bei `AUTH_ENABLED=true` trägt auch eine Wissensdatenbank-Quelle `paperless_url` nur für einen Leser mit
+  `mcp.paperless.read` (auch `mcp.paperless` oder `mcp.*`): der Link nennt die Paperless-Kennung. Ohne die
+  Berechtigung bleibt die Quelle, nur der Link fehlt. Dasselbe gilt schon beim Schreiben für den Fragenden (der
+  `done`-Rahmen und die gespeicherten `sources` sind eine Liste): fehlt ihm die Berechtigung, wird die Quelle ohne
+  Link gespeichert und bleibt es auch für spätere Leser.
 
 ---
 

@@ -33,8 +33,10 @@ needs `WEATHER_ENABLED`.
   `CLIENT_METADATA_KEYS` + `sources`, never `action_summary` & co. (the agent's copy of the tool result). Under auth
   each source is rebuilt for the READER: `document_id` (on any kind) through the circle filter, Paperless needs
   `mcp.paperless.read` + a valid id, unknown kind / non-list `sources` dropped; the stored `paperless_url` is never
-  served, the link is rebuilt from the id (own session → 2 pool connections). A new metadata key the client needs
-  goes into the allowlist; a new route that returns `message_metadata` goes through this function. NOT covered:
+  served, the link is rebuilt from the id (own session → 2 pool connections). 🛑 The Paperless link of a KB source
+  needs `mcp.paperless.read` too — on read (the reader's) AND on write (the asker's, `may_link_paperless`;
+  `None` denies under auth): circles give the source, the permission the link (it names the Paperless id).
+  A new metadata key the client needs goes into the allowlist; a new route that returns `message_metadata` goes through this function. NOT covered:
   `load_context` re-injecting `action_summary` into the next prompt (open decision). Enable the flag only AFTER the
   frontend has propagated (old bundle → `/knowledge?doc=undefined`).
   Chip row: TWO owner-approved deviations from DESIGN.md — the spacing stays (`gap-1.5`), so the invisible
