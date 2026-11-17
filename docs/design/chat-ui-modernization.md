@@ -435,11 +435,17 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
   - *One check per field, on both sides* (`_CARD_FIELD_CHECKS`): a date is an ISO day (a timestamp is cut to its
     day as written, a calendar day that does not exist is no date) stored as `YYYY-MM-DD`; a text is single-line
     and capped at 120 characters; a page count is an integer from 1 to 100 000. A value that fails is left out.
+    Every display text (title, filename, correspondent, document type) also loses its Unicode Cc/Cf characters
+    (bidi overrides and isolates, zero-width characters, NUL) — on write and again on read, so older stored
+    sources are served clean too. The frontend puts each meta part in its own `<bdi>`.
   - *Read side.* The two allowlists (`_KNOWLEDGE_SOURCE_FIELDS`, `_PAPERLESS_SOURCE_FIELDS`) carry the new fields.
-    The knowledge-base fields are served from the STORED source, as `title`, `filename` and `tier` are, and are
-    covered by the visibility check that gates the whole source: `_source_for_reader` returns nothing before any
-    field is copied unless the document passes `documents_circles_filter` for the reader now. They are columns of
-    that same row, so a reader who gets them could read them from the document itself. Each kind serves only its
+    The knowledge-base fields are covered by the visibility check that gates the whole source:
+    `_source_for_reader` returns nothing before any field is copied unless the document passes
+    `documents_circles_filter` for the reader now. Under auth they are then taken from that same fresh row, not
+    from the stored source — the reader sees the date and page count the document has NOW (a re-derived date
+    moves old cards along). Only with auth off and no lookup (an unlinked source) are the stored values served,
+    validated. They are columns of that same row, so a reader who gets them could read them from the document
+    itself. Each kind serves only its
     own fields — the Paperless ones are gated by `mcp.paperless.read`, the knowledge-base ones by the circles, and
     neither rides on the other kind. For the same reason a knowledge-base card does NOT take over the document
     type and correspondent of a Paperless hit it replaces: it shows date and pages only.

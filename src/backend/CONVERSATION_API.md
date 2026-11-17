@@ -158,9 +158,13 @@ bei `CHAT_DOCUMENT_LINKS_ENABLED=true`; früher gespeicherte Quellen tragen sie 
 ```
 
 - Wissensdatenbank-Quelle (ohne `kind`): `document_date` ist das Datum des Dokuments selbst (`YYYY-MM-DD`), nie
-  das Hochladedatum; fehlt es, gibt es kein Datum. Nur ausgeliefert, wenn das Dokument für den Leser sichtbar ist.
+  das Hochladedatum; fehlt es, gibt es kein Datum. Bei `AUTH_ENABLED=true` nur ausgeliefert, wenn das Dokument
+  für den Leser sichtbar ist, und dann mit Datum und Seitenzahl, wie das Dokument sie JETZT hat (nicht wie beim
+  Zug gespeichert).
 - Paperless-Quelle (`kind: "paperless"`): `created` als `YYYY-MM-DD`, `correspondent` und `document_type` als
-  einzeilige Texte bis 120 Zeichen. Nur ausgeliefert mit `mcp.paperless.read`.
+  einzeilige Texte bis 120 Zeichen. Bei `AUTH_ENABLED=true` nur ausgeliefert mit `mcp.paperless.read`.
+- Alle Anzeigetexte (Titel, Dateiname, Korrespondent, Dokumenttyp) sind einzeilig und ohne Steuer- und
+  Formatzeichen (Unicode Cc/Cf: Bidi-Umschalter, Nullbreitenzeichen, NUL).
 - `paperless_url` baut der Server beim Ausliefern aus `PAPERLESS_PUBLIC_URL` und der Kennung neu; der gespeicherte
   Wert wird nie ausgeliefert. Kein Auszug, kein Inhalt, keine Schlagwörter.
 
