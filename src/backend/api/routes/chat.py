@@ -482,15 +482,16 @@ async def get_history(
                     "status": upload.status,
                 }
 
-        # `metadata.sources` name documents by the ASKER's rights, and a shared
-        # conversation is read by others: every reader gets the sources their
-        # own rights cover (`document_sources.metadata_for_reader`).
+        # `message_metadata` is the turn's working record and a conversation is
+        # read by people who did not ask: a client gets the keys it renders,
+        # and of `sources` what the READER's own rights cover
+        # (`document_sources.metadata_for_reader`).
         from api.websocket.document_sources import metadata_for_reader
 
         reader_metadata = dict(zip(
             (msg.id for msg in messages),
             await metadata_for_reader(
-                db, [msg.message_metadata for msg in messages], current_user,
+                [msg.message_metadata for msg in messages], current_user,
             ),
             strict=True,
         ))

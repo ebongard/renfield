@@ -8,6 +8,8 @@ for carol.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +25,8 @@ pytestmark = [pytest.mark.backend, pytest.mark.database]
 PUBLIC = "https://paperless.example.org"
 TIER_SELF = 0
 PAPERLESS_ID = 7001
+#: Retrieved chunk text of the asker's private document.
+SECRET_CONTEXT = "Rueckzahlung 4711 an die Antragstellerin"
 
 
 @pytest.fixture
@@ -179,11 +183,14 @@ async def _reader(db: AsyncSession, user_id: int):
 
 
 @pytest.fixture
-async def kitchen(db_session: AsyncSession, monkeypatch):
+async def kitchen(db_session: AsyncSession, monkeypatch, own_session_to_test_db):
     """The shared room thread (auth-on §8.1): owned by the device account at
     tier 2, read by every member. Anna asked a turn in it; her answer's sources
     name HER private document and two Paperless documents. Bert is a member of
-    the room but not of Anna's circles, and holds no Paperless permission."""
+    the room but not of Anna's circles, and holds no Paperless permission.
+
+    `own_session_to_test_db`: the read side looks visibility up on a session of
+    its own, as production does -- here against the test database."""
     from sqlalchemy import text
 
     from services.conversation_service import ConversationService
@@ -220,27 +227,76 @@ async def kitchen(db_session: AsyncSession, monkeypatch):
          "paperless_url": f"{PUBLIC}/documents/8001/details"},
         {"kind": "paperless", "paperless_document_id": 8002, "title": "Annas Vertrag"},
     ]
+    # The metadata a REAL turn stores, built by the handler's own builders --
+    # a hand-written dict left `action_summary` out, and with it the field
+    # that carries the same documents past a filter on `sources`.
+    knowledge_turn = _stored_metadata(
+        "internal.knowledge_search",
+        {
+            "query": "Bescheid", "results_count": 1, "facts_count": 0,
+            "context": f"[doclinks.pdf] {SECRET_CONTEXT}",
+            "sources": sources[:1], "facts": [],
+        },
+        sources,
+    )
+    paperless_turn = _stored_metadata(
+        "mcp.paperless.search_documents",
+        [{"type": "text", "text": json.dumps({"results": [
+            {"id": 8001, "title": "Annas Beleg", "created": "2026-01-02"},
+            {"id": 8002, "title": "Annas Vertrag", "created": "2026-01-03"},
+            {"id": 8003, "title": "Annas Mahnung", "created": "2026-01-04"},
+            {"id": 8004, "title": "Annas Police", "created": "2026-01-05"},
+        ]})}],
+        sources[1:],
+    )
+    assert SECRET_CONTEXT in knowledge_turn["action_summary"]
+    assert "Annas Police" in paperless_turn["action_summary"]
+
     svc = ConversationService(db_session)
     await svc.save_message("kueche", "user", "Was steht im Bescheid?",
                            user_id=device.id, circle_tier=2)
     await svc.save_message(
         "kueche", "assistant", "Im Bescheid steht …",
-        metadata={"agent_role": "documents", "action_success": True, "sources": sources},
-        user_id=device.id,
+        metadata=knowledge_turn, user_id=device.id,
+    )
+    await svc.save_message("kueche", "user", "Und in Paperless?", user_id=device.id)
+    await svc.save_message(
+        "kueche", "assistant", "Dort liegen vier Dokumente.",
+        metadata=paperless_turn, user_id=device.id,
     )
     await db_session.commit()
     return {"anna": anna.id, "bert": bert.id, "cleo": cleo.id, "doc": doc, "sources": sources}
 
 
-async def _history_sources(db: AsyncSession, reader_id: int | None) -> tuple[dict, list]:
-    """What `GET /api/chat/history/kueche` serves this reader: the assistant
-    message's metadata and its sources."""
+def _stored_metadata(tool: str, data, sources: list) -> dict:
+    """`assistant_metadata` as `chat_handler` assembles it for an agent turn
+    that ran `tool` (same keys, same builders)."""
+    action_result = ch._build_agent_action_result([(tool, data)])
+    summary = ch._build_action_summary({"intent": tool}, action_result)
+    return {
+        "intent": tool,
+        "action_success": True,
+        "agent_role": "documents",
+        "action_summary": summary,
+        "sources": sources,
+        "subsystems_used": ["knowledge"],
+    }
+
+
+async def _history(db: AsyncSession, reader_id: int | None) -> list[dict]:
+    """The metadata of the assistant messages `GET /api/chat/history/kueche`
+    serves this reader, oldest first."""
     from api.routes.chat import get_history
 
     reader = await _reader(db, reader_id) if reader_id is not None else None
     payload = await get_history("kueche", limit=50, db=db, current_user=reader)
-    [answer] = [m for m in payload["messages"] if m["role"] == "assistant"]
-    return answer["metadata"], answer["metadata"].get("sources", [])
+    return [m["metadata"] for m in payload["messages"] if m["role"] == "assistant"]
+
+
+async def _history_sources(db: AsyncSession, reader_id: int | None) -> tuple[dict, list]:
+    """The knowledge turn's metadata and its sources, as served to this reader."""
+    meta = (await _history(db, reader_id))[0]
+    return meta, meta.get("sources", [])
 
 
 class TestAReaderOfASharedConversation:
@@ -256,16 +312,31 @@ class TestAReaderOfASharedConversation:
         """Bert reaches the THREAD (and reads the answer text) -- but neither
         Anna's private document nor Paperless."""
         # Control: Bert really reads this conversation ...
-        meta, sources = await _history_sources(db_session, kitchen["bert"])
-        assert meta["agent_role"] == "documents" and meta["action_success"] is True
+        knowledge_turn, paperless_turn = await _history(db_session, kitchen["bert"])
+        assert knowledge_turn["agent_role"] == "documents"
         # ... and the same call serves the asker all three sources.
         assert len((await _history_sources(db_session, kitchen["anna"]))[1]) == 3
 
-        assert sources == []
-        assert "sources" not in meta
-        served = repr(meta)
+        assert "sources" not in knowledge_turn and "sources" not in paperless_turn
+        served = repr([knowledge_turn, paperless_turn])
         assert "Privater Bescheid" not in served and "Annas" not in served
-        assert str(PAPERLESS_ID) not in served
+        assert SECRET_CONTEXT not in served
+        assert str(PAPERLESS_ID) not in served and "800" not in served
+
+    async def test_only_the_keys_the_client_reads_leave_the_server(self, db_session, kitchen):
+        """The history route is an allowlist. `action_summary` is the agent's
+        working copy of the tool result (ids, titles, retrieved text) and is
+        for the next prompt, not for a reader -- the asker included."""
+        for reader in ("anna", "bert", "cleo"):
+            for meta in await _history(db_session, kitchen[reader]):
+                assert set(meta) <= {"agent_role", "sources"}, reader
+                assert meta["agent_role"] == "documents"
+
+    async def test_auth_off_serves_the_same_keys(self, db_session, kitchen, monkeypatch):
+        monkeypatch.setattr(settings, "auth_enabled", False)
+
+        for meta in await _history(db_session, None):
+            assert set(meta) == {"agent_role", "sources"}
 
     async def test_the_paperless_permission_opens_paperless_sources_only(
         self, db_session, kitchen,
@@ -285,18 +356,27 @@ class TestAReaderOfASharedConversation:
         assert sources == kitchen["sources"][:1]
 
     async def test_the_stored_row_is_not_touched(self, db_session, kitchen):
+        """`message_metadata` is a plain JSON column (no `MutableDict`): an
+        in-place change never marks the row dirty, so a re-select after a
+        commit would not see it. The guard is the loaded object itself, in the
+        route's own session, never expired."""
+        import copy
+
         from sqlalchemy import select
 
         from models.database import Message
 
-        await _history_sources(db_session, kitchen["bert"])
-        await db_session.commit()
-        db_session.expire_all()
+        rows = (await db_session.execute(
+            select(Message).order_by(Message.id)
+        )).scalars().all()
+        before = copy.deepcopy([m.message_metadata for m in rows])
+        assert before[1]["action_summary"] and len(before[1]["sources"]) == 3
 
-        stored = (await db_session.execute(
-            select(Message.message_metadata).where(Message.role == "assistant")
-        )).scalar_one()
-        assert stored["sources"] == kitchen["sources"]
+        await _history(db_session, kitchen["bert"])
+
+        # Same identity map, nothing expired: these are the dicts the route read.
+        assert [m.message_metadata for m in rows] == before
+        assert not db_session.dirty
 
     async def test_auth_off_is_one_trust_domain(self, db_session, kitchen, monkeypatch):
         monkeypatch.setattr(settings, "auth_enabled", False)
@@ -313,3 +393,26 @@ class TestAReaderOfASharedConversation:
         monkeypatch.setattr(settings, "chat_document_links_enabled", False, raising=False)
 
         assert (await _history_sources(db_session, kitchen["bert"]))[1] == []
+
+    async def test_a_failed_lookup_leaves_the_route_session_usable(
+        self, db_session, kitchen, monkeypatch,
+    ):
+        """The lookup's failure is swallowed -- so it must not be the ROUTE's
+        transaction that a failed statement aborted (`InFailedSQLTransaction`
+        on whatever the route queries next)."""
+        from sqlalchemy import text
+
+        import services.knowledge_tool as kt
+
+        async def broken(db, doc_ids, user_id):
+            await db.execute(text("SELECT * FROM a_table_that_does_not_exist"))
+
+        monkeypatch.setattr(kt, "_visible_document_meta", broken)
+
+        knowledge_turn, paperless_turn = await _history(db_session, kitchen["cleo"])
+
+        # Fail-closed for the knowledge-base source, the rest is served ...
+        assert knowledge_turn["sources"] == kitchen["sources"][1:]
+        assert paperless_turn["sources"] == kitchen["sources"][1:]
+        # ... and the session the route was given still answers.
+        assert (await db_session.execute(text("SELECT 1"))).scalar_one() == 1

@@ -639,3 +639,307 @@ class TestDoneFrame:
         done = frames[-1]
         assert done["type"] == "done", [f.get("type") for f in frames]
         assert "sources" not in done
+
+
+# --------------------------------------------------------------------------- #
+# Read side: what the history route serves of a stored metadata
+# --------------------------------------------------------------------------- #
+class _Reader:
+    """A user as the route gets it: an id and the permissions of its role."""
+
+    def __init__(self, user_id=5, permissions=()):
+        self.id = user_id
+        self._permissions = permissions
+
+    def get_permissions(self):
+        if isinstance(self._permissions, Exception):
+            raise self._permissions
+        return list(self._permissions)
+
+
+KB = {"document_id": 21, "filename": "21.pdf", "title": "Bescheid", "tier": 1}
+PL = {"kind": "paperless", "paperless_document_id": 31, "title": "Beleg"}
+
+
+@pytest.fixture
+def auth_on(monkeypatch, public_base):
+    monkeypatch.setattr(settings, "auth_enabled", True)
+
+
+def _visible(monkeypatch, *doc_ids, paperless=None):
+    lookup = _meta(**{f"d{i}": _row(paperless=paperless) for i in doc_ids})
+    monkeypatch.setattr(ds, "_visible_meta", lookup)
+    return lookup
+
+
+async def _served(sources, reader, **other_keys) -> dict:
+    [meta] = await ds.metadata_for_reader([{**other_keys, "sources": sources}], reader)
+    return meta
+
+
+class TestMetadataForReader:
+    async def test_only_the_client_keys_leave_the_server(self, auth_on, monkeypatch):
+        _visible(monkeypatch, 21)
+        stored = {
+            "intent": "internal.knowledge_search", "action_success": True,
+            "action_summary": "internal.knowledge_search → {\"context\":\"geheim\"}",
+            "action_result": {"data": "geheim"}, "subsystems_used": ["knowledge"],
+            "room_context": {"room": "r"}, "speaker": "s", "attachment_ids": [1],
+            "handoff_source": "x", "scanner_job": {"job_id": "j"}, "a_key_of_tomorrow": 1,
+            "agent_role": "documents", "artifacts": [{"id": "a", "kind": "list"}],
+            "attachments": [{"id": 1}], "wb_entities": [{"id": "e"}],
+            "sources": [KB],
+        }
+
+        [meta] = await ds.metadata_for_reader([stored], _Reader())
+
+        assert meta == {
+            "agent_role": "documents", "artifacts": [{"id": "a", "kind": "list"}],
+            "attachments": [{"id": 1}], "wb_entities": [{"id": "e"}], "sources": [KB],
+        }
+        assert "geheim" not in repr(meta)
+
+    @pytest.mark.parametrize("auth", [True, False])
+    async def test_the_key_allowlist_does_not_depend_on_auth(self, monkeypatch, public_base, auth):
+        monkeypatch.setattr(settings, "auth_enabled", auth)
+        _visible(monkeypatch)
+
+        [meta] = await ds.metadata_for_reader(
+            [{"agent_role": "r", "action_summary": "geheim"}], _Reader(),
+        )
+
+        assert meta == {"agent_role": "r"}
+
+    @pytest.mark.parametrize("stored", [None, "text", 7, ["sources"], True])
+    async def test_a_metadata_that_is_no_dict_is_served_as_none(self, auth_on, monkeypatch, stored):
+        _visible(monkeypatch, 21)
+
+        served = await ds.metadata_for_reader([stored, {"sources": [KB]}], _Reader())
+
+        assert served == [None, {"sources": [KB]}]
+
+    @pytest.mark.parametrize("auth", [True, False])
+    @pytest.mark.parametrize("value", [
+        {"0": KB}, "21", 21, True, None, (KB,),
+    ])
+    async def test_sources_that_are_no_list_are_dropped(
+        self, monkeypatch, public_base, auth, value,
+    ):
+        """Fail-closed: a value of another shape is never passed through."""
+        monkeypatch.setattr(settings, "auth_enabled", auth)
+        lookup = _visible(monkeypatch, 21)
+
+        meta = await _served(value, _Reader(permissions=["mcp.*"]), agent_role="r")
+
+        assert meta == {"agent_role": "r"}
+        assert lookup.calls == []
+
+    @pytest.mark.parametrize("source", [None, "21", 21, [KB], True])
+    async def test_a_source_that_is_no_dict_is_dropped(self, auth_on, monkeypatch, source):
+        _visible(monkeypatch, 21)
+
+        meta = await _served([source, KB], _Reader())
+
+        assert meta == {"sources": [KB]}
+
+    @pytest.mark.parametrize("bad_id", ["21", True, 0, -1, 2**31, 21.0, None, [21]])
+    async def test_a_document_id_that_is_not_a_plain_integer_is_no_source(
+        self, auth_on, monkeypatch, bad_id,
+    ):
+        lookup = _visible(monkeypatch, 21, 1)
+
+        meta = await _served([{**KB, "document_id": bad_id}], _Reader())
+
+        assert meta == {}
+        assert lookup.calls == []
+
+    @pytest.mark.parametrize("kind", ["note", "", "PAPERLESS", 0, False, ["paperless"]])
+    async def test_an_unknown_kind_is_dropped_even_when_its_document_is_visible(
+        self, auth_on, monkeypatch, kind,
+    ):
+        """The client renders anything that is not `paperless` as a
+        knowledge-base chip -- so a kind this module does not write is no chip."""
+        _visible(monkeypatch, 21)
+
+        meta = await _served([{**KB, "kind": kind}], _Reader(permissions=["mcp.*"]))
+
+        assert meta == {}
+
+    async def test_a_knowledge_source_carries_out_its_own_fields_only(self, auth_on, monkeypatch):
+        _visible(monkeypatch, 21)
+        stored = {**KB, "content": "geheim", "paperless_document_id": 31, "owner": 2, "url": "x"}
+
+        assert await _served([stored], _Reader()) == {"sources": [KB]}
+
+    async def test_a_field_of_the_wrong_type_is_left_out(self, auth_on, monkeypatch):
+        _visible(monkeypatch, 21)
+        stored = {"document_id": 21, "filename": ["f"], "title": {"t": 1}, "tier": True}
+
+        assert await _served([stored], _Reader()) == {"sources": [{"document_id": 21}]}
+
+    async def test_a_paperless_source_needs_a_valid_paperless_id(self, auth_on, monkeypatch):
+        _visible(monkeypatch)
+        reader = _Reader(permissions=["mcp.paperless.read"])
+        bad = [{**PL, "paperless_document_id": v} for v in ("31", True, 0, 2**31, None)]
+        bad.append({"kind": "paperless", "title": "ohne id"})
+
+        assert await _served([*bad, PL], reader) == {"sources": [PL]}
+
+    async def test_a_paperless_source_never_carries_knowledge_base_fields(
+        self, auth_on, monkeypatch,
+    ):
+        """The shape from the review: `kind: paperless` on a knowledge-base
+        row. With the document visible, the Paperless fields go out and the
+        knowledge-base ones stay."""
+        _visible(monkeypatch, 21)
+        stored = {**PL, "document_id": 21, "filename": "21.pdf", "tier": 0, "content": "geheim"}
+
+        meta = await _served([stored], _Reader(permissions=["mcp.paperless.read"]))
+
+        assert meta == {"sources": [PL]}
+
+    async def test_a_document_id_is_checked_whatever_the_kind_says(self, auth_on, monkeypatch):
+        """... and with the document NOT visible, the Paperless permission
+        alone does not carry the source out."""
+        lookup = _visible(monkeypatch)
+        stored = {**PL, "document_id": 21, "filename": "21.pdf", "tier": 0}
+
+        meta = await _served([stored], _Reader(permissions=["mcp.paperless.read"]))
+
+        assert meta == {}
+        assert lookup.calls == [({21}, 5)]
+
+    @pytest.mark.parametrize("permissions", [
+        ["mcp.paperless.read"], ["mcp.paperless"], ["mcp.paperless.*"], ["mcp.*"],
+    ])
+    async def test_every_form_of_the_paperless_permission_opens_paperless_sources(
+        self, auth_on, monkeypatch, permissions,
+    ):
+        _visible(monkeypatch)
+
+        assert await _served([PL], _Reader(permissions=permissions)) == {"sources": [PL]}
+
+    @pytest.mark.parametrize("permissions", [
+        [], ["mcp.calendar.read"], ["mcp.paperless.write"], ["kb.all"], None,
+        RuntimeError("role not loaded"),
+    ])
+    async def test_without_the_permission_there_is_no_paperless_source(
+        self, auth_on, monkeypatch, permissions,
+    ):
+        """`RuntimeError` stands for a role that was not loaded with the user:
+        the lazy load raises inside `get_permissions`, and that denies."""
+        _visible(monkeypatch, 21)
+
+        meta = await _served([PL, KB], _Reader(permissions=permissions))
+
+        assert meta == {"sources": [KB]}
+
+    async def test_no_reader_under_auth_gets_public_documents_only(self, auth_on, monkeypatch):
+        """A device token reads a room history without a user: the lookup runs
+        for `user_id=None` (public documents), Paperless is withheld."""
+        lookup = _visible(monkeypatch, 21)
+
+        meta = await _served([PL, KB, {**KB, "document_id": 22}], None)
+
+        assert meta == {"sources": [KB]}
+        assert lookup.calls == [({21, 22}, None)]
+
+    async def test_a_failing_lookup_withholds_knowledge_sources_and_serves_the_rest(
+        self, auth_on, monkeypatch,
+    ):
+        async def boom(doc_ids, user_id):
+            raise RuntimeError("db down")
+        monkeypatch.setattr(ds, "_visible_meta", boom)
+
+        meta = await _served(
+            [KB, PL, {**PL, "paperless_document_id": 32, "document_id": 21}],
+            _Reader(permissions=["mcp.paperless.read"]), agent_role="r",
+        )
+
+        assert meta == {"agent_role": "r", "sources": [PL]}
+
+    async def test_one_lookup_serves_a_mixed_page(self, auth_on, monkeypatch):
+        lookup = _visible(monkeypatch, 21)
+        page = [
+            None,
+            {"agent_role": "a"},
+            {"agent_role": "b", "sources": [KB, {**KB, "document_id": 22}]},
+            {"sources": [{**KB, "document_id": 23}], "action_summary": "geheim"},
+            {"sources": []},
+            {"agent_role": "c", "sources": [PL]},
+        ]
+
+        served = await ds.metadata_for_reader(page, _Reader())
+
+        assert served == [
+            None, {"agent_role": "a"}, {"agent_role": "b", "sources": [KB]}, {}, {},
+            {"agent_role": "c"},
+        ]
+        assert lookup.calls == [({21, 22, 23}, 5)]
+
+    async def test_a_page_without_sources_costs_no_lookup(self, auth_on, monkeypatch):
+        lookup = _visible(monkeypatch, 21)
+        reader = _Reader(permissions=RuntimeError("must not be asked"))
+
+        served = await ds.metadata_for_reader([{"agent_role": "a"}, None, {"sources": []}], reader)
+
+        assert served == [{"agent_role": "a"}, None, {}]
+        assert lookup.calls == []
+
+    async def test_the_stored_dicts_are_not_modified(self, auth_on, monkeypatch):
+        import copy
+
+        _visible(monkeypatch)
+        page = [{"agent_role": "a", "action_summary": "s", "sources": [dict(KB), dict(PL)]}]
+        before = copy.deepcopy(page)
+
+        served = await ds.metadata_for_reader(page, _Reader())
+
+        assert page == before
+        assert served == [{"agent_role": "a"}]
+
+    async def test_a_link_is_served_only_if_the_server_builds_the_same_one_now(
+        self, auth_on, monkeypatch,
+    ):
+        _visible(monkeypatch, 21, paperless=210)
+        own = f"{PUBLIC}/documents/210/details"
+        reader = _Reader(permissions=["mcp.paperless.read"])
+
+        meta = await _served([
+            {**KB, "paperless_url": own},
+            {**PL, "paperless_url": f"{PUBLIC}/documents/31/details"},
+            {**PL, "paperless_document_id": 32, "paperless_url": f"{PUBLIC}/documents/31/details"},
+            {**PL, "paperless_document_id": 33, "paperless_url": "https://evil.example/x"},
+            {**PL, "paperless_document_id": 34, "paperless_url": ["x"]},
+        ], reader)
+
+        assert meta["sources"] == [
+            {**KB, "paperless_url": own},
+            {**PL, "paperless_url": f"{PUBLIC}/documents/31/details"},
+            {**PL, "paperless_document_id": 32},
+            {**PL, "paperless_document_id": 33},
+            {**PL, "paperless_document_id": 34},
+        ]
+
+    async def test_a_foreign_link_on_a_knowledge_source_is_dropped(self, auth_on, monkeypatch):
+        _visible(monkeypatch, 21, paperless=210)
+
+        meta = await _served([{**KB, "paperless_url": f"{PUBLIC}/documents/999/details"}], _Reader())
+
+        assert meta == {"sources": [KB]}
+
+    async def test_auth_off_keeps_the_shape_rules_and_asks_nobody(self, monkeypatch, public_base):
+        """One trust domain: no visibility lookup, no permission -- but still
+        only sources of the shape this module writes."""
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        lookup = _visible(monkeypatch)
+        link = f"{PUBLIC}/documents/210/details"
+
+        meta = await _served(
+            [{**KB, "paperless_url": link, "content": "x"}, PL, {**KB, "kind": "note"}, "junk",
+             {**KB, "document_id": "21"}],
+            None,
+        )
+
+        assert meta == {"sources": [{**KB, "paperless_url": link}, PL]}
+        assert lookup.calls == []

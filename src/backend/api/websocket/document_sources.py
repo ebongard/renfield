@@ -270,9 +270,30 @@ async def turn_sources(
 
 
 # --------------------------------------------------------------------------- #
-# Read side: persisted sources, served to whoever reads the conversation
+# Read side: persisted metadata, served to whoever reads the conversation
 # --------------------------------------------------------------------------- #
 PAPERLESS_READ_PERMISSION = "mcp.paperless.read"
+
+#: The keys of `message_metadata` the history route hands to a client -- the
+#: ones `historyToUiMessage` (ChatContext.tsx) reads, and nothing else.
+#:
+#: 🛑 This is an ALLOWLIST on purpose. The column is the turn's working record,
+#: and most of it is not for a reader: `action_summary` is the agent's copy of
+#: the tool result (Paperless ids and titles of up to ten hits, or the whole
+#: `knowledge_search` payload with retrieved text) and exists for the next
+#: PROMPT; `action_result`, `speaker`, `room_context`, `scanner_job` are of the
+#: same kind. A new key is invisible to clients until it is added here -- with
+#: a decision about who may read it.
+#:
+#: `attachments` and `wb_entities` have no writer in this repository (a plugin
+#: persists the latter); they are listed because the client reads them.
+CLIENT_METADATA_KEYS = ("agent_role", "artifacts", "attachments", "wb_entities")
+
+#: What a source of each kind may carry out, and the type each value must have.
+_KNOWLEDGE_SOURCE_FIELDS: dict[str, type | tuple[type, ...]] = {
+    "filename": str, "title": str, "tier": int,
+}
+_PAPERLESS_SOURCE_FIELDS: dict[str, type | tuple[type, ...]] = {"title": str}
 
 
 def _may_read_paperless(reader: Any) -> bool:
@@ -296,76 +317,130 @@ def _may_read_paperless(reader: Any) -> bool:
         return False
 
 
-def _message_sources(meta: Any) -> list | None:
-    sources = meta.get("sources") if isinstance(meta, dict) else None
-    return sources if isinstance(sources, list) and sources else None
+def _stored_sources(meta: dict) -> list:
+    """The `sources` of one stored metadata; anything but a list is no sources
+    (a value of another shape is dropped, never passed through)."""
+    sources = meta.get("sources")
+    return sources if isinstance(sources, list) else []
 
 
-async def metadata_for_reader(db: Any, metadatas: list, reader: Any) -> list:
+def _typed_fields(source: dict, fields: dict) -> dict:
+    return {
+        key: source[key] for key, kind in fields.items()
+        if isinstance(source.get(key), kind) and not isinstance(source.get(key), bool)
+    }
+
+
+def _source_for_reader(
+    source: Any, visible: dict, paperless_ok: bool, check_rights: bool,
+) -> dict | None:
+    """One stored source as the reader may see it, rebuilt key by key; None
+    when it is not theirs or not a source this module would have written.
+
+    * The kind is `"paperless"` or absent. Anything else is dropped: the client
+      would render it as a knowledge-base chip.
+    * A `document_id` -- on ANY kind -- must be a document the reader's circles
+      cover. A Paperless source never carries one out.
+    * A Paperless source needs a valid `paperless_document_id` and the reader's
+      Paperless permission.
+    * `paperless_url` survives only if it is exactly the link the server builds
+      for that document now; nothing else is ever a link.
+
+    `check_rights=False` (auth off, one trust domain) keeps the shape rules and
+    skips the two access rules.
+    """
+    if not isinstance(source, dict):
+        return None
+    kind = source.get("kind")
+    if kind not in (None, "paperless"):
+        return None
+
+    doc_id = None
+    if "document_id" in source:
+        doc_id = _document_id(source["document_id"])
+        if doc_id is None or (check_rights and doc_id not in visible):
+            return None
+
+    if kind == "paperless":
+        paperless_id = _document_id(source.get("paperless_document_id"))
+        if paperless_id is None or (check_rights and not paperless_ok):
+            return None
+        out = {"kind": "paperless", "paperless_document_id": paperless_id}
+        out.update(_typed_fields(source, _PAPERLESS_SOURCE_FIELDS))
+    else:
+        if doc_id is None:
+            return None
+        paperless_id = (visible.get(doc_id) or {}).get("paperless_document_id")
+        out = {"document_id": doc_id}
+        out.update(_typed_fields(source, _KNOWLEDGE_SOURCE_FIELDS))
+
+    url = source.get("paperless_url")
+    if isinstance(url, str) and url:
+        # Auth off has no lookup, so a knowledge-base link cannot be re-derived
+        # there; it is the one the server stored.
+        if (kind is None and not check_rights) or url == _paperless_url(paperless_id):
+            out["paperless_url"] = url
+    return out
+
+
+async def metadata_for_reader(metadatas: list, reader: Any) -> list:
     """The message metadata of a history page as THIS reader may see it.
 
-    A conversation is a shared artifact (auth-on §8.1): a room history is read
-    by every member its tier reaches, and any of them may have asked the turn.
-    `sources` are per-ASKER -- built from the asker's circle reach and Paperless
-    permission -- and they name more than the answer text does (every fetched
-    document, up to three search hits, every retrieved document). Messages do
-    not record who asked, so the rule is applied to EVERY reader, the asker
-    included, by the reader's own rights:
+    Two rules, in this order:
 
-    * a knowledge-base source only if the document passes
-      `documents_circles_filter` for the reader (`_visible_document_meta`);
-    * a Paperless source only with `mcp.paperless.read`.
+    1. Only `CLIENT_METADATA_KEYS` and `sources` leave the server, for every
+       reader and with auth on or off. A metadata that is not a dict is `None`.
+    2. `sources` are per-ASKER -- built from the asker's circle reach and
+       Paperless permission -- while a conversation is a shared artifact
+       (auth-on §8.1) that every member its tier reaches reads. Messages do not
+       record who asked, so under auth each source is decided for EVERY reader,
+       the asker included, by the reader's own rights (`_source_for_reader`).
+       For the asker this changes nothing unless access was lost or the
+       document is gone -- and then the chip led nowhere anyway.
 
-    For the asker this changes nothing unless access was lost or the document
-    is gone -- and then the chip led nowhere anyway. `AUTH_ENABLED=false` is one
-    trust domain: untouched. A failed lookup withholds the knowledge-base
-    sources (fail-closed); it never fails the history.
+    The visibility lookup runs on a session of its own (`_visible_meta`, as on
+    the write side), so a failed statement cannot leave the caller's
+    transaction aborted. A failed lookup withholds every source that names a
+    knowledge-base document (fail-closed); it never fails the history.
 
-    Returns a list parallel to `metadatas`. Nothing is modified in place (the
-    dicts are ORM column values); a metadata without sources is returned as is.
+    Returns a list parallel to `metadatas`, built from new dicts -- the stored
+    ones are ORM column values and are never modified.
     """
     from utils.config import settings
 
-    if not settings.auth_enabled or not any(_message_sources(m) for m in metadatas):
-        return list(metadatas)
+    check_rights = bool(settings.auth_enabled)
+    dicts = [m for m in metadatas if isinstance(m, dict)]
 
-    wanted: set[int] = set()
-    for meta in metadatas:
-        for source in _message_sources(meta) or []:
-            if isinstance(source, dict) and source.get("kind") != "paperless":
-                doc_id = _document_id(source.get("document_id"))
+    visible: dict = {}
+    paperless_ok = False
+    if check_rights and any(_stored_sources(m) for m in dicts):
+        wanted: set[int] = set()
+        for meta in dicts:
+            for source in _stored_sources(meta):
+                doc_id = _document_id(source.get("document_id")) if isinstance(source, dict) else None
                 if doc_id is not None:
                     wanted.add(doc_id)
-
-    visible: set = set()
-    if wanted:
-        try:
-            from services.knowledge_tool import _visible_document_meta
-
-            visible = set(await _visible_document_meta(db, wanted, getattr(reader, "id", None)))
-        except Exception as e:
-            logger.warning(
-                "chat sources: visibility lookup for a history reader failed, "
-                f"knowledge-base sources withheld: {error_text_without_content(e)}"
-            )
-    paperless_ok = _may_read_paperless(reader)
-
-    def _keep(source: Any) -> bool:
-        if not isinstance(source, dict):
-            return False
-        if source.get("kind") == "paperless":
-            return paperless_ok
-        return _document_id(source.get("document_id")) in visible
+        if wanted:
+            try:
+                visible = dict(await _visible_meta(wanted, getattr(reader, "id", None)))
+            except Exception as e:
+                logger.warning(
+                    "chat sources: visibility lookup for a history reader failed, "
+                    f"knowledge-base sources withheld: {error_text_without_content(e)}"
+                )
+        paperless_ok = _may_read_paperless(reader)
 
     out: list = []
     for meta in metadatas:
-        sources = _message_sources(meta)
-        if sources is None:
-            out.append(meta)
+        if not isinstance(meta, dict):
+            out.append(None)
             continue
-        kept = [s for s in sources if _keep(s)]
-        filtered = {k: v for k, v in meta.items() if k != "sources"}
-        if kept:
-            filtered["sources"] = kept
-        out.append(filtered)
+        served = {key: meta[key] for key in CLIENT_METADATA_KEYS if key in meta}
+        sources = [
+            kept for source in _stored_sources(meta)
+            if (kept := _source_for_reader(source, visible, paperless_ok, check_rights)) is not None
+        ]
+        if sources:
+            served["sources"] = sources
+        out.append(served)
     return out
