@@ -10,10 +10,9 @@ only called ``receive()`` again after it, so any frame sent during a turn that
 outlived that budget (in production: the ``register`` frame racing the first
 ``text``) cut the turn off.
 
-Starlette's ``TestClient`` cannot show this: it does not run uvicorn's
-protocol, has no transport to pause and sends no keepalive pings. These tests
-therefore run the real chat router under a REAL in-process uvicorn server with
-a small ping budget and talk to it with the ``websockets`` client.
+The tests run the real chat router under a REAL in-process uvicorn
+(``uvicorn_harness``; the TestClient cannot show the bug) and talk to it with
+the ``websockets`` client.
 
 The turn is stubbed at ``_resolve_wire_speaker``, the first coroutine the
 handler awaits inline for a ``text`` frame: the stub sleeps for the frame's
@@ -24,63 +23,23 @@ database and no model.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 from types import SimpleNamespace
 
 import pytest
-import uvicorn
 from fastapi import FastAPI, WebSocket
 from loguru import logger
 from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed
 
 import api.websocket.chat_handler as ch
 import api.websocket.shared as ws_shared
 from services.input_guard import InjectionResult
+from tests.backend.uvicorn_harness import SLOW, expect_close, recv_json, serve
 
 pytestmark = [pytest.mark.backend, pytest.mark.integration]
 
-# Server keepalive budget: a ping every PING seconds, closed after PING more
-# without a pong. A turn of SLOW seconds outlives the budget comfortably.
-PING = 0.3
-SLOW = 5 * PING
 REFUSAL = {"type": "stream", "content": "Ich kann diese Anfrage nicht verarbeiten."}
 DONE = {"type": "done"}
-
-
-class _InProcessServer(uvicorn.Server):
-    """uvicorn without signal handlers, so it can run inside the test loop."""
-
-    @contextlib.contextmanager
-    def capture_signals(self):
-        yield
-
-
-@contextlib.asynccontextmanager
-async def _serve(app: FastAPI):
-    config = uvicorn.Config(
-        app,
-        host="127.0.0.1",
-        port=0,
-        ws="websockets-sansio",
-        ws_ping_interval=PING,
-        ws_ping_timeout=PING,
-        lifespan="off",
-        log_config=None,
-        log_level="warning",
-    )
-    server = _InProcessServer(config)
-    task = asyncio.create_task(server.serve())
-    try:
-        async with asyncio.timeout(10):
-            while not server.started:
-                await asyncio.sleep(0.01)
-        port = server.servers[0].sockets[0].getsockname()[1]
-        yield f"ws://127.0.0.1:{port}"
-    finally:
-        server.should_exit = True
-        await asyncio.wait_for(task, 10)
 
 
 @pytest.fixture
@@ -110,7 +69,7 @@ def chat_app(monkeypatch, events) -> FastAPI:
         return {"authenticated": True, "user_id": 42, "auth_method": "jwt"}
 
     class _AllowAll:
-        def check(self, _ip):
+        def check(self, _ip, **_kwargs):
             return True, ""
 
     async def _turn(_embedding, duration):
@@ -153,17 +112,6 @@ def _register_frame(sid: str) -> str:
     return json.dumps({"type": "register", "session_id": sid})
 
 
-async def _recv(ws, timeout: float = SLOW + 5) -> dict:
-    try:
-        return json.loads(await asyncio.wait_for(ws.recv(), timeout))
-    except ConnectionClosed as exc:
-        rcvd = exc.rcvd
-        pytest.fail(
-            f"server closed the socket: code={rcvd.code if rcvd else None} "
-            f"reason={rcvd.reason if rcvd else None!r}"
-        )
-
-
 async def test_harness_reproduces_the_keepalive_kill_on_an_endpoint_that_does_not_read():
     """Control for the harness: a handler that does not read during long work
     really is closed with 1011 by uvicorn. Without this the tests below could
@@ -178,28 +126,27 @@ async def test_harness_reproduces_the_keepalive_kill_on_an_endpoint_that_does_no
         await websocket.send_json(DONE)
         await websocket.receive_json()
 
-    async with _serve(app) as base, connect(f"{base}/inline", ping_interval=None) as ws:
+    async with serve(app) as base, connect(f"{base}/inline", ping_interval=None) as ws:
         await ws.send(json.dumps({"n": 1}))
         await ws.send(json.dumps({"n": 2}))  # arrives while the handler is busy
-        with pytest.raises(ConnectionClosed) as closed:
-            await asyncio.wait_for(ws.recv(), SLOW + 5)
-    assert closed.value.rcvd is not None
-    assert closed.value.rcvd.code == 1011
-    assert closed.value.rcvd.reason == "keepalive ping timeout"
+        rcvd = await expect_close(ws)
+    assert rcvd is not None
+    assert rcvd.code == 1011
+    assert rcvd.reason == "keepalive ping timeout"
 
 
 async def test_register_frame_during_a_long_turn_keeps_the_socket_and_delivers_the_turn(chat_app, events):
-    async with _serve(chat_app) as base, connect(f"{base}/ws", ping_interval=None) as ws:
+    async with serve(chat_app) as base, connect(f"{base}/ws", ping_interval=None) as ws:
         await ws.send(_text("slow", SLOW))
         await ws.send(_register_frame("session-a"))  # the production race
 
-        assert await _recv(ws) == REFUSAL
-        assert await _recv(ws) == DONE
+        assert await recv_json(ws) == REFUSAL
+        assert await recv_json(ws) == DONE
 
         # The socket is still open and still serves turns.
         await ws.send(_text("next"))
-        assert await _recv(ws) == REFUSAL
-        assert await _recv(ws) == DONE
+        assert await recv_json(ws) == REFUSAL
+        assert await recv_json(ws) == DONE
 
     # The register frame was read during the turn but processed AFTER it, in
     # arrival order -- exactly as before.
@@ -211,10 +158,10 @@ async def test_register_frame_during_a_long_turn_keeps_the_socket_and_delivers_t
 
 
 async def test_two_text_frames_back_to_back_run_as_two_turns_in_order(chat_app, events):
-    async with _serve(chat_app) as base, connect(f"{base}/ws", ping_interval=None) as ws:
+    async with serve(chat_app) as base, connect(f"{base}/ws", ping_interval=None) as ws:
         await ws.send(_text("first", SLOW))
         await ws.send(_text("second", 0.1))
-        received = [await _recv(ws) for _ in range(4)]
+        received = [await recv_json(ws) for _ in range(4)]
 
     assert received == [REFUSAL, DONE, REFUSAL, DONE]
     # Never interleaved: the second turn starts only after the first one ended.
@@ -225,7 +172,7 @@ async def test_two_text_frames_back_to_back_run_as_two_turns_in_order(chat_app, 
 
 
 async def test_client_disconnect_mid_turn_lets_the_turn_finish_and_leaks_no_task(chat_app, events, readers):
-    async with _serve(chat_app) as base:
+    async with serve(chat_app) as base:
         before = asyncio.all_tasks()  # the server's own tasks are not the connection's
         ws = await connect(f"{base}/ws", ping_interval=None)
         await ws.send(_text("gone", SLOW))
@@ -245,28 +192,46 @@ async def test_client_disconnect_mid_turn_lets_the_turn_finish_and_leaks_no_task
     assert readers[0].task.done()
 
 
-async def test_a_flood_during_a_turn_is_bounded_and_then_processed_in_order(chat_app, events, readers, monkeypatch):
-    bound = 4
-    flood = 20
-    monkeypatch.setattr(ws_shared, "MAX_PENDING_CLIENT_FRAMES", bound)
-    warnings: list[str] = []
-    sink = logger.add(lambda m: warnings.append(m.record["message"]), level="WARNING")
+async def test_many_frames_during_a_turn_are_all_kept_and_processed_in_order(chat_app, events):
+    """More frames than the old 64-frame queue: the reader never stops reading
+    because of a count, so the socket survives and nothing is dropped."""
+    many = 150
+    async with serve(chat_app) as base, connect(f"{base}/ws", ping_interval=None) as ws:
+        await ws.send(_text("busy", SLOW))
+        for i in range(many):
+            await ws.send(_register_frame(f"s-{i}"))
+        await ws.send(_text("after"))
+        received = [await recv_json(ws) for _ in range(4)]
+
+    assert received == [REFUSAL, DONE, REFUSAL, DONE]
+    assert [e for e in events if e[0] == "register"] == [("register", f"s-{i}") for i in range(many)]
+    assert events[-3:] == [("start", 0.0), ("end", 0.0), ("check", "after")]
+
+
+async def test_a_flood_over_the_byte_budget_closes_with_1013_and_ends_cleanly(chat_app, events, readers, monkeypatch):
+    monkeypatch.setattr(ws_shared, "CLIENT_FRAME_BUDGET_BYTES", 4096)
+    lines: list[tuple[str, str]] = []
+    sink = logger.add(lambda m: lines.append((m.record["level"].name, m.record["message"])), level="INFO")
     try:
-        async with _serve(chat_app) as base, connect(f"{base}/ws", ping_interval=None) as ws:
-            # Short enough that the paused read stays inside the ping budget.
-            await ws.send(_text("busy", PING / 2))
-            for i in range(flood):
+        async with serve(chat_app) as base, connect(f"{base}/ws", ping_interval=None) as ws:
+            await ws.send(_text("busy", SLOW))
+            await asyncio.wait_for(chat_app.state.turn_started.wait(), 5)
+            for i in range(200):
                 await ws.send(_register_frame(f"s-{i}"))
-            await ws.send(_text("after"))
-            received = [await _recv(ws) for _ in range(4)]
+            rcvd = await expect_close(ws)
+            # The handler ends on its own: the turn's next send hits the closed socket.
+            await asyncio.wait({readers[0].task}, timeout=SLOW + 5)
+            async with asyncio.timeout(SLOW + 5):
+                while ("end", SLOW) not in events or not any("frame flood" in m for _, m in lines):
+                    await asyncio.sleep(0.05)
     finally:
         logger.remove(sink)
 
-    assert received == [REFUSAL, DONE, REFUSAL, DONE]
-    assert readers[0].max_pending == bound
-    # The queue never held more than the bound (asyncio.Queue enforces maxsize)
-    # and reaching it is visible in the log.
-    assert any("frame queue is full" in w for w in warnings), warnings
-    # Nothing was dropped and nothing reordered.
-    assert [e for e in events if e[0] == "register"] == [("register", f"s-{i}") for i in range(flood)]
-    assert events[-3:] == [("start", 0.0), ("end", 0.0), ("check", "after")]
+    assert rcvd is not None and (rcvd.code, rcvd.reason) == (1013, "client frame budget exceeded")
+    assert readers[0].closed_for_flood
+    warnings = [m for lvl, m in lines if lvl == "WARNING" and "budget" in m]
+    assert len(warnings) == 1, warnings  # once, with the counts
+    assert "4096-byte budget" in warnings[0]
+    # No frame of the flood was acted on, and the closed socket is no ERROR.
+    assert not [e for e in events if e[0] == "register"]
+    assert not [m for lvl, m in lines if lvl == "ERROR"], lines

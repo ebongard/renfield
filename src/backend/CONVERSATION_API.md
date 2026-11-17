@@ -307,10 +307,23 @@ Um Konversationspersistenz über WebSocket zu aktivieren, sende die `session_id`
 2. **Jede Nachricht**: User-Nachricht und Assistant-Antwort werden in DB gespeichert
 3. **LLM-Kontext**: Alle `chat_stream()` Aufrufe erhalten die Konversationshistorie
 
-**Reihenfolge der Frames:** Der Handler liest den Socket ununterbrochen (`ClientFrameReader`, #1570), verarbeitet die
-Frames aber nacheinander in Eingangsreihenfolge — ein `register` oder zweites `text` während eines laufenden Zuges
-wird erst nach dessen `done` behandelt. Der Client schickt `{"type": "register", "session_id": …}` vor dem ersten
-`text` eines Sockets.
+**Lesen während eines Zuges (#1570):** `/ws`, `/ws/device` und `/ws/satellite` holen ihre Frames über
+`api.websocket.shared.ClientFrameReader`, nie über `websocket.receive*` in einer Schleife, die Arbeit abwartet.
+Grund: uvicorns `websockets-sansio` hört auf zu lesen, sobald ein Frame wartet und die App nicht in `receive()` steht,
+verpasst dann den Pong auf den eigenen Keepalive-Ping und schließt nach 20 s + 20 s selbst mit 1011.
+- Die Frames werden weiter **einzeln und in Eingangsreihenfolge** verarbeitet; nichts wirkt mitten im Zug, nichts wird
+  zusammengefasst (BLE-Berichte speisen je Bericht einen Filter, Heartbeats je Bericht Verlauf und Taubheitswache).
+- Grenze: wartende Frames dürfen 8 MiB belegen (`CLIENT_FRAME_BUDGET_BYTES`, Python-Größe der Rohdaten, unabhängig von
+  `--ws-max-size`). Ein Frame, das sie überschreitet, während andere warten, schließt mit **1013** und EINER Warnung
+  mit Zählern; ein einzelnes großes Frame bei leerer Schlange wird immer angenommen. Heartbeat + BLE eines Satelliten
+  füllen das erst nach Stunden; eine zweite Aufnahme mit 12,5 Audio-Frames/s während des Zuges dagegen schnell.
+- Ratenbegrenzung urteilt nach **Ankunftszeit** (`frames.arrived_at`), nicht nach dem Schwall, in dem der Handler die
+  Frames nach einem langen Zug abholt.
+- Das Ende ist klebrig: jedes `next()` danach wiederholt es. Im `finally`: `frames.stop()` zuerst, `await
+  frames.aclose()` zuletzt.
+- Der Client schickt `{"type": "register", "session_id": …}` vor dem ersten `text` eines Sockets (`useChatWebSocket`).
+- Tests: `test_ws_endpoints_keep_reading.py` (Struktur), `test_ws_keepalive_during_turn.py` und
+  `test_ws_keepalive_device_satellite.py` (echter uvicorn — der TestClient kann den Fehler nicht zeigen).
 
 **Session State (In-Memory):**
 ```python

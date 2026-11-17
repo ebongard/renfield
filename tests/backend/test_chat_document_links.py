@@ -559,7 +559,7 @@ def _turn(monkeypatch, role_name: str) -> list[dict]:
         return {"authenticated": True, "user_id": 42, "auth_method": "jwt"}
 
     class _AllowAll:
-        def check(self, _ip):
+        def check(self, _ip, **_kwargs):
             return True, ""
 
     async def _fake_stream(content, kb_id, ollama, state, websocket, **kwargs):

@@ -26,7 +26,7 @@ def client(monkeypatch):
         return {"authenticated": True, "user_id": 42, "auth_method": "jwt"}
 
     class _AllowAll:
-        def check(self, _ip):
+        def check(self, _ip, **_kwargs):
             return True, ""
 
     monkeypatch.setattr(ch, "authenticate_websocket", _fake_auth)

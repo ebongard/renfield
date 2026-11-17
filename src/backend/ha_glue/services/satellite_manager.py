@@ -1543,8 +1543,9 @@ class SatelliteManager:
             # 2. Heartbeat eviction, with two exemptions for devices that are
             # demonstrably alive but legitimately unable to answer:
             #   * a LIVE session — we are processing its audio right now, and its
-            #     heartbeats sit unread in the socket buffer because the turn
-            #     runs inline in the receive loop. (Keyed on the session really
+            #     heartbeats are read (ClientFrameReader, #1570) but processed
+            #     only after the turn, which runs inline in the receive loop --
+            #     `last_heartbeat` does not move meanwhile. (Keyed on the session really
             #     existing, so a dangling id cannot grant permanent immunity.)
             #   * a running OTA — the installer blocks the satellite's event loop
             #     for up to ~150s (pip 120s + systemctl restart 30s,

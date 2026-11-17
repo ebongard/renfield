@@ -84,11 +84,17 @@ def loop_env(monkeypatch):
         "between two processed frames". The reading itself is covered by
         test_ws_keepalive_during_turn.py."""
 
-        def __init__(self, receive, **_kwargs):
-            self._receive = receive
+        closed_for_flood = False
+        arrived_at = None
+
+        def __init__(self, websocket, **_kwargs):
+            self._websocket = websocket
 
         async def next(self):
-            return await self._receive()
+            return await self._websocket.receive()
+
+        def stop(self):
+            return None
 
         async def aclose(self):
             return None

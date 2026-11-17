@@ -391,7 +391,7 @@ async def device_websocket(
     # reading at the first frame (the 30 s heartbeat) sent during the turn and
     # closes with 1011 after its keepalive budget (#1570). Frames are still
     # processed one at a time, in arrival order.
-    frames = ClientFrameReader(websocket.receive_json, label="device")
+    frames = ClientFrameReader(websocket, decode="json", label="device")
 
     try:
         while True:
@@ -399,7 +399,7 @@ async def device_websocket(
 
             # Rate limiting (use device_id if registered, otherwise IP)
             rate_key = device_id if device_id else ip_address
-            allowed, reason = rate_limiter.check(rate_key)
+            allowed, reason = rate_limiter.check(rate_key, at=frames.arrived_at)
             if not allowed:
                 await send_ws_error(websocket, WSErrorCode.RATE_LIMITED, reason)
                 continue
@@ -652,10 +652,15 @@ async def device_websocket(
     except WebSocketDisconnect:
         logger.info(f"👋 Device WebSocket disconnected: {device_id}")
     except Exception as e:
-        logger.error(f"❌ Device WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
-        logger.error(f"at {frames_without_content(e)}")
+        if frames.closed_for_flood:
+            # The reader closed the socket (frame budget, logged there); this
+            # is the running turn's next send hitting it.
+            logger.info(f"👋 Device WebSocket closed for a frame flood ({type(e).__name__})")
+        else:
+            logger.error(f"❌ Device WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
+            logger.error(f"at {frames_without_content(e)}")
     finally:
-        await frames.aclose()
+        frames.stop()
         # Clean up connection limiter
         if device_id and ip_address:
             connection_limiter.remove_connection(ip_address, device_id)
@@ -676,3 +681,5 @@ async def device_websocket(
             wakeword_config_manager.unsubscribe(websocket)
 
             await device_manager.unregister(device_id, websocket=websocket)
+
+        await frames.aclose()
