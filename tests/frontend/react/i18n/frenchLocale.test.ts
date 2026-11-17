@@ -88,7 +88,7 @@ const SAME_IN_BOTH_LANGUAGES = new Set<string>([
   'Relations', 'Renfield', 'Route', 'Routine', 'Satellite', 'Satellites',
   'Section', 'Silence', 'Smartphone', 'Sources', 'Table', 'Total', 'Type',
   'Types', 'VAD', 'Wissensbasis',
-  'Page {{page}}', 'Pages {{from}}–{{to}}', 'Position {{position}}',
+  'Document {{id}}', 'Page {{page}}', 'Pages {{from}}–{{to}}', 'Position {{position}}',
   'Relations ({{count}})', 'mcp.ha.turn_on\nmcp.ha.get_state',
   '{{count}} document', '{{count}} documents', '{{count}} mention',
   '{{count}} mentions', '{{count}} message', '{{count}} messages',
