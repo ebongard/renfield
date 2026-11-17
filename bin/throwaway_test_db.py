@@ -19,6 +19,13 @@ Three rules, each enforced in THIS file and not only by the caller:
    extension, as ``renfield_test`` has it.
 3. ``drop`` only removes a database that carries the token ``create`` wrote
    into its comment in the same invocation. A matching NAME is not ownership.
+   The one exception is spelled out at ``_drop_unmarked``: a database this very
+   call created and could not mark.
+
+What can be left behind (a leak, never a wrong drop): a SIGKILL, a container
+stop, or an interrupt that lands between CREATE and the moment the caller holds
+the token. The orphan blocks its suffix (exit 3) until it is removed by hand;
+its comment identifies it.
 
 Exit codes: 0 done, 2 refused (name / usage), 3 the database already exists,
 4 not ours (token mismatch), 1 anything else.
@@ -50,30 +57,85 @@ class Refused(Exception):
 
 
 def _database_of(url: str) -> str:
-    """The database name of a DSN, without its query string."""
-    return url.rpartition("/")[2].partition("?")[0]
+    """The database name of a DSN, parsed the way the driver parses it.
+
+    The same parser the harness guard uses (`_db_name_only` in tests/backend/
+    conftest.py), for the same reason: a slash inside the query string
+    (`/renfield_test_x?options=a/b`) must not make this read the wrong name.
+    A trailing slash is not part of the name either. A DSN that cannot be
+    parsed is refused -- unknown is not "different".
+    """
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import ArgumentError
+
+    try:
+        return (make_url(url).database or "").rstrip("/")
+    except ArgumentError:
+        raise Refused("DATABASE_URL cannot be parsed.") from None
 
 
-def check_name(name: str, application_url: str) -> None:
-    if not NAME_RE.fullmatch(name):
+def require_throwaway_name(name: str) -> None:
+    """The one place that decides whether a name may be put into SQL."""
+    if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         raise Refused(
             f"{name!r} is not a throwaway test database name "
             "(renfield_test_<suffix>: lowercase letters, digits, underscore; "
             "no 'prod', no 'live'; suffix at most 40 characters)."
         )
+
+
+def check_name(name: str, application_url: str) -> None:
+    require_throwaway_name(name)
     if name == _database_of(application_url):
         raise Refused(f"{name!r} is the application database.")
 
 
+_MARK_SQL = (
+    "SELECT shobj_description(oid, 'pg_database') AS mark "
+    "FROM pg_database WHERE datname = $1"
+)
+
+
+async def _drop_unmarked(conn, name: str) -> None:
+    """Remove the database `create` made a moment ago and could not mark.
+
+    The only DROP in this file without a token, so here is exactly why it
+    cannot hit a database of somebody else:
+
+    - It is called from ONE place, after `CREATE DATABASE` for this name
+      succeeded in the same call. A database that existed before would have
+      made that CREATE fail, and the call would have ended as "already exists".
+    - Nobody else can take the name in between: every other `create` is refused
+      while it exists, and every `drop` needs a token this database never got.
+    - And, checked rather than argued: it is dropped only while its comment is
+      still EMPTY. A database carrying any mark -- a run's token included -- is
+      left alone.
+
+    Without this, the unmarked database would block its suffix for good: no
+    token could ever drop it.
+    """
+    require_throwaway_name(name)
+    row = await conn.fetchrow(_MARK_SQL, name)
+    if row is None or row["mark"] is not None:
+        return
+    await conn.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+
+
 async def create(conn, name: str) -> str:
     """Create the database and mark it as this invocation's. Returns the token."""
-    from asyncpg.exceptions import DuplicateDatabaseError
+    from asyncpg.exceptions import DuplicateDatabaseError, UniqueViolationError
 
+    # Checked HERE, where the SQL is built -- not only by whoever calls this.
+    # After it, nothing in the name needs quoting or escaping.
+    require_throwaway_name(name)
     token = secrets.token_hex(16)
     try:
-        # The name passed `check_name`: nothing in it needs quoting or escaping.
         await conn.execute(f'CREATE DATABASE "{name}"')
-    except DuplicateDatabaseError:
+    except (DuplicateDatabaseError, UniqueViolationError):
+        # UniqueViolation is the same answer from a LOST RACE: two creates of
+        # one name at the same instant both pass the existence check, and the
+        # loser fails on the unique index of pg_database (23505) instead of
+        # with duplicate_database (42P04).
         raise Refused(
             f"{name} already exists. It is neither reused nor dropped -- another "
             "run may be using it. Pick another suffix.",
@@ -81,23 +143,29 @@ async def create(conn, name: str) -> str:
         ) from None
     try:
         await conn.execute(f"COMMENT ON DATABASE \"{name}\" IS '{MARK}{token}'")
-    except BaseException:
-        # Created a moment ago by this very call and not yet handed to anybody:
-        # without its mark nobody could ever drop it again.
-        await conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    except Exception:
+        # A statement that FAILED: the connection is usable, clean up. Not
+        # BaseException -- after a cancellation or Ctrl-C the connection is in
+        # an unknown state, and a second statement on it could fail and replace
+        # the interrupt; that case leaves an orphan (see the module docstring).
+        try:
+            await _drop_unmarked(conn, name)
+        except Exception as cleanup_error:
+            print(
+                f"WARNING: {name} was created but could neither be marked nor "
+                f"removed ({type(cleanup_error).__name__}) -- remove it by hand.",
+                file=sys.stderr,
+            )
         raise
     return token
 
 
 async def drop(conn, name: str, token: str) -> bool:
     """Drop the database if it carries `token`. False when it is already gone."""
-    if not TOKEN_RE.fullmatch(token):
+    require_throwaway_name(name)
+    if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
         raise Refused("malformed run token.")
-    row = await conn.fetchrow(
-        "SELECT shobj_description(oid, 'pg_database') AS mark "
-        "FROM pg_database WHERE datname = $1",
-        name,
-    )
+    row = await conn.fetchrow(_MARK_SQL, name)
     if row is None:
         return False
     if row["mark"] != MARK + token:
@@ -143,9 +211,20 @@ async def create_ready(conn, name: str, application_url: str) -> str:
         finally:
             await inside.close()
     except BaseException:
-        # Ours by the token just written; a half-prepared database would only
-        # block the suffix for the next run.
-        await drop(conn, name, token)
+        # BaseException on purpose, and always re-raised: an interrupt while the
+        # extension is being installed must not leave a database whose token
+        # the caller never received. Unlike in `create`, the cleanup is safe to
+        # attempt -- `conn` is the idle maintenance connection, not the one the
+        # interrupt hit, and `drop` is gated by the token just written. A
+        # half-prepared database would only block the suffix for the next run.
+        try:
+            await drop(conn, name, token)
+        except Exception as cleanup_error:
+            print(
+                f"WARNING: {name} could not be removed again "
+                f"({type(cleanup_error).__name__}) -- remove it by hand.",
+                file=sys.stderr,
+            )
         raise
     return token
 
