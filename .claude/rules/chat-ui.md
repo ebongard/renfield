@@ -22,7 +22,7 @@ needs `WEATHER_ENABLED`.
 - **Provenance chips:** `knowledge_tool` emits `data.sources`; `chat_handler._extract_agent_sources` rides them on the
   `done` frame + `message_metadata.sources`. Circle-safe ONLY because the sources come from `rag.search(user_id)`.
 - **Chip opens its document** (`CHAT_DOCUMENT_LINKS_ENABLED`, `api/websocket/document_sources.py`; flag off =
-  byte-identical): `chat_handler._turn_sources` is the ONE list for `done` + metadata. Adds Paperless tool results
+  unchanged list): `chat_handler._turn_sources` is the ONE list for `done` + metadata. Adds Paperless tool results
   (`get_document` uncapped, `search_documents` ≤ `PAPERLESS_SEARCH_SOURCE_CAP` per turn, rank-wise) and the direct
   RAG path. 🛑 A link is SERVER-built: `paperless_document_url(id, public_only=True)` from `PAPERLESS_PUBLIC_URL`
   + an id validated as `int` — never a URL/base from a tool result or the model, never the `PAPERLESS_API_URL`
@@ -37,6 +37,9 @@ needs `WEATHER_ENABLED`.
   goes into the allowlist; a new route that returns `message_metadata` goes through this function. NOT covered:
   `load_context` re-injecting `action_summary` into the next prompt (open decision). Enable the flag only AFTER the
   frontend has propagated (old bundle → `/knowledge?doc=undefined`).
+  Chip row = DESIGN.md §Accessibility: 44 px hit area as an invisible `::after` behind the chips (`isolate` row,
+  `gap-y-6`), ONE outline focus ring (`accent-500`, never `outline-none` beside it), and NO backend-made title —
+  a nameless document has `title: ""`, the label is `chat.sources.untitled` (model-facing text keeps "Dokument N").
 - **Follow-up chips** (`services/followup_service.py`): best-effort small-model call in the background AFTER the `done`
   frame, via a separate `followups` frame — never delay the spinner/TTS/wakeword. Skipped on TTS/error/very-short turns.
 - **`role_hint` is ROUTING-ONLY** (palette, role badge via `pendingRoleHint`, "Neu beantworten" via `corrected_intent` →

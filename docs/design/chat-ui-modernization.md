@@ -390,6 +390,23 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
   the answer's own typed content, like the message text.
 - **Enable order:** roll out the frontend first, flip the flag after it has propagated — a stale PWA bundle renders
   a `kind: 'paperless'` source as a chip to `/knowledge?doc=undefined`.
+- **The chip row follows DESIGN.md §Accessibility** (`SourceChips.tsx`):
+  - *Touch target.* Every interactive element (both chip forms, the Paperless segment, "+N") carries an invisible
+    `::after`, centred on it, at least 44×44 px and at least as large as the element; the chip itself keeps its
+    size. A chip that opens nothing has none. Wrapped lines sit 44 px apart (`gap-y-6` on a 20 px chip), so hit
+    areas of neighbouring lines do not overlap; the row's `py-1` plus the 8 px margin around it gives the 12 px an
+    area reaches beyond the first and last line. Horizontally an area can reach over a neighbour (the 24 px
+    segment, a short "+N"): the areas lie BEHIND the visible chips (`after:-z-10`, the row is `isolate`), so the
+    neighbour's visible body always wins and only empty space is claimed — where two areas meet in empty space
+    the later element wins, the space is not split evenly.
+  - *Focus ring.* One ring for every focusable element: `accent-500`, `:focus-visible`, 2 px at 2 px offset, drawn
+    as an OUTLINE (as the button classes in `index.css` do) — no offset colour to match against the bubble. Never
+    `outline-none` beside it: in Tailwind v4 that zeroes the outline style.
+  - *No invented title.* A document with neither title nor filename gets `title: ""` from the backend
+    (`knowledge_search` sources, RAG-path sources; `_visible_document_meta` returns `None`), and the frontend
+    labels it through `chat.sources.untitled` (de/en/fr/it). The German "Dokument N" stays where the MODEL reads
+    it (the FAKTEN line of the context). This changes the `knowledge_search` source of a nameless document with
+    the flag OFF too (`"Dokument N"` → `""`). Rows stored earlier keep their literal "Dokument N" title.
 - **Not built:** opening the ORIGINAL file of a knowledge-base document that is not filed in Paperless. It needs a
   download endpoint behind `check_document_access` and an authenticated blob fetch in the frontend (one instance
   has no cookie session, a plain `href` would 401).
