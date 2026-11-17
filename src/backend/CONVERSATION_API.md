@@ -163,8 +163,9 @@ bei `CHAT_DOCUMENT_LINKS_ENABLED=true`; früher gespeicherte Quellen tragen sie 
   Zug gespeichert).
 - Paperless-Quelle (`kind: "paperless"`): `created` als `YYYY-MM-DD`, `correspondent` und `document_type` als
   einzeilige Texte bis 120 Zeichen. Bei `AUTH_ENABLED=true` nur ausgeliefert mit `mcp.paperless.read`.
-- Alle Anzeigetexte (Titel, Dateiname, Korrespondent, Dokumenttyp) sind einzeilig und ohne Steuer- und
-  Formatzeichen (Unicode Cc/Cf: Bidi-Umschalter, Nullbreitenzeichen, NUL).
+- Alle Anzeigetexte (Titel, Dateiname, Korrespondent, Dokumenttyp) sind einzeilig: Steuerzeichen (Unicode Cc,
+  etwa Zeilenumbruch oder NUL) werden zum Leerzeichen, Formatzeichen (Cf: Bidi-Umschalter, Nullbreitenzeichen)
+  entfallen — außer ZWNJ/ZWJ (U+200C/U+200D), die persische und indische Schrift sowie Emoji-Folgen brauchen.
 - `paperless_url` baut der Server beim Ausliefern aus `PAPERLESS_PUBLIC_URL` und der Kennung neu; der gespeicherte
   Wert wird nie ausgeliefert. Kein Auszug, kein Inhalt, keine Schlagwörter.
 - Bei `AUTH_ENABLED=true` trägt auch eine Wissensdatenbank-Quelle `paperless_url` nur für einen Leser mit

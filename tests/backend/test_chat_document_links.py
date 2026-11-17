@@ -1408,6 +1408,31 @@ class TestNoControlOrFormatCharacters:
         assert ds._card_text(value) == kept
         assert ds._title(value) == (kept or "")
 
+    @pytest.mark.parametrize("value, shown", [
+        # A control character separates like the whitespace it usually is ...
+        ("a\nb", "a b"),
+        ("a\x00b", "a b"),
+        # ... a format character is dropped BEFORE the whitespace is collapsed,
+        # so neither a double space nor a leading space is left behind.
+        ("A​ B", "A B"),
+        ("‎ Titel", "Titel"),
+        ("Titel ⁩", "Titel"),
+        # ZWNJ and ZWJ are orthography: Persian/Indic words, emoji sequences.
+        ("می‌خواهم", "می‌خواهم"),
+        ("\U0001F468‍\U0001F469‍\U0001F467", "\U0001F468‍\U0001F469‍\U0001F467"),
+    ])
+    def test_format_characters_go_before_the_whitespace_is_collapsed(self, value, shown):
+        assert ds._title(value) == shown
+        assert ds._card_text(value) == shown
+
+    def test_a_title_of_format_characters_only_is_no_title(self):
+        """Empty -> the frontend labels it `chat.sources.untitled`."""
+        assert ds._title("‎​﻿ ⁦") == ""
+        assert ds._card_text("‎​﻿ ⁦") is None
+
+    def test_a_cut_title_does_not_end_in_a_space(self):
+        assert ds._title("a" * 199 + " b") == "a" * 199
+
     async def test_the_reader_gets_them_dropped_from_stored_sources(self, auth_on, monkeypatch):
         _visible(monkeypatch, 21)
         stored_kb = {**KB, "title": HOSTILE, "filename": HOSTILE}

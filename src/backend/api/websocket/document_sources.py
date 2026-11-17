@@ -93,14 +93,31 @@ def _document_id(value: Any) -> int | None:
     return value
 
 
+#: Format characters that are orthography, not markup: ZWNJ and ZWJ shape
+#: Persian and Indic words and join emoji sequences.
+_KEPT_FORMAT_CHARACTERS = frozenset("‌‍")
+
+
+def _display_char(c: str) -> str:
+    category = unicodedata.category(c)
+    if category == "Cc":
+        return " "
+    if category == "Cf" and c not in _KEPT_FORMAT_CHARACTERS:
+        return ""
+    return c
+
+
 def _display_text(value: str) -> str:
-    """One line of display text: whitespace runs become one space, and
-    characters of the Unicode categories Cc (control: NUL & co.) and Cf
-    (format: bidi overrides and isolates, zero-width characters, BOM) are
-    dropped -- they are invisible, and a bidi override reorders what a card
-    shows around it. Letters of every script stay."""
-    single_line = " ".join(value.split())
-    return "".join(c for c in single_line if unicodedata.category(c) not in ("Cc", "Cf"))
+    """One line of display text.
+
+    A control character (Unicode Cc: newline, tab, NUL & co.) becomes a space
+    -- it separates words like the whitespace it usually is. A format character
+    (Cf: bidi overrides and isolates, zero-width space, BOM) is dropped: it is
+    invisible, and a bidi override reorders what a card shows around it. Only
+    ZWNJ/ZWJ stay. Whitespace is collapsed and stripped AFTER that, so a
+    dropped character leaves no double or leading space. Letters of every
+    script stay."""
+    return " ".join("".join(map(_display_char, value)).split())
 
 
 def _title(value: Any) -> str:
@@ -108,7 +125,7 @@ def _title(value: Any) -> str:
     falls back to a translated generic label)."""
     if not isinstance(value, str):
         return ""
-    return _display_text(value)[:_TITLE_MAX_CHARS]
+    return _display_text(value)[:_TITLE_MAX_CHARS].rstrip()
 
 
 def _iso_day(value: Any) -> str | None:

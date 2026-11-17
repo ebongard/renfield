@@ -441,9 +441,11 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
   - *One check per field, on both sides* (`_CARD_FIELD_CHECKS`): a date is an ISO day (a timestamp is cut to its
     day as written, a calendar day that does not exist is no date) stored as `YYYY-MM-DD`; a text is single-line
     and capped at 120 characters; a page count is an integer from 1 to 100 000. A value that fails is left out.
-    Every display text (title, filename, correspondent, document type) also loses its Unicode Cc/Cf characters
-    (bidi overrides and isolates, zero-width characters, NUL) — on write and again on read, so older stored
-    sources are served clean too. The frontend puts each meta part in its own `<bdi>`.
+    Every display text (title, filename, correspondent, document type) is cleaned — on write and again on read,
+    so older stored sources are served clean too: a Unicode Cc character (newline, tab, NUL) becomes a space, a
+    Cf character (bidi overrides and isolates, zero-width space, BOM) is dropped except ZWNJ/ZWJ (U+200C/U+200D,
+    Persian/Indic orthography and emoji sequences), and only then is whitespace collapsed and stripped. A title
+    of format characters only is empty and gets the "untitled" label. The frontend puts each meta part in its own `<bdi>`.
   - *Read side.* The two allowlists (`_KNOWLEDGE_SOURCE_FIELDS`, `_PAPERLESS_SOURCE_FIELDS`) carry the new fields.
     The knowledge-base fields are covered by the visibility check that gates the whole source:
     `_source_for_reader` returns nothing before any field is copied unless the document passes
