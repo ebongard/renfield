@@ -72,6 +72,17 @@ describe('DocumentRefArtifact', () => {
     expect(screen.queryByRole('link')).toBeNull();
   });
 
+  // Without mcp.paperless.read the server withholds the link and says so.
+  // A freshly filed scan is then NOT the duplicate.
+  it('says neutrally "filed" when the link was withheld, not "war schon in Paperless"', async () => {
+    antwortet(doc({ in_paperless: true, paperless_url: null, paperless_link_withheld: true }));
+    renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
+
+    expect(await screen.findByText('in Paperless abgelegt')).toBeInTheDocument();
+    expect(screen.queryByText(/war schon in Paperless/i)).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
   it('distinguishes a real failure to file from „laeuft noch"', async () => {
     antwortet(doc({ status: 'completed', in_paperless: false }));
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);

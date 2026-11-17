@@ -226,6 +226,7 @@
         "open": "Apri in Paperless",
         "filing": "archiviazione in corso",
         "alreadyThere": "già presente in Paperless",
+        "filed": "archiviato in Paperless",
         "notFiled": "non archiviato in Paperless",
         "otherInstance": "si trova in {{instance}} — non ancora accessibile da qui"
       }

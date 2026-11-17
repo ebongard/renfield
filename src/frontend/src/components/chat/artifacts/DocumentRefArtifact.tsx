@@ -81,6 +81,12 @@ export default function DocumentRefArtifact({ data }: { data: DocumentRefData })
     );
   }
 
+  // Filed, but this reader may not open it in Paperless (no
+  // `mcp.paperless.read`): neutral, NOT the duplicate wording below.
+  if (doc.paperless_link_withheld) {
+    return <Hint text={t('chat.artifacts.documentRef.filed')} />;
+  }
+
   // Reported in Paperless but without an id of its own: that is the
   // duplicate. `in_paperless` is true exactly when an id exists OR the filing
   // run reported "done" -- with no link, only the second case remains.

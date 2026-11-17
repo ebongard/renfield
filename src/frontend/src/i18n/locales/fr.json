@@ -281,6 +281,7 @@
         "open": "Ouvrir dans Paperless",
         "filing": "classement en cours",
         "alreadyThere": "déjà dans Paperless",
+        "filed": "classé dans Paperless",
         "notFiled": "non classé dans Paperless",
         "otherInstance": "stocké dans {{instance}} — pas encore accessible d'ici"
       }

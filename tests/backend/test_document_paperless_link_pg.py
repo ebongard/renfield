@@ -108,6 +108,9 @@ class TestTheDocumentApiServesThePaperlessLinkOnlyWithThePermission:
             assert row["id"] == filed["doc_id"], name  # he does see the document ...
             assert row["paperless_url"] is None, name  # ... but not its link
             assert row["in_paperless"] is True, name   # the filing status stays
+            # ... and the client learns the link was WITHHELD, not that the
+            # document is a duplicate without an id of its own.
+            assert row["paperless_link_withheld"] is True, name
             assert str(PAPERLESS_ID) not in repr(row), name
 
     @pytest.mark.parametrize("permission", ["mcp.paperless.read", "mcp.paperless", "mcp.*"])
@@ -121,6 +124,7 @@ class TestTheDocumentApiServesThePaperlessLinkOnlyWithThePermission:
 
         for name, row in rows.items():
             assert row["paperless_url"] == LINK, name
+            assert row["paperless_link_withheld"] is False, name
 
     async def test_the_owner_with_the_permission_gets_the_link(
         self, async_client, db_session, filed,
@@ -136,6 +140,55 @@ class TestTheDocumentApiServesThePaperlessLinkOnlyWithThePermission:
 
         for name, row in (await _rows(async_client, filed)).items():
             assert row["paperless_url"] == LINK, name
+
+
+class TestTheTierChangeAnswersWithTheCallersLink:
+    """`PATCH /documents/{id}/tier` re-reads the document after
+    `db.expire_all()`. The caller's row lives on the same request session, so
+    its permissions must be decided BEFORE that -- after it, reading the role
+    is a lazy load outside the greenlet, which the visibility check would
+    swallow into a denial and a false warning."""
+
+    @staticmethod
+    def _warnings():
+        from loguru import logger
+
+        lines: list[str] = []
+        sink = logger.add(lambda m: lines.append(str(m)), level="WARNING")
+        return lines, lambda: logger.remove(sink)
+
+    async def test_a_permitted_owner_gets_the_link_and_no_warning(
+        self, async_client, db_session, filed,
+    ):
+        _as(filed["alice"])
+        lines, stop = self._warnings()
+        try:
+            resp = await async_client.patch(
+                f"/api/knowledge/documents/{filed['doc_id']}/tier", json={"tier": 2},
+            )
+        finally:
+            stop()
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["circle_tier"] == 2
+        assert resp.json()["paperless_url"] == LINK
+        assert not [line for line in lines if "Paperless id withheld" in line]
+
+    async def test_an_owner_without_the_permission_gets_none(
+        self, async_client, db_session, filed,
+    ):
+        alice = filed["alice"]
+        alice.role.permissions = ["kb.own"]
+        await db_session.commit()
+        _as(alice)
+
+        resp = await async_client.patch(
+            f"/api/knowledge/documents/{filed['doc_id']}/tier", json={"tier": 2},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["paperless_url"] is None
+        assert resp.json()["paperless_link_withheld"] is True
 
 
 class TestADuplicateProposalNamesThePaperlessIdOnlyWithThePermission:
