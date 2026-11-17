@@ -52,6 +52,27 @@ describe('SourceChips', () => {
     expect(screen.getAllByRole('link')).toHaveLength(9);
   });
 
+  it('moves the focus to the first revealed chip, not to the page', async () => {
+    const many = Array.from({ length: 9 }, (_, i) => src(i + 1, `Doc${i + 1}`, 2));
+    renderWithRouter(<SourceChips sources={many} />);
+    screen.getByText('+3 weitere').focus();
+    await userEvent.keyboard('{Enter}');
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: /Doc7/ }));
+  });
+
+  it('moves the focus to a revealed chip that opens nothing, without adding it to the tab order', async () => {
+    const sources = [
+      ...Array.from({ length: 6 }, (_, i) => src(i + 1, `Doc${i + 1}`)),
+      paperless(70, 'Ohne Link', false),
+      src(8, 'Doc8'),
+    ];
+    renderWithRouter(<SourceChips sources={sources} />);
+    await userEvent.click(screen.getByText('+2 weitere'));
+    const target = screen.getByText('Ohne Link').parentElement as HTMLElement;
+    expect(document.activeElement).toBe(target);
+    expect(target).toHaveAttribute('tabindex', '-1');
+  });
+
   it('omits the tier badge when tier is absent but still renders the chip', () => {
     renderWithRouter(<SourceChips sources={[src(5, 'Notiz')]} />);
     expect(screen.getByRole('link', { name: /Notiz/ })).toHaveAttribute('href', '/knowledge?doc=5');

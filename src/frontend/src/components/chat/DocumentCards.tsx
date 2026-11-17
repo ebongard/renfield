@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, FileText } from 'lucide-react';
 import TierBadge from '../TierBadge';
 import { formatDate } from '../../utils/datetime';
+import { focusRevealedItem } from './revealFocus';
 import type { MessageSource } from '../../types/chat';
 
 /**
@@ -128,9 +129,16 @@ function DocumentCard({ source }: { source: MessageSource }) {
         {tier !== null && <TierBadge tier={tier} className="flex-shrink-0" />}
       </div>
 
+      {/* Each part in its own <bdi>: a right-to-left name from a third system
+          cannot reorder the separators or its neighbours. */}
       {meta.length > 0 && (
         <p data-card-meta className="w-full break-words text-xs text-gray-600 dark:text-gray-300">
-          {meta.join(' · ')}
+          {meta.map((part, i) => (
+            <span key={i}>
+              {i > 0 && ' · '}
+              <bdi>{part}</bdi>
+            </span>
+          ))}
         </p>
       )}
 
@@ -172,6 +180,15 @@ function DocumentCard({ source }: { source: MessageSource }) {
 export default function DocumentCards({ sources }: { sources?: MessageSource[] }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
+  const listRef = useRef<HTMLUListElement>(null);
+  const focusOnReveal = useRef(false);
+
+  // "+N" removes itself: hand the focus to the first card it revealed.
+  useEffect(() => {
+    if (!expanded || !focusOnReveal.current) return;
+    focusOnReveal.current = false;
+    focusRevealedItem(listRef.current?.children[MAX_VISIBLE]);
+  }, [expanded]);
 
   if (!sources || sources.length === 0) return null;
 
@@ -180,7 +197,7 @@ export default function DocumentCards({ sources }: { sources?: MessageSource[] }
 
   return (
     <div className="mt-2 flex min-w-0 flex-col items-start gap-2">
-      <ul className="flex w-full min-w-0 flex-col gap-2" aria-label={t('chat.sources.label')}>
+      <ul ref={listRef} className="flex w-full min-w-0 flex-col gap-2" aria-label={t('chat.sources.label')}>
         {visible.map((source) => (
           <DocumentCard key={sourceKey(source)} source={source} />
         ))}
@@ -188,7 +205,10 @@ export default function DocumentCards({ sources }: { sources?: MessageSource[] }
       {hidden > 0 && (
         <button
           type="button"
-          onClick={() => setExpanded(true)}
+          onClick={() => {
+            focusOnReveal.current = true;
+            setExpanded(true);
+          }}
           className="btn-ghost min-h-11 px-3 text-sm"
         >
           {t('chat.sources.more', { count: hidden })}

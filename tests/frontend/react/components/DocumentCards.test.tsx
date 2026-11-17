@@ -42,6 +42,9 @@ const paperless = (
 
 const cards = () => screen.getAllByRole('listitem');
 
+/** The meta line of a card as one string (each part sits in its own <bdi>). */
+const metaLine = (card: HTMLElement) => card.querySelector('[data-card-meta]')?.textContent ?? null;
+
 afterEach(async () => {
   await i18n.changeLanguage('de');
 });
@@ -64,7 +67,7 @@ describe('DocumentCards', () => {
     expect(within(card).getByText('Steuerbescheid 2024')).toBeInTheDocument();
     // TierBadge: colour + symbol + label, announced.
     expect(within(card).getByLabelText(/Stufe|Tier/i)).toBeInTheDocument();
-    expect(within(card).getByText('14.03.2025 · 3 S.')).toBeInTheDocument();
+    expect(metaLine(card)).toBe('14.03.2025 · 3 S.');
 
     const links = within(card).getAllByRole('link');
     expect(links).toHaveLength(1);
@@ -106,7 +109,7 @@ describe('DocumentCards', () => {
       />,
     );
     const [card] = cards();
-    expect(within(card).getByText('02.02.2025 · Rechnung · Stadtwerke · 2 S.')).toBeInTheDocument();
+    expect(metaLine(card)).toBe('02.02.2025 · Rechnung · Stadtwerke · 2 S.');
     const links = within(card).getAllByRole('link');
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute('href', `${PAPERLESS}/documents/11/details`);
@@ -129,9 +132,9 @@ describe('DocumentCards', () => {
       />,
     );
     const [typeOnly, dateAndSender, pagesOnly] = cards();
-    expect(within(typeOnly).getByText('Vertrag')).toBeInTheDocument();
-    expect(within(dateAndSender).getByText('05.01.2025 · Amt')).toBeInTheDocument();
-    expect(within(pagesOnly).getByText('1 S.')).toBeInTheDocument();
+    expect(metaLine(typeOnly)).toBe('Vertrag');
+    expect(metaLine(dateAndSender)).toBe('05.01.2025 · Amt');
+    expect(metaLine(pagesOnly)).toBe('1 S.');
     expect(document.body.textContent).not.toMatch(/· ·|·\s*$/);
   });
 
@@ -167,7 +170,7 @@ describe('DocumentCards', () => {
     );
     const [card] = cards();
     expect(within(card).getByText('Vertrag alt')).toBeInTheDocument();
-    expect(within(card).getByText('01.06.2024')).toBeInTheDocument();
+    expect(metaLine(card)).toBe('01.06.2024');
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
     // Nothing in it can take the focus.
@@ -201,6 +204,41 @@ describe('DocumentCards', () => {
     await userEvent.click(more);
     expect(cards()).toHaveLength(5);
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('moves the focus to the first revealed card\'s button, not to the page', async () => {
+    const many = Array.from({ length: 5 }, (_, i) => kb(i + 1, `Doc${i + 1}`, { tier: 2 }));
+    renderWithRouter(<DocumentCards sources={many} />);
+    const more = screen.getByRole('button', { name: '+2 weitere' });
+    more.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Doc4 öffnen' }));
+  });
+
+  it('moves the focus to the revealed card itself when it has no button', async () => {
+    const sources = [
+      ...Array.from({ length: 3 }, (_, i) => kb(i + 1, `Doc${i + 1}`)),
+      paperless(40, 'Ohne Link', {}, false),
+      kb(5, 'Doc5'),
+    ];
+    renderWithRouter(<DocumentCards sources={sources} />);
+    await userEvent.click(screen.getByRole('button', { name: '+2 weitere' }));
+    const target = cards()[3];
+    expect(document.activeElement).toBe(target);
+    // Reachable by script only -- it does not join the tab order.
+    expect(target).toHaveAttribute('tabindex', '-1');
+    // The cards shown from the start are untouched.
+    for (const card of cards().slice(0, 3)) expect(card).not.toHaveAttribute('tabindex');
+  });
+
+  it('puts each part of the meta line in its own <bdi>', () => {
+    renderWithRouter(
+      <DocumentCards
+        sources={[paperless(11, 'Rechnung', { created: '2025-02-02', correspondent: 'Amt', page_count: 2 })]}
+      />,
+    );
+    const parts = Array.from(cards()[0].querySelectorAll('[data-card-meta] bdi')).map((b) => b.textContent);
+    expect(parts).toEqual(['02.02.2025', 'Amt', '2 S.']);
   });
 
   it('shows no "+N" control for three documents', () => {
@@ -303,8 +341,21 @@ describe('DocumentCards', () => {
     renderWithRouter(
       <DocumentCards sources={[kb(7, 'Notice', { document_date: '2025-03-14', page_count: 3 })]} />,
     );
-    expect(screen.getByText('03/14/2025 · 3 pages')).toBeInTheDocument();
+    expect(metaLine(cards()[0])).toBe('03/14/2025 · 3 pages');
     expect(screen.getByRole('link')).toHaveAccessibleName('Open Notice');
+  });
+
+  it('has every new card key in each of the four locales itself, not by fallback', () => {
+    // `fallbackLng` is 'de': `t()` would find a key missing in en/fr/it in the
+    // German bundle. `exists` without a fallback asks the locale alone.
+    const keys = ['open', 'openDocument', 'inPaperless', 'pages_one', 'pages_other'];
+    for (const lng of ['de', 'en', 'fr', 'it']) {
+      for (const key of keys) {
+        expect(i18n.exists(`chat.sources.${key}`, { lng, fallbackLng: [] }), `${lng}: ${key}`).toBe(true);
+      }
+    }
+    // French distinguishes a `many` form (frenchLocale.test.ts).
+    expect(i18n.exists('chat.sources.pages_many', { lng: 'fr', fallbackLng: [] })).toBe(true);
   });
 
   it('has every card string in all four languages, none of them the key', () => {

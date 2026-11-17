@@ -80,6 +80,9 @@ const TURN: ChatMessage[] = [
   { id: 2, role: 'assistant', content: 'Am 12. Mai.', sources: SOURCES },
 ];
 
+const metaLines = () =>
+  Array.from(document.querySelectorAll('[data-card-meta]')).map((el) => el.textContent);
+
 function drive(messages: ChatMessage[]): void {
   vi.mocked(useChatContext).mockReturnValue(buildChatContextValue({ messages }));
 }
@@ -95,8 +98,7 @@ describe('ChatMessages — document cards', () => {
     renderWithRouter(<ChatMessages />);
 
     await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(2));
-    expect(screen.getByText('14.03.2025 · 3 S.')).toBeInTheDocument();
-    expect(screen.getByText('02.02.2025 · Rechnung · Stadtwerke')).toBeInTheDocument();
+    expect(metaLines()).toEqual(['14.03.2025 · 3 S.', '02.02.2025 · Rechnung · Stadtwerke']);
     expect(screen.getByRole('link', { name: 'Steuerbescheid 2024 öffnen' })).toHaveAttribute(
       'href', '/knowledge?doc=7',
     );
@@ -151,7 +153,7 @@ describe('ChatMessages — document cards', () => {
     renderWithRouter(<ChatMessages />);
 
     await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(2));
-    expect(screen.getByText('14.03.2025 · 3 S.')).toBeInTheDocument();
+    expect(metaLines()[0]).toBe('14.03.2025 · 3 S.');
     expect(
       screen.getByRole('link', { name: 'Rechnung Stadtwerke – in Paperless öffnen (neuer Tab)' }),
     ).toHaveAttribute('href', `${PAPERLESS}/documents/11/details`);
