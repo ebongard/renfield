@@ -2685,6 +2685,7 @@
     "keepThis": "Conserver {{name}}",
     "imported": "importé le {{date}}",
     "inPaperless": "Dans Paperless n° {{id}}",
+    "inPaperlessNoId": "Dans Paperless",
     "notInPaperless": "absent de Paperless",
     "resolutionLegend": "Que faire du document en double\u00a0:",
     "supersede": "Masquer",

@@ -38,6 +38,7 @@ from typing import Any
 
 from loguru import logger
 
+from services.paperless_visibility import paperless_visible, paperless_visible_to
 from utils.log_safety import error_text_without_content
 
 PAPERLESS_SEARCH_TOOL = "mcp.paperless.search_documents"
@@ -356,7 +357,7 @@ async def turn_sources(
 
     🛑 `user_permissions` are the asker's, loaded server-side for the turn. A
     knowledge-base source gets its Paperless link only if they include
-    `mcp.paperless.read` (`may_link_paperless`): the link reveals the Paperless
+    `mcp.paperless.read` (`paperless_visible`): the link reveals the Paperless
     id, which is the Paperless permission's to give, not the circles'. With
     auth off there is one trust domain and the link stays. The `done` frame and
     the stored metadata are the same list, so a source written without the
@@ -379,7 +380,7 @@ async def turn_sources(
                 f"the RAG path gets none): {error_text_without_content(e)}"
             )
 
-    may_link = may_link_paperless(user_permissions)
+    may_link = paperless_visible(user_permissions)
     sources = [_as_card(s, meta.get(s.get("document_id")), may_link) for s in kb_sources]
     seen = {s.get("document_id") for s in sources}
     for doc_id in rag_ids:
@@ -408,8 +409,6 @@ async def turn_sources(
 # --------------------------------------------------------------------------- #
 # Read side: persisted metadata, served to whoever reads the conversation
 # --------------------------------------------------------------------------- #
-PAPERLESS_READ_PERMISSION = "mcp.paperless.read"
-
 #: The keys of `message_metadata` the history route hands to a client -- the
 #: ones `historyToUiMessage` (ChatContext.tsx) reads, and nothing else.
 #:
@@ -449,42 +448,6 @@ _PAPERLESS_SOURCE_FIELDS: dict[str, type | tuple[type, ...]] = {
     "title": str,
     "created": str, "correspondent": str, "document_type": str, "page_count": int,
 }
-
-
-def _holds_paperless_read(permissions: list[str]) -> bool:
-    """The check the tool call makes: `mcp_servers.yaml` maps both Paperless
-    reads to `mcp.paperless.read`; `has_mcp_permission` honours `mcp.*` and the
-    server-wide `mcp.paperless`."""
-    from models.permissions import has_mcp_permission
-
-    return has_mcp_permission(list(permissions), PAPERLESS_READ_PERMISSION)
-
-
-def may_link_paperless(user_permissions: list[str] | None) -> bool:
-    """May the ASKER of a turn get the Paperless link of a knowledge-base
-    source? Auth off: yes, one trust domain. Auth on: only with
-    `mcp.paperless.read`; `None` (an unidentified turn) denies -- fail-closed,
-    unlike the MCP gate, which keeps unidentified voice turns working."""
-    from utils.config import settings
-
-    if not settings.auth_enabled:
-        return True
-    return user_permissions is not None and _holds_paperless_read(user_permissions)
-
-
-def _may_read_paperless(reader: Any) -> bool:
-    """Does this reader hold the permission the two Paperless reads require?
-    Any failure to read the permissions denies."""
-    if reader is None:
-        return False
-    try:
-        return _holds_paperless_read(reader.get_permissions() or [])
-    except Exception as e:
-        logger.warning(
-            f"chat sources: reader permissions unreadable, Paperless sources withheld: "
-            f"{error_text_without_content(e)}"
-        )
-        return False
 
 
 def _stored_sources(meta: dict) -> list:
@@ -644,7 +607,7 @@ async def metadata_for_reader(metadatas: list, reader: Any) -> list:
                     f"withheld: {error_text_without_content(e)}"
                 )
         if check_rights:
-            paperless_ok = _may_read_paperless(reader)
+            paperless_ok = paperless_visible_to(reader)
 
     out: list = []
     for meta in metadatas:

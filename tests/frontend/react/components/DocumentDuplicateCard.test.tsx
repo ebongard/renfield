@@ -38,6 +38,25 @@ describe('DocumentDuplicateCard', () => {
     expect(screen.getByText(/In Paperless #50/)).toBeInTheDocument();
   });
 
+  // The server withholds the Paperless id from a reader without
+  // mcp.paperless.read and says only that the document is filed.
+  it('a filed document whose id is withheld reads "In Paperless", not "nicht in Paperless"', () => {
+    renderWithRouter(
+      <DocumentDuplicateCard
+        proposal={proposal({
+          document_a: doc({ id: 44, name: 'Rechnung A', in_paperless: true }),
+          document_b: doc({ id: 45, name: 'Rechnung B' }),
+        })}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('In Paperless')).toBeInTheDocument();
+    expect(screen.queryByText(/#\d/)).not.toBeInTheDocument();
+    // Control: the unfiled document keeps its own badge.
+    expect(screen.getByText('nicht in Paperless')).toBeInTheDocument();
+  });
+
   it('approves with the suggested survivor + supersede by default', () => {
     const onApprove = vi.fn();
     renderWithRouter(<DocumentDuplicateCard proposal={proposal()} onApprove={onApprove} onReject={vi.fn()} />);

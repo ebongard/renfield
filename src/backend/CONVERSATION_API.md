@@ -172,7 +172,8 @@ bei `CHAT_DOCUMENT_LINKS_ENABLED=true`; früher gespeicherte Quellen tragen sie 
   `mcp.paperless.read` (auch `mcp.paperless` oder `mcp.*`): der Link nennt die Paperless-Kennung. Ohne die
   Berechtigung bleibt die Quelle, nur der Link fehlt. Dasselbe gilt schon beim Schreiben für den Fragenden (der
   `done`-Rahmen und die gespeicherten `sources` sind eine Liste): fehlt ihm die Berechtigung, wird die Quelle ohne
-  Link gespeichert und bleibt es auch für spätere Leser.
+  Link gespeichert und bleibt es auch für spätere Leser. Die Regel gilt systemweit (`services/paperless_visibility.py`):
+  auch `GET /api/knowledge/documents…` liefert `paperless_url` nur mit dieser Berechtigung.
 
 ---
 

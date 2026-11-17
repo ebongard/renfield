@@ -68,6 +68,11 @@ export default function DocumentDuplicateCard({ proposal, onApprove, onReject, b
                 <span className="inline-block rounded bg-green-100 px-1.5 py-0.5 text-green-800 dark:bg-green-900/40 dark:text-green-300">
                   {t('documentDuplicates.inPaperless', { id: doc.paperless_document_id })}
                 </span>
+              ) : doc.in_paperless ? (
+                // Filed, but the id is not this reader's to see (no Paperless permission).
+                <span className="inline-block rounded bg-green-100 px-1.5 py-0.5 text-green-800 dark:bg-green-900/40 dark:text-green-300">
+                  {t('documentDuplicates.inPaperlessNoId')}
+                </span>
               ) : (
                 <span className="inline-block rounded bg-gray-100 px-1.5 py-0.5 text-gray-600 dark:bg-gray-800 dark:text-gray-400">
                   {t('documentDuplicates.notInPaperless')}

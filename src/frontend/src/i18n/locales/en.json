@@ -2662,6 +2662,7 @@
     "keepThis": "Keep {{name}}",
     "imported": "imported {{date}}",
     "inPaperless": "In Paperless #{{id}}",
+    "inPaperlessNoId": "In Paperless",
     "notInPaperless": "not in Paperless",
     "resolutionLegend": "What to do with the duplicate document:",
     "supersede": "Hide",

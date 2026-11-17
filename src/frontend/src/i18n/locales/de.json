@@ -2662,6 +2662,7 @@
     "keepThis": "{{name}} behalten",
     "imported": "importiert {{date}}",
     "inPaperless": "In Paperless #{{id}}",
+    "inPaperlessNoId": "In Paperless",
     "notInPaperless": "nicht in Paperless",
     "resolutionLegend": "Was mit dem doppelten Dokument geschehen soll:",
     "supersede": "Ausblenden",
