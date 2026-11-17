@@ -7,14 +7,20 @@ This module contains:
 - Whisper service singleton
 """
 
+import asyncio
+import json
 import re
+import sys
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from time import time
+from typing import Any
 
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 from loguru import logger
 
 from models.websocket_messages import WSErrorCode, create_error_response
+from utils.log_safety import error_text_without_content
 
 # =============================================================================
 # Session State Management
@@ -230,6 +236,192 @@ async def send_ws_error(websocket: WebSocket, code: WSErrorCode, message: str, r
         await websocket.send_json(create_error_response(code, message, request_id))
     except Exception:
         pass  # WebSocket may already be closed
+
+
+# =============================================================================
+# Continuous Reading (#1570)
+# =============================================================================
+
+#: Memory a connection may hold in frames its handler has not taken yet,
+#: measured as the Python size of the raw frame payloads -- so it bounds memory
+#: whatever ``--ws-max-size`` is (prod 1 MB; uvicorn's default 16 MiB under
+#: Dockerfile.gpu). 8 MiB is 8 maximal prod frames, and a frame that arrives
+#: while nothing is queued is always taken, so no single legitimate frame can
+#: trip it. A satellite's state frames during a long turn (a heartbeat every
+#: 30 s, a BLE report every ~3 s, each a few hundred bytes to ~2 KB) take hours
+#: to fill it; what fills it is a genuine flood, e.g. a second recording
+#: streamed at 12.5 audio frames/s while the first turn still runs.
+CLIENT_FRAME_BUDGET_BYTES = 8 * 1024 * 1024
+
+#: Close code when the budget is exceeded: 1013 "try again later". Such a
+#: connection used to die anyway (uvicorn's 1011 after its keepalive budget),
+#: and every client reconnects on a close.
+FLOOD_CLOSE_CODE = 1013
+FLOOD_CLOSE_REASON = "client frame budget exceeded"
+
+
+def _utc_now() -> datetime:
+    # The clock WSRateLimiter uses; it compares these arrival times.
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _frame_size(message: dict) -> int:
+    payload = message.get("text")
+    if payload is None:
+        payload = message.get("bytes")
+    return sys.getsizeof(message) + (sys.getsizeof(payload) if payload is not None else 0)
+
+
+class _ReaderEnd:
+    """The end of the stream: what ``receive`` raised, or the disconnect message."""
+
+    __slots__ = ("exc", "message")
+
+    def __init__(self, *, exc: Exception | None = None, message: dict | None = None):
+        self.exc = exc
+        self.message = message
+
+
+class ClientFrameReader:
+    """Reads a WebSocket continuously while its handler works on one frame.
+
+    🛑 Why: uvicorn's ``websockets-sansio`` protocol pauses reading the
+    transport as soon as a client message is queued while the app is not inside
+    ``receive()``. While paused it does not read the pong to its own keepalive
+    ping either, and after ``ws_ping_interval + ws_ping_timeout`` (20 s + 20 s)
+    it closes the socket itself with 1011 "keepalive ping timeout". A handler
+    that processes a long turn inline therefore lost the socket whenever the
+    client sent anything during that turn.
+
+    This task stays inside ``receive()`` for the whole connection -- it never
+    waits for the handler -- and hands each frame over through a queue, so the
+    handler still processes frames ONE AT A TIME and IN ARRIVAL ORDER. Nothing
+    is acted on earlier, merged or dropped; frames are only read earlier.
+
+    Limit: the waiting frames may hold ``CLIENT_FRAME_BUDGET_BYTES`` (8 MiB).
+    A frame that would exceed it while others wait ends the connection with
+    ``FLOOD_CLOSE_CODE`` (1013) and one WARNING with the counts; the waiting
+    frames are discarded, the next ``next()`` reports the disconnect, and
+    ``closed_for_flood`` tells the handler's error path why a send failed.
+
+    ``decode="json"`` gives what ``websocket.receive_json()`` gave and raises
+    ``WebSocketDisconnect`` at the end; ``decode="raw"`` gives the ASGI message
+    and ends with the ``websocket.disconnect`` message. The end is STICKY:
+    every ``next()`` after it repeats it. ``arrived_at`` is the arrival time of
+    the frame ``next()`` returned last -- a rate limit judges the client's
+    sending, not the handler catching up after a long turn.
+
+    In ``finally``: ``stop()`` first (synchronous, so it runs even when a later
+    await of the cleanup is cancelled), ``await aclose()`` last.
+    """
+
+    def __init__(
+        self,
+        websocket: WebSocket,
+        *,
+        decode: str,
+        label: str,
+        budget_bytes: int | None = None,
+    ):
+        if decode not in ("json", "raw"):
+            raise ValueError(f"decode must be 'json' or 'raw', not {decode!r}")
+        self.budget_bytes = budget_bytes or CLIENT_FRAME_BUDGET_BYTES
+        self.closed_for_flood = False
+        self.arrived_at: datetime | None = None
+        self._ws = websocket
+        self._decode = decode
+        self._label = label
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._pending_bytes = 0
+        self._end: _ReaderEnd | None = None
+        self.task = asyncio.create_task(self._run(), name=f"ws-reader:{label}")
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                message = await self._ws.receive()
+            except Exception as exc:
+                self._queue.put_nowait((_utc_now(), 0, _ReaderEnd(exc=exc)))
+                return
+            if message.get("type") == "websocket.disconnect":
+                self._queue.put_nowait((_utc_now(), 0, _ReaderEnd(message=message)))
+                return
+            size = _frame_size(message)
+            if not self._queue.empty() and self._pending_bytes + size > self.budget_bytes:
+                await self._close_for_flood(size)
+                return
+            self._pending_bytes += size
+            self._queue.put_nowait((_utc_now(), size, message))
+
+    async def _close_for_flood(self, size: int) -> None:
+        self.closed_for_flood = True
+        waiting, held = self._queue.qsize(), self._pending_bytes
+        while not self._queue.empty():
+            self._queue.get_nowait()
+        self._pending_bytes = 0
+        logger.warning(
+            f"🚫 {self._label}: {waiting + 1} client frames ({held + size} bytes) "
+            f"arrived while the handler was busy, over the {self.budget_bytes}-byte "
+            f"budget -- closing with {FLOOD_CLOSE_CODE}"
+        )
+        self._queue.put_nowait((_utc_now(), 0, _ReaderEnd(message={
+            "type": "websocket.disconnect",
+            "code": FLOOD_CLOSE_CODE,
+            "reason": FLOOD_CLOSE_REASON,
+        })))
+        try:
+            await self._ws.close(code=FLOOD_CLOSE_CODE, reason=FLOOD_CLOSE_REASON)
+        except Exception as exc:
+            logger.warning(
+                f"⚠️ {self._label}: closing a flooded socket failed: "
+                f"{type(exc).__name__}: {error_text_without_content(exc)}"
+            )
+
+    def _resolve_end(self, end: _ReaderEnd) -> Any:
+        if end.exc is not None:
+            raise end.exc
+        message = end.message or {}
+        if self._decode == "json":
+            raise WebSocketDisconnect(message.get("code") or 1000, message.get("reason"))
+        return dict(message)
+
+    async def next(self) -> Any:
+        """The next client frame, in arrival order."""
+        if self._end is not None:
+            return self._resolve_end(self._end)
+        arrived, size, item = await self._queue.get()
+        self._pending_bytes -= size
+        self.arrived_at = arrived
+        if isinstance(item, _ReaderEnd):
+            self._end = item
+            return self._resolve_end(item)
+        if self._decode == "raw":
+            return item
+        try:
+            # Exactly websocket.receive_json(): a binary frame is a KeyError.
+            return json.loads(item["text"])
+        except Exception as exc:
+            # As before, a frame that does not parse ends the stream.
+            self._end = _ReaderEnd(exc=exc)
+            self.stop()
+            raise
+
+    def stop(self) -> None:
+        """Stop reading; synchronous, so no cancelled await can skip it."""
+        self.task.cancel()
+
+    async def aclose(self) -> None:
+        """Stop reading and wait until the reader task has ended."""
+        self.stop()
+        await asyncio.wait({self.task})
+        # The reader never raises (it queues what `receive` raised), so a
+        # failure here is a bug in the reader itself and must be seen.
+        if not self.task.cancelled() and self.task.exception() is not None:
+            exc = self.task.exception()
+            logger.error(
+                f"❌ {self._label}: frame reader failed: "
+                f"{type(exc).__name__}: {error_text_without_content(exc)}"
+            )
 
 
 # =============================================================================

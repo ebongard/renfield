@@ -69,6 +69,8 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
 - A denial is marked `permission_denied` and SPOKEN; swallowing it would let the model answer the refused question.
 
 ## Voice turn
+- 🛑 The turn runs inline, so the socket is read by `ClientFrameReader` meanwhile (#1570): frames wait and are processed
+  AFTER the turn in order (8 MiB budget, then 1013) — never `websocket.receive()` in the loop. Long form: `CONVERSATION_API.md`.
 - A turn ends on VAD silence after the grace period: `vad.min_listening_seconds` 2.0 s + `silence_duration_ms` 1.2 s,
   capped by `vad.max_recording_seconds` (fleet 60 s). `_recorded_chunks` and `vad.reset()` are zeroed at EVERY
   LISTENING entry, including `_on_server_state_change("listening")`.

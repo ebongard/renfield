@@ -1291,6 +1291,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
     onPaperlessConfirmRequest: handlePaperlessConfirmRequest,
     onDeviceActionResult: handleDeviceActionResult,
     onSessionReplaced: handleSessionReplaced,
+    // The hook registers this session on the socket: on open, on a session
+    // change, and before the first `text` of a session (#1570). Registering
+    // NOW (not only on the first message) lets background pushes such as the
+    // async chat-upload `upload_processed` reach the session before it.
+    sessionId,
   });
 
   // Interactive device widget: send a toggle/run action over the WS and resolve
@@ -1362,18 +1367,6 @@ export function ChatProvider({ children }: ChatProviderProps) {
     },
     [wsSendMessage, sessionId, t],
   );
-
-  // Register this session on the WS as soon as it's connected, so background
-  // pushes (e.g. async chat-upload `upload_processed`) can reach it BEFORE the
-  // first chat message — otherwise an upload-then-wait flow leaves the chip
-  // stuck in "processing" because the backend only registered the session on
-  // the first text message. Re-runs on reconnect (wsConnected flips) and on
-  // session change. wsSendMessage re-checks readyState and no-ops if not open.
-  useEffect(() => {
-    if (wsConnected && sessionId) {
-      wsSendMessage({ type: 'register', session_id: sessionId });
-    }
-  }, [wsConnected, sessionId, wsSendMessage]);
 
   // Handle transcription from audio recording
   const handleTranscription = useCallback((text: string) => {

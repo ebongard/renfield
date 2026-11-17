@@ -13,13 +13,13 @@ This module handles:
 import asyncio
 import functools
 import json
-from datetime import date
+from datetime import date, datetime
 from typing import NamedTuple
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 
-from api.websocket.shared import get_whisper_service, send_ws_error
+from api.websocket.shared import ClientFrameReader, get_whisper_service, send_ws_error
 from ha_glue.services.opus_transport import (
     BinaryFrameError,
     parse_audio_frame,
@@ -326,7 +326,10 @@ def _live_session_frame(raw: dict, satellite_id: str, manager) -> str | None:
     return kind
 
 
-def _rate_verdict(raw: dict, rate_key: str, satellite_id: str | None, rate_limiter, manager) -> tuple[bool, str]:
+def _rate_verdict(
+    raw: dict, rate_key: str, satellite_id: str | None, rate_limiter, manager,
+    at: datetime | None = None,
+) -> tuple[bool, str]:
     """Rate-limit one inbound frame; a refused frame of a LIVE turn gets a second look.
 
     A refused frame must not cost a running turn (#1284). Audio legitimately
@@ -336,7 +339,10 @@ def _rate_verdict(raw: dict, rate_key: str, satellite_id: str | None, rate_limit
     most one per session, and dropping it strands the session in `listening`
     until the cleanup sweep discards the recording unanswered.
     """
-    allowed, reason = rate_limiter.check(rate_key, record_violation=False)
+    # `at` = when the frame ARRIVED: after a long inline turn the handler takes
+    # the frames that came in meanwhile at once, and must not judge that as a
+    # burst the satellite sent (#1570).
+    allowed, reason = rate_limiter.check(rate_key, record_violation=False, at=at)
     if allowed:
         return True, ""
 
@@ -345,13 +351,15 @@ def _rate_verdict(raw: dict, rate_key: str, satellite_id: str | None, rate_limit
     # could buy a JSON parse of a ~1 MB frame per message). A legitimate turn
     # never gets near it — a satellite sends ~775 frames a minute in total.
     if satellite_id and rate_limiter.check(
-        f"{rate_key}{_SECOND_LOOK_SUFFIX}", burst_ok=True, record_violation=False
+        f"{rate_key}{_SECOND_LOOK_SUFFIX}", burst_ok=True, record_violation=False, at=at,
     )[0]:
         frame_kind = _live_session_frame(raw, satellite_id, manager)
         if frame_kind == "audio_end":
             return True, ""
         if frame_kind == "audio":
-            allowed, reason = rate_limiter.check(rate_key, burst_ok=True, record_violation=False)
+            allowed, reason = rate_limiter.check(
+                rate_key, burst_ok=True, record_violation=False, at=at,
+            )
             if allowed:
                 return True, ""
 
@@ -738,16 +746,23 @@ async def satellite_websocket(
     satellite_history_loaded = False
     satellite_db_session_id = None  # Will be set after registration
 
+    # Read the socket also while a voice turn runs inline below, or uvicorn
+    # stops reading at the first frame (heartbeat, BLE report) sent during the
+    # turn and closes with 1011 after its keepalive budget (#1570). Frames are
+    # still processed one at a time, in arrival order.
+    frames = ClientFrameReader(websocket, decode="raw", label="satellite")
+
     try:
         while True:
-            raw = await websocket.receive()
+            raw = await frames.next()
             if raw.get("type") == "websocket.disconnect":
                 raise WebSocketDisconnect(raw.get("code") or 1000)
 
             # Rate limiting (applies to text AND binary frames)
             rate_key = satellite_id if satellite_id else ip_address
             allowed, rate_reason = _rate_verdict(
-                raw, rate_key, satellite_id, rate_limiter, satellite_manager
+                raw, rate_key, satellite_id, rate_limiter, satellite_manager,
+                at=frames.arrived_at,
             )
             if not allowed:
                 await send_ws_error(websocket, WSErrorCode.RATE_LIMITED, rate_reason)
@@ -1814,9 +1829,15 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
     except WebSocketDisconnect:
         logger.info(f"👋 Satellite WebSocket disconnected: {satellite_id}")
     except Exception as e:
-        logger.error(f"❌ Satellite WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
-        logger.error(f"at {frames_without_content(e)}")
+        if frames.closed_for_flood:
+            # The reader closed the socket (frame budget, logged there); this
+            # is the running turn's next send hitting it.
+            logger.info(f"👋 Satellite WebSocket closed for a frame flood ({type(e).__name__})")
+        else:
+            logger.error(f"❌ Satellite WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
+            logger.error(f"at {frames_without_content(e)}")
     finally:
+        frames.stop()
         # Clean up connection limiter
         if satellite_id and ip_address:
             connection_limiter.remove_connection(ip_address, satellite_id)
@@ -1837,3 +1858,5 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
             wakeword_config_manager.unsubscribe(websocket)
 
             await satellite_manager.unregister(satellite_id, websocket=websocket)
+
+        await frames.aclose()

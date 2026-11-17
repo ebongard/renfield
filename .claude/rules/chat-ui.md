@@ -19,6 +19,7 @@ planned** (2026-09-20; its placeholder flag was removed — a build needs its ow
 needs `WEATHER_ENABLED`.
 
 ## Turn frames
+- 🛑 The socket is READ while a turn runs (`ClientFrameReader`, #1570) — invariant + limits: `src/backend/CONVERSATION_API.md` → „Lesen während eines Zuges“.
 - **Provenance chips:** `knowledge_tool` emits `data.sources`; `chat_handler._extract_agent_sources` rides them on the
   `done` frame + `message_metadata.sources`. Circle-safe ONLY because the sources come from `rag.search(user_id)`.
 - **Chip opens its document** (`CHAT_DOCUMENT_LINKS_ENABLED`, `api/websocket/document_sources.py`; flag off =

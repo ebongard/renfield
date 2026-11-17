@@ -46,7 +46,8 @@ class WSRateLimiter:
         self._violations: dict[str, int] = defaultdict(int)
 
     def check(
-        self, client_id: str, *, burst_ok: bool = False, record_violation: bool = True
+        self, client_id: str, *, burst_ok: bool = False, record_violation: bool = True,
+        at: datetime | None = None,
     ) -> tuple[bool, str]:
         """
         Check if a client is allowed to send a message.
@@ -63,6 +64,10 @@ class WSRateLimiter:
                 FINAL refusal via ``record_violation()`` — otherwise accepted
                 frames log "exceeded" and burn the three-warning quota that
                 real violations need.
+            at: When the message ARRIVED (naive UTC), if not now. A WebSocket
+                handler busy with a long turn takes the frames that came in
+                meanwhile all at once; judged at that moment, a client sending
+                a heartbeat every 30 s would look like a burst (#1570).
 
         Returns:
             Tuple of (allowed: bool, reason: str)
@@ -70,7 +75,7 @@ class WSRateLimiter:
         if not self.enabled:
             return True, ""
 
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = at or datetime.now(UTC).replace(tzinfo=None)
 
         # Clean up old timestamps
         second_ago = now - timedelta(seconds=1)

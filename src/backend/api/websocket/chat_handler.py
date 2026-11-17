@@ -44,6 +44,7 @@ from utils.request_context import request_id as request_id_var
 from utils.voice_context import voice_originated
 
 from .shared import (
+    ClientFrameReader,
     ConversationSessionState,
     history_needs_reload,
     is_followup_question,
@@ -1165,10 +1166,16 @@ async def websocket_endpoint(
     # the global counter in the outer handlers below (no stuck "processing" core).
     _chat_turn_marked = False
 
+    # Read the socket for the whole connection, also while a turn runs below:
+    # otherwise uvicorn stops reading at the first frame sent during the turn,
+    # misses the pong to its keepalive ping and closes with 1011 (#1570). The
+    # frames are still processed one at a time, in arrival order.
+    frames = ClientFrameReader(websocket, decode="json", label="chat")
+
     try:
         while True:
             # Receive message
-            data = await websocket.receive_json()
+            data = await frames.next()
 
             # Per-message request id, minted FIRST so every error path
             # (rate-limit, validation) gets a fresh correlator instead of
@@ -1187,7 +1194,7 @@ async def websocket_endpoint(
             request_id_var.set(uuid.uuid4().hex[:8])
 
             # Rate limiting check
-            allowed, reason = rate_limiter.check(ip_address)
+            allowed, reason = rate_limiter.check(ip_address, at=frames.arrived_at)
             if not allowed:
                 await send_ws_error(websocket, WSErrorCode.RATE_LIMITED, reason)
                 continue
@@ -3213,10 +3220,16 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
     except Exception as e:
         if session_state.db_session_id:
             unregister_ws_connection(session_state.db_session_id, websocket)
-        logger.error(f"❌ WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
-        logger.error(f"at {frames_without_content(e)}")
-        await websocket.close()
+        if frames.closed_for_flood:
+            # The reader closed the socket (frame budget, logged there); this
+            # is the running turn's next send hitting it.
+            logger.info(f"👋 WebSocket closed for a frame flood ({type(e).__name__})")
+        else:
+            logger.error(f"❌ WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
+            logger.error(f"at {frames_without_content(e)}")
+            await websocket.close()
     finally:
+        frames.stop()
         # Crash-safe: a turn interrupted between its start-mark and the `done`
         # clear (disconnect / mid-turn error) must still decrement the global
         # counter, or the kiosk core would stay stuck "processing".
@@ -3224,3 +3237,4 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             from api.websocket.kiosk_handler import note_chat_turn_active
 
             await note_chat_turn_active(False)
+        await frames.aclose()

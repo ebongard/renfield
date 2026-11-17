@@ -75,7 +75,7 @@ def client(monkeypatch, askers, asker, own_session_to_test_db):
         return {"authenticated": True, "user_id": asker["id"], "auth_method": "jwt"}
 
     class _AllowAll:
-        def check(self, _ip):
+        def check(self, _ip, **_kwargs):
             return True, ""
 
     monkeypatch.setattr(settings, "auth_enabled", True)

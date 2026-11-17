@@ -222,6 +222,23 @@ Optional: Eine kurze Notiz im neuen `CONTRIBUTING.md`-Abschnitt zu Alembic-Best-
 
 ### 🟢 Niedrig
 
+#### WebSocket: Antworten auf Server-Anfragen warten auf das Zugende (#1570, offen)
+
+Seit #1570 lesen `/ws`, `/ws/device` und `/ws/satellite` den Socket während eines Zuges weiter (kein 1011 mehr), die
+Frames werden aber bewusst weiter **nacheinander** verarbeitet. Ein Frame, der eine Server-Anfrage beantwortet
+(`snapshot_result`, `bt_scan_result`, `irk_capture_result` am Satelliten), wird deshalb erst nach einem laufenden
+Sprachzug desselben Satelliten behandelt — wie vorher. Folge: wartet ein Zug selbst auf eine solche Antwort desselben
+Satelliten, läuft er in deren Zeitgrenze (`request_snapshot` 8 s, `request_bt_scan` 30 s, IRK-Fang Fenster + 15 s)
+statt sie zu bekommen. Wer das ändern will, muss diese Antworttypen gezielt im Leser abzweigen.
+Nicht zusammengefasst (geprüft): BLE-Berichte (jeder speist Sichtungsliste und Filter) und Satelliten-Heartbeats (jeder
+schreibt Verlauf und die Taubheitswache vergleicht aufeinanderfolgende Signale); statt dessen das 8-MiB-Budget.
+Zeitstempel einer verspätet verarbeiteten Sichtung/Heartbeat sind die Verarbeitungszeit, nicht die Ankunft — vorbestehend.
+Unverändert gelassen: `/ws/wakeword` liest direkt (Rechenarbeit je Block im Millisekundenbereich), die reinen
+Push-Kanäle (`/ws/user`, `/ws/kiosk`, `/ws/knowledge-graph`, `/ws/presence-debug`) tun zwischen zwei `receive` nichts.
+Der Sprach-WebSocket des voice-servers liegt außerhalb dieses Repos und ist nicht geprüft.
+Außerdem: der äußere `except Exception`-Zweig des Chat-Handlers ruft `websocket.close()` auch auf einem Socket, den
+der Server schon geschlossen hat (`RuntimeError` im uvicorn-Log) — vorbestehend; nur der Flutfall ist abgefangen.
+
 #### ~~8. Alembic Migrations ohne Downgrade~~ ✅ OK
 
 **Status:** Überprüft am 2026-01-26

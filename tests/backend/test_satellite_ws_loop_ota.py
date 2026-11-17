@@ -76,6 +76,30 @@ def loop_env(monkeypatch):
     dimming = MagicMock()
     dimming.get_current_led_brightness.return_value = 1.0
     monkeypatch.setattr(led, "get_led_dimming_service", lambda: dimming)
+
+    class _LockstepReader:
+        """Reads only when the loop asks for the next frame. The production
+        reader reads ahead (#1570), which would run the script's callables
+        before the frame in front of them is processed; these tests mean
+        "between two processed frames". The reading itself is covered by
+        test_ws_keepalive_during_turn.py."""
+
+        closed_for_flood = False
+        arrived_at = None
+
+        def __init__(self, websocket, **_kwargs):
+            self._websocket = websocket
+
+        async def next(self):
+            return await self._websocket.receive()
+
+        def stop(self):
+            return None
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(sh, "ClientFrameReader", _LockstepReader)
     return mgr
 
 
