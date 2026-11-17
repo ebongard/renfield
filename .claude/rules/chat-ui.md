@@ -39,7 +39,8 @@ needs `WEATHER_ENABLED`.
   frontend has propagated (old bundle → `/knowledge?doc=undefined`).
   Chip row = DESIGN.md §Accessibility: 44 px hit area as an invisible `::after` behind the chips (`isolate` row,
   `gap-y-6`), ONE outline focus ring (`accent-500`, never `outline-none` beside it), and NO backend-made title —
-  a nameless document has `title: ""`, the label is `chat.sources.untitled` (model-facing text keeps "Dokument N").
+  a nameless document has `title: ""`, the label is `chat.sources.untitled`. The model keeps "Dokument N" only in
+  the FAKTEN line; in the `sources` of the tool result (agent prompt, `action_summary`) it reads `"title": ""` too.
 - **Follow-up chips** (`services/followup_service.py`): best-effort small-model call in the background AFTER the `done`
   frame, via a separate `followups` frame — never delay the spinner/TTS/wakeword. Skipped on TTS/error/very-short turns.
 - **`role_hint` is ROUTING-ONLY** (palette, role badge via `pendingRoleHint`, "Neu beantworten" via `corrected_intent` →

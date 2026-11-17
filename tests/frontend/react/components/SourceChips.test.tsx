@@ -206,6 +206,13 @@ describe('SourceChips', () => {
       }
     });
 
+    it('raises the bare "+N" to 20px so its hit area stays inside the row', () => {
+      // 16 px text button -> the area would reach 14 px beyond it, the row
+      // provides 12. Measured in a browser; here only the class is checked.
+      renderAll();
+      expect(has(screen.getByRole('button'), 'min-h-5')).toBe(true);
+    });
+
     it('gives a chip that opens nothing no hit area', () => {
       renderAll();
       const plain = screen.getByText('Vertrag').parentElement as HTMLElement;

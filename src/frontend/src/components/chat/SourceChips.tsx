@@ -44,6 +44,9 @@ const MAX_VISIBLE = 6;
 // wide Paperless segment, a short "+N") the neighbour's visible body wins and
 // only empty space is claimed. `isolate` keeps the negative z-index inside
 // the row -- without it the area would fall behind the message bubble.
+// For the Paperless segment the 44x44 px is therefore a BOUNDING BOX: its
+// knowledge-base chip covers part of it, the solid target measured in a
+// browser is about 34x44 px.
 const HIT_AREA =
   'relative after:absolute after:-z-10 after:left-1/2 after:top-1/2 after:h-full after:w-full after:min-h-[44px] after:min-w-[44px] after:-translate-x-1/2 after:-translate-y-1/2';
 
@@ -68,8 +71,11 @@ const PLAIN_CHIP = CHIP_LOOK;
 const EXTERNAL_SEGMENT =
   `inline-flex items-center px-1.5 py-0.5 rounded-full text-xs bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-200 ${CHIP_HOVER} ${HIT_AREA} ${FOCUS_RING}`;
 
+// min-h-5: a bare text button is 16 px high, its hit area would reach 14 px
+// beyond it -- 2 px more than the row provides when "+N" stands alone on the
+// last line. At 20 px the reach is the 12 px the row has.
 const MORE_BUTTON =
-  `text-xs text-primary-600 dark:text-primary-400 hover:underline rounded ${HIT_AREA} ${FOCUS_RING}`;
+  `min-h-5 text-xs text-primary-600 dark:text-primary-400 hover:underline rounded ${HIT_AREA} ${FOCUS_RING}`;
 
 /** The server-built Paperless link, or null when it is absent or not http(s). */
 function externalUrl(source: MessageSource): string | null {
@@ -93,10 +99,12 @@ export default function SourceChips({ sources }: { sources?: MessageSource[] }) 
   const hidden = sources.length - visible.length;
 
   return (
-    // gap-y-6: a chip is 20 px high, so wrapped lines sit 44 px apart and the
-    // hit areas of neighbouring lines do not overlap. py-1 on top of mt-2 (and
-    // of the next block's own margin) gives the 12 px a hit area reaches
-    // beyond the first and last line.
+    // gap-y-6 (24 px) between wrapped lines: a line is at least 20 px high
+    // (measured: a chip with tier badge 23.3 px; the Paperless segment and a
+    // bare "+N" 16 px, the latter raised to 20 px by min-h-5), so the lines
+    // sit at least 44 px apart and their hit areas do not overlap. py-1 on
+    // top of mt-2 (and of the next block's own margin) gives 12 px beyond the
+    // first and last line -- the reach of the hit area of a 20 px element.
     <div
       className="isolate mt-2 py-1 flex flex-wrap items-center gap-x-1.5 gap-y-6"
       aria-label={t('chat.sources.label')}
