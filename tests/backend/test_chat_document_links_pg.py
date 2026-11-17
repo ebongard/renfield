@@ -307,6 +307,12 @@ async def kitchen(db_session: AsyncSession, monkeypatch, own_session_to_test_db)
     await db_session.commit()
 
     _kb, doc = await _private_document(db_session, anna.id)
+    import datetime
+
+    # What the document says now -- equal to what the turn stored.
+    doc.document_date = datetime.date(2025, 3, 14)
+    doc.page_count = 3
+    await db_session.commit()
     sources = [
         {"document_id": doc.id, "filename": "doclinks.pdf", "title": "Privater Bescheid",
          "tier": TIER_SELF, "document_date": "2025-03-14", "page_count": 3,
@@ -471,6 +477,24 @@ class TestAReaderOfASharedConversation:
         # Same identity map, nothing expired: these are the dicts the route read.
         assert [m.message_metadata for m in rows] == before
         assert not db_session.dirty
+
+    async def test_the_card_fields_are_what_the_document_says_now(self, db_session, kitchen):
+        """The date was derived anew after the turn: under auth the reader gets
+        the document's CURRENT date and page count, read through the same
+        circle-filtered statement that decides the source."""
+        import datetime
+
+        doc = kitchen["doc"]
+        doc.document_date = datetime.date(2024, 11, 30)
+        doc.page_count = 5
+        await db_session.commit()
+
+        _meta, sources = await _history_sources(db_session, kitchen["anna"])
+
+        assert sources[0]["document_date"] == "2024-11-30"
+        assert sources[0]["page_count"] == 5
+        # Control: the stored source still says otherwise.
+        assert kitchen["sources"][0]["document_date"] == "2025-03-14"
 
     async def test_auth_off_is_one_trust_domain(self, db_session, kitchen, monkeypatch):
         monkeypatch.setattr(settings, "auth_enabled", False)

@@ -32,6 +32,7 @@ source is still named, it just has no link.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date
 from typing import Any
 
@@ -92,12 +93,22 @@ def _document_id(value: Any) -> int | None:
     return value
 
 
+def _display_text(value: str) -> str:
+    """One line of display text: whitespace runs become one space, and
+    characters of the Unicode categories Cc (control: NUL & co.) and Cf
+    (format: bidi overrides and isolates, zero-width characters, BOM) are
+    dropped -- they are invisible, and a bidi override reorders what a card
+    shows around it. Letters of every script stay."""
+    single_line = " ".join(value.split())
+    return "".join(c for c in single_line if unicodedata.category(c) not in ("Cc", "Cf"))
+
+
 def _title(value: Any) -> str:
     """Bounded display text; empty when the result carried none (the chip then
     falls back to a translated generic label)."""
     if not isinstance(value, str):
         return ""
-    return " ".join(value.split())[:_TITLE_MAX_CHARS]
+    return _display_text(value)[:_TITLE_MAX_CHARS]
 
 
 def _iso_day(value: Any) -> str | None:
@@ -122,7 +133,7 @@ def _card_text(value: Any) -> str | None:
     """Bounded single-line display text, or None when there is none."""
     if not isinstance(value, str):
         return None
-    return " ".join(value.split())[:_CARD_TEXT_MAX_CHARS] or None
+    return _display_text(value)[:_CARD_TEXT_MAX_CHARS].strip() or None
 
 
 def _page_count(value: Any) -> int | None:
@@ -285,6 +296,9 @@ def _as_card(source: dict, meta_row: dict | None) -> dict:
         k: v for k, v in source.items()
         if k != "paperless_url" and k not in _CARD_FIELD_CHECKS
     }
+    for key in ("title", "filename"):
+        if isinstance(out.get(key), str):
+            out[key] = _title(out[key])
     out.update(_card_fields(meta_row, _KNOWLEDGE_CARD_FIELDS))
     url = _paperless_url((meta_row or {}).get("paperless_document_id"))
     if url:
@@ -391,13 +405,13 @@ CLIENT_METADATA_KEYS = ("agent_role", "artifacts", "attachments", "wb_entities")
 #: Paperless permission. A field of one kind stored on a source of the other
 #: is not served.
 #:
-#: The knowledge-base card fields are served from the STORED source, as
-#: `title`, `filename` and `tier` are, and are covered by the visibility check
-#: that gates the whole source: `_source_for_reader` returns None before any
-#: field is copied unless the document is visible to the reader NOW. They are
-#: columns of that same `documents` row, so a reader who gets them could read
-#: them from the document itself. There is no path on which a field leaves
-#: without its source.
+#: The knowledge-base card fields are covered by the visibility check that
+#: gates the whole source: `_source_for_reader` returns None before any field
+#: is copied unless the document is visible to the reader NOW. Under auth they
+#: are then taken from that same fresh, circle-filtered row, not from the
+#: stored source -- the reader gets what the document says now. Only with auth
+#: off and no lookup (an unlinked source) are the stored values served,
+#: validated. There is no path on which a field leaves without its source.
 _KNOWLEDGE_SOURCE_FIELDS: dict[str, type | tuple[type, ...]] = {
     "filename": str, "title": str, "tier": int,
     "document_date": str, "page_count": int,
@@ -441,15 +455,22 @@ def _had_link(source: dict) -> bool:
     return isinstance(url, str) and bool(url)
 
 
+#: What a served text passes besides the card fields' own checks: the same
+#: cleaning the writer applies, so a source stored before it existed is served
+#: clean too.
+_READ_CHECKS = {**_CARD_FIELD_CHECKS, "title": _title, "filename": _title}
+
+
 def _typed_fields(source: dict, fields: dict) -> dict:
     """The allowlisted fields of a stored source whose value has the listed
-    type and, for a card field, passes its check. The rest is left out."""
+    type and passes its check (card fields, display texts). The rest is left
+    out."""
     out: dict = {}
     for key, kind in fields.items():
         value = source.get(key)
         if not isinstance(value, kind) or isinstance(value, bool):
             continue
-        check = _CARD_FIELD_CHECKS.get(key)
+        check = _READ_CHECKS.get(key)
         if check is not None:
             value = check(value)
             if value is None:
@@ -500,9 +521,18 @@ def _source_for_reader(
     else:
         if doc_id is None:
             return None
-        paperless_id = (visible.get(doc_id) or {}).get("paperless_document_id")
+        row = visible.get(doc_id)
+        paperless_id = (row or {}).get("paperless_document_id")
         out = {"document_id": doc_id}
         out.update(_typed_fields(source, _KNOWLEDGE_SOURCE_FIELDS))
+        if row is not None:
+            # The document as it is NOW decides the card fields: the row was
+            # read through the circle filter that just let this source pass.
+            # Under auth every served knowledge-base source has a row; the
+            # stored values remain only for auth off without a lookup.
+            for key in _KNOWLEDGE_CARD_FIELDS:
+                out.pop(key, None)
+            out.update(_card_fields(row, _KNOWLEDGE_CARD_FIELDS))
 
     if _had_link(source):
         url = _paperless_url(paperless_id)

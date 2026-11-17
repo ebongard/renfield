@@ -679,8 +679,14 @@ def auth_on(monkeypatch, public_base):
     monkeypatch.setattr(settings, "auth_enabled", True)
 
 
-def _visible(monkeypatch, *doc_ids, paperless=None):
-    lookup = _meta(**{f"d{i}": _row(paperless=paperless) for i in doc_ids})
+def _visible(monkeypatch, *doc_ids, paperless=None, document_date=None, page_count=None):
+    """The read-side lookup: `doc_ids` visible, each row with the shape of
+    `_visible_document_meta` -- card columns included, `None` when empty."""
+    lookup = _meta(**{
+        f"d{i}": {**_row(paperless=paperless), "document_date": document_date,
+                  "page_count": page_count}
+        for i in doc_ids
+    })
     monkeypatch.setattr(ds, "_visible_meta", lookup)
     return lookup
 
@@ -1212,9 +1218,45 @@ PL_CARD = {**PL, "created": "2025-02-02", "correspondent": "Stadtwerke",
 
 class TestCardFieldsForAReader:
     async def test_a_visible_document_is_served_with_its_card_fields(self, auth_on, monkeypatch):
-        _visible(monkeypatch, 21)
+        _visible(monkeypatch, 21, document_date="2025-03-14", page_count=3)
 
         assert await _served([KB_CARD], _Reader()) == {"sources": [KB_CARD]}
+
+    async def test_under_auth_the_fresh_row_decides_not_the_stored_source(
+        self, auth_on, monkeypatch,
+    ):
+        """The document's date was derived anew (or its pages counted) after
+        the turn: the reader gets what the document says NOW."""
+        _visible(monkeypatch, 21, document_date="2024-11-30", page_count=5)
+
+        meta = await _served([KB_CARD], _Reader())
+
+        assert meta == {"sources": [{**KB, "document_date": "2024-11-30", "page_count": 5}]}
+
+    async def test_under_auth_a_value_the_row_no_longer_has_is_not_served(
+        self, auth_on, monkeypatch,
+    ):
+        _visible(monkeypatch, 21)  # the row has neither date nor pages
+
+        assert await _served([KB_CARD], _Reader()) == {"sources": [KB]}
+
+    async def test_under_auth_a_row_value_of_the_wrong_shape_is_left_out(
+        self, auth_on, monkeypatch,
+    ):
+        _visible(monkeypatch, 21, document_date="14.03.2025", page_count=0)
+
+        assert await _served([KB_CARD], _Reader()) == {"sources": [KB]}
+
+    async def test_auth_off_with_a_row_the_row_decides_too(self, monkeypatch, public_base):
+        """Auth off, a linked source: its row is looked up for the link, and
+        then it is the fresher record of the card fields as well."""
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        _visible(monkeypatch, 21, paperless=210, document_date="2024-11-30", page_count=5)
+        stored = {**KB_CARD, "paperless_url": f"{PUBLIC}/documents/210/details"}
+
+        [source] = (await _served([stored], None))["sources"]
+
+        assert source["document_date"] == "2024-11-30" and source["page_count"] == 5
 
     async def test_an_invisible_document_is_gone_as_a_whole(self, auth_on, monkeypatch):
         """No field of a document outside the reader's circles goes out: the
@@ -1250,13 +1292,17 @@ class TestCardFieldsForAReader:
         ("page_count", "3"), ("page_count", True), ("page_count", 0), ("page_count", -2),
         ("page_count", 3.5), ("page_count", 100_001),
     ])
-    async def test_a_knowledge_card_field_of_the_wrong_shape_is_left_out(
-        self, auth_on, monkeypatch, field, value,
+    async def test_a_stored_knowledge_card_field_of_the_wrong_shape_is_left_out(
+        self, monkeypatch, public_base, field, value,
     ):
-        _visible(monkeypatch, 21)
+        """Stored knowledge-base card fields are served only with auth off and
+        no row (an unlinked source is not looked up) -- validated."""
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        lookup = _visible(monkeypatch)
         expected = {k: v for k, v in KB_CARD.items() if k != field}
 
-        assert await _served([{**KB_CARD, field: value}], _Reader()) == {"sources": [expected]}
+        assert await _served([{**KB_CARD, field: value}], None) == {"sources": [expected]}
+        assert lookup.calls == []
 
     @pytest.mark.parametrize("field, value", [
         ("created", "02.02.2025"), ("created", "2025-13-01"), ("created", 20250202),
@@ -1290,7 +1336,7 @@ class TestCardFieldsForAReader:
     async def test_each_kind_carries_out_its_own_card_fields_only(self, auth_on, monkeypatch):
         """The Paperless fields are gated by the Paperless permission, the
         knowledge-base ones by the circles -- neither rides on the other kind."""
-        _visible(monkeypatch, 21)
+        _visible(monkeypatch, 21, page_count=2)
         knowledge = {**KB, "created": "2025-02-02", "correspondent": "Stadtwerke",
                      "document_type": "Rechnung", "page_count": 2}
         paperless = {**PL_CARD, "document_date": "2025-03-14", "filename": "x.pdf", "tier": 0}
@@ -1300,7 +1346,7 @@ class TestCardFieldsForAReader:
         assert meta == {"sources": [{**KB, "page_count": 2}, PL_CARD]}
 
     async def test_no_content_field_is_ever_served(self, auth_on, monkeypatch):
-        _visible(monkeypatch, 21)
+        _visible(monkeypatch, 21, document_date="2025-03-14", page_count=3)
         extra = {"snippet": "geheim", "content": "geheim", "tags": ["geheim"], "facts": ["geheim"]}
 
         meta = await _served(
@@ -1335,6 +1381,54 @@ class TestCardFieldsForAReader:
             KB_CARD, PL_CARD, {**KB, "document_id": 22}, {**PL, "paperless_document_id": 32},
         ]}
         assert lookup.calls == []
+
+
+HOSTILE = "Rech\u202enung\x00 \u200bAmt\ufeff\u2066x\u2069"
+
+
+class TestNoControlOrFormatCharacters:
+    """Bidi overrides, zero-width characters and NUL are dropped from every
+    display text a card shows (Unicode categories Cc and Cf). Normal text,
+    umlauts and other scripts stay."""
+
+    def test_the_writer_drops_them_from_title_and_names(self, public_base):
+        [source] = ds.paperless_sources([(GET, _mcp(_rich_hit(
+            title=HOSTILE, correspondent=HOSTILE, document_type=HOSTILE,
+        )))])
+
+        for field in ("title", "correspondent", "document_type"):
+            assert source[field] == "Rechnung Amtx", field
+
+    @pytest.mark.parametrize("value, kept", [
+        ("Bescheid über Grundsteuer", "Bescheid über Grundsteuer"),
+        ("فاتورة الكهرباء", "فاتورة الكهرباء"),
+        ("\u202e\x00\u200b", None),
+    ])
+    def test_normal_text_stays_and_nothing_left_is_no_value(self, value, kept):
+        assert ds._card_text(value) == kept
+        assert ds._title(value) == (kept or "")
+
+    async def test_the_reader_gets_them_dropped_from_stored_sources(self, auth_on, monkeypatch):
+        _visible(monkeypatch, 21)
+        stored_kb = {**KB, "title": HOSTILE, "filename": HOSTILE}
+        stored_pl = {**PL, "title": HOSTILE, "correspondent": HOSTILE, "document_type": HOSTILE}
+
+        meta = await _served([stored_kb, stored_pl], _Reader(permissions=["mcp.paperless.read"]))
+
+        served = json.dumps(meta, ensure_ascii=False)
+        for char in ("\u202e", "\x00", "\u200b", "\ufeff", "\u2066", "\u2069"):
+            assert char not in served
+        assert meta["sources"][0]["title"] == "Rechnung Amtx"
+        assert meta["sources"][1]["correspondent"] == "Rechnung Amtx"
+
+    async def test_a_knowledge_source_of_the_turn_gets_them_dropped(
+        self, flag_on, public_base, monkeypatch,
+    ):
+        monkeypatch.setattr(ds, "_visible_meta", _meta(d21=_row(title=HOSTILE, filename="21.pdf")))
+
+        [source] = await ch._turn_sources([], [_rag_result(21)], 42)
+
+        assert source["title"] == "Rechnung Amtx"
 
 
 class TestTheFrontendLearnsTheFlag:
