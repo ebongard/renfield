@@ -183,6 +183,15 @@ data:
   # a *.web.hostpoint.ch cert — unusable. Paperless is reachable directly
   # on the cluster subnet.
   PAPERLESS_API_URL: "http://192.168.1.162:8000"
+  # Browser-reachable base for Paperless links in chat source chips and the
+  # document view. Same LAN address as the API: reachable from the home network
+  # only -- a chip opened from outside leads nowhere.
+  PAPERLESS_PUBLIC_URL: "http://192.168.1.162:8000"
+  # Chat document links (#1567): a source chip under a chat answer opens its
+  # document; Paperless hits and the direct RAG path become sources. Switched on
+  # 2026-11-17 on the owner's word, after the frontend of the same release was
+  # rolled out (an old bundle renders a Paperless source as a dead chip).
+  CHAT_DOCUMENT_LINKS_ENABLED: "true"
 
   # OpenAI-compatible LLM endpoints — moved to cuda.local (RTX 5090) on
   # 2026-05-13 per reva/docs/architecture/gpu-allocation.md.
