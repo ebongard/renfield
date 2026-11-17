@@ -96,7 +96,7 @@ def _document_id(value: Any) -> int | None:
 
 #: Format characters that are orthography, not markup: ZWNJ and ZWJ shape
 #: Persian and Indic words and join emoji sequences.
-_KEPT_FORMAT_CHARACTERS = frozenset("‌‍")
+_KEPT_FORMAT_CHARACTERS = frozenset("\u200c\u200d")
 
 
 def _display_char(c: str) -> str:
@@ -115,10 +115,14 @@ def _display_text(value: str) -> str:
     -- it separates words like the whitespace it usually is. A format character
     (Cf: bidi overrides and isolates, zero-width space, BOM) is dropped: it is
     invisible, and a bidi override reorders what a card shows around it. Only
-    ZWNJ/ZWJ stay. Whitespace is collapsed and stripped AFTER that, so a
-    dropped character leaves no double or leading space. Letters of every
-    script stay."""
-    return " ".join("".join(map(_display_char, value)).split())
+    ZWNJ/ZWJ stay -- but a text of nothing else is no text (the untitled
+    label shows, not an invisible title). Whitespace is collapsed and stripped
+    AFTER that, so a dropped character leaves no double or leading space.
+    Letters of every script stay."""
+    text = " ".join("".join(map(_display_char, value)).split())
+    if not text.replace(" ", "").strip("".join(_KEPT_FORMAT_CHARACTERS)):
+        return ""
+    return text
 
 
 def _title(value: Any) -> str:

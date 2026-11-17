@@ -1414,12 +1414,12 @@ class TestNoControlOrFormatCharacters:
         ("a\x00b", "a b"),
         # ... a format character is dropped BEFORE the whitespace is collapsed,
         # so neither a double space nor a leading space is left behind.
-        ("A​ B", "A B"),
-        ("‎ Titel", "Titel"),
-        ("Titel ⁩", "Titel"),
+        ("A\u200b B", "A B"),
+        ("\u200e Titel", "Titel"),
+        ("Titel \u2069", "Titel"),
         # ZWNJ and ZWJ are orthography: Persian/Indic words, emoji sequences.
-        ("می‌خواهم", "می‌خواهم"),
-        ("\U0001F468‍\U0001F469‍\U0001F467", "\U0001F468‍\U0001F469‍\U0001F467"),
+        ("می\u200cخواهم", "می\u200cخواهم"),
+        ("\U0001F468\u200d\U0001F469\u200d\U0001F467", "\U0001F468\u200d\U0001F469\u200d\U0001F467"),
     ])
     def test_format_characters_go_before_the_whitespace_is_collapsed(self, value, shown):
         assert ds._title(value) == shown
@@ -1427,8 +1427,17 @@ class TestNoControlOrFormatCharacters:
 
     def test_a_title_of_format_characters_only_is_no_title(self):
         """Empty -> the frontend labels it `chat.sources.untitled`."""
-        assert ds._title("‎​﻿ ⁦") == ""
-        assert ds._card_text("‎​﻿ ⁦") is None
+        assert ds._title("\u200e\u200b\ufeff \u2066") == ""
+        assert ds._card_text("\u200e\u200b\ufeff \u2066") is None
+
+    # ZWNJ/ZWJ stay inside a word, but alone they are no text: the untitled
+    # label must show, not an invisible title.
+    @pytest.mark.parametrize("value", [
+        chr(0x200C), chr(0x200D) * 3, f"{chr(0x200C)} {chr(0x200D)}",
+    ])
+    def test_a_title_of_kept_joiners_only_is_no_title(self, value):
+        assert ds._title(value) == ""
+        assert ds._card_text(value) is None
 
     def test_a_cut_title_does_not_end_in_a_space(self):
         assert ds._title("a" * 199 + " b") == "a" * 199
