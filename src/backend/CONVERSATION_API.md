@@ -307,6 +307,11 @@ Um Konversationspersistenz über WebSocket zu aktivieren, sende die `session_id`
 2. **Jede Nachricht**: User-Nachricht und Assistant-Antwort werden in DB gespeichert
 3. **LLM-Kontext**: Alle `chat_stream()` Aufrufe erhalten die Konversationshistorie
 
+**Reihenfolge der Frames:** Der Handler liest den Socket ununterbrochen (`ClientFrameReader`, #1570), verarbeitet die
+Frames aber nacheinander in Eingangsreihenfolge — ein `register` oder zweites `text` während eines laufenden Zuges
+wird erst nach dessen `done` behandelt. Der Client schickt `{"type": "register", "session_id": …}` vor dem ersten
+`text` eines Sockets.
+
 **Session State (In-Memory):**
 ```python
 @dataclass

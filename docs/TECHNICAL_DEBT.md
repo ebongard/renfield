@@ -222,6 +222,18 @@ Optional: Eine kurze Notiz im neuen `CONTRIBUTING.md`-Abschnitt zu Alembic-Best-
 
 ### 🟢 Niedrig
 
+#### WebSocket: Antworten auf Server-Anfragen warten auf das Zugende (#1570, offen)
+
+Seit #1570 lesen `/ws`, `/ws/device` und `/ws/satellite` den Socket während eines Zuges weiter (kein 1011 mehr), die
+Frames werden aber bewusst weiter **nacheinander** verarbeitet. Ein Frame, der eine Server-Anfrage beantwortet
+(`snapshot_result`, `bt_scan_result`, `irk_capture_result` am Satelliten), wird deshalb erst nach einem laufenden
+Sprachzug desselben Satelliten behandelt — wie vorher. Wer das ändern will, muss diese Antworttypen gezielt im
+Leser abzweigen. Unverändert gelassen: `/ws/wakeword` liest direkt (Rechenarbeit je Block im Millisekundenbereich),
+die reinen Push-Kanäle (`/ws/user`, `/ws/kiosk`, `/ws/knowledge-graph`, `/ws/presence-debug`) tun zwischen zwei
+`receive` nichts. Der Sprach-WebSocket des voice-servers liegt außerhalb dieses Repos und ist nicht geprüft.
+Außerdem: der äußere `except Exception`-Zweig des Chat-Handlers ruft `websocket.close()` auch auf einem Socket, den
+der Server schon geschlossen hat (`RuntimeError` im uvicorn-Log) — vorbestehend, nicht Teil von #1570.
+
 #### ~~8. Alembic Migrations ohne Downgrade~~ ✅ OK
 
 **Status:** Überprüft am 2026-01-26
