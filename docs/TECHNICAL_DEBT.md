@@ -661,9 +661,12 @@ von `bin/run-backend-tests.sh` gesetzt). Der Harness in `tests/backend/conftest.
 
 **Ein Lauf je Datenbank — zwei Wege:**
 
-- **Geteilte `renfield_test`:** Läufe stehen hintereinander an. Wer sie benutzt, hält für die
+- **Geteilte `renfield_test`:** Läufe stehen hintereinander an. Erzwungen wird das allein vom
+  Advisory-Lock des Harness (ein zweiter Lauf bricht ab). Damit niemand erst beim Abbruch
+  davon erfährt, gilt zusätzlich eine VEREINBARUNG: wer die Datenbank benutzt, hält für die
   Dauer des Laufs das Sperrverzeichnis `/tmp/renfield-testdb.lock` auf der Build-Box (`mkdir`
-  gelingt = belegt, darin eine Datei `owner`); eine fremde Sperre wird nie entfernt.
+  gelingt = belegt, darin eine Datei `owner`). Kein Code legt es an oder prüft es; eine fremde
+  Sperre wird nie entfernt.
 - **Eigene Wegwerf-Datenbank:** `RENFIELD_TEST_DB_SUFFIX=<name>` vor `bin/run-backend-tests.sh`
   legt `renfield_test_<name>` an (mit `vector`, wie die geteilte sie hat), lässt die Tests dort
   laufen und löscht sie danach — auch wenn pytest scheitert oder das Skript ein Signal erhält.
@@ -672,8 +675,12 @@ von `bin/run-backend-tests.sh` gesetzt). Der Harness in `tests/backend/conftest.
   (Kleinbuchstaben, Ziffern, Unterstrich; kein `prod`/`live`), verweigert eine bereits
   vorhandene Datenbank (weder wiederverwendet noch gelöscht) und löscht nur, was derselbe
   Aufruf angelegt hat: `create` schreibt ein Zufallstoken in den Kommentar der Datenbank,
-  `drop` vergleicht es. Nach einem `SIGKILL` des Skripts bleibt die Datenbank stehen und
-  sperrt ihr Suffix; sie wird dann von Hand entfernt.
+  `drop` vergleicht es. Nach einem `SIGKILL` des Skripts, einem Stopp des Containers (auch
+  `bin/quick-update.sh` startet ihn neu) oder einer Unterbrechung zwischen `CREATE` und der
+  Übergabe des Tokens bleibt die Datenbank stehen und sperrt ihr Suffix (Exit 3); sie wird
+  dann von Hand entfernt, ihr Kommentar weist sie aus. Ein Leck, nie ein falsches Löschen.
+  pytest wird vor dem Löschen in jedem Fall beendet und abgewartet (`TERM`, nach einer
+  Frist `KILL`); auf `SIGINT` bekommt es zuerst die Frist, um seine Zusammenfassung zu drucken.
   Voraussetzung: die Rolle aus `DATABASE_URL` darf Datenbanken anlegen und `vector`
   installieren (auf der Build-Box: Superuser; `vector` ist nicht `trusted`).
 
