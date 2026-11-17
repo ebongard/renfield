@@ -210,6 +210,11 @@ export default function KnowledgePage() {
   const deepLinkDoc = searchParams.get('doc');
   const deepLinkId = deepLinkDoc !== null && /^\d+$/.test(deepLinkDoc) ? Number(deepLinkDoc) : null;
   const listedDocuments = documentsQuery.data;
+  // Embedded at scope=everything the cross-corpus overlay owns `?q=`: the
+  // document list is NOT searched then, although the query is mirrored into
+  // `searchQuery` (see the two effects below).
+  const omniScope = searchParams.get('scope');
+  const docSearchSuppressed = embedded && omniScope === 'everything';
   const deepLinkOutsideList =
     deepLinkId !== null
     && listedDocuments !== undefined
@@ -220,8 +225,9 @@ export default function KnowledgePage() {
     && statusFilter === 'all'
     // A document search is the user's own narrowing: a target it does not
     // match must not sit on top of unrelated results. Both the typed value
-    // and its debounced copy, so the pin goes with the first keystroke.
-    && searchQuery.trim() === ''
+    // and its debounced copy, so the pin goes with the first keystroke. A
+    // query that does not search this list (overlay mode) narrows nothing.
+    && (docSearchSuppressed || searchQuery.trim() === '')
     && docSearchQuery.trim() === ''
     && !listedDocuments.some((d) => d.id === deepLinkId);
   const deepLinkQuery = useDocumentQuery(deepLinkId ?? 0, deepLinkOutsideList);
@@ -427,7 +433,6 @@ export default function KnowledgePage() {
   // debounced. At scope=everything the cross-corpus overlay owns the query, so
   // we clear our inline results and stay out of the way.
   const omniQ = searchParams.get('q') ?? '';
-  const omniScope = searchParams.get('scope');
   // Embedded with a non-empty query and not in cross-corpus mode → the
   // Documents lens owns the query and renders inline results.
   const embeddedActiveQuery = embedded && omniScope !== 'everything' && omniQ.trim().length > 0;
@@ -454,11 +459,10 @@ export default function KnowledgePage() {
   // embedded). Suppressed only when the lens defers to the cross-corpus overlay
   // (embedded + scope=everything), so the list isn't hijacked there.
   useEffect(() => {
-    const suppressed = embedded && omniScope === 'everything';
-    const next = suppressed ? '' : searchQuery.trim();
+    const next = docSearchSuppressed ? '' : searchQuery.trim();
     const id = setTimeout(() => setDocSearchQuery(next), 300);
     return () => clearTimeout(id);
-  }, [searchQuery, embedded, omniScope]);
+  }, [searchQuery, docSearchSuppressed]);
 
   useEffect(() => {
     // New target id → allow handling again (e.g. agenda → doc A, back, → doc B).

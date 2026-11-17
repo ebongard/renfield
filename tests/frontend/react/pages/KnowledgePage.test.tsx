@@ -8,6 +8,7 @@ import { screen, waitFor, fireEvent } from '@testing-library/react';
 import KnowledgePage from '../../../../src/frontend/src/pages/KnowledgePage';
 import { renderWithProviders, createTestQueryClient, createMockResponse } from '../test-utils';
 import apiClient from '../../../../src/frontend/src/utils/axios';
+import { LensContextProvider } from '../../../../src/frontend/src/context/LensContext';
 
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   default: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
@@ -190,6 +191,75 @@ describe('KnowledgePage Schicht A integration', () => {
     expect(rows).toEqual(['doc-6']);
     // ... and no second by-id fetch was made for the search view.
     expect(byId).toHaveLength(1);
+  });
+
+  // The typed value counts, not only its debounced copy: between the first
+  // keystroke and the search result the pinned row would otherwise still sit
+  // on top of a list the user has started to narrow.
+  it('drops the pinned row with the first keystroke, before the debounce', async () => {
+    const FAR = { ...DOC, id: 977, filename: 'alt.pdf', title: 'Alter Vertrag' };
+    const listCalls: unknown[] = [];
+    mockedGet.mockImplementation((url: string, config?: { params?: Record<string, unknown> }) => {
+      if (url === '/api/knowledge/documents/977') return Promise.resolve(createMockResponse(FAR));
+      if (url.includes('/api/knowledge/documents')) {
+        listCalls.push(config?.params?.q ?? null);
+        return Promise.resolve(createMockResponse([DOC]));
+      }
+      if (url.includes('/api/config/features')) {
+        return Promise.resolve(createMockResponse({ schicht_a_extraction_enabled: true }));
+      }
+      return Promise.resolve(createMockResponse([]));
+    });
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge?doc=977' });
+    await waitFor(() => expect(document.getElementById('doc-977')).not.toBeNull());
+    const callsBefore = listCalls.length;
+
+    const searchBox = document.querySelector('input.input.flex-1') as HTMLInputElement;
+    fireEvent.change(searchBox, { target: { value: 'S' } });
+
+    // Synchronously after the keystroke: no wait, so the 300 ms debounce has
+    // not fired and no search request has gone out ...
+    expect(listCalls).toHaveLength(callsBefore);
+    // ... and the pin is already gone, the list itself untouched.
+    const rows = Array.from(document.querySelectorAll('[id^="doc-"]')).map((el) => el.id);
+    expect(rows).toEqual(['doc-5']);
+  });
+
+  // Embedded at scope=everything the cross-corpus overlay owns `?q=`; the
+  // document list is not searched, so the query narrows nothing here.
+  it.each([
+    ['everything', ['doc-977', 'doc-5']],
+    ['documents', ['doc-5']],
+  ])('embedded with ?q= and scope=%s: the pin follows whether THIS list is searched', async (scope, expected) => {
+    const FAR = { ...DOC, id: 977, filename: 'alt.pdf', title: 'Alter Vertrag' };
+    mockedGet.mockImplementation((url: string) => {
+      if (url === '/api/knowledge/documents/977') return Promise.resolve(createMockResponse(FAR));
+      if (url.includes('/api/knowledge/documents')) return Promise.resolve(createMockResponse([DOC]));
+      if (url.includes('/api/config/features')) {
+        return Promise.resolve(createMockResponse({ schicht_a_extraction_enabled: true }));
+      }
+      return Promise.resolve(createMockResponse([]));
+    });
+    mockedPost.mockResolvedValue(createMockResponse([]));
+
+    renderWithProviders(
+      <LensContextProvider value={{ embedded: true }}>
+        <KnowledgePage />
+      </LensContextProvider>,
+      { route: `/knowledge?scope=${scope}&q=Strom&doc=977` },
+    );
+
+    await waitFor(() => expect(document.getElementById('doc-5')).not.toBeNull());
+    if (expected.length === 2) {
+      await waitFor(() => expect(document.getElementById('doc-977')).not.toBeNull());
+    } else {
+      // Let the debounced document search settle before asserting an absence.
+      await waitFor(() => expect(
+        mockedGet.mock.calls.some((c) => (c[1] as { params?: { q?: string } } | undefined)?.params?.q === 'Strom'),
+      ).toBe(true));
+    }
+    const rows = Array.from(document.querySelectorAll('[id^="doc-"]')).map((el) => el.id);
+    expect(rows).toEqual(expected);
   });
 
   it('does not auto-expand without a deep link', async () => {
