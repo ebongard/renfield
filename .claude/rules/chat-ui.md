@@ -19,12 +19,7 @@ planned** (2026-09-20; its placeholder flag was removed — a build needs its ow
 needs `WEATHER_ENABLED`.
 
 ## Turn frames
-- 🛑 **The socket is READ while a turn runs** (#1570): `/ws`, `/ws/device` and `/ws/satellite` pull frames through
-  `shared.ClientFrameReader`, never `websocket.receive*` inside a loop that awaits work. uvicorn (websockets-sansio)
-  pauses reading on the first frame queued while the app is not in `receive()`, misses its keepalive pong and closes
-  with 1011 after 20 s + 20 s. Frames are still processed one at a time, in order; nothing acts mid-turn.
-  `test_ws_endpoints_keep_reading.py` holds the class; the real-uvicorn proof is `test_ws_keepalive_during_turn.py`
-  (TestClient cannot show it). The frontend sends `register` before the first `text` of a socket (`useChatWebSocket`).
+- 🛑 The socket is READ while a turn runs (`ClientFrameReader`, #1570) — invariant + limits: `src/backend/CONVERSATION_API.md` → „Lesen während eines Zuges“.
 - **Provenance chips:** `knowledge_tool` emits `data.sources`; `chat_handler._extract_agent_sources` rides them on the
   `done` frame + `message_metadata.sources`. Circle-safe ONLY because the sources come from `rag.search(user_id)`.
 - **Chip opens its document** (`CHAT_DOCUMENT_LINKS_ENABLED`, `api/websocket/document_sources.py`; flag off =
