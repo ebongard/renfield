@@ -107,8 +107,14 @@ stop_pytest() {
   fi
   watchdog=$!
   wait "$pid" 2>/dev/null || true
-  # Before it can fire at a pid that is no longer pytest's.
-  kill "$watchdog" 2>/dev/null || true
+  # Before it can fire at a pid that is no longer pytest's. SIGKILL, not the
+  # default: the watchdog is a subshell started from inside a signal trap that
+  # has just set TERM to "ignore", it inherits that, and a plain `kill` left it
+  # sitting there for the whole grace period (measured). Its `sleep` child
+  # lives on for at most that long, holds none of our descriptors and signals
+  # nobody.
+  kill -KILL "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
 }
 
 # Drops ONLY what this invocation created: RUN_TOKEN is empty until `create`

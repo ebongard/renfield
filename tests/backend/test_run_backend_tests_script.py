@@ -526,9 +526,9 @@ def script(request, tmp_path):
             **({"input": stdin_text} if stdin_text is not None else {"stdin": subprocess.DEVNULL}),
         )
 
-    def _popen(suffix, **stub_env):
+    def _popen(suffix, *pytest_args, **stub_env):
         return subprocess.Popen(
-            [shell, str(_SCRIPT), str(_REPO)],
+            [shell, str(_SCRIPT), str(_REPO), *pytest_args],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env=_env(suffix, stub_env), stdin=subprocess.DEVNULL,
             # A shell cannot trap a signal it inherited as IGNORED, and this
@@ -639,9 +639,9 @@ def test_a_failed_drop_is_reported_and_does_not_mask_the_result(script):
     assert sum(c.startswith("admin drop") for c in _calls(log)) == 1
 
 
-def _signal_a_running_pytest(popen, tmp_path, signum, mode):
+def _signal_a_running_pytest(popen, tmp_path, signum, mode, *pytest_args, **stub_env):
     pidfile = tmp_path / "pytest.pid"
-    proc = popen("a1", STUB_PYTEST_MODE=mode)
+    proc = popen("a1", *pytest_args, STUB_PYTEST_MODE=mode, **stub_env)
     try:
         deadline = time.monotonic() + 30
         while not (pidfile.exists() and pidfile.read_text().strip()):
@@ -683,6 +683,35 @@ def test_the_database_is_never_dropped_under_a_pytest_that_is_still_alive(script
     assert _calls(log)[-1] == _DROP_A1
     with pytest.raises(ProcessLookupError):
         os.kill(pytest_pid, 0)
+
+
+def _processes_mentioning(marker: str) -> list[str]:
+    found = []
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit() and int(entry.name) != os.getpid():
+            try:
+                cmdline = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+            except OSError:
+                continue
+            if marker in cmdline:
+                found.append(cmdline[:80])
+    return found
+
+
+@pytest.mark.skipif(not Path("/proc/self/cmdline").exists(), reason="needs /proc to look for leftover processes")
+def test_no_copy_of_the_script_outlives_it(script, tmp_path):
+    # The watchdog that escalates to SIGKILL is a subshell -- a copy of the
+    # script. It inherits the ignored signals of the trap that started it, so
+    # a plain `kill` did not stop it (measured on the build box): it sat there
+    # for the grace period and then fired SIGKILL at a pid that was no longer
+    # pytest's.
+    _, popen, _log = script
+    marker = f"marker-{secrets.token_hex(8)}"
+    returncode, _pid = _signal_a_running_pytest(
+        popen, tmp_path, signal.SIGTERM, "hang", marker, RENFIELD_TEST_STOP_GRACE=20,
+    )
+    assert returncode == 143
+    assert _processes_mentioning(marker) == []
 
 
 # --------------------------------------------------------------------------
