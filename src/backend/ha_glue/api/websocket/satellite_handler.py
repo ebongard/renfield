@@ -19,7 +19,7 @@ from typing import NamedTuple
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 
-from api.websocket.shared import get_whisper_service, send_ws_error
+from api.websocket.shared import ClientFrameReader, get_whisper_service, send_ws_error
 from ha_glue.services.opus_transport import (
     BinaryFrameError,
     parse_audio_frame,
@@ -738,9 +738,15 @@ async def satellite_websocket(
     satellite_history_loaded = False
     satellite_db_session_id = None  # Will be set after registration
 
+    # Read the socket also while a voice turn runs inline below, or uvicorn
+    # stops reading at the first frame (heartbeat, BLE report) sent during the
+    # turn and closes with 1011 after its keepalive budget (#1570). Frames are
+    # still processed one at a time, in arrival order.
+    frames = ClientFrameReader(websocket.receive, label="satellite")
+
     try:
         while True:
-            raw = await websocket.receive()
+            raw = await frames.next()
             if raw.get("type") == "websocket.disconnect":
                 raise WebSocketDisconnect(raw.get("code") or 1000)
 
@@ -1817,6 +1823,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
         logger.error(f"❌ Satellite WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
     finally:
+        await frames.aclose()
         # Clean up connection limiter
         if satellite_id and ip_address:
             connection_limiter.remove_connection(ip_address, satellite_id)

@@ -15,7 +15,7 @@ from fastapi import APIRouter, FastAPI, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pydantic import ValidationError
 
-from api.websocket.shared import get_whisper_service, send_ws_error
+from api.websocket.shared import ClientFrameReader, get_whisper_service, send_ws_error
 from ha_glue.services.device_manager import DeviceManager, DeviceState, get_device_manager
 from ha_glue.services.voice_empty_turn import record_empty_turn, recorded_seconds
 from models.database import DEFAULT_CAPABILITIES, DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPES
@@ -387,9 +387,15 @@ async def device_websocket(
     rate_limiter = get_rate_limiter()
     device_id = None
 
+    # Read the socket also while a turn runs inline below, or uvicorn stops
+    # reading at the first frame (the 30 s heartbeat) sent during the turn and
+    # closes with 1011 after its keepalive budget (#1570). Frames are still
+    # processed one at a time, in arrival order.
+    frames = ClientFrameReader(websocket.receive_json, label="device")
+
     try:
         while True:
-            data = await websocket.receive_json()
+            data = await frames.next()
 
             # Rate limiting (use device_id if registered, otherwise IP)
             rate_key = device_id if device_id else ip_address
@@ -649,6 +655,7 @@ async def device_websocket(
         logger.error(f"❌ Device WebSocket error: {type(e).__name__}: {error_text_without_content(e)}")
         logger.error(f"at {frames_without_content(e)}")
     finally:
+        await frames.aclose()
         # Clean up connection limiter
         if device_id and ip_address:
             connection_limiter.remove_connection(ip_address, device_id)
