@@ -49,6 +49,8 @@ needs `WEATHER_ENABLED`.
   the tool result. ONE check per field (`_CARD_FIELD_CHECKS`) on write AND read; allowlists per kind (a KB source
   never serves Paperless fields — another right). No snippet/content/tags. One card per document: a Paperless hit
   that is a visible KB source of the turn is dropped. Buttons: `.btn-secondary` + `min-h-11` (class alone < 44 px).
+  Focus ring: owner-approved DESIGN.md deviation — the chip row's `primary-500` outline classes in the CARD
+  component only (accent ≈1.6:1 on the white card); never change `.btn-secondary` globally for it.
 - **Follow-up chips** (`services/followup_service.py`): best-effort small-model call in the background AFTER the `done`
   frame, via a separate `followups` frame — never delay the spinner/TTS/wakeword. Skipped on TTS/error/very-short turns.
 - **`role_hint` is ROUTING-ONLY** (palette, role badge via `pendingRoleHint`, "Neu beantworten" via `corrected_intent` →

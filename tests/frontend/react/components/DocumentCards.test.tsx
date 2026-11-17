@@ -311,12 +311,41 @@ describe('DocumentCards', () => {
     }
     for (const link of screen.getAllByRole('link')) {
       expect(link).toHaveClass('btn-secondary');
-      // The focus ring is the one the button class defines -- nothing here
-      // removes or recolours it.
-      expect(link.className).not.toMatch(/outline-none|focus:|focus-visible:|ring-/);
     }
     // No competing card class for the same concept (DESIGN.md).
     expect(document.querySelector('.atom-card, .card')).toBeNull();
+  });
+
+  // Owner-approved deviation from DESIGN.md: the chip row's primary-500 ring,
+  // not the accent ring of the button classes (≈1.6:1 on the white card).
+  it('gives every focusable element the primary-500 ring of the chip row, and no accent ring', async () => {
+    const RING = [
+      'focus-visible:outline-2', 'focus-visible:outline-offset-2', 'focus-visible:outline-primary-500',
+    ];
+    const many = [
+      kb(7, 'Bescheid', { tier: 1, paperless_url: `${PAPERLESS}/documents/70/details` }),
+      paperless(11, 'Rechnung'),
+      paperless(12, 'Ohne Link', {}, false),
+      kb(8, 'Vier'),
+    ];
+    const { container } = renderWithRouter(<DocumentCards sources={many} />);
+    const check = () => {
+      const focusable = Array.from(container.querySelectorAll('a, button'));
+      expect(focusable.length).toBeGreaterThan(0);
+      for (const el of focusable) {
+        for (const cls of RING) expect(el.classList.contains(cls), `${el.textContent}: ${cls}`).toBe(true);
+      }
+      for (const el of Array.from(container.querySelectorAll('*'))) {
+        const cls = el.getAttribute('class') ?? '';
+        expect(cls).not.toMatch(/(ring|outline)-accent-/);
+        expect(cls).not.toMatch(/focus-visible:ring-/);
+        // Tailwind v4: `outline-none` zeroes the outline style the ring needs.
+        expect(cls).not.toMatch(/outline-none/);
+      }
+    };
+    check(); // with "+1 weitere"
+    await userEvent.click(screen.getByRole('button', { name: '+1 weitere' }));
+    check();
   });
 
   it('carries a dark variant wherever it sets a colour itself', () => {

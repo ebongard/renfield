@@ -453,12 +453,20 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
     Paperless hit whose id is the looked-up Paperless id of a knowledge-base source of the turn is dropped — keyed
     on the id, not on a link that may be absent, and only for a document the asker can see.
   - *Component.* DESIGN.md list-row pattern (`.atom-row` + `tier-ring-{tier}`; a Paperless card has no tier and is
-    the neutral row), `TierBadge`, `.btn-secondary` with the focus ring the class defines. `.btn-secondary`
-    alone is below the 44 px touch target (measured 38 px with `text-sm`, 42 px at its default size); the card
+    the neutral row), `TierBadge`, `.btn-secondary`. `.btn-secondary` alone is below the 44 px touch target (measured 38 px with `text-sm`, 42 px at its default size); the card
     buttons carry `min-h-11` — a real height, no invisible hit area. At most three cards, "+N" reveals the rest.
     The meta line joins the parts that exist with " · "; dates go through `utils/datetime.formatDate`. A card
     without any target (Paperless, no public base) is plain content and takes no focus. In a narrow bubble the
     tier badge moves under the title and a long button label wraps (measured at 375 px: no overflow).
+    After "+N" the focus moves to the first revealed card's first button, or to the card itself (`tabIndex=-1`,
+    not in the tab order) when it has none; the chip row does the same.
+  - *Focus ring — owner-approved deviation from DESIGN.md (2026-11-17).* The card buttons and "+N" carry the chip
+    row's ring, character for character: `focus-visible:outline-2 focus-visible:outline-offset-2
+    focus-visible:outline-primary-500`, so a bubble has ONE ring colour whichever rendering it shows. DESIGN.md's
+    turquoise `accent-500` ring, which `.btn-secondary` / `.btn-ghost` define, measured ≈1.6:1 against the white
+    card. Changed in `DocumentCards.tsx` only; the global button classes keep DESIGN.md's ring. The utilities win
+    over the class's own `:focus-visible` rule because utilities are a later cascade layer than components
+    (measured in a browser: `rgb(230, 62, 84)`, 2 px at 2 px offset, both themes).
   - *Flag off:* `done` frame and stored `sources` are exactly what they were; the read side is flag-independent.
 - **Not built:** opening the ORIGINAL file of a knowledge-base document that is not filed in Paperless. It needs a
   download endpoint behind `check_document_access` and an authenticated blob fetch in the frontend (one instance

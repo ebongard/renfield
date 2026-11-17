@@ -30,11 +30,19 @@ import type { MessageSource } from '../../types/chat';
  *    is plain content: nothing in it takes the focus.
  *
  * Design: DESIGN.md list-row pattern (`.atom-row` + `tier-ring-{tier}`),
- * `TierBadge` (colour is never the only signal), `.btn-secondary` with the
- * focus ring that class defines. The buttons are 44 px high through
+ * `TierBadge` (colour is never the only signal), `.btn-secondary`. The buttons are 44 px high through
  * `min-h-11` -- a real height, no invisible hit area. The class alone does not
  * reach DESIGN.md's 44 px touch target: measured 38 px with `text-sm`
  * (42 px at its default text size).
+ *
+ * 🛑 Focus ring: owner-approved deviation from DESIGN.md (2026-11-17). Not
+ * the turquoise `accent-500` ring `.btn-secondary` / `.btn-ghost` define
+ * (measured ≈1.6:1 against the white card) but `primary-500`, with exactly
+ * the classes of the chip row (`SourceChips.tsx`), so a bubble has ONE ring
+ * colour whichever rendering it shows. `:focus-visible`, 2 px at 2 px offset,
+ * drawn as an outline. Changed HERE only -- the global button classes keep
+ * DESIGN.md's ring. The utilities win over the class's own `:focus-visible`
+ * rule because utilities are a later cascade layer than components.
  */
 
 const MAX_VISIBLE = 3;
@@ -53,7 +61,13 @@ const TIER_RING: Record<number, string> = {
 // title wrap instead of widening the bubble.
 const CARD = 'atom-row flex-col gap-2 p-3 min-w-0';
 
-const BUTTON = 'btn-secondary min-h-11 max-w-full gap-1.5 px-3 text-sm';
+// The chip row's ring, character for character (see the comment above).
+const FOCUS_RING =
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500';
+
+const BUTTON = `btn-secondary min-h-11 max-w-full gap-1.5 px-3 text-sm ${FOCUS_RING}`;
+
+const MORE_BUTTON = `btn-ghost min-h-11 px-3 text-sm ${FOCUS_RING}`;
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -209,7 +223,7 @@ export default function DocumentCards({ sources }: { sources?: MessageSource[] }
             focusOnReveal.current = true;
             setExpanded(true);
           }}
-          className="btn-ghost min-h-11 px-3 text-sm"
+          className={MORE_BUTTON}
         >
           {t('chat.sources.more', { count: hidden })}
         </button>
