@@ -257,6 +257,9 @@ describe('KnowledgePage Schicht A integration', () => {
       await waitFor(() => expect(
         mockedGet.mock.calls.some((c) => (c[1] as { params?: { q?: string } } | undefined)?.params?.q === 'Strom'),
       ).toBe(true));
+      // The searched list has a query key of its own: between the request and
+      // its answer the list renders no rows. Wait for the answer, not only the call.
+      await waitFor(() => expect(document.getElementById('doc-5')).not.toBeNull());
     }
     const rows = Array.from(document.querySelectorAll('[id^="doc-"]')).map((el) => el.id);
     expect(rows).toEqual(expected);
