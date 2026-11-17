@@ -675,7 +675,16 @@ von `bin/run-backend-tests.sh` gesetzt). Der Harness in `tests/backend/conftest.
   `drop` vergleicht es. Nach einem `SIGKILL` des Skripts bleibt die Datenbank stehen und
   sperrt ihr Suffix; sie wird dann von Hand entfernt.
   Voraussetzung: die Rolle aus `DATABASE_URL` darf Datenbanken anlegen und `vector`
-  installieren (auf der Build-Box: Superuser).
+  installieren (auf der Build-Box: Superuser; `vector` ist nicht `trusted`).
+
+**Nebenläufig heißt nicht schneller** (gemessen 2026-11-16, zwei Wegwerf-Läufe plus ein
+gleichzeitiger Lauf auf `renfield_test`): beide grün mit denselben Zahlen wie allein, aber
+je 3 h 09 min statt ~80–88 min. Die Läufe teilen sich, was außerhalb der Datenbank liegt:
+die Platte (`TRUNCATE` wartet auf `DataFileImmediateSync`, `fsync = on`; I/O-Druck ~32 %),
+das Ollama des Hosts (`qwen3-embedding:4b` auf der CPU — u. a. `test_notes.py` ruft es echt
+auf), 8 GB Arbeitsspeicher (ein Lauf belegt bis 1,8 GB) und das Redis des Dev-Stacks
+(`login_fail:*`/`login_lock:*` unter festen Schlüsseln). Der Gewinn der eigenen Datenbank
+ist, dass niemand mehr ansteht — nicht der Durchsatz.
 
 Die Migrationstests arbeiten in eigenen Wegwerf-Schemata neben `public` und finden `vector`
 über `search_path = <schema>, public`; der Neuaufbau berührt sie nicht.
