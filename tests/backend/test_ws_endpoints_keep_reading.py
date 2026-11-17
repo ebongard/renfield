@@ -39,10 +39,17 @@ def _is_websocket_route(func: ast.AST) -> bool:
     return False
 
 
+def _is_receive_call(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _RECEIVE_NAMES)
+
+
 def _direct_receive(node: ast.AST) -> bool:
-    return (isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
-            and isinstance(node.value.func, ast.Attribute)
-            and node.value.func.attr in _RECEIVE_NAMES)
+    """``await ws.receive*()``, also wrapped: ``await asyncio.wait_for(ws.receive*(), t)``."""
+    if not isinstance(node, ast.Await) or not isinstance(node.value, ast.Call):
+        return False
+    call = node.value
+    return _is_receive_call(call) or any(_is_receive_call(arg) for arg in call.args)
 
 
 def offending_loops(source: str) -> list[str]:
@@ -88,14 +95,39 @@ async def push_only(websocket):
     reader = '''
 @router.websocket("/z")
 async def reader(websocket):
-    frames = ClientFrameReader(websocket.receive_json, label="z")
+    frames = ClientFrameReader(websocket, decode="json", label="z")
     while True:
         data = await frames.next()
         await run_turn(data)
 '''
+    wrapped = '''
+@router.websocket("/w")
+async def wrapped(websocket):
+    while True:
+        data = await asyncio.wait_for(websocket.receive_json(), 30)
+        await run_turn(data)
+'''
+    wrapped_push_only = '''
+@router.websocket("/v")
+async def wrapped_push_only(websocket):
+    while True:
+        await asyncio.wait_for(websocket.receive_text(), 30)
+'''
     assert offending_loops(inline) == ["inline"]
+    assert offending_loops(wrapped) == ["wrapped"]
     assert offending_loops(push_only) == []
+    assert offending_loops(wrapped_push_only) == []
     assert offending_loops(reader) == []
+
+
+def test_every_allowlist_entry_still_exists_and_still_matches():
+    # A stale entry would silently allow a future endpoint of the same name.
+    for rel, name in ALLOWED_DIRECT_RECEIVE:
+        path = _BACKEND / rel
+        assert path.is_file(), f"allowlisted file is gone: {rel}"
+        assert name in offending_loops(path.read_text(encoding="utf-8")), (
+            f"{rel}:{name} no longer reads directly between awaits -- remove it from the allowlist"
+        )
 
 
 def test_the_scan_sees_the_known_endpoints():
