@@ -358,13 +358,27 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
   circle-filtered — gated by `mcp.paperless.read` when the tool ran; a chip repeats only id + title that tool result
   already put into the user's turn. No new read path for persisted sources: they sit in `message_metadata` and
   are readable exactly where the answer text of that message is.
-- **Read side (`metadata_for_reader`, independent of the flag, auth-on only):** a conversation is a shared
-  artifact, and `GET /api/chat/history/{session_id}` is the one route that serves `message_metadata` to a reader
-  by REACH. Sources are per-asker and messages do not record who asked, so every reader — the asker included —
-  gets a knowledge-base source only if the document passes `documents_circles_filter` for THEM, and a Paperless
-  source only with `mcp.paperless.read`. This also closes a gap that predates the flag: `knowledge_search`
-  sources (title, filename, tier) were served unfiltered to every member reading a shared thread. The stored row
-  is never rewritten; a failed lookup withholds the knowledge-base sources.
+- **Read side (`metadata_for_reader`, independent of the flag):** a conversation is a shared artifact, and
+  `GET /api/chat/history/{session_id}` is the one route that serves `message_metadata` to a reader by REACH. Two
+  rules apply there, and nowhere else:
+  1. **Key allowlist, auth on or off.** A client gets `sources` plus `CLIENT_METADATA_KEYS` (`agent_role`,
+     `artifacts`, `attachments`, `wb_entities` — the keys `historyToUiMessage` reads). Everything else stays on the
+     server: `action_summary` (the agent's copy of the tool result — Paperless ids/titles of up to ten hits, or the
+     `knowledge_search` payload with retrieved text), `action_result`, `intent`, `action_success`,
+     `subsystems_used`, `room_context`, `speaker`, `scanner_job`, `handoff_source`, `attachment_ids`. A new key is
+     invisible to clients until it is added to the allowlist.
+  2. **Sources by the reader's rights, auth-on.** Sources are per-asker and messages do not record who asked, so
+     every reader — the asker included — gets a source rebuilt key by key: the kind is `paperless` or absent
+     (anything else is dropped); a `document_id` on ANY kind must pass `documents_circles_filter` for the reader; a
+     Paperless source needs a valid `paperless_document_id` and `mcp.paperless.read`, and never carries
+     knowledge-base fields; `paperless_url` survives only if it equals the link the server builds now. A `sources`
+     value that is not a list is dropped. Under auth-off the shape rules hold and the two access rules are skipped.
+  The visibility lookup runs on a session of its own; a failed lookup withholds every source that names a
+  knowledge-base document and never fails the history. The stored row is never modified.
+  **Not covered — the same data on other paths:** `ConversationService.load_context` re-injects `action_summary`
+  into the prompt of whoever continues the thread, and `conversations.context_vars` / `summary` travel by reach as
+  well. Those feed the model, not the client, and are an open decision. `artifacts` are served unfiltered: they are
+  the answer's own typed content, like the message text.
 - **Enable order:** roll out the frontend first, flip the flag after it has propagated — a stale PWA bundle renders
   a `kind: 'paperless'` source as a chip to `/knowledge?doc=undefined`.
 - **Not built:** opening the ORIGINAL file of a knowledge-base document that is not filed in Paperless. It needs a

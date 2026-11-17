@@ -29,10 +29,13 @@ needs `WEATHER_ENABLED`.
   fallback (cluster-internal on one instance, and the link is persisted). 🛑 KB metadata (title, Paperless id) only
   through `_visible_document_meta`; a RAG-path document not visible NOW gets no chip. Paperless is one backend
   token, NOT circle-filtered: a chip may only repeat id + title the tool result already put into that turn.
-  🛑 READ side (`metadata_for_reader`, flag-independent, auth-on): `GET /api/chat/history` serves sources by the
-  READER's rights (circle filter per KB document, `mcp.paperless.read` for Paperless) — a shared thread is read by
-  people who did not ask. A new route that returns `message_metadata` must go through it. Enable the flag only
-  AFTER the frontend has propagated (old bundle → `/knowledge?doc=undefined`).
+  🛑 READ side (`metadata_for_reader`, flag-independent): `GET /api/chat/history` is an ALLOWLIST — a client gets
+  `CLIENT_METADATA_KEYS` + `sources`, never `action_summary` & co. (the agent's copy of the tool result). Under auth
+  each source is rebuilt for the READER: `document_id` (on any kind) through the circle filter, Paperless needs
+  `mcp.paperless.read` + a valid id, unknown kind / non-list `sources` dropped. A new metadata key the client needs
+  goes into the allowlist; a new route that returns `message_metadata` goes through this function. NOT covered:
+  `load_context` re-injecting `action_summary` into the next prompt (open decision). Enable the flag only AFTER the
+  frontend has propagated (old bundle → `/knowledge?doc=undefined`).
 - **Follow-up chips** (`services/followup_service.py`): best-effort small-model call in the background AFTER the `done`
   frame, via a separate `followups` frame — never delay the spinner/TTS/wakeword. Skipped on TTS/error/very-short turns.
 - **`role_hint` is ROUTING-ONLY** (palette, role badge via `pendingRoleHint`, "Neu beantworten" via `corrected_intent` →

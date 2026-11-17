@@ -3594,9 +3594,11 @@ PAPERLESS_API_URL=http://paperless.local:8000
 # in den Browsern angekommen ist (PWA-Service-Worker), DANN den Schalter umlegen. Ein
 # altes Bundle kennt die Paperless-Quelle nicht und zeigt sie als Chip mit dem toten Ziel
 # `/knowledge?doc=undefined`.
-# Lesende Seite (unabhängig vom Schalter, nur bei AUTH_ENABLED=true): `GET /api/chat/history`
-# liefert `metadata.sources` je LESER — eine Wissensdatenbank-Quelle nur, wenn das Dokument
-# für ihn sichtbar ist, eine Paperless-Quelle nur mit `mcp.paperless.read`.
+# Lesende Seite (unabhängig vom Schalter): `GET /api/chat/history` liefert von
+# `message_metadata` nur die Schlüssel, die der Client liest (`agent_role`, `artifacts`,
+# `attachments`, `wb_entities`, `sources`) — mit und ohne AUTH_ENABLED. Bei
+# AUTH_ENABLED=true zusätzlich `sources` je LESER: eine Wissensdatenbank-Quelle nur, wenn
+# das Dokument für ihn sichtbar ist, eine Paperless-Quelle nur mit `mcp.paperless.read`.
 # CHAT_DOCUMENT_LINKS_ENABLED=false
 
 # Calendar (Unified Calendar MCP Server — EWS, Google, CalDAV)
