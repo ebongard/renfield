@@ -200,6 +200,11 @@ export interface SessionReplacedMessage extends BaseWsMessage {
   session_id: string;
 }
 
+function isTextFrame(message: unknown): message is { type: 'text'; session_id?: string | null } {
+  return typeof message === 'object' && message !== null
+    && (message as { type?: unknown }).type === 'text';
+}
+
 interface UseChatWebSocketOptions {
   onStreamChunk?: (content: string) => void;
   onStreamDone?: (data: DoneMessage) => void;
@@ -221,6 +226,10 @@ interface UseChatWebSocketOptions {
   onFollowups?: (data: FollowupsMessage) => void;
   onDeviceActionResult?: (data: DeviceActionResultMessage) => void;
   onSessionReplaced?: (data: SessionReplacedMessage) => void;
+  /** The conversation this socket serves. The hook sends `register` for it on
+   *  open, on change, and before any `text` frame of a session the socket has
+   *  not registered yet (#1570). */
+  sessionId?: string | null;
 }
 
 /**
@@ -248,9 +257,27 @@ export function useChatWebSocket({
   onFollowups,
   onDeviceActionResult,
   onSessionReplaced,
+  sessionId = null,
 }: UseChatWebSocketOptions = {}) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  // `register` goes out BEFORE the first `text` of a session on a socket. The
+  // backend processes frames in order anyway, but a `register` that trails the
+  // first `text` used to arrive while that turn ran (#1570). Remembered per
+  // socket object, so a reconnect registers again.
+  const sessionIdRef = useRef<string | null>(sessionId);
+  const registeredRef = useRef<{ ws: WebSocket | null; sessionId: string | null }>({
+    ws: null,
+    sessionId: null,
+  });
+
+  const ensureRegistered = useCallback((ws: WebSocket, sid: string | null): void => {
+    if (!sid || ws.readyState !== WebSocket.OPEN) return;
+    const done = registeredRef.current;
+    if (done.ws === ws && done.sessionId === sid) return;
+    ws.send(JSON.stringify({ type: 'register', session_id: sid }));
+    registeredRef.current = { ws, sessionId: sid };
+  }, []);
   // Set on unmount so an in-flight async token fetch (below) can't open a
   // socket after the effect has torn down.
   const cancelledRef = useRef(false);
@@ -283,6 +310,8 @@ export function useChatWebSocket({
 
     ws.onopen = () => {
       debug.log('WebSocket verbunden');
+      // Register synchronously, before any waiting sender is woken below.
+      ensureRegistered(ws, sessionIdRef.current);
       setWsConnected(true);
       // Wake any callers waiting on whenReady().
       const pending = readyResolversRef.current.splice(0);
@@ -387,7 +416,16 @@ export function useChatWebSocket({
     };
 
     wsRef.current = ws;
-  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onUploadProcessed, onPaperlessCommitted, onPaperlessConfirmRequest, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard, onArtifact, onFollowups, onDeviceActionResult, onSessionReplaced]);
+  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onUploadProcessed, onPaperlessCommitted, onPaperlessConfirmRequest, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard, onArtifact, onFollowups, onDeviceActionResult, onSessionReplaced, ensureRegistered]);
+
+  // Register on a session change while connected (and keep the ref current for
+  // the next onopen).
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+    if (wsConnected && wsRef.current) {
+      ensureRegistered(wsRef.current, sessionId);
+    }
+  }, [wsConnected, sessionId, ensureRegistered]);
 
   useEffect(() => {
     connectWebSocket();
@@ -404,12 +442,18 @@ export function useChatWebSocket({
   }, [connectWebSocket]);
 
   const sendMessage = useCallback((message: unknown): boolean => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(message));
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      if (isTextFrame(message)) {
+        // The session the text names, not the hook's: the caller may have
+        // switched sessions in the same render.
+        ensureRegistered(ws, message.session_id ?? null);
+      }
+      ws.send(JSON.stringify(message));
       return true;
     }
     return false;
-  }, []);
+  }, [ensureRegistered]);
 
   const isReady = useCallback((): boolean => {
     return Boolean(wsRef.current && wsRef.current.readyState === WebSocket.OPEN);

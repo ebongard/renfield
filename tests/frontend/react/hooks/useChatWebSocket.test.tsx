@@ -173,6 +173,79 @@ describe('useChatWebSocket', () => {
     });
   });
 
+  // #1570: a `register` that trailed the first `text` reached the backend
+  // while that turn ran. It must go out first on every socket.
+  describe('register before text', () => {
+    const types = (ws: ControllableWebSocket) =>
+      ws.sent.map((raw) => JSON.parse(raw) as { type: string; session_id?: string });
+
+    it('registers the session synchronously on open, before a waiting sender sends text', async () => {
+      const { result } = renderHook(() => useChatWebSocket({ sessionId: 'session-1' }));
+      await flushConnect();
+      const ws = ControllableWebSocket.instances[0];
+
+      // A sender that submitted during the handshake sends as soon as it is woken.
+      const sent = result.current.whenReady(2000).then(() =>
+        result.current.sendMessage({ type: 'text', content: 'hi', session_id: 'session-1' }),
+      );
+      await act(async () => {
+        ws.fireOpen();
+      });
+      await sent;
+
+      expect(types(ws)).toEqual([
+        { type: 'register', session_id: 'session-1' },
+        expect.objectContaining({ type: 'text', session_id: 'session-1' }),
+      ]);
+    });
+
+    it('registers the session a text names when the socket has not registered it yet', async () => {
+      const { result, rerender } = renderHook(
+        ({ sid }: { sid: string | null }) => useChatWebSocket({ sessionId: sid }),
+        { initialProps: { sid: null as string | null } },
+      );
+      await flushConnect();
+      const ws = ControllableWebSocket.instances[0];
+      act(() => ws.fireOpen());
+      expect(ws.sent).toHaveLength(0); // no session yet, nothing to register
+
+      // The new session's text goes out in the same render as the id change.
+      result.current.sendMessage({ type: 'text', content: 'hi', session_id: 'session-2' });
+      rerender({ sid: 'session-2' });
+
+      expect(types(ws)).toEqual([
+        { type: 'register', session_id: 'session-2' },
+        expect.objectContaining({ type: 'text', session_id: 'session-2' }),
+      ]); // and the effect does not register it a second time
+    });
+
+    it('registers once per socket and session, and again after a reconnect', async () => {
+      vi.useFakeTimers();
+      try {
+        const { result } = renderHook(() => useChatWebSocket({ sessionId: 'session-3' }));
+        await act(async () => {
+          await flushConnect();
+        });
+        const first = ControllableWebSocket.instances[0];
+        act(() => first.fireOpen());
+        result.current.sendMessage({ type: 'text', content: 'a', session_id: 'session-3' });
+        result.current.sendMessage({ type: 'text', content: 'b', session_id: 'session-3' });
+        expect(types(first).map((m) => m.type)).toEqual(['register', 'text', 'text']);
+
+        act(() => first.fireClose());
+        await act(async () => {
+          vi.advanceTimersByTime(3000);
+          await flushConnect();
+        });
+        const second = ControllableWebSocket.instances[1];
+        act(() => second.fireOpen());
+        expect(types(second)).toEqual([{ type: 'register', session_id: 'session-3' }]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   // P0 Nr. 5: the server refuses a session id that is not the caller's
   // (foreign, or ownerless now that adoption is gone), saves the turn into a
   // fresh conversation and pushes its id.
