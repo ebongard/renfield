@@ -355,10 +355,16 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
   (`documents_circles_filter`, server-injected `user_id`). A `knowledge_search` source keeps its chip but gets a
   link only when the document is visible; a RAG-path document gets a chip only when it is visible NOW (cached
   follow-up results may predate an access change). 🛑 The Paperless LINK of a knowledge-base source additionally
-  needs the asker's `mcp.paperless.read` under auth (owner decision 2026-11-17; `may_link_paperless`, permissions
+  needs the asker's `mcp.paperless.read` under auth (owner decision 2026-11-17; `paperless_visible`, permissions
   loaded server-side for the turn, `None` denies): the link names the Paperless id, which is the Paperless
   permission's to give, not the circles'. The source itself stays. The `done` frame and the stored metadata are
   one list, so a source written without the link stays without it for later readers too. Auth off: unchanged.
+  The rule is SYSTEM-WIDE (second owner decision, same day) and lives in ONE module,
+  `services/paperless_visibility.py`: the document API (`GET /api/knowledge/documents`, `/documents/{id}`,
+  `/documents/batch`, `PATCH /documents/{id}/tier` — `paperless_url` is None without the permission,
+  `in_paperless` stays because it is a filing status without an id), the duplicate proposals
+  (`paperless_document_id` withheld, a new `in_paperless` keeps the badge honest) and
+  `internal.list_unfiled_documents` (id withheld from the result and the answer text) apply it too.
   Paperless is read through ONE backend token and is not circle-filtered — gated by `mcp.paperless.read` when the tool ran; a chip repeats only id + title that tool result
   already put into the user's turn. No new read path for persisted sources: they sit in `message_metadata` and
   are readable exactly where the answer text of that message is.

@@ -207,6 +207,8 @@ Source: `services/kb_maintenance_tool.py`
   INNER-joined fail-closed — the query mode is a corpus-wide name search that must not leak other users' document
   names.
 - LIKE wildcards escaped.
+- The Paperless id (in `data` and in the label of the answer text) only for a caller with `mcp.paperless.read`
+  under auth (`services/paperless_visibility.py`; `None` denies); the filing status stays.
 - Backs "welche Dokumente sind nicht in Paperless?" / "ist die Rechnung X abgelegt?".
 
 ### `internal.refile_to_paperless`

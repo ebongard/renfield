@@ -3573,7 +3573,9 @@ PAPERLESS_API_URL=http://paperless.local:8000
 # `<basis>/documents/<paperless_id>/details`; ein abschliessender `/` wird entfernt,
 # ein Pfadpräfix hinter einem Reverse-Proxy bleibt erhalten.
 # Leer/ungesetzt → Rückfall auf PAPERLESS_API_URL (Verhalten wie vor der Trennung).
-# Beide leer → kein Link, kein Fehler. Nötig, sobald die API-Adresse im Browser
+# Beide leer → kein Link, kein Fehler. Bei AUTH_ENABLED=true nur für Nutzer mit
+# `mcp.paperless.read` (auch `mcp.paperless`, `mcp.*`); sonst ist `paperless_url` leer.
+# Nötig, sobald die API-Adresse im Browser
 # nicht taugt (`http://paperless:8000` unter Compose, LAN-Adresse ausserhalb des Heimnetzes).
 # PAPERLESS_PUBLIC_URL=https://paperless.example.org
 
