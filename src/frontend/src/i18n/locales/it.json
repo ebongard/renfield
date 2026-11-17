@@ -178,6 +178,7 @@
     "sources": {
       "label": "Fonti",
       "more": "+{{count}} altre",
+      "untitled": "Documento {{id}}",
       "paperlessUntitled": "Documento Paperless {{id}}",
       "openInPaperless": "{{title}} – apri in Paperless (nuova scheda)",
       "noLink": "Trovato in Paperless – nessun link disponibile"

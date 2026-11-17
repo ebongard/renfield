@@ -28,23 +28,48 @@ import type { MessageSource } from '../../types/chat';
  *  - Tier is never color-only — TierBadge pairs the color with a symbol+label.
  *  - Chips are real links: keyboard-focusable, visible focus ring. A chip that
  *    opens nothing is NOT focusable (no tabbing through dead controls).
+ *  - DESIGN.md §Accessibility: every interactive element of the row has a
+ *    44x44 px touch target and the one turquoise focus ring (see below).
  */
 
 const MAX_VISIBLE = 6;
 
-const CHIP =
-  'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
+// Touch target (DESIGN.md: >= 44x44 px on every interactive element). The chip
+// keeps its size; an invisible ::after, centred on it, is at least 44 px in
+// both directions and at least as large as the chip. A click on the
+// pseudo-element is a click on the chip.
+//
+// `after:-z-10` + `isolate` on the row: the hit areas lie BEHIND the visible
+// chips of the row, so where a hit area reaches over a neighbour (the 24 px
+// wide Paperless segment, a short "+N") the neighbour's visible body wins and
+// only empty space is claimed. `isolate` keeps the negative z-index inside
+// the row -- without it the area would fall behind the message bubble.
+const HIT_AREA =
+  'relative after:absolute after:-z-10 after:left-1/2 after:top-1/2 after:h-full after:w-full after:min-h-[44px] after:min-w-[44px] after:-translate-x-1/2 after:-translate-y-1/2';
 
-// The elements this feature adds follow DESIGN.md §Accessibility (turquoise
-// focus ring); the chip above keeps the ring it shipped with.
-const EXTERNAL_CHIP =
-  'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500';
+// Focus ring (DESIGN.md: turquoise accent-500, :focus-visible, 2px at 2px
+// offset) -- as an OUTLINE, like the button classes in index.css, so it needs
+// no offset colour that would have to match the bubble in both themes.
+// 🛑 No `outline-none` beside it: in Tailwind v4 that zeroes the outline style
+// this ring is drawn with. The browser shows an outline on :focus-visible only.
+const FOCUS_RING =
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500';
 
-const PLAIN_CHIP =
+const CHIP_LOOK =
   'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-200';
 
+const CHIP_HOVER = 'hover:bg-gray-300 dark:hover:bg-gray-500';
+
+const CHIP = `${CHIP_LOOK} ${CHIP_HOVER} ${HIT_AREA} ${FOCUS_RING}`;
+
+// A chip that opens nothing: no hover, no hit area, no ring.
+const PLAIN_CHIP = CHIP_LOOK;
+
 const EXTERNAL_SEGMENT =
-  'inline-flex items-center px-1.5 py-0.5 rounded-full text-xs bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500';
+  `inline-flex items-center px-1.5 py-0.5 rounded-full text-xs bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-200 ${CHIP_HOVER} ${HIT_AREA} ${FOCUS_RING}`;
+
+const MORE_BUTTON =
+  `text-xs text-primary-600 dark:text-primary-400 hover:underline rounded ${HIT_AREA} ${FOCUS_RING}`;
 
 /** The server-built Paperless link, or null when it is absent or not http(s). */
 function externalUrl(source: MessageSource): string | null {
@@ -68,7 +93,14 @@ export default function SourceChips({ sources }: { sources?: MessageSource[] }) 
   const hidden = sources.length - visible.length;
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-1.5" aria-label={t('chat.sources.label')}>
+    // gap-y-6: a chip is 20 px high, so wrapped lines sit 44 px apart and the
+    // hit areas of neighbouring lines do not overlap. py-1 on top of mt-2 (and
+    // of the next block's own margin) gives the 12 px a hit area reaches
+    // beyond the first and last line.
+    <div
+      className="isolate mt-2 py-1 flex flex-wrap items-center gap-x-1.5 gap-y-6"
+      aria-label={t('chat.sources.label')}
+    >
       <span className="text-xs text-gray-500 dark:text-gray-400 mr-0.5">
         {t('chat.sources.label')}:
       </span>
@@ -95,7 +127,7 @@ export default function SourceChips({ sources }: { sources?: MessageSource[] }) 
               rel="noopener noreferrer"
               title={label}
               aria-label={t('chat.sources.openInPaperless', { title: label })}
-              className={EXTERNAL_CHIP}
+              className={CHIP}
             >
               <FileText className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
               <span className="truncate max-w-[160px]">{label}</span>
@@ -104,7 +136,8 @@ export default function SourceChips({ sources }: { sources?: MessageSource[] }) 
           );
         }
 
-        const label = src.title || src.filename || String(src.document_id);
+        const label =
+          src.title || src.filename || t('chat.sources.untitled', { id: src.document_id });
         const chip = (
           <Link
             key={sourceKey(src)}
@@ -140,7 +173,7 @@ export default function SourceChips({ sources }: { sources?: MessageSource[] }) 
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="text-xs text-primary-600 dark:text-primary-400 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
+          className={MORE_BUTTON}
         >
           {t('chat.sources.more', { count: hidden })}
         </button>

@@ -155,15 +155,93 @@ describe('SourceChips', () => {
       expect(el.className).toMatch(/\btext-gray-700\b/);
       expect(el.className).toMatch(/\bdark:text-gray-200\b/);
     }
-    // Interactive forms show a focus ring; the plain one is not focusable.
-    expect(linked.className).toMatch(/focus-visible:ring-2/);
-    expect(segment.className).toMatch(/focus-visible:ring-2/);
+    // The plain one is not focusable (the ring itself: see the block below).
     expect(plain).not.toHaveAttribute('tabindex');
+  });
+
+  it('labels a knowledge-base document without title and filename from the translations', () => {
+    const nameless: MessageSource = { document_id: 7, filename: '', title: '' };
+    renderWithRouter(<SourceChips sources={[nameless]} />);
+    const link = screen.getByRole('link');
+    expect(link).toHaveTextContent('Dokument 7');
+    expect(link).toHaveAttribute('title', 'Dokument 7');
+    expect(i18n.t('chat.sources.untitled', { lng: 'en', id: 7 })).toBe('Document 7');
+  });
+
+  it('keeps a stored title as it is, also an old literal one', () => {
+    renderWithRouter(<SourceChips sources={[{ document_id: 7, filename: 'f.pdf', title: 'Dokument 123' }]} />);
+    expect(screen.getByRole('link')).toHaveTextContent('Dokument 123');
+  });
+
+  // jsdom has no layout: these tests prove that the classes are ON the right
+  // elements, not that the area measures 44 px or that neighbours do not
+  // overlap. That needs a browser.
+  describe('touch targets and focus ring (DESIGN.md §Accessibility)', () => {
+    const HIT_AREA = [
+      'relative', 'after:absolute', 'after:min-h-[44px]', 'after:min-w-[44px]',
+      'after:left-1/2', 'after:top-1/2', 'after:-translate-x-1/2', 'after:-translate-y-1/2',
+    ];
+    const RING = [
+      'focus-visible:outline-2', 'focus-visible:outline-offset-2',
+      'focus-visible:outline-accent-500',
+    ];
+    const has = (el: Element, cls: string) => el.classList.contains(cls);
+
+    function renderAll() {
+      const filed: MessageSource = { ...src(7, 'Bescheid'), paperless_url: `${PAPERLESS}/documents/70/details` };
+      const many = Array.from({ length: 6 }, (_, i) => src(100 + i, `Doc${i}`));
+      return renderWithRouter(
+        <SourceChips sources={[paperless(11, 'Rechnung'), paperless(12, 'Vertrag', false), filed, ...many]} />,
+      );
+    }
+
+    it('gives every interactive element of the row the invisible 44px hit area', () => {
+      const { container } = renderAll();
+      const interactive = Array.from(container.querySelectorAll('a, button'));
+      // Paperless chip, KB chip + its Paperless segment, 3 more KB chips, "+N".
+      expect(interactive).toHaveLength(7);
+      expect(interactive.some((el) => el.tagName === 'BUTTON')).toBe(true);
+      for (const el of interactive) {
+        for (const cls of HIT_AREA) expect(has(el, cls), `${el.textContent}: ${cls}`).toBe(true);
+      }
+    });
+
+    it('gives a chip that opens nothing no hit area', () => {
+      renderAll();
+      const plain = screen.getByText('Vertrag').parentElement as HTMLElement;
+      expect(plain.tagName).toBe('SPAN');
+      expect(plain.className).not.toMatch(/after:|\brelative\b/);
+    });
+
+    it('keeps the hit areas of wrapped lines apart and behind the visible chips', () => {
+      const { container } = renderAll();
+      const row = container.firstElementChild as HTMLElement;
+      // 20px chip + 24px line gap = 44px line pitch; `isolate` keeps the
+      // negative z-index of the hit areas inside the row.
+      expect(has(row, 'gap-y-6')).toBe(true);
+      expect(has(row, 'isolate')).toBe(true);
+      for (const el of Array.from(container.querySelectorAll('a, button'))) {
+        expect(has(el, 'after:-z-10')).toBe(true);
+      }
+    });
+
+    it('uses the one DESIGN.md focus ring on every focusable element, never primary', () => {
+      const { container } = renderAll();
+      for (const el of Array.from(container.querySelectorAll('a, button'))) {
+        for (const cls of RING) expect(has(el, cls), `${el.textContent}: ${cls}`).toBe(true);
+      }
+      for (const el of Array.from(container.querySelectorAll('*'))) {
+        const cls = el.getAttribute('class') ?? '';
+        expect(cls).not.toMatch(/(ring|outline)-primary-/);
+        // Tailwind v4: `outline-none` zeroes the outline style the ring needs.
+        expect(cls).not.toMatch(/outline-none/);
+      }
+    });
   });
 
   it('has every new string in all four languages, none of them the key', () => {
     for (const lng of ['de', 'en', 'it', 'fr']) {
-      for (const key of ['paperlessUntitled', 'openInPaperless', 'noLink']) {
+      for (const key of ['paperlessUntitled', 'untitled', 'openInPaperless', 'noLink']) {
         const text = i18n.t(`chat.sources.${key}`, { lng, id: 3, title: 'T' });
         expect(text, `${lng}:${key}`).not.toContain('chat.sources');
         expect(text.length, `${lng}:${key}`).toBeGreaterThan(3);

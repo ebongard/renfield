@@ -232,6 +232,7 @@
     "sources": {
       "label": "Quellen",
       "more": "+{{count}} weitere",
+      "untitled": "Dokument {{id}}",
       "paperlessUntitled": "Paperless-Dokument {{id}}",
       "openInPaperless": "{{title}} – in Paperless öffnen (neuer Tab)",
       "noLink": "In Paperless gefunden – kein Link verfügbar"
