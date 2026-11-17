@@ -33,8 +33,10 @@ needs `WEATHER_ENABLED`.
   `CLIENT_METADATA_KEYS` + `sources`, never `action_summary` & co. (the agent's copy of the tool result). Under auth
   each source is rebuilt for the READER: `document_id` (on any kind) through the circle filter, Paperless needs
   `mcp.paperless.read` + a valid id, unknown kind / non-list `sources` dropped; the stored `paperless_url` is never
-  served, the link is rebuilt from the id (own session → 2 pool connections). A new metadata key the client needs
-  goes into the allowlist; a new route that returns `message_metadata` goes through this function. NOT covered:
+  served, the link is rebuilt from the id (own session → 2 pool connections). 🛑 The Paperless link of a KB source
+  needs `mcp.paperless.read` too — on read (the reader's) AND on write (the asker's): circles give the source, the
+  permission the link (it names the Paperless id). System-wide invariant: `documents-facts.md` (Paperless id).
+  A new metadata key the client needs goes into the allowlist; a new route that returns `message_metadata` goes through this function. NOT covered:
   `load_context` re-injecting `action_summary` into the next prompt (open decision). Enable the flag only AFTER the
   frontend has propagated (old bundle → `/knowledge?doc=undefined`).
   Chip row: TWO owner-approved deviations from DESIGN.md — the spacing stays (`gap-1.5`), so the invisible
@@ -42,6 +44,15 @@ needs `WEATHER_ENABLED`.
   ONE focus ring is `primary-500` as an outline (never `outline-none` beside it). NO backend-made title —
   a nameless document has `title: ""`, the label is `chat.sources.untitled`. The model keeps "Dokument N" only in
   the FAKTEN line; in the `sources` of the tool result (agent prompt, `action_summary`) it reads `"title": ""` too.
+- **Document cards** (same flag → `/api/config/features` `chat_document_links_enabled` → `DocumentCards.tsx`; off →
+  `SourceChips`). 🛑 Card data lives in `sources`, NEVER in `artifacts` (served unfiltered). KB fields
+  (`document_date` — never the upload day —, `page_count`) come from `_visible_document_meta`, never from the tool
+  source; Paperless fields (`created`, `correspondent`, `document_type`, `page_count`) are a typed, capped subset of
+  the tool result. ONE check per field (`_CARD_FIELD_CHECKS`) on write AND read; allowlists per kind (a KB source
+  never serves Paperless fields — another right). No snippet/content/tags. One card per document: a Paperless hit
+  that is a visible KB source of the turn is dropped. Buttons: `.btn-secondary` + `min-h-11` (class alone < 44 px).
+  Focus ring: owner-approved DESIGN.md deviation — the chip row's `primary-500` outline classes in the CARD
+  component only (accent ≈1.6:1 on the white card); never change `.btn-secondary` globally for it.
 - **Follow-up chips** (`services/followup_service.py`): best-effort small-model call in the background AFTER the `done`
   frame, via a separate `followups` frame — never delay the spinner/TTS/wakeword. Skipped on TTS/error/very-short turns.
 - **`role_hint` is ROUTING-ONLY** (palette, role badge via `pendingRoleHint`, "Neu beantworten" via `corrected_intent` →

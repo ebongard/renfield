@@ -59,7 +59,8 @@ Source: `services/knowledge_tool.py`
 - Flag-off = chunk-only (byte-identical context/message).
 - Also returns structured `data.sources` (deduped per document) that `chat_handler._extract_agent_sources` surfaces
   as chat **provenance chips**. With `CHAT_DOCUMENT_LINKS_ENABLED` each chip also gets a server-built open target
-  (`api/websocket/document_sources.py`); the tool's own result is unchanged.
+  (`api/websocket/document_sources.py`) and the fields of a document card (date, page count — from the
+  circle-filtered lookup, not from this tool); the tool's own result is unchanged.
 
 ### `internal.list_my_memories`
 
@@ -206,6 +207,8 @@ Source: `services/kb_maintenance_tool.py`
   INNER-joined fail-closed — the query mode is a corpus-wide name search that must not leak other users' document
   names.
 - LIKE wildcards escaped.
+- The Paperless id (in `data` and in the label of the answer text) only for a caller with `mcp.paperless.read`
+  under auth (`services/paperless_visibility.py`; `None` denies); the filing status stays.
 - Backs "welche Dokumente sind nicht in Paperless?" / "ist die Rechnung X abgelegt?".
 
 ### `internal.refile_to_paperless`

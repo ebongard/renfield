@@ -135,7 +135,8 @@ async def _visible_document_meta(
     sql = text(f"""
         SELECT d.id AS id, d.generated_title AS generated_title, d.title AS title,
                d.filename AS filename, d.circle_tier AS circle_tier,
-               d.paperless_document_id AS paperless_document_id
+               d.paperless_document_id AS paperless_document_id,
+               d.document_date AS document_date, d.page_count AS page_count
         FROM documents d
         LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
         WHERE d.id = ANY(:ids) AND ({doc_clause})
@@ -149,6 +150,11 @@ async def _visible_document_meta(
             # For the chat chips' open target; read through the SAME circle
             # filter as the title, so it is known only where the title is.
             "paperless_document_id": r.paperless_document_id,
+            # For the chat's document cards, same reasoning. The document's OWN
+            # date (NULL when none was derived -- the upload day is not a
+            # substitute) as a JSON value: the row ends up in a persisted source.
+            "document_date": r.document_date.isoformat() if r.document_date else None,
+            "page_count": r.page_count,
         }
         for r in rows
     }

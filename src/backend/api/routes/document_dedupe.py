@@ -24,6 +24,7 @@ from models.database import (
 from services.auth_service import get_optional_user
 from services.database import get_db
 from services.document_dedupe_service import DocumentDedupeService
+from services.paperless_visibility import paperless_visible_to
 from utils.config import settings
 
 router = APIRouter()
@@ -72,7 +73,11 @@ async def _owned_proposal(db: AsyncSession, proposal_id: int, user) -> DocumentD
 class DupDocBrief(BaseModel):
     id: int
     name: str
+    #: Only for a caller with `mcp.paperless.read` (`paperless_visibility`).
     paperless_document_id: int | None = None
+    #: Filed in Paperless, without the id -- so a withheld id does not read as
+    #: "not in Paperless".
+    in_paperless: bool = False
     created_at: str | None = None
 
 
@@ -102,17 +107,21 @@ def _display_name(doc: Document | None) -> str:
     return doc.generated_title or doc.title or doc.filename or f"Dokument {doc.id}"
 
 
-async def _brief(db: AsyncSession, doc_id: int) -> DupDocBrief:
+async def _brief(db: AsyncSession, doc_id: int, paperless_visible: bool) -> DupDocBrief:
     doc = (await db.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
+    paperless_id = doc.paperless_document_id if doc is not None else None
     return DupDocBrief(
         id=doc_id,
         name=_display_name(doc),
-        paperless_document_id=(doc.paperless_document_id if doc is not None else None),
+        paperless_document_id=paperless_id if paperless_visible else None,
+        in_paperless=paperless_id is not None,
         created_at=(doc.created_at.isoformat() if doc is not None and doc.created_at else None),
     )
 
 
-async def _pending_for_user(db: AsyncSession, user_id: int | None) -> list[DuplicateProposalOut]:
+async def _pending_for_user(
+    db: AsyncSession, user_id: int | None, paperless_visible: bool,
+) -> list[DuplicateProposalOut]:
     q = select(DocumentDuplicateProposal).where(
         DocumentDuplicateProposal.status == DOC_DUP_PROPOSAL_PENDING
     )
@@ -129,8 +138,8 @@ async def _pending_for_user(db: AsyncSession, user_id: int | None) -> list[Dupli
                 shared_key=p.shared_key,
                 similarity=p.similarity,
                 suggested_survivor_id=p.suggested_survivor_id,
-                document_a=await _brief(db, p.document_a_id),
-                document_b=await _brief(db, p.document_b_id),
+                document_a=await _brief(db, p.document_a_id, paperless_visible),
+                document_b=await _brief(db, p.document_b_id, paperless_visible),
             )
         )
     return out
@@ -143,7 +152,9 @@ async def list_document_duplicates(
 ) -> DuplicateProposalsResponse:
     _require_enabled()
     _require_user(user)
-    return DuplicateProposalsResponse(proposals=await _pending_for_user(db, _uid(user)))
+    return DuplicateProposalsResponse(
+        proposals=await _pending_for_user(db, _uid(user), paperless_visible_to(user)),
+    )
 
 
 @router.post("/document-duplicates/run", response_model=RunResponse)
@@ -155,7 +166,7 @@ async def run_document_dedupe(
     _require_user(user)
     uid = _uid(user)
     report = await DocumentDedupeService(db).run_for_user(uid)
-    pending = await _pending_for_user(db, uid)
+    pending = await _pending_for_user(db, uid, paperless_visible_to(user))
     return RunResponse(
         candidates=report.candidates,
         newly_proposed=report.proposed,

@@ -117,8 +117,8 @@ def test_doc_response_display_name_precedence():
     from models.database import Document
 
     d = Document(filename="2026_05_23_10_55_18.pdf")
-    assert _doc_to_response_kwargs(d)["display_name"] == "2026_05_23_10_55_18.pdf"
+    assert _doc_to_response_kwargs(d, paperless_visible=True)["display_name"] == "2026_05_23_10_55_18.pdf"
     d.title = "Microsoft Word - Doc1"
-    assert _doc_to_response_kwargs(d)["display_name"] == "Microsoft Word - Doc1"
+    assert _doc_to_response_kwargs(d, paperless_visible=True)["display_name"] == "Microsoft Word - Doc1"
     d.generated_title = "Mahnung BFS health finance"
-    assert _doc_to_response_kwargs(d)["display_name"] == "Mahnung BFS health finance"
+    assert _doc_to_response_kwargs(d, paperless_visible=True)["display_name"] == "Mahnung BFS health finance"

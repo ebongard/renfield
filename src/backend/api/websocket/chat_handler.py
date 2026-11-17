@@ -500,7 +500,10 @@ def _extract_agent_sources(tool_results: list) -> list[dict]:
     return sources
 
 
-async def _turn_sources(tool_results: list, rag_results: list, user_id: int | None) -> list[dict]:
+async def _turn_sources(
+    tool_results: list, rag_results: list, user_id: int | None,
+    user_permissions: list[str] | None,
+) -> list[dict]:
     """The source chips of one turn -- the `done` frame and
     `message_metadata.sources` both carry exactly this list.
 
@@ -516,7 +519,7 @@ async def _turn_sources(tool_results: list, rag_results: list, user_id: int | No
     try:
         from api.websocket.document_sources import turn_sources
 
-        return await turn_sources(tool_results, rag_results, user_id)
+        return await turn_sources(tool_results, rag_results, user_id, user_permissions)
     except Exception as e:
         from utils.log_safety import error_text_without_content
 
@@ -2749,7 +2752,9 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # Provenance: which documents this answer drew on (circle-filtered at
             # retrieval). Persisted so chips rehydrate on history load; also sent
             # on the `done` frame below for the live turn. Empty → key omitted.
-            agent_sources = await _turn_sources(agent_tool_results, turn_rag_results, user_id)
+            agent_sources = await _turn_sources(
+                agent_tool_results, turn_rag_results, user_id, user_permissions,
+            )
             if agent_sources:
                 assistant_metadata["sources"] = agent_sources
 

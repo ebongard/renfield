@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, FileText } from 'lucide-react';
 import TierBadge from '../TierBadge';
 import type { MessageSource } from '../../types/chat';
+import { focusRevealedItem } from './revealFocus';
 
 /**
  * Provenance "source chips" under an assistant turn.
@@ -102,6 +103,17 @@ function sourceKey(source: MessageSource): string {
 export default function SourceChips({ sources }: { sources?: MessageSource[] }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const focusOnReveal = useRef(false);
+
+  // "+N" removes itself: hand the focus to the first chip it revealed. The
+  // row's first child is the "Quellen:" label, so that chip is child
+  // MAX_VISIBLE + 1.
+  useEffect(() => {
+    if (!expanded || !focusOnReveal.current) return;
+    focusOnReveal.current = false;
+    focusRevealedItem(rowRef.current?.children[MAX_VISIBLE + 1]);
+  }, [expanded]);
 
   if (!sources || sources.length === 0) return null;
 
@@ -112,6 +124,7 @@ export default function SourceChips({ sources }: { sources?: MessageSource[] }) 
     // Spacing exactly as before the hit areas existed (`mt-2 … gap-1.5`);
     // `isolate` only scopes their z-index.
     <div
+      ref={rowRef}
       className="isolate mt-2 flex flex-wrap items-center gap-1.5"
       aria-label={t('chat.sources.label')}
     >
@@ -186,7 +199,10 @@ export default function SourceChips({ sources }: { sources?: MessageSource[] }) 
       {hidden > 0 && (
         <button
           type="button"
-          onClick={() => setExpanded(true)}
+          onClick={() => {
+            focusOnReveal.current = true;
+            setExpanded(true);
+          }}
           className={MORE_BUTTON}
         >
           {t('chat.sources.more', { count: hidden })}

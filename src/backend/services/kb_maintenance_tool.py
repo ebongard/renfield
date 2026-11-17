@@ -51,6 +51,7 @@ from models.database import (
 from models.permissions import Permission, has_permission
 from services.database import AsyncSessionLocal
 from services.document_processing_history import ProcessingTrigger
+from services.paperless_visibility import paperless_visible
 from utils.config import settings
 from utils.log_safety import error_text_without_content
 
@@ -890,10 +891,15 @@ async def list_chunkless_documents(params: dict, user_id: int | None = None) -> 
 _UNFILED_STATES = ("failed", "pending")
 
 
-def _filing_status(state: str | None, pid: int | None) -> tuple[str, bool]:
-    """(human label, is_in_paperless) for a document's Paperless filing state."""
+def _filing_status(state: str | None, pid: int | None, *, show_id: bool) -> tuple[str, bool]:
+    """(human label, is_in_paperless) for a document's Paperless filing state.
+
+    The label names the Paperless id only with ``show_id``
+    (`paperless_visibility`): it goes into the answer text."""
     if state == "done":
         if pid:
+            if not show_id:
+                return ("in Paperless abgelegt", True)
             return (f"in Paperless abgelegt (Paperless-Dokument #{pid})", True)
         # done without a linked id = Paperless accepted it as a duplicate of an
         # existing document at consume time (no separate Paperless doc created).
@@ -934,6 +940,11 @@ async def list_unfiled_documents(
         except (ValueError, TypeError):
             pass
     query = (params.get("query") or "").strip()
+
+    # The Paperless id goes into the tool result (and so to the agent and the
+    # answer) only for a caller with `mcp.paperless.read`; the filing status
+    # (`in_paperless`, the label) stays for everyone in scope.
+    show_paperless_id = paperless_visible(user_permissions)
 
     # Owner scope: auth on + a known non-admin caller → own documents only.
     apply_scope = (
@@ -997,13 +1008,13 @@ async def list_unfiled_documents(
                 documents = []
                 lines = []
                 for _id, name, state, pid in rows:
-                    label, in_pl = _filing_status(state, pid)
+                    label, in_pl = _filing_status(state, pid, show_id=show_paperless_id)
                     documents.append(
                         {
                             "id": _id,
                             "name": name,
                             "paperless_state": state,
-                            "paperless_document_id": pid,
+                            "paperless_document_id": pid if show_paperless_id else None,
                             "in_paperless": in_pl,
                             "status_label": label,
                         }
@@ -1062,11 +1073,12 @@ async def list_unfiled_documents(
         documents = []
         lines = []
         for _id, name, state, pid in rows:
-            label, in_pl = _filing_status(state, pid)
+            label, in_pl = _filing_status(state, pid, show_id=show_paperless_id)
             documents.append(
                 {
                     "id": _id, "name": name, "paperless_state": state,
-                    "paperless_document_id": pid, "in_paperless": in_pl,
+                    "paperless_document_id": pid if show_paperless_id else None,
+                    "in_paperless": in_pl,
                     "status_label": label,
                 }
             )

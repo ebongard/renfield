@@ -23,6 +23,7 @@ from models.permissions import Permission, has_permission, holds_no_rung_above
 from services.atom_service import AtomService
 from services.auth_service import get_optional_user
 from services.database import get_db
+from services.paperless_visibility import paperless_visible_to
 from services.progress import DocumentProgress
 from services.rag_service import (
     DocumentBusyError,
@@ -631,10 +632,13 @@ async def list_documents(
     simba_uploaded = await _simba_uploaded_ids(db, [d.id for d in documents])
 
     delete_rights = await _document_delete_rights(db, user, documents)
+    paperless_visible = paperless_visible_to(user)
 
     responses: list[DocumentResponse] = []
     for doc in documents:
-        kwargs = _doc_to_response_kwargs(doc, in_simba=doc.id in simba_uploaded)
+        kwargs = _doc_to_response_kwargs(
+            doc, paperless_visible=paperless_visible, in_simba=doc.id in simba_uploaded,
+        )
         kwargs["can_delete"] = delete_rights[doc.id]
         # Queue position only meaningful on single-doc + batch polling
         # endpoints; the list view is a bulk screen and we don't want to
@@ -740,9 +744,10 @@ def paperless_document_url(
 ) -> str | None:
     """The link to a document in Paperless, or None.
 
-    🛑 ONE place, not three: `_doc_to_response_kwargs` serves `/documents`,
-    `/documents/batch`, `/documents/{id}`, `/upload` and `/reindex`. A URL
-    assembled in several places drifts apart.
+    🛑 ONE place: `_doc_to_response_kwargs` serves `GET /documents`,
+    `/documents/batch`, `/documents/{id}` and `PATCH /documents/{id}/tier`
+    (`/upload` and `/reindex` answer without a link); the chat sources call
+    it with `public_only=True`. A URL assembled in several places drifts apart.
 
     The base is `PAPERLESS_PUBLIC_URL` (what a browser reaches), falling back
     to `PAPERLESS_API_URL` (what the backend reaches) when it is unset.
@@ -769,10 +774,21 @@ def paperless_document_url(
     return f"{base}/documents/{paperless_document_id}/details"
 
 
-def _doc_to_response_kwargs(doc: Document, *, in_simba: bool = False) -> dict:
+def _doc_to_response_kwargs(
+    doc: Document, *, paperless_visible: bool, in_simba: bool = False,
+) -> dict:
     """Common Document → DocumentResponse mapping. Lives in one place so
     new fields land consistently across single-doc, list, and batch
     endpoints.
+
+    ``paperless_visible`` is `paperless_visible_to(<the requesting user>)`
+    and has no default: every caller decides it. 🛑 The circles let a member
+    see the document; the Paperless link names its Paperless id, which only
+    `mcp.paperless.read` gives (`services/paperless_visibility.py`, the same
+    rule as the chat sources). Without it the link is None. `in_paperless`
+    stays: a filing status for the row icon, it carries no id.
+    `paperless_link_withheld` tells the client WHY a filed document has no
+    link, so a withheld link does not read as a duplicate without an id.
 
     ``in_simba`` is passed by the list handler (batch-computed once); other
     callers default it to False."""
@@ -800,7 +816,12 @@ def _doc_to_response_kwargs(doc: Document, *, in_simba: bool = False) -> dict:
         "in_paperless": (doc.paperless_document_id is not None or doc.paperless_state == "done"),
         # A finished link rather than a raw id: the frontend should not have
         # to know a Paperless address, and the composition stays in one place.
-        "paperless_url": paperless_document_url(doc.paperless_document_id),
+        "paperless_url": (
+            paperless_document_url(doc.paperless_document_id) if paperless_visible else None
+        ),
+        "paperless_link_withheld": (
+            doc.paperless_document_id is not None and not paperless_visible
+        ),
         "in_simba": in_simba,
         # Circle visibility for the tier-control UX. Denormalized on the
         # documents row; atom_id may be NULL on legacy / global-RAG docs.
@@ -841,11 +862,12 @@ async def get_documents_batch(
     from services.document_access import readable_document_ids
     readable = await readable_document_ids(db, documents, user)
 
+    paperless_visible = paperless_visible_to(user)
     responses: list[DocumentResponse] = []
     for doc in documents:
         if doc.id not in readable:
             continue
-        kwargs = _doc_to_response_kwargs(doc)
+        kwargs = _doc_to_response_kwargs(doc, paperless_visible=paperless_visible)
         await _augment_with_progress(doc, kwargs, include_queue_position=True)
         responses.append(DocumentResponse(**kwargs))
     return responses
@@ -870,7 +892,7 @@ async def get_document(
         if not await check_document_access(document, user, "read", db):
             raise HTTPException(status_code=403, detail="No access to this document")
 
-    kwargs = _doc_to_response_kwargs(document)
+    kwargs = _doc_to_response_kwargs(document, paperless_visible=paperless_visible_to(user))
     await _augment_with_progress(document, kwargs, include_queue_position=True)
     return DocumentResponse(**kwargs)
 
@@ -1160,6 +1182,11 @@ async def set_document_tier(
         raise HTTPException(status_code=404, detail=f"Dokument {document_id} nicht gefunden")
     await _assert_document_tier_write(doc, user, db)
 
+    # Decided BEFORE the commit and `expire_all()` below: `user` lives on this
+    # same request session, and after the expiry reading its role is a lazy
+    # load outside the greenlet -- the check would deny a permitted caller.
+    paperless_visible = paperless_visible_to(user)
+
     atom_id = await _ensure_document_atom(doc, rag, db)
     await AtomService(db).update_tier(atom_id, {"tier": body.tier})
     await db.commit()
@@ -1169,7 +1196,7 @@ async def set_document_tier(
     # re-read would return the identity-map-cached doc with its pre-update tier.
     db.expire_all()
     fresh = await rag.get_document(document_id)
-    return DocumentResponse(**_doc_to_response_kwargs(fresh))
+    return DocumentResponse(**_doc_to_response_kwargs(fresh, paperless_visible=paperless_visible))
 
 
 @router.post("/documents/tier")

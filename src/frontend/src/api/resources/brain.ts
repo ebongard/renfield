@@ -109,6 +109,9 @@ export interface FeatureFlags {
   message_search_enabled: boolean;
   /** Gates chat artifacts Lane A (typed table/list/keyvalue/chart inline renderer). */
   artifacts_typed_enabled: boolean;
+  /** Chat document cards: one card per document of a turn instead of the grey
+   *  source chips. Optional -- a backend older than the flag does not send it. */
+  chat_document_links_enabled?: boolean;
   /** Gates the chat room-handoff affordance (item 8): the inline meta line shown when Media Follow moves playback to a new room. */
   room_handoff_enabled: boolean;
   /** Gates the chat message-branching UI (edit/regenerate per-message fork actions). */

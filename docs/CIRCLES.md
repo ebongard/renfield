@@ -280,7 +280,9 @@ apply). Without that gate a public-tier document, which the circle filter hands 
 token. A KB filter (`?knowledge_base_id` on the list, `knowledge_base_id` on
 `/search`) no longer 403s a caller without a KB share: the list falls to the document filter, `/search` to the
 chunk filter of `rag.search(user_id=…)`. Before, a household-tier document that search returned to a household
-member answered 403 on all of these. Write, reindex, tier, move and delete stay KB-level permissions on top
+member answered 403 on all of these. The circles give the document, not its place in Paperless: `paperless_url`
+(it names the Paperless id) is served only with `mcp.paperless.read` (`services/paperless_visibility.py`, the same
+rule as the chat sources). Write, reindex, tier, move and delete stay KB-level permissions on top
 (`check_kb_access`, the owner's `can_delete` switch). `GET /bases/{id}` and the KB list stay KB-level: a
 household member who reaches documents of a KB by tier does not see the KB itself. Proof:
 `tests/backend/test_document_read_rule_pg.py`, `tests/backend/test_document_atom_reach_parity_pg.py`.

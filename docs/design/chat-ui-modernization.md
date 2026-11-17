@@ -354,8 +354,20 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
 - **Access:** knowledge-base metadata (title, tier, Paperless id) is read through `_visible_document_meta`
   (`documents_circles_filter`, server-injected `user_id`). A `knowledge_search` source keeps its chip but gets a
   link only when the document is visible; a RAG-path document gets a chip only when it is visible NOW (cached
-  follow-up results may predate an access change). Paperless is read through ONE backend token and is not
-  circle-filtered — gated by `mcp.paperless.read` when the tool ran; a chip repeats only id + title that tool result
+  follow-up results may predate an access change). 🛑 The Paperless LINK of a knowledge-base source additionally
+  needs the asker's `mcp.paperless.read` under auth (owner decision 2026-11-17; `paperless_visible`, permissions
+  loaded server-side for the turn, `None` denies): the link names the Paperless id, which is the Paperless
+  permission's to give, not the circles'. The source itself stays. The `done` frame and the stored metadata are
+  one list, so a source written without the link stays without it for later readers too. Auth off: unchanged.
+  The rule is SYSTEM-WIDE (second owner decision, same day) and lives in ONE module,
+  `services/paperless_visibility.py`: the document API (`GET /api/knowledge/documents`, `/documents/{id}`,
+  `/documents/batch`, `PATCH /documents/{id}/tier` — `paperless_url` is None without the permission,
+  `in_paperless` stays because it is a filing status without an id; `paperless_link_withheld` says the link was
+  withheld, so `document_ref` shows a neutral "in Paperless abgelegt" instead of the duplicate wording "war schon
+  in Paperless"; the tier PATCH decides visibility before its `expire_all()`), the duplicate proposals
+  (`paperless_document_id` withheld, a new `in_paperless` keeps the badge honest) and
+  `internal.list_unfiled_documents` (id withheld from the result and the answer text) apply it too.
+  Paperless is read through ONE backend token and is not circle-filtered — gated by `mcp.paperless.read` when the tool ran; a chip repeats only id + title that tool result
   already put into the user's turn. No new read path for persisted sources: they sit in `message_metadata` and
   are readable exactly where the answer text of that message is.
 - **Read side (`metadata_for_reader`, independent of the flag):** a conversation is a shared artifact, and
@@ -371,8 +383,10 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
      every reader — the asker included — gets a source rebuilt key by key: the kind is `paperless` or absent
      (anything else is dropped); a `document_id` on ANY kind must pass `documents_circles_filter` for the reader; a
      Paperless source needs a valid `paperless_document_id` and `mcp.paperless.read`, and never carries
-     knowledge-base fields. A `sources` value that is not a list is dropped. Under auth-off the shape rules hold
-     and the two access rules are skipped.
+     knowledge-base fields; a knowledge-base source carries its Paperless link only for a reader with
+     `mcp.paperless.read` (or `mcp.paperless` / `mcp.*`) — a member who sees the document through the circles or
+     a share but lacks the permission gets the source without the link. A `sources` value that is not a list is
+     dropped. Under auth-off the shape rules hold and the three access rules are skipped.
   3. **The stored `paperless_url` is never served**, auth on or off. It only marks that the source had a link; the
      link that goes out is built NOW from the id (the stored Paperless id, or the knowledge-base document's
      looked-up one). A changed `PAPERLESS_PUBLIC_URL` therefore moves old chips along; no base, or a document no
@@ -419,6 +433,57 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
     `action_summary` (`chat_handler._build_action_summary`) — so there the model reads `"title": ""` for a
     nameless document. This changes the `knowledge_search` source of a nameless document with the flag OFF too
     (`"Dokument N"` → `""`). Rows stored earlier keep their literal "Dokument N" title.
+- **Document cards (2026-11-17, same flag).** The owner tried the linked chips and found them not useful: he
+  expected a CARD per found document with the answer. With the flag on the chat renders `DocumentCards.tsx`
+  instead of the chip row; `SourceChips` stays the flag-off rendering. The frontend learns the flag from
+  `/api/config/features` (`chat_document_links_enabled`), so both halves switch together.
+  - *The card data lives in `sources`, not in `artifacts`.* `metadata_for_reader` rebuilds every source per
+    reader; `artifacts` are served unfiltered and must never receive titles, dates or correspondents copied from a
+    tool result. Nothing depends on the model: a card is built by the server from the turn's sources.
+  - *Fields* (all optional; a source stored earlier renders as a card with its title only). Knowledge base:
+    `document_date` (the document's OWN date, `documents.document_date`; absent when none was derived — the upload
+    day is never substituted) and `page_count`, both from the `_visible_document_meta` select that already runs
+    once per turn (two more columns, no further query). A value inside the tool source is dropped, like a link
+    there. Paperless: `created`, `correspondent`, `document_type`, `page_count`, taken from the parsed tool result.
+    No snippet, no content, no tags, no facts — content in a shared thread is a different decision.
+  - *One check per field, on both sides* (`_CARD_FIELD_CHECKS`): a date is an ISO day (a timestamp is cut to its
+    day as written, a calendar day that does not exist is no date) stored as `YYYY-MM-DD`; a text is single-line
+    and capped at 120 characters; a page count is an integer from 1 to 100 000. A value that fails is left out.
+    Every display text (title, filename, correspondent, document type) is cleaned — on write and again on read,
+    so older stored sources are served clean too: a Unicode Cc character (newline, tab, NUL) becomes a space, a
+    Cf character (bidi overrides and isolates, zero-width space, BOM) is dropped except ZWNJ/ZWJ (U+200C/U+200D,
+    Persian/Indic orthography and emoji sequences), and only then is whitespace collapsed and stripped. A title
+    of format characters only is empty and gets the "untitled" label. The frontend puts each meta part in its own `<bdi>`.
+  - *Read side.* The two allowlists (`_KNOWLEDGE_SOURCE_FIELDS`, `_PAPERLESS_SOURCE_FIELDS`) carry the new fields.
+    The knowledge-base fields are covered by the visibility check that gates the whole source:
+    `_source_for_reader` returns nothing before any field is copied unless the document passes
+    `documents_circles_filter` for the reader now. Under auth they are then taken from that same fresh row, not
+    from the stored source — the reader sees the date and page count the document has NOW (a re-derived date
+    moves old cards along). Only with auth off and no lookup (an unlinked source) are the stored values served,
+    validated. They are columns of that same row, so a reader who gets them could read them from the document
+    itself. Each kind serves only its
+    own fields — the Paperless ones are gated by `mcp.paperless.read`, the knowledge-base ones by the circles, and
+    neither rides on the other kind. For the same reason a knowledge-base card does NOT take over the document
+    type and correspondent of a Paperless hit it replaces: it shows date and pages only.
+  - *One card per document.* A knowledge-base document filed in Paperless is one card with both buttons. A
+    Paperless hit whose id is the looked-up Paperless id of a knowledge-base source of the turn is dropped — keyed
+    on the id, not on a link that may be absent, and only for a document the asker can see.
+  - *Component.* DESIGN.md list-row pattern (`.atom-row` + `tier-ring-{tier}`; a Paperless card has no tier and is
+    the neutral row), `TierBadge`, `.btn-secondary`. `.btn-secondary` alone is below the 44 px touch target (measured 38 px with `text-sm`, 42 px at its default size); the card
+    buttons carry `min-h-11` — a real height, no invisible hit area. At most three cards, "+N" reveals the rest.
+    The meta line joins the parts that exist with " · "; dates go through `utils/datetime.formatDate`. A card
+    without any target (Paperless, no public base) is plain content and takes no focus. In a narrow bubble the
+    tier badge moves under the title and a long button label wraps (measured at 375 px: no overflow).
+    After "+N" the focus moves to the first revealed card's first button, or to the card itself (`tabIndex=-1`,
+    not in the tab order) when it has none; the chip row does the same.
+  - *Focus ring — owner-approved deviation from DESIGN.md (2026-11-17).* The card buttons and "+N" carry the chip
+    row's ring, character for character: `focus-visible:outline-2 focus-visible:outline-offset-2
+    focus-visible:outline-primary-500`, so a bubble has ONE ring colour whichever rendering it shows. DESIGN.md's
+    turquoise `accent-500` ring, which `.btn-secondary` / `.btn-ghost` define, measured ≈1.6:1 against the white
+    card. Changed in `DocumentCards.tsx` only; the global button classes keep DESIGN.md's ring. The utilities win
+    over the class's own `:focus-visible` rule because utilities are a later cascade layer than components
+    (measured in a browser: `rgb(230, 62, 84)`, 2 px at 2 px offset, both themes).
+  - *Flag off:* `done` frame and stored `sources` are exactly what they were; the read side is flag-independent.
 - **Not built:** opening the ORIGINAL file of a knowledge-base document that is not filed in Paperless. It needs a
   download endpoint behind `check_document_access` and an authenticated blob fetch in the frontend (one instance
   has no cookie session, a plain `href` would 401).

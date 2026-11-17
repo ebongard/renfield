@@ -113,6 +113,8 @@ export interface DocumentRow {
   paperless_url?: string | null;
   /** Integration upload status for the per-row icons. */
   in_paperless?: boolean;
+  /** Filed in Paperless, but the link is withheld (no `mcp.paperless.read`). */
+  paperless_link_withheld?: boolean;
   in_simba?: boolean;
   // Circle visibility (tier-control UX). circle_tier is the document's tier
   // (0 self … 4 public); atom_id is its atoms-row UUID (null on legacy docs).

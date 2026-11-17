@@ -3573,7 +3573,9 @@ PAPERLESS_API_URL=http://paperless.local:8000
 # `<basis>/documents/<paperless_id>/details`; ein abschliessender `/` wird entfernt,
 # ein Pfadpräfix hinter einem Reverse-Proxy bleibt erhalten.
 # Leer/ungesetzt → Rückfall auf PAPERLESS_API_URL (Verhalten wie vor der Trennung).
-# Beide leer → kein Link, kein Fehler. Nötig, sobald die API-Adresse im Browser
+# Beide leer → kein Link, kein Fehler. Bei AUTH_ENABLED=true nur für Nutzer mit
+# `mcp.paperless.read` (auch `mcp.paperless`, `mcp.*`); sonst ist `paperless_url` leer.
+# Nötig, sobald die API-Adresse im Browser
 # nicht taugt (`http://paperless:8000` unter Compose, LAN-Adresse ausserhalb des Heimnetzes).
 # PAPERLESS_PUBLIC_URL=https://paperless.example.org
 
@@ -3599,6 +3601,12 @@ PAPERLESS_API_URL=http://paperless.local:8000
 # `attachments`, `wb_entities`, `sources`) — mit und ohne AUTH_ENABLED. Bei
 # AUTH_ENABLED=true zusätzlich `sources` je LESER: eine Wissensdatenbank-Quelle nur, wenn
 # das Dokument für ihn sichtbar ist, eine Paperless-Quelle nur mit `mcp.paperless.read`.
+# Derselbe Schalter stellt den Chat auf DOKUMENTKARTEN um: das Backend schreibt in jede
+# Quelle die Kartenfelder (Wissensdatenbank: `document_date`, `page_count`; Paperless:
+# `created`, `correspondent`, `document_type`, `page_count` — geprüft und gekappt, kein
+# Auszug, kein Inhalt), und `/api/config/features` meldet `chat_document_links_enabled`,
+# woraufhin das Frontend je Dokument eine Karte statt der Chip-Zeile zeigt. Aus: Chip-Zeile
+# und Quellen wie zuvor.
 # CHAT_DOCUMENT_LINKS_ENABLED=false
 
 # Calendar (Unified Calendar MCP Server — EWS, Google, CalDAV)

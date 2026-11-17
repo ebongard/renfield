@@ -129,6 +129,52 @@ curl http://localhost:8000/api/chat/history/session-1234567890-abc?limit=20
 Schlüssel der gespeicherten `message_metadata` (`intent`, `action_success`, `action_summary`, …) verlassen den
 Server über diese Route nicht; eine Nachricht ohne Metadaten liefert `null`.
 
+**Form einer Quelle (`sources[]`).** Zwei Arten; alle Felder außer der Kennung sind optional, ein Wert der
+falschen Form wird weggelassen. Die Kartenfelder (Datum, Typ, Korrespondent, Seitenzahl) schreibt das Backend nur
+bei `CHAT_DOCUMENT_LINKS_ENABLED=true`; früher gespeicherte Quellen tragen sie nicht.
+
+```json
+[
+  {
+    "document_id": 7,
+    "filename": "bescheid.pdf",
+    "title": "Steuerbescheid 2024",
+    "tier": 0,
+    "document_date": "2025-03-14",
+    "page_count": 3,
+    "paperless_url": "https://paperless.example.org/documents/70/details"
+  },
+  {
+    "kind": "paperless",
+    "paperless_document_id": 11,
+    "title": "Rechnung",
+    "created": "2025-02-02",
+    "correspondent": "Stadtwerke",
+    "document_type": "Rechnung",
+    "page_count": 2,
+    "paperless_url": "https://paperless.example.org/documents/11/details"
+  }
+]
+```
+
+- Wissensdatenbank-Quelle (ohne `kind`): `document_date` ist das Datum des Dokuments selbst (`YYYY-MM-DD`), nie
+  das Hochladedatum; fehlt es, gibt es kein Datum. Bei `AUTH_ENABLED=true` nur ausgeliefert, wenn das Dokument
+  für den Leser sichtbar ist, und dann mit Datum und Seitenzahl, wie das Dokument sie JETZT hat (nicht wie beim
+  Zug gespeichert).
+- Paperless-Quelle (`kind: "paperless"`): `created` als `YYYY-MM-DD`, `correspondent` und `document_type` als
+  einzeilige Texte bis 120 Zeichen. Bei `AUTH_ENABLED=true` nur ausgeliefert mit `mcp.paperless.read`.
+- Alle Anzeigetexte (Titel, Dateiname, Korrespondent, Dokumenttyp) sind einzeilig: Steuerzeichen (Unicode Cc,
+  etwa Zeilenumbruch oder NUL) werden zum Leerzeichen, Formatzeichen (Cf: Bidi-Umschalter, Nullbreitenzeichen)
+  entfallen — außer ZWNJ/ZWJ (U+200C/U+200D), die persische und indische Schrift sowie Emoji-Folgen brauchen.
+- `paperless_url` baut der Server beim Ausliefern aus `PAPERLESS_PUBLIC_URL` und der Kennung neu; der gespeicherte
+  Wert wird nie ausgeliefert. Kein Auszug, kein Inhalt, keine Schlagwörter.
+- Bei `AUTH_ENABLED=true` trägt auch eine Wissensdatenbank-Quelle `paperless_url` nur für einen Leser mit
+  `mcp.paperless.read` (auch `mcp.paperless` oder `mcp.*`): der Link nennt die Paperless-Kennung. Ohne die
+  Berechtigung bleibt die Quelle, nur der Link fehlt. Dasselbe gilt schon beim Schreiben für den Fragenden (der
+  `done`-Rahmen und die gespeicherten `sources` sind eine Liste): fehlt ihm die Berechtigung, wird die Quelle ohne
+  Link gespeichert und bleibt es auch für spätere Leser. Die Regel gilt systemweit (`services/paperless_visibility.py`):
+  auch `GET /api/knowledge/documents…` liefert `paperless_url` nur mit dieser Berechtigung.
+
 ---
 
 ### 4. Konversationen durchsuchen

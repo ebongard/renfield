@@ -235,7 +235,12 @@
       "untitled": "Dokument {{id}}",
       "paperlessUntitled": "Paperless-Dokument {{id}}",
       "openInPaperless": "{{title}} – in Paperless öffnen (neuer Tab)",
-      "noLink": "In Paperless gefunden – kein Link verfügbar"
+      "noLink": "In Paperless gefunden – kein Link verfügbar",
+      "open": "Öffnen",
+      "openDocument": "{{title}} öffnen",
+      "inPaperless": "In Paperless öffnen",
+      "pages_one": "{{count}} S.",
+      "pages_other": "{{count}} S."
     },
     "followups": {
       "label": "Vorschläge für Folgefragen"
@@ -275,6 +280,7 @@
         "open": "In Paperless öffnen",
         "filing": "wird gerade abgelegt",
         "alreadyThere": "war schon in Paperless",
+        "filed": "in Paperless abgelegt",
         "notFiled": "nicht in Paperless abgelegt",
         "otherInstance": "liegt in {{instance}} — von hier aus noch nicht abrufbar"
       }
@@ -2657,6 +2663,7 @@
     "keepThis": "{{name}} behalten",
     "imported": "importiert {{date}}",
     "inPaperless": "In Paperless #{{id}}",
+    "inPaperlessNoId": "In Paperless",
     "notInPaperless": "nicht in Paperless",
     "resolutionLegend": "Was mit dem doppelten Dokument geschehen soll:",
     "supersede": "Ausblenden",

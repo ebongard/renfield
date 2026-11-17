@@ -235,7 +235,13 @@
       "untitled": "Document {{id}}",
       "paperlessUntitled": "Document Paperless {{id}}",
       "openInPaperless": "{{title}} – ouvrir dans Paperless (nouvel onglet)",
-      "noLink": "Trouvé dans Paperless – aucun lien disponible"
+      "noLink": "Trouvé dans Paperless – aucun lien disponible",
+      "open": "Ouvrir",
+      "openDocument": "Ouvrir {{title}}",
+      "inPaperless": "Ouvrir dans Paperless",
+      "pages_one": "{{count}} p.",
+      "pages_many": "{{count}} p.",
+      "pages_other": "{{count}} p."
     },
     "followups": {
       "label": "Suggestions de suite"
@@ -275,6 +281,7 @@
         "open": "Ouvrir dans Paperless",
         "filing": "classement en cours",
         "alreadyThere": "déjà dans Paperless",
+        "filed": "classé dans Paperless",
         "notFiled": "non classé dans Paperless",
         "otherInstance": "stocké dans {{instance}} — pas encore accessible d'ici"
       }
@@ -2679,6 +2686,7 @@
     "keepThis": "Conserver {{name}}",
     "imported": "importé le {{date}}",
     "inPaperless": "Dans Paperless n° {{id}}",
+    "inPaperlessNoId": "Dans Paperless",
     "notInPaperless": "absent de Paperless",
     "resolutionLegend": "Que faire du document en double\u00a0:",
     "supersede": "Masquer",

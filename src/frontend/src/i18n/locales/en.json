@@ -235,7 +235,12 @@
       "untitled": "Document {{id}}",
       "paperlessUntitled": "Paperless document {{id}}",
       "openInPaperless": "{{title}} – open in Paperless (new tab)",
-      "noLink": "Found in Paperless – no link available"
+      "noLink": "Found in Paperless – no link available",
+      "open": "Open",
+      "openDocument": "Open {{title}}",
+      "inPaperless": "Open in Paperless",
+      "pages_one": "{{count}} page",
+      "pages_other": "{{count}} pages"
     },
     "followups": {
       "label": "Follow-up suggestions"
@@ -275,6 +280,7 @@
         "open": "Open in Paperless",
         "filing": "being filed",
         "alreadyThere": "already in Paperless",
+        "filed": "filed in Paperless",
         "notFiled": "not filed in Paperless",
         "otherInstance": "stored in {{instance}} — not reachable from here yet"
       }
@@ -2657,6 +2663,7 @@
     "keepThis": "Keep {{name}}",
     "imported": "imported {{date}}",
     "inPaperless": "In Paperless #{{id}}",
+    "inPaperlessNoId": "In Paperless",
     "notInPaperless": "not in Paperless",
     "resolutionLegend": "What to do with the duplicate document:",
     "supersede": "Hide",

@@ -56,7 +56,7 @@ def test_the_field_SURVIVES_the_response_model(monkeypatch):
     from utils.config import settings
     monkeypatch.setattr(settings, "paperless_api_url", "http://paperless.local:8000",
                         raising=False)
-    kwargs = _doc_to_response_kwargs(_doc(paperless_document_id=42, paperless_state="done"))
+    kwargs = _doc_to_response_kwargs(_doc(paperless_document_id=42, paperless_state="done"), paperless_visible=True)
     response = DocumentResponse(**kwargs)
     assert response.paperless_url == "http://paperless.local:8000/documents/42/details", (
         "the field did not survive the response model — exactly the silent "
@@ -71,7 +71,7 @@ def test_a_duplicate_has_no_url_but_counts_as_filed(monkeypatch):
     monkeypatch.setattr(settings, "paperless_api_url", "http://paperless.local:8000",
                         raising=False)
     response = DocumentResponse(**_doc_to_response_kwargs(
-        _doc(paperless_document_id=None, paperless_state="done")))
+        _doc(paperless_document_id=None, paperless_state="done"), paperless_visible=True))
     assert response.paperless_url is None
     assert response.in_paperless is True
 
@@ -81,7 +81,7 @@ def test_still_ingesting_is_neither_filed_nor_linked(monkeypatch):
     monkeypatch.setattr(settings, "paperless_api_url", "http://paperless.local:8000",
                         raising=False)
     response = DocumentResponse(**_doc_to_response_kwargs(
-        _doc(status="processing", paperless_document_id=None, paperless_state=None)))
+        _doc(status="processing", paperless_document_id=None, paperless_state=None), paperless_visible=True))
     assert response.paperless_url is None
     assert response.in_paperless is False
 
@@ -94,7 +94,7 @@ def test_NEGATIVE_CONTROL_the_model_really_drops_unknown_keys():
     "without a declaration it falls away silently" would be unevidenced.
     """
     response = DocumentResponse(**{
-        **_doc_to_response_kwargs(_doc()),
+        **_doc_to_response_kwargs(_doc(), paperless_visible=True),
         "gibtesnicht": "wert",
     })
     assert not hasattr(response, "gibtesnicht"), (
@@ -141,7 +141,7 @@ def test_the_public_url_reaches_the_response_model(monkeypatch):
                         raising=False)
     monkeypatch.setattr(settings, "paperless_api_url", "http://paperless:8000", raising=False)
     response = DocumentResponse(**_doc_to_response_kwargs(
-        _doc(paperless_document_id=42, paperless_state="done")))
+        _doc(paperless_document_id=42, paperless_state="done"), paperless_visible=True))
     assert response.paperless_url == "https://paperless.example.org/documents/42/details"
 
 
@@ -197,3 +197,72 @@ def test_NEGATIVE_CONTROL_the_duplicate_check_sees_a_duplicate():
         "    paperless_api_url: str | None = None\n"
     )
     assert _duplicate_fields(source) == ["paperless_api_url"]
+
+
+# ---------------------------------------------------------------------------
+# The link names the Paperless id: only for a caller with mcp.paperless.read
+# ---------------------------------------------------------------------------
+
+def test_without_paperless_visibility_the_link_is_withheld_and_the_status_stays(monkeypatch):
+    from utils.config import settings
+    monkeypatch.setattr(settings, "paperless_public_url", "https://paperless.example.org",
+                        raising=False)
+    doc = _doc(paperless_document_id=42, paperless_state="done")
+
+    response = DocumentResponse(**_doc_to_response_kwargs(doc, paperless_visible=False))
+
+    assert response.paperless_url is None
+    assert response.in_paperless is True
+    assert "42" not in response.model_dump_json()
+    # Control: the same document with visibility carries the link.
+    assert DocumentResponse(
+        **_doc_to_response_kwargs(doc, paperless_visible=True)
+    ).paperless_url == "https://paperless.example.org/documents/42/details"
+
+
+class _User:
+    def __init__(self, permissions):
+        self._permissions = permissions
+
+    def get_permissions(self):
+        if isinstance(self._permissions, Exception):
+            raise self._permissions
+        return self._permissions
+
+
+@pytest.mark.parametrize("permissions, visible", [
+    (["mcp.paperless.read"], True),
+    (["mcp.paperless"], True),
+    (["mcp.*"], True),
+    (["mcp.paperless.write"], False),
+    (["kb.all", "admin"], False),
+    ([], False),
+    (None, False),
+])
+def test_paperless_visibility_under_auth(monkeypatch, permissions, visible):
+    from services.paperless_visibility import paperless_visible, paperless_visible_to
+    from utils.config import settings
+    monkeypatch.setattr(settings, "auth_enabled", True)
+
+    assert paperless_visible(permissions) is visible
+    if permissions is not None:
+        assert paperless_visible_to(_User(permissions)) is visible
+
+
+def test_paperless_visibility_denies_without_a_user_or_readable_permissions(monkeypatch):
+    from services.paperless_visibility import paperless_visible_to
+    from utils.config import settings
+    monkeypatch.setattr(settings, "auth_enabled", True)
+
+    assert paperless_visible_to(None) is False
+    assert paperless_visible_to(_User(RuntimeError("role not loaded"))) is False
+
+
+def test_auth_off_shows_everything(monkeypatch):
+    from services.paperless_visibility import paperless_visible, paperless_visible_to
+    from utils.config import settings
+    monkeypatch.setattr(settings, "auth_enabled", False)
+
+    assert paperless_visible(None) is True
+    assert paperless_visible([]) is True
+    assert paperless_visible_to(None) is True

@@ -129,6 +129,10 @@ class DocumentResponse(BaseModel):
     #: frontend and nothing would report it. Found as C1 in the review of this
     #: plan, before it was built.
     paperless_url: str | None = None
+    #: The document is in Paperless but the caller lacks `mcp.paperless.read`,
+    #: so `paperless_url` is None for that reason -- not because it is a
+    #: duplicate without an id of its own. Carries no id.
+    paperless_link_withheld: bool = False
     in_simba: bool = False
     # Circle visibility (tier-control UX). circle_tier is the document's
     # denormalized tier (0 self … 4 public); atom_id is its atoms-row UUID

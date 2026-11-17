@@ -13,6 +13,10 @@ export type MessageRole = 'user' | 'assistant' | 'system';
 // (`paperless_url`, built server-side from the configured public Paperless
 // base -- never from model output) and a second kind of source: a document the
 // agent found in Paperless itself, which has no knowledge-base id.
+//
+// Document cards (same flag): a source also carries the few fields a card
+// shows beside the title. All of them are optional -- a source stored before
+// cards existed has none and renders as a card with its title only.
 export interface KnowledgeMessageSource {
   kind?: undefined;
   document_id: number | string;
@@ -21,6 +25,9 @@ export interface KnowledgeMessageSource {
   tier?: number | null;
   /** The filed original in Paperless; absent when not filed or no public base. */
   paperless_url?: string | null;
+  /** The document's OWN date as `YYYY-MM-DD` (not the upload day); absent when none was derived. */
+  document_date?: string;
+  page_count?: number;
 }
 
 export interface PaperlessMessageSource {
@@ -30,6 +37,11 @@ export interface PaperlessMessageSource {
   title: string;
   /** Absent when no browser-reachable Paperless base is configured. */
   paperless_url?: string | null;
+  /** The document's date in Paperless, as `YYYY-MM-DD`. */
+  created?: string;
+  correspondent?: string;
+  document_type?: string;
+  page_count?: number;
 }
 
 export type MessageSource = KnowledgeMessageSource | PaperlessMessageSource;

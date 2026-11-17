@@ -655,3 +655,42 @@ async def test_list_unfiled_unscoped_when_auth_off(monkeypatch):
 def test_escape_like_neutralizes_wildcards():
     assert kb._escape_like("50%_off") == "50\\%\\_off"
     assert kb._escape_like("a\\b") == "a\\\\b"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("permissions", [[], ["kb.own"], None])
+async def test_list_unfiled_withholds_the_paperless_id_without_the_permission(
+    monkeypatch, permissions,
+):
+    """The id goes into the tool result AND the answer text: under auth only
+    for a caller with mcp.paperless.read. The filing status stays."""
+    from utils.config import settings
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    cm, _ = _session([_all_result([(44, "Rechnung Taxon", "done", 50)])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+
+    out = await kb.list_unfiled_documents(
+        {"query": "Taxon"}, user_id=None, user_permissions=permissions,
+    )
+
+    doc = out["data"]["documents"][0]
+    assert doc["in_paperless"] is True
+    assert doc["paperless_document_id"] is None
+    assert "50" not in out["message"]
+    assert "in Paperless abgelegt" in out["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("permissions", [["mcp.paperless.read"], ["mcp.paperless"], ["mcp.*"]])
+async def test_list_unfiled_shows_the_paperless_id_with_the_permission(monkeypatch, permissions):
+    from utils.config import settings
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    cm, _ = _session([_all_result([(44, "Rechnung Taxon", "done", 50)])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+
+    out = await kb.list_unfiled_documents(
+        {"query": "Taxon"}, user_id=None, user_permissions=permissions,
+    )
+
+    assert out["data"]["documents"][0]["paperless_document_id"] == 50
+    assert "Paperless-Dokument #50" in out["message"]

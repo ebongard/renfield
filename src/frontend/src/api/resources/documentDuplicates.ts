@@ -13,7 +13,10 @@ export type DuplicateResolution = 'supersede' | 'delete';
 export interface DuplicateDocBrief {
   id: number;
   name: string;
+  /** Only for a caller with `mcp.paperless.read`. */
   paperless_document_id: number | null;
+  /** Filed in Paperless; true also when the id is withheld. */
+  in_paperless?: boolean;
   created_at: string | null;
 }
 

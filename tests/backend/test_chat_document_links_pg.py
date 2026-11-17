@@ -25,6 +25,10 @@ pytestmark = [pytest.mark.backend, pytest.mark.database]
 PUBLIC = "https://paperless.example.org"
 TIER_SELF = 0
 PAPERLESS_ID = 7001
+#: The asker's permissions in the write-side tests that expect a link: the
+#: Paperless link of a knowledge-base source needs the Paperless permission.
+READS_PAPERLESS = ["mcp.paperless.read"]
+LINK = f"{PUBLIC}/documents/{PAPERLESS_ID}/details"
 #: Retrieved chunk text of the asker's private document.
 SECRET_CONTEXT = "Rueckzahlung 4711 an die Antragstellerin"
 
@@ -88,7 +92,7 @@ class TestRagPathSourcesAreCircleFiltered:
         alice, _bob, _carol = people
         _kb, doc = await _private_document(db_session, alice.id)
 
-        sources = await ch._turn_sources([], _rag(doc), alice.id)
+        sources = await ch._turn_sources([], _rag(doc), alice.id, READS_PAPERLESS)
 
         assert sources == [{
             "document_id": doc.id, "filename": "doclinks.pdf", "title": "Privater Bescheid",
@@ -99,27 +103,161 @@ class TestRagPathSourcesAreCircleFiltered:
         alice, _bob, carol = people
         _kb, doc = await _private_document(db_session, alice.id)
         # Control: the very same call names the document for its owner.
-        assert await ch._turn_sources([], _rag(doc), alice.id)
+        assert await ch._turn_sources([], _rag(doc), alice.id, READS_PAPERLESS)
 
-        assert await ch._turn_sources([], _rag(doc), carol.id) == []
+        assert await ch._turn_sources([], _rag(doc), carol.id, READS_PAPERLESS) == []
 
     async def test_an_unidentified_turn_gets_no_source(self, db_session, people):
         alice, _bob, _carol = people
         _kb, doc = await _private_document(db_session, alice.id)
 
-        assert await ch._turn_sources([], _rag(doc), None) == []
+        assert await ch._turn_sources([], _rag(doc), None, READS_PAPERLESS) == []
 
     async def test_a_kb_share_opens_chip_and_link(self, db_session, people):
         alice, bob, carol = people
         kb_id, doc = await _private_document(db_session, alice.id)
-        assert await ch._turn_sources([], _rag(doc), bob.id) == []
+        assert await ch._turn_sources([], _rag(doc), bob.id, READS_PAPERLESS) == []
 
         await ks.share_kb(db_session, kb_id, bob.id, "read", granted_by=alice.id)
 
-        [source] = await ch._turn_sources([], _rag(doc), bob.id)
+        [source] = await ch._turn_sources([], _rag(doc), bob.id, READS_PAPERLESS)
         assert source["document_id"] == doc.id
         assert source["paperless_url"] == f"{PUBLIC}/documents/{PAPERLESS_ID}/details"
-        assert await ch._turn_sources([], _rag(doc), carol.id) == []
+        assert await ch._turn_sources([], _rag(doc), carol.id, READS_PAPERLESS) == []
+
+
+class TestTheAskersPaperlessPermissionDecidesTheLink:
+    """The circles decide the knowledge-base source; its Paperless link names
+    the Paperless id and is the Paperless permission's to give. The live
+    `done` frame and the stored metadata are one list -- this is both."""
+
+    @pytest.mark.parametrize("permissions", [
+        ["mcp.paperless.read"], ["mcp.paperless"], ["mcp.*"],
+    ])
+    async def test_with_the_permission_the_source_carries_the_link(
+        self, db_session, people, permissions,
+    ):
+        alice, _bob, _carol = people
+        _kb, doc = await _private_document(db_session, alice.id)
+
+        [source] = await ch._turn_sources([], _rag(doc), alice.id, permissions)
+
+        assert source["paperless_url"] == LINK
+
+    @pytest.mark.parametrize("permissions", [
+        [], ["mcp.calendar.read"], ["mcp.paperless.write"], ["kb.all"], None,
+    ])
+    async def test_without_it_the_source_stays_and_the_link_is_gone(
+        self, db_session, people, permissions,
+    ):
+        alice, _bob, _carol = people
+        _kb, doc = await _private_document(db_session, alice.id)
+        # Control: the same turn with the permission carries the link.
+        [linked] = await ch._turn_sources([], _rag(doc), alice.id, READS_PAPERLESS)
+        assert linked["paperless_url"] == LINK
+
+        [source] = await ch._turn_sources([], _rag(doc), alice.id, permissions)
+
+        assert source == {
+            "document_id": doc.id, "filename": "doclinks.pdf", "title": "Privater Bescheid",
+            "tier": TIER_SELF,
+        }
+        assert str(PAPERLESS_ID) not in repr(source)
+
+    async def test_a_knowledge_search_source_loses_its_link_too(self, db_session, people):
+        alice, _bob, _carol = people
+        _kb, doc = await _private_document(db_session, alice.id)
+        kb_source = {"document_id": doc.id, "filename": "doclinks.pdf",
+                     "title": "Privater Bescheid", "tier": TIER_SELF,
+                     # A link inside the tool source is never trusted either.
+                     "paperless_url": LINK}
+
+        [source] = await ch._turn_sources(
+            [("internal.knowledge_search", {"sources": [kb_source]})], [], alice.id, [],
+        )
+
+        assert "paperless_url" not in source
+        assert source["document_id"] == doc.id
+
+    async def test_auth_off_is_unchanged(self, db_session, people, monkeypatch):
+        alice, _bob, _carol = people
+        _kb, doc = await _private_document(db_session, alice.id)
+        monkeypatch.setattr(settings, "auth_enabled", False)
+
+        for permissions in ([], None):
+            [source] = await ch._turn_sources([], _rag(doc), alice.id, permissions)
+            assert source["paperless_url"] == LINK
+
+
+class TestCardFieldsComeFromTheCircleFilteredRow:
+    """Document cards: the document's own date and its page count are columns
+    of the row `_visible_document_meta` already selects -- the same statement,
+    the same circle filter, no further query."""
+
+    @staticmethod
+    async def _dated(db, owner_id):
+        import datetime
+
+        kb_id, doc = await _private_document(db, owner_id)
+        doc.document_date = datetime.date(2025, 3, 14)
+        doc.page_count = 3
+        await db.commit()
+        return kb_id, doc
+
+    async def test_the_owner_gets_date_and_pages(self, db_session, people):
+        alice, _bob, _carol = people
+        _kb, doc = await self._dated(db_session, alice.id)
+
+        row = (await ds._visible_meta({doc.id}, alice.id))[doc.id]
+        [source] = await ch._turn_sources([], _rag(doc), alice.id, READS_PAPERLESS)
+
+        # The lookup hands out a JSON value, not a `date`: the row is persisted.
+        assert row["document_date"] == "2025-03-14" and row["page_count"] == 3
+        assert source == {
+            "document_id": doc.id, "filename": "doclinks.pdf", "title": "Privater Bescheid",
+            "tier": TIER_SELF, "document_date": "2025-03-14", "page_count": 3,
+            "paperless_url": f"{PUBLIC}/documents/{PAPERLESS_ID}/details",
+        }
+
+    async def test_a_stranger_gets_neither_from_lookup_nor_from_a_tool_source(
+        self, db_session, people,
+    ):
+        alice, _bob, carol = people
+        _kb, doc = await self._dated(db_session, alice.id)
+        kb_source = {"document_id": doc.id, "filename": "x.pdf", "title": "X", "tier": 4}
+        tool_results = [("internal.knowledge_search", {"sources": [kb_source]})]
+        # Control: the owner's turn carries both.
+        [for_owner] = await ch._turn_sources(tool_results, [], alice.id, READS_PAPERLESS)
+        assert for_owner["document_date"] == "2025-03-14" and for_owner["page_count"] == 3
+
+        assert await ds._visible_meta({doc.id}, carol.id) == {}
+        assert await ch._turn_sources(tool_results, [], carol.id, READS_PAPERLESS) == [kb_source]
+        assert await ch._turn_sources([], _rag(doc), carol.id, READS_PAPERLESS) == []
+
+    async def test_a_document_without_a_date_carries_no_date_and_never_the_upload_day(
+        self, db_session, people,
+    ):
+        alice, _bob, _carol = people
+        _kb, doc = await _private_document(db_session, alice.id)
+        assert doc.document_date is None and doc.created_at is not None
+
+        [source] = await ch._turn_sources([], _rag(doc), alice.id, READS_PAPERLESS)
+
+        assert "document_date" not in source and "created_at" not in source
+        assert "page_count" not in source
+
+    async def test_with_the_flag_off_the_turn_has_no_card_fields(
+        self, db_session, people, monkeypatch,
+    ):
+        alice, _bob, _carol = people
+        _kb, doc = await self._dated(db_session, alice.id)
+        kb_source = {"document_id": doc.id, "filename": "x.pdf", "title": "X", "tier": 0}
+        tool_results = [("internal.knowledge_search", {"sources": [kb_source]})]
+        monkeypatch.setattr(settings, "chat_document_links_enabled", False, raising=False)
+
+        sources = await ch._turn_sources(tool_results, _rag(doc), alice.id, READS_PAPERLESS)
+
+        assert sources == [kb_source] and sources[0] is kb_source
 
 
 class TestADocumentWithoutAName:
@@ -131,7 +269,7 @@ class TestADocumentWithoutAName:
         await db_session.commit()
 
         row = (await ds._visible_meta({doc.id}, alice.id))[doc.id]
-        [source] = await ch._turn_sources([], _rag(doc), alice.id)
+        [source] = await ch._turn_sources([], _rag(doc), alice.id, READS_PAPERLESS)
 
         assert not row["title"] and row["filename"] == ""
         assert source["title"] == "" and source["filename"] == ""
@@ -151,8 +289,8 @@ class TestKnowledgeSearchSourcesGetNoLinkOutsideTheCircles:
         kb_source = {"document_id": doc.id, "filename": "x.pdf", "title": "X", "tier": 4}
         tool_results = [("internal.knowledge_search", {"sources": [kb_source]})]
 
-        for_owner = await ch._turn_sources(tool_results, [], alice.id)
-        for_stranger = await ch._turn_sources(tool_results, [], carol.id)
+        for_owner = await ch._turn_sources(tool_results, [], alice.id, READS_PAPERLESS)
+        for_stranger = await ch._turn_sources(tool_results, [], carol.id, READS_PAPERLESS)
 
         assert for_owner == [
             {**kb_source, "paperless_url": f"{PUBLIC}/documents/{PAPERLESS_ID}/details"},
@@ -175,7 +313,7 @@ class TestKnowledgeSearchSourcesGetNoLinkOutsideTheCircles:
                 {"results": [{"id": PAPERLESS_ID, "title": "Treffer"}]})}],
         )
 
-        sources = await ch._turn_sources([hit], _rag(doc), carol.id)
+        sources = await ch._turn_sources([hit], _rag(doc), carol.id, READS_PAPERLESS)
 
         assert sources == [{
             "kind": "paperless", "paperless_document_id": PAPERLESS_ID, "title": "Treffer",
@@ -236,11 +374,21 @@ async def kitchen(db_session: AsyncSession, monkeypatch, own_session_to_test_db)
     await db_session.commit()
 
     _kb, doc = await _private_document(db_session, anna.id)
+    import datetime
+
+    # What the document says now -- equal to what the turn stored.
+    doc.document_date = datetime.date(2025, 3, 14)
+    doc.page_count = 3
+    await db_session.commit()
     sources = [
         {"document_id": doc.id, "filename": "doclinks.pdf", "title": "Privater Bescheid",
-         "tier": TIER_SELF, "paperless_url": f"{PUBLIC}/documents/{PAPERLESS_ID}/details"},
+         "tier": TIER_SELF, "document_date": "2025-03-14", "page_count": 3,
+         "paperless_url": f"{PUBLIC}/documents/{PAPERLESS_ID}/details"},
+        # The first Paperless source is a document CARD (date, type,
+        # correspondent, pages); the second is one stored before cards existed.
         {"kind": "paperless", "paperless_document_id": 8001, "title": "Annas Beleg",
-         "paperless_url": f"{PUBLIC}/documents/8001/details"},
+         "created": "2026-01-02", "correspondent": "Annas Bank", "document_type": "Beleg",
+         "page_count": 2, "paperless_url": f"{PUBLIC}/documents/8001/details"},
         {"kind": "paperless", "paperless_document_id": 8002, "title": "Annas Vertrag"},
     ]
     # The metadata a REAL turn stores, built by the handler's own builders --
@@ -338,6 +486,9 @@ class TestAReaderOfASharedConversation:
         assert "Privater Bescheid" not in served and "Annas" not in served
         assert SECRET_CONTEXT not in served
         assert str(PAPERLESS_ID) not in served and "800" not in served
+        # ... nor a card field of either: document date, Paperless date, type.
+        assert "2025-03-14" not in served and "2026-01-02" not in served
+        assert "page_count" not in served and "Beleg" not in served
 
     async def test_only_the_keys_the_client_reads_leave_the_server(self, db_session, kitchen):
         """The history route is an allowlist. `action_summary` is the agent's
@@ -363,13 +514,49 @@ class TestAReaderOfASharedConversation:
 
         assert sources == kitchen["sources"][1:]
 
-    async def test_a_share_opens_the_knowledge_base_source(self, db_session, kitchen):
+    async def test_a_share_opens_the_knowledge_base_source_but_not_its_paperless_link(
+        self, db_session, kitchen,
+    ):
+        """Bert may see the document through the share, but holds no Paperless
+        permission: the link names the Paperless id, which is not his to see."""
         kb_id = kitchen["doc"].knowledge_base_id
         await ks.share_kb(db_session, kb_id, kitchen["bert"], "read", granted_by=kitchen["anna"])
 
         _meta, sources = await _history_sources(db_session, kitchen["bert"])
 
-        assert sources == kitchen["sources"][:1]
+        stored = dict(kitchen["sources"][0])
+        del stored["paperless_url"]
+        assert sources == [stored]
+        assert str(PAPERLESS_ID) not in repr(sources)
+
+    @pytest.mark.parametrize("permissions", [
+        ["mcp.paperless.read"], ["mcp.paperless"], ["mcp.*"],
+    ])
+    async def test_a_shared_reader_with_the_permission_gets_the_link(
+        self, db_session, kitchen, permissions,
+    ):
+        from sqlalchemy import text
+
+        dora = await ensure_user(
+            db_session, 5, username="dora", role_name=f"paperless-{permissions[0]}",
+            permissions=permissions,
+        )
+        await db_session.execute(
+            text(
+                "INSERT INTO circle_memberships "
+                "(circle_owner_id, member_user_id, dimension, value, granted_by, granted_at) "
+                "VALUES (1, :m, 'tier', '2', 1, NOW())"
+            ),
+            {"m": dora.id},
+        )
+        kb_id = kitchen["doc"].knowledge_base_id
+        await ks.share_kb(db_session, kb_id, dora.id, "read", granted_by=kitchen["anna"])
+        await db_session.commit()
+
+        _meta, sources = await _history_sources(db_session, dora.id)
+
+        assert sources[0] == kitchen["sources"][0]
+        assert sources[0]["paperless_url"] == LINK
 
     async def test_the_stored_row_is_not_touched(self, db_session, kitchen):
         """`message_metadata` is a plain JSON column (no `MutableDict`): an
@@ -393,6 +580,24 @@ class TestAReaderOfASharedConversation:
         # Same identity map, nothing expired: these are the dicts the route read.
         assert [m.message_metadata for m in rows] == before
         assert not db_session.dirty
+
+    async def test_the_card_fields_are_what_the_document_says_now(self, db_session, kitchen):
+        """The date was derived anew after the turn: under auth the reader gets
+        the document's CURRENT date and page count, read through the same
+        circle-filtered statement that decides the source."""
+        import datetime
+
+        doc = kitchen["doc"]
+        doc.document_date = datetime.date(2024, 11, 30)
+        doc.page_count = 5
+        await db_session.commit()
+
+        _meta, sources = await _history_sources(db_session, kitchen["anna"])
+
+        assert sources[0]["document_date"] == "2024-11-30"
+        assert sources[0]["page_count"] == 5
+        # Control: the stored source still says otherwise.
+        assert kitchen["sources"][0]["document_date"] == "2025-03-14"
 
     async def test_auth_off_is_one_trust_domain(self, db_session, kitchen, monkeypatch):
         monkeypatch.setattr(settings, "auth_enabled", False)
