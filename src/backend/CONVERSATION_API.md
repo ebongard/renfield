@@ -129,6 +129,41 @@ curl http://localhost:8000/api/chat/history/session-1234567890-abc?limit=20
 Schlüssel der gespeicherten `message_metadata` (`intent`, `action_success`, `action_summary`, …) verlassen den
 Server über diese Route nicht; eine Nachricht ohne Metadaten liefert `null`.
 
+**Form einer Quelle (`sources[]`).** Zwei Arten; alle Felder außer der Kennung sind optional, ein Wert der
+falschen Form wird weggelassen. Die Kartenfelder (Datum, Typ, Korrespondent, Seitenzahl) schreibt das Backend nur
+bei `CHAT_DOCUMENT_LINKS_ENABLED=true`; früher gespeicherte Quellen tragen sie nicht.
+
+```json
+[
+  {
+    "document_id": 7,
+    "filename": "bescheid.pdf",
+    "title": "Steuerbescheid 2024",
+    "tier": 0,
+    "document_date": "2025-03-14",
+    "page_count": 3,
+    "paperless_url": "https://paperless.example.org/documents/70/details"
+  },
+  {
+    "kind": "paperless",
+    "paperless_document_id": 11,
+    "title": "Rechnung",
+    "created": "2025-02-02",
+    "correspondent": "Stadtwerke",
+    "document_type": "Rechnung",
+    "page_count": 2,
+    "paperless_url": "https://paperless.example.org/documents/11/details"
+  }
+]
+```
+
+- Wissensdatenbank-Quelle (ohne `kind`): `document_date` ist das Datum des Dokuments selbst (`YYYY-MM-DD`), nie
+  das Hochladedatum; fehlt es, gibt es kein Datum. Nur ausgeliefert, wenn das Dokument für den Leser sichtbar ist.
+- Paperless-Quelle (`kind: "paperless"`): `created` als `YYYY-MM-DD`, `correspondent` und `document_type` als
+  einzeilige Texte bis 120 Zeichen. Nur ausgeliefert mit `mcp.paperless.read`.
+- `paperless_url` baut der Server beim Ausliefern aus `PAPERLESS_PUBLIC_URL` und der Kennung neu; der gespeicherte
+  Wert wird nie ausgeliefert. Kein Auszug, kein Inhalt, keine Schlagwörter.
+
 ---
 
 ### 4. Konversationen durchsuchen

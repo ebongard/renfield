@@ -3599,6 +3599,12 @@ PAPERLESS_API_URL=http://paperless.local:8000
 # `attachments`, `wb_entities`, `sources`) — mit und ohne AUTH_ENABLED. Bei
 # AUTH_ENABLED=true zusätzlich `sources` je LESER: eine Wissensdatenbank-Quelle nur, wenn
 # das Dokument für ihn sichtbar ist, eine Paperless-Quelle nur mit `mcp.paperless.read`.
+# Derselbe Schalter stellt den Chat auf DOKUMENTKARTEN um: das Backend schreibt in jede
+# Quelle die Kartenfelder (Wissensdatenbank: `document_date`, `page_count`; Paperless:
+# `created`, `correspondent`, `document_type`, `page_count` — geprüft und gekappt, kein
+# Auszug, kein Inhalt), und `/api/config/features` meldet `chat_document_links_enabled`,
+# woraufhin das Frontend je Dokument eine Karte statt der Chip-Zeile zeigt. Aus: Chip-Zeile
+# und Quellen wie zuvor.
 # CHAT_DOCUMENT_LINKS_ENABLED=false
 
 # Calendar (Unified Calendar MCP Server — EWS, Google, CalDAV)

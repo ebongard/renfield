@@ -419,6 +419,41 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
     `action_summary` (`chat_handler._build_action_summary`) — so there the model reads `"title": ""` for a
     nameless document. This changes the `knowledge_search` source of a nameless document with the flag OFF too
     (`"Dokument N"` → `""`). Rows stored earlier keep their literal "Dokument N" title.
+- **Document cards (2026-11-17, same flag).** The owner tried the linked chips and found them not useful: he
+  expected a CARD per found document with the answer. With the flag on the chat renders `DocumentCards.tsx`
+  instead of the chip row; `SourceChips` stays the flag-off rendering. The frontend learns the flag from
+  `/api/config/features` (`chat_document_links_enabled`), so both halves switch together.
+  - *The card data lives in `sources`, not in `artifacts`.* `metadata_for_reader` rebuilds every source per
+    reader; `artifacts` are served unfiltered and must never receive titles, dates or correspondents copied from a
+    tool result. Nothing depends on the model: a card is built by the server from the turn's sources.
+  - *Fields* (all optional; a source stored earlier renders as a card with its title only). Knowledge base:
+    `document_date` (the document's OWN date, `documents.document_date`; absent when none was derived — the upload
+    day is never substituted) and `page_count`, both from the `_visible_document_meta` select that already runs
+    once per turn (two more columns, no further query). A value inside the tool source is dropped, like a link
+    there. Paperless: `created`, `correspondent`, `document_type`, `page_count`, taken from the parsed tool result.
+    No snippet, no content, no tags, no facts — content in a shared thread is a different decision.
+  - *One check per field, on both sides* (`_CARD_FIELD_CHECKS`): a date is an ISO day (a timestamp is cut to its
+    day as written, a calendar day that does not exist is no date) stored as `YYYY-MM-DD`; a text is single-line
+    and capped at 120 characters; a page count is an integer from 1 to 100 000. A value that fails is left out.
+  - *Read side.* The two allowlists (`_KNOWLEDGE_SOURCE_FIELDS`, `_PAPERLESS_SOURCE_FIELDS`) carry the new fields.
+    The knowledge-base fields are served from the STORED source, as `title`, `filename` and `tier` are, and are
+    covered by the visibility check that gates the whole source: `_source_for_reader` returns nothing before any
+    field is copied unless the document passes `documents_circles_filter` for the reader now. They are columns of
+    that same row, so a reader who gets them could read them from the document itself. Each kind serves only its
+    own fields — the Paperless ones are gated by `mcp.paperless.read`, the knowledge-base ones by the circles, and
+    neither rides on the other kind. For the same reason a knowledge-base card does NOT take over the document
+    type and correspondent of a Paperless hit it replaces: it shows date and pages only.
+  - *One card per document.* A knowledge-base document filed in Paperless is one card with both buttons. A
+    Paperless hit whose id is the looked-up Paperless id of a knowledge-base source of the turn is dropped — keyed
+    on the id, not on a link that may be absent, and only for a document the asker can see.
+  - *Component.* DESIGN.md list-row pattern (`.atom-row` + `tier-ring-{tier}`; a Paperless card has no tier and is
+    the neutral row), `TierBadge`, `.btn-secondary` with the focus ring the class defines. `.btn-secondary`
+    alone is below the 44 px touch target (measured 38 px with `text-sm`, 42 px at its default size); the card
+    buttons carry `min-h-11` — a real height, no invisible hit area. At most three cards, "+N" reveals the rest.
+    The meta line joins the parts that exist with " · "; dates go through `utils/datetime.formatDate`. A card
+    without any target (Paperless, no public base) is plain content and takes no focus. In a narrow bubble the
+    tier badge moves under the title and a long button label wraps (measured at 375 px: no overflow).
+  - *Flag off:* `done` frame and stored `sources` are exactly what they were; the read side is flag-independent.
 - **Not built:** opening the ORIGINAL file of a knowledge-base document that is not filed in Paperless. It needs a
   download endpoint behind `check_document_access` and an authenticated blob fetch in the frontend (one instance
   has no cookie session, a plain `href` would 401).

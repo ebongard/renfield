@@ -42,6 +42,13 @@ needs `WEATHER_ENABLED`.
   ONE focus ring is `primary-500` as an outline (never `outline-none` beside it). NO backend-made title —
   a nameless document has `title: ""`, the label is `chat.sources.untitled`. The model keeps "Dokument N" only in
   the FAKTEN line; in the `sources` of the tool result (agent prompt, `action_summary`) it reads `"title": ""` too.
+- **Document cards** (same flag → `/api/config/features` `chat_document_links_enabled` → `DocumentCards.tsx`; off →
+  `SourceChips`). 🛑 Card data lives in `sources`, NEVER in `artifacts` (served unfiltered). KB fields
+  (`document_date` — never the upload day —, `page_count`) come from `_visible_document_meta`, never from the tool
+  source; Paperless fields (`created`, `correspondent`, `document_type`, `page_count`) are a typed, capped subset of
+  the tool result. ONE check per field (`_CARD_FIELD_CHECKS`) on write AND read; allowlists per kind (a KB source
+  never serves Paperless fields — another right). No snippet/content/tags. One card per document: a Paperless hit
+  that is a visible KB source of the turn is dropped. Buttons: `.btn-secondary` + `min-h-11` (class alone < 44 px).
 - **Follow-up chips** (`services/followup_service.py`): best-effort small-model call in the background AFTER the `done`
   frame, via a separate `followups` frame — never delay the spinner/TTS/wakeword. Skipped on TTS/error/very-short turns.
 - **`role_hint` is ROUTING-ONLY** (palette, role badge via `pendingRoleHint`, "Neu beantworten" via `corrected_intent` →
