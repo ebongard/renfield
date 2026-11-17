@@ -7,14 +7,18 @@ This module contains:
 - Whisper service singleton
 """
 
+import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from time import time
+from typing import Any
 
 from fastapi import WebSocket
 from loguru import logger
 
 from models.websocket_messages import WSErrorCode, create_error_response
+from utils.log_safety import error_text_without_content
 
 # =============================================================================
 # Session State Management
@@ -230,6 +234,109 @@ async def send_ws_error(websocket: WebSocket, code: WSErrorCode, message: str, r
         await websocket.send_json(create_error_response(code, message, request_id))
     except Exception:
         pass  # WebSocket may already be closed
+
+
+# =============================================================================
+# Continuous Reading (#1570)
+# =============================================================================
+
+#: How many client frames may wait while the handler is busy with one of them.
+#: A browser sends a handful during a turn (``register``, a debounced widget
+#: click, a confirm card); a satellite streams audio at most. When the queue is
+#: full the reader waits, which is exactly what uvicorn does on its own: the
+#: client is back-pressured over TCP and memory stays bounded at this many
+#: frames of at most ``--ws-max-size`` bytes each.
+MAX_PENDING_CLIENT_FRAMES = 64
+
+
+class _ReaderEnd:
+    """Queue item that ends the stream: the exception ``receive`` raised."""
+
+    __slots__ = ("exc",)
+
+    def __init__(self, exc: Exception):
+        self.exc = exc
+
+
+class ClientFrameReader:
+    """Reads a WebSocket continuously while its handler works on one frame.
+
+    🛑 Why: uvicorn's ``websockets-sansio`` protocol pauses reading the
+    transport as soon as a client message is queued while the app is not inside
+    ``receive()``. While paused it does not read the pong to its own keepalive
+    ping either, and after ``ws_ping_interval + ws_ping_timeout`` (20 s + 20 s)
+    it closes the socket itself with 1011 "keepalive ping timeout". A handler
+    that processes a long turn inline therefore lost the socket whenever the
+    client sent anything during that turn.
+
+    This task stays inside ``receive()`` and hands each frame to the handler
+    through a queue, so the handler still processes frames ONE AT A TIME and IN
+    ARRIVAL ORDER -- nothing is acted on earlier than before, it is only read
+    earlier.
+
+    ``next()`` returns what ``receive`` returned, or raises what it raised
+    (``WebSocketDisconnect``, a JSON error), at the position the frame had in
+    the stream. A ``websocket.disconnect`` message from a raw ``receive`` is
+    returned like any other frame and ends the reading. ``aclose()`` must run
+    on every exit path of the handler.
+    """
+
+    def __init__(
+        self,
+        receive: Callable[[], Awaitable[Any]],
+        *,
+        label: str,
+        max_pending: int | None = None,
+    ):
+        self.max_pending = max_pending or MAX_PENDING_CLIENT_FRAMES
+        self._receive = receive
+        self._label = label
+        self._queue: asyncio.Queue = asyncio.Queue(maxsize=self.max_pending)
+        self._full_reported = False
+        self.task = asyncio.create_task(self._run(), name=f"ws-reader:{label}")
+
+    async def _put(self, item: Any) -> None:
+        if self._queue.full():
+            if not self._full_reported:
+                self._full_reported = True
+                logger.warning(
+                    f"⏸️ {self._label}: client frame queue is full "
+                    f"({self.max_pending} frames) -- reading waits for the handler"
+                )
+        else:
+            self._full_reported = False
+        await self._queue.put(item)
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                item = await self._receive()
+            except Exception as exc:
+                await self._put(_ReaderEnd(exc))
+                return
+            await self._put(item)
+            if isinstance(item, dict) and item.get("type") == "websocket.disconnect":
+                return
+
+    async def next(self) -> Any:
+        """The next client frame, in arrival order."""
+        item = await self._queue.get()
+        if isinstance(item, _ReaderEnd):
+            raise item.exc
+        return item
+
+    async def aclose(self) -> None:
+        """Stop reading and wait until the reader task has ended."""
+        self.task.cancel()
+        await asyncio.wait({self.task})
+        # The reader never raises (it queues what `receive` raised), so a
+        # failure here is a bug in the reader itself and must be seen.
+        if not self.task.cancelled() and self.task.exception() is not None:
+            exc = self.task.exception()
+            logger.error(
+                f"❌ {self._label}: frame reader failed: "
+                f"{type(exc).__name__}: {error_text_without_content(exc)}"
+            )
 
 
 # =============================================================================
