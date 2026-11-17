@@ -214,10 +214,14 @@ class TestChatUploadAPI:
 class TestExtractAndFinalize:
     """The background worker that the async upload schedules."""
 
+    @pytest.fixture(autouse=True)
+    def _own_directory(self, tmp_path):
+        # Not the shared temp directory under a fixed name: two runs side by
+        # side would write the very same file.
+        self._dir = tmp_path
+
     async def _seed(self, db_session, *, text="hi", file_hash="h"):
-        import tempfile
-        from pathlib import Path as _P
-        f = _P(tempfile.gettempdir()) / f"renfield-bg-{file_hash}.txt"
+        f = self._dir / f"renfield-bg-{file_hash}.txt"
         f.write_text(text)
         upload = ChatUpload(
             session_id="bg-session", filename=f.name, file_type="txt",

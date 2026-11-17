@@ -659,6 +659,46 @@ von `bin/run-backend-tests.sh` gesetzt). Der Harness in `tests/backend/conftest.
 - **Leert zwischen Tests** nur die Tabellen, die Zeilen haben, und setzt benutzte Sequenzen zurück.
 - **Sperrt die Datenbank je Lauf** (Advisory-Lock); ein zweiter Lauf bricht sofort ab.
 
+**Ein Lauf je Datenbank — zwei Wege:**
+
+- **Geteilte `renfield_test`:** Läufe stehen hintereinander an. Erzwungen wird das allein vom
+  Advisory-Lock des Harness (ein zweiter Lauf bricht ab). Damit niemand erst beim Abbruch
+  davon erfährt, gilt zusätzlich eine VEREINBARUNG: wer die Datenbank benutzt, hält für die
+  Dauer des Laufs das Sperrverzeichnis `/tmp/renfield-testdb.lock` auf der Build-Box (`mkdir`
+  gelingt = belegt, darin eine Datei `owner`). Kein Code legt es an oder prüft es; eine fremde
+  Sperre wird nie entfernt.
+- **Eigene Wegwerf-Datenbank:** `RENFIELD_TEST_DB_SUFFIX=<name>` vor `bin/run-backend-tests.sh`
+  legt `renfield_test_<name>` an (mit `vector`, wie die geteilte sie hat), lässt die Tests dort
+  laufen und löscht sie danach — auch wenn pytest scheitert oder das Skript ein Signal erhält.
+  Ein solcher Lauf nimmt **keine** Sperre; nebenläufige Läufe wählen je ein eigenes Suffix.
+  `bin/throwaway_test_db.py` verweigert jeden Namen außerhalb von `renfield_test_<suffix>`
+  (Kleinbuchstaben, Ziffern, Unterstrich; kein `prod`/`live`), verweigert eine bereits
+  vorhandene Datenbank (weder wiederverwendet noch gelöscht) und löscht nur, was derselbe
+  Aufruf angelegt hat: beim Anlegen schreibt es ein Zufallstoken in den Kommentar der
+  Datenbank, vor dem Löschen vergleicht es ihn; das Token verlässt den Prozess nie. Nach
+  einem `SIGKILL` oder einem Stopp des Containers (auch `bin/quick-update.sh` startet ihn
+  neu) bleibt die Datenbank stehen und sperrt ihr Suffix (Exit 3); sie wird dann von Hand
+  entfernt, ihr Kommentar weist sie aus. Ein Leck, nie ein falsches Löschen.
+  pytest läuft als Kind dieses Hilfsprogramms, nicht der Shell: es wird vor dem Löschen in
+  jedem Fall beendet und abgewartet (`TERM`, nach einer Frist `KILL`; Frist
+  `RENFIELD_TEST_STOP_GRACE`, Vorgabe 10 s, ganze Sekunden), auf `SIGINT` bekommt es zuerst
+  die Frist, um seine Zusammenfassung zu drucken. Ein Signal während des Anlegens oder
+  Löschens wird nur vermerkt, beides läuft zu Ende. Ein Löschen, das nach 120 s nicht fertig
+  ist, endet mit einer Warnung; bleibt die Datenbank stehen, ist auch ein grüner Lauf Exit 1.
+  Die URL für pytest baut das Hilfsprogramm selbst aus dem geprüften Namen. Nicht beendet
+  werden Prozesse, die pytest seinerseits gestartet hat; `WITH (FORCE)` trennt ihre Verbindungen.
+  Voraussetzung: die Rolle aus `DATABASE_URL` darf Datenbanken anlegen und `vector`
+  installieren (auf der Build-Box: Superuser; `vector` ist nicht `trusted`).
+
+**Nebenläufig heißt nicht schneller** (gemessen 2026-11-16, zwei Wegwerf-Läufe plus ein
+gleichzeitiger Lauf auf `renfield_test`): beide grün mit denselben Zahlen wie allein, aber
+je 3 h 09 min statt ~80–88 min. Die Läufe teilen sich, was außerhalb der Datenbank liegt:
+die Platte (`TRUNCATE` wartet auf `DataFileImmediateSync`, `fsync = on`; I/O-Druck ~32 %),
+das Ollama des Hosts (`qwen3-embedding:4b` auf der CPU — u. a. `test_notes.py` ruft es echt
+auf), 8 GB Arbeitsspeicher (ein Lauf belegt bis 1,8 GB) und das Redis des Dev-Stacks
+(`login_fail:*`/`login_lock:*` unter festen Schlüsseln). Der Gewinn der eigenen Datenbank
+ist, dass niemand mehr ansteht — nicht der Durchsatz.
+
 Die Migrationstests arbeiten in eigenen Wegwerf-Schemata neben `public` und finden `vector`
 über `search_path = <schema>, public`; der Neuaufbau berührt sie nicht.
 

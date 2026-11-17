@@ -47,7 +47,9 @@ async def _wait_until_insert_blocks(make_session, timeout: float = 10.0) -> None
         while True:
             waiting = (await probe.execute(text(
                 "SELECT count(*) FROM pg_stat_activity "
-                "WHERE wait_event_type = 'Lock' "
+                # This database only: the view is server-wide, and a run next
+                # door on a database of its own may be waiting on the same INSERT.
+                "WHERE datname = current_database() AND wait_event_type = 'Lock' "
                 "AND query ILIKE 'INSERT INTO knowledge_bases%'"
             ))).scalar_one()
             await probe.rollback()
