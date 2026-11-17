@@ -80,6 +80,11 @@ class FeatureFlags(BaseModel):
     # Off => the ArtifactRenderer is inert (artifacts fall back to escaped text).
     # See utils/config.py::artifacts_typed_enabled + docs/design/chat-artifacts-sandbox.md.
     artifacts_typed_enabled: bool
+    # Chat document cards: on => the chat renders one card per document of a
+    # turn (title, date, open buttons) instead of the grey source chips. The
+    # same flag makes the backend write the card fields into the sources, so
+    # the two halves switch together. See utils/config.py::chat_document_links_enabled.
+    chat_document_links_enabled: bool = False
     # Gates the chat room-handoff affordance (item 8): the quiet inline meta line
     # shown when Media Follow moves the user's playback to a new room. Off => the
     # `media_handoff` device-WS frame is never emitted and the indicator never
@@ -166,6 +171,7 @@ async def get_features(
         role_surfacing_enabled=settings.role_surfacing_enabled,
         message_search_enabled=settings.message_search_enabled,
         artifacts_typed_enabled=settings.artifacts_typed_enabled,
+        chat_document_links_enabled=settings.chat_document_links_enabled,
         room_handoff_enabled=settings.room_handoff_enabled,
         chat_branching_enabled=settings.chat_branching_enabled,
         projects_enabled=settings.projects_enabled,

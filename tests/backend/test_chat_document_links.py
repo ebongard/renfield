@@ -82,11 +82,12 @@ class TestPaperlessSources:
         chat offered nothing to open."""
         sources = await ch._turn_sources([_search(_hit(11, "Rechnung"), _hit(12, "Vertrag"))], [], 7)
 
+        # `created` is the one card field a hit of this shape carries.
         assert sources == [
             {"kind": "paperless", "paperless_document_id": 11, "title": "Rechnung",
-             "paperless_url": f"{PUBLIC}/documents/11/details"},
+             "created": "2026-01-02", "paperless_url": f"{PUBLIC}/documents/11/details"},
             {"kind": "paperless", "paperless_document_id": 12, "title": "Vertrag",
-             "paperless_url": f"{PUBLIC}/documents/12/details"},
+             "created": "2026-01-02", "paperless_url": f"{PUBLIC}/documents/12/details"},
         ]
 
     async def test_no_public_base_means_no_link_and_never_the_internal_name(
@@ -140,7 +141,9 @@ class TestPaperlessSources:
             f"{PUBLIC}/documents/12/details", f"{PUBLIC}/documents/11/details",
         ]
         for source in sources:
-            assert set(source) == {"kind", "paperless_document_id", "title", "paperless_url"}
+            assert set(source) == {
+                "kind", "paperless_document_id", "title", "created", "paperless_url",
+            }
             # The URL-shaped TITLE stays what it is: display text.
             assert source["title"] == evil
 
@@ -347,7 +350,7 @@ class TestKnowledgeBaseTargets:
         assert sources == [
             kb[0],
             {"kind": "paperless", "paperless_document_id": 11, "title": "Beleg",
-             "paperless_url": f"{PUBLIC}/documents/11/details"},
+             "created": "2026-01-02", "paperless_url": f"{PUBLIC}/documents/11/details"},
         ]
 
     async def test_a_crash_in_the_new_path_falls_back_to_the_old_sources(
@@ -1019,3 +1022,329 @@ class TestMetadataForReader:
         meta = await _served([{**KB, "paperless_url": "https://other.example/x"}], None)
 
         assert meta == {"sources": [KB]}
+
+
+# --------------------------------------------------------------------------- #
+# Document cards: what a card shows beside the title
+# --------------------------------------------------------------------------- #
+def _rich_hit(doc_id=11, **overrides) -> dict:
+    """A Paperless document as `get_document` answers it."""
+    return {
+        "id": doc_id, "title": "Rechnung", "created": "2025-02-02",
+        "correspondent": "Stadtwerke", "document_type": "Rechnung", "page_count": 2,
+        "tags": ["privat"], "snippet": "geheimer Auszug", "content": "geheimer Volltext",
+        **overrides,
+    }
+
+
+class TestCardFieldsOfPaperlessSources:
+    def test_a_fetched_document_carries_date_type_correspondent_and_pages(self, public_base):
+        assert ds.paperless_sources([(GET, _mcp(_rich_hit()))]) == [{
+            "kind": "paperless", "paperless_document_id": 11, "title": "Rechnung",
+            "created": "2025-02-02", "correspondent": "Stadtwerke",
+            "document_type": "Rechnung", "page_count": 2,
+            "paperless_url": f"{PUBLIC}/documents/11/details",
+        }]
+
+    def test_no_snippet_no_content_no_tags_reach_a_source(self, public_base):
+        [source] = ds.paperless_sources([_search(_rich_hit())])
+
+        assert set(source) == {
+            "kind", "paperless_document_id", "title", "created", "correspondent",
+            "document_type", "page_count", "paperless_url",
+        }
+        assert "geheim" not in repr(source) and "privat" not in repr(source)
+
+    def test_a_hit_without_the_fields_is_the_source_it_always_was(self, public_base):
+        assert ds.paperless_sources([_search({"id": 11, "title": "Beleg"})]) == [{
+            "kind": "paperless", "paperless_document_id": 11, "title": "Beleg",
+            "paperless_url": f"{PUBLIC}/documents/11/details",
+        }]
+
+    @pytest.mark.parametrize("created, stored", [
+        ("2025-03-14", "2025-03-14"),
+        ("2025-03-14T00:00:00+01:00", "2025-03-14"),
+        ("2025-03-14 09:30:00", "2025-03-14"),
+    ])
+    def test_a_date_is_stored_as_a_plain_iso_day(self, public_base, created, stored):
+        [source] = ds.paperless_sources([(GET, _mcp(_rich_hit(created=created)))])
+
+        assert source["created"] == stored
+
+    @pytest.mark.parametrize("created", [
+        "14.03.2025", "2025-13-40", "2025-02-30", "20250314", "2025-03-14x", "gestern", "",
+        None, 20250314, True, ["2025-03-14"], {"date": "2025-03-14"},
+    ])
+    def test_a_value_that_is_no_iso_date_is_left_out(self, public_base, created):
+        [source] = ds.paperless_sources([(GET, _mcp(_rich_hit(created=created)))])
+
+        assert "created" not in source
+
+    @pytest.mark.parametrize("field", ["correspondent", "document_type"])
+    def test_a_text_is_bounded_and_single_line(self, public_base, field):
+        [source] = ds.paperless_sources([(GET, _mcp(_rich_hit(**{field: "A\n  b " + "x" * 400})))])
+
+        assert source[field].startswith("A b xxx")
+        assert len(source[field]) == 120
+
+    @pytest.mark.parametrize("field", ["correspondent", "document_type"])
+    @pytest.mark.parametrize("value", [None, "", "   ", 7, True, ["Amt"], {"name": "Amt"}])
+    def test_a_text_that_is_no_text_is_left_out(self, public_base, field, value):
+        [source] = ds.paperless_sources([(GET, _mcp(_rich_hit(**{field: value})))])
+
+        assert field not in source
+
+    @pytest.mark.parametrize("pages", [None, "3", True, 0, -1, 2.5, 100_001, [3]])
+    def test_a_page_count_that_is_no_positive_integer_is_left_out(self, public_base, pages):
+        [source] = ds.paperless_sources([(GET, _mcp(_rich_hit(page_count=pages)))])
+
+        assert "page_count" not in source
+
+
+def _card_row(document_date="2025-03-14", page_count=3, **kw) -> dict:
+    return {**_row(**kw), "document_date": document_date, "page_count": page_count}
+
+
+class TestCardFieldsOfKnowledgeBaseSources:
+    async def test_date_and_pages_come_from_the_visibility_lookup(
+        self, flag_on, public_base, monkeypatch,
+    ):
+        lookup = _meta(d7=_card_row(paperless=70), d9=_card_row(document_date=None, page_count=None))
+        monkeypatch.setattr(ds, "_visible_meta", lookup)
+        kb = [
+            {"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2},
+            {"document_id": 9, "filename": "b.pdf", "title": "B", "tier": 0},
+        ]
+
+        sources = await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 42)
+
+        assert sources == [
+            {**kb[0], "document_date": "2025-03-14", "page_count": 3,
+             "paperless_url": f"{PUBLIC}/documents/70/details"},
+            kb[1],
+        ]
+        # Still ONE lookup for the whole turn.
+        assert lookup.calls == [({7, 9}, 42)]
+
+    async def test_the_direct_rag_path_carries_them_too(self, flag_on, public_base, monkeypatch):
+        monkeypatch.setattr(ds, "_visible_meta", _meta(d21=_card_row("2024-12-01", 12)))
+
+        [source] = await ch._turn_sources([], [_rag_result(21)], 42)
+
+        assert source["document_date"] == "2024-12-01" and source["page_count"] == 12
+
+    async def test_card_fields_inside_a_tool_source_are_never_adopted(
+        self, flag_on, public_base, monkeypatch,
+    ):
+        """A card shows what the SERVER looked up. A value that arrived inside
+        the tool result is dropped like a link that arrived there."""
+        monkeypatch.setattr(ds, "_visible_meta", _meta(d7=_card_row(None, None)))
+        kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2,
+               "document_date": "1999-01-01", "page_count": 99, "created": "1999-01-01",
+               "correspondent": "X", "document_type": "Y"}]
+
+        [source] = await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1)
+
+        assert source == {"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}
+
+    async def test_a_document_not_visible_now_gets_no_card_fields(
+        self, flag_on, public_base, monkeypatch,
+    ):
+        monkeypatch.setattr(ds, "_visible_meta", _meta())
+        kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}]
+
+        assert await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1) == kb
+
+    @pytest.mark.parametrize("row", [
+        {"document_date": "14.03.2025", "page_count": "3"},
+        {"document_date": 20250314, "page_count": True},
+        {"document_date": "", "page_count": 0},
+    ])
+    async def test_a_lookup_value_of_the_wrong_shape_is_left_out(
+        self, flag_on, public_base, monkeypatch, row,
+    ):
+        monkeypatch.setattr(ds, "_visible_meta", _meta(d7={**_row(), **row}))
+        kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}]
+
+        assert await ch._turn_sources([("internal.knowledge_search", {"sources": kb})], [], 1) == kb
+
+    async def test_one_card_for_a_document_of_both_systems_and_it_is_the_knowledge_one(
+        self, flag_on, public_base, monkeypatch,
+    ):
+        """Knowledge-base document 7 IS Paperless document 70. One source; it
+        does not take over what Paperless said about the document -- those
+        fields are gated by another right on the read side."""
+        monkeypatch.setattr(ds, "_visible_meta", _meta(d7=_card_row(paperless=70)))
+        kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}]
+        tool_results = [
+            ("internal.knowledge_search", {"sources": kb}),
+            (GET, _mcp(_rich_hit(70))),
+            _search(_rich_hit(70), _rich_hit(71)),
+        ]
+
+        sources = await ch._turn_sources(tool_results, [], 1)
+
+        assert sources[0] == {
+            **kb[0], "document_date": "2025-03-14", "page_count": 3,
+            "paperless_url": f"{PUBLIC}/documents/70/details",
+        }
+        assert [s.get("paperless_document_id") for s in sources] == [None, 71]
+
+    async def test_with_the_flag_off_nothing_of_this_exists(self, flag_off, public_base, monkeypatch):
+        lookup = AsyncMock(side_effect=AssertionError("no lookup with the flag off"))
+        monkeypatch.setattr(ds, "_visible_meta", lookup)
+        kb = [{"document_id": 7, "filename": "a.pdf", "title": "A", "tier": 2}]
+        tool_results = [
+            ("internal.knowledge_search", {"sources": kb}),
+            (GET, _mcp(_rich_hit(70))), _search(_rich_hit(71)),
+        ]
+
+        after = await ch._turn_sources(tool_results, [_rag_result(21)], 7)
+
+        assert json.dumps(after) == json.dumps(ch._extract_agent_sources(tool_results))
+        assert after == kb and after[0] is kb[0]
+
+
+KB_CARD = {**KB, "document_date": "2025-03-14", "page_count": 3}
+PL_CARD = {**PL, "created": "2025-02-02", "correspondent": "Stadtwerke",
+           "document_type": "Rechnung", "page_count": 2}
+
+
+class TestCardFieldsForAReader:
+    async def test_a_visible_document_is_served_with_its_card_fields(self, auth_on, monkeypatch):
+        _visible(monkeypatch, 21)
+
+        assert await _served([KB_CARD], _Reader()) == {"sources": [KB_CARD]}
+
+    async def test_an_invisible_document_is_gone_as_a_whole(self, auth_on, monkeypatch):
+        """No field of a document outside the reader's circles goes out: the
+        visibility check drops the SOURCE, there is no per-field path past it."""
+        _visible(monkeypatch)
+
+        meta = await _served([KB_CARD], _Reader(permissions=["mcp.*"]))
+
+        assert meta == {}
+        assert "2025-03-14" not in repr(meta)
+
+    async def test_a_paperless_source_is_served_with_its_card_fields(self, auth_on, monkeypatch):
+        _visible(monkeypatch)
+
+        meta = await _served([PL_CARD], _Reader(permissions=["mcp.paperless.read"]))
+
+        assert meta == {"sources": [PL_CARD]}
+
+    async def test_without_the_paperless_permission_it_is_gone_as_a_whole(
+        self, auth_on, monkeypatch,
+    ):
+        _visible(monkeypatch)
+
+        meta = await _served([PL_CARD], _Reader())
+
+        assert meta == {}
+        assert "Stadtwerke" not in repr(meta)
+
+    @pytest.mark.parametrize("field, value", [
+        ("document_date", "14.03.2025"), ("document_date", "2025-02-30"),
+        ("document_date", 20250314), ("document_date", True), ("document_date", ""),
+        ("document_date", ["2025-03-14"]),
+        ("page_count", "3"), ("page_count", True), ("page_count", 0), ("page_count", -2),
+        ("page_count", 3.5), ("page_count", 100_001),
+    ])
+    async def test_a_knowledge_card_field_of_the_wrong_shape_is_left_out(
+        self, auth_on, monkeypatch, field, value,
+    ):
+        _visible(monkeypatch, 21)
+        expected = {k: v for k, v in KB_CARD.items() if k != field}
+
+        assert await _served([{**KB_CARD, field: value}], _Reader()) == {"sources": [expected]}
+
+    @pytest.mark.parametrize("field, value", [
+        ("created", "02.02.2025"), ("created", "2025-13-01"), ("created", 20250202),
+        ("created", None), ("created", ""),
+        ("correspondent", 7), ("correspondent", ["Amt"]), ("correspondent", ""),
+        ("correspondent", "   "), ("correspondent", True),
+        ("document_type", {"name": "Rechnung"}), ("document_type", ""),
+        ("page_count", "2"), ("page_count", False), ("page_count", 0),
+    ])
+    async def test_a_paperless_card_field_of_the_wrong_shape_is_left_out(
+        self, auth_on, monkeypatch, field, value,
+    ):
+        _visible(monkeypatch)
+        expected = {k: v for k, v in PL_CARD.items() if k != field}
+
+        meta = await _served([{**PL_CARD, field: value}], _Reader(permissions=["mcp.paperless.read"]))
+
+        assert meta == {"sources": [expected]}
+
+    async def test_a_stored_text_longer_than_the_cap_is_cut_on_the_way_out(
+        self, auth_on, monkeypatch,
+    ):
+        _visible(monkeypatch)
+        stored = {**PL_CARD, "correspondent": "y" * 500, "created": "2025-02-02T10:00:00Z"}
+
+        [source] = (await _served([stored], _Reader(permissions=["mcp.*"])))["sources"]
+
+        assert source["correspondent"] == "y" * 120
+        assert source["created"] == "2025-02-02"
+
+    async def test_each_kind_carries_out_its_own_card_fields_only(self, auth_on, monkeypatch):
+        """The Paperless fields are gated by the Paperless permission, the
+        knowledge-base ones by the circles -- neither rides on the other kind."""
+        _visible(monkeypatch, 21)
+        knowledge = {**KB, "created": "2025-02-02", "correspondent": "Stadtwerke",
+                     "document_type": "Rechnung", "page_count": 2}
+        paperless = {**PL_CARD, "document_date": "2025-03-14", "filename": "x.pdf", "tier": 0}
+
+        meta = await _served([knowledge, paperless], _Reader(permissions=["mcp.paperless.read"]))
+
+        assert meta == {"sources": [{**KB, "page_count": 2}, PL_CARD]}
+
+    async def test_no_content_field_is_ever_served(self, auth_on, monkeypatch):
+        _visible(monkeypatch, 21)
+        extra = {"snippet": "geheim", "content": "geheim", "tags": ["geheim"], "facts": ["geheim"]}
+
+        meta = await _served(
+            [{**KB_CARD, **extra}, {**PL_CARD, **extra}], _Reader(permissions=["mcp.*"]),
+        )
+
+        assert meta == {"sources": [KB_CARD, PL_CARD]}
+
+    async def test_a_source_stored_before_cards_existed_is_served_unchanged(
+        self, auth_on, monkeypatch,
+    ):
+        _visible(monkeypatch, 21)
+
+        meta = await _served([KB, PL], _Reader(permissions=["mcp.paperless.read"]))
+
+        assert meta == {"sources": [KB, PL]}
+
+    async def test_auth_off_keeps_the_shape_rules_for_card_fields(self, monkeypatch, public_base):
+        """One trust domain: nobody's rights are checked and nothing is looked
+        up for an unlinked source -- the stored fields are served, validated."""
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        lookup = _visible(monkeypatch)
+
+        meta = await _served([
+            KB_CARD, PL_CARD,
+            {**KB_CARD, "document_id": 22, "document_date": "gestern", "page_count": "3"},
+            {**PL_CARD, "paperless_document_id": 32, "created": 1, "correspondent": 2,
+             "document_type": 3, "page_count": "4", "snippet": "x"},
+        ], None)
+
+        assert meta == {"sources": [
+            KB_CARD, PL_CARD, {**KB, "document_id": 22}, {**PL, "paperless_document_id": 32},
+        ]}
+        assert lookup.calls == []
+
+
+class TestTheFrontendLearnsTheFlag:
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_features_route_reports_chat_document_links(self, monkeypatch, enabled):
+        from api.routes.config import get_features
+
+        monkeypatch.setattr(settings, "chat_document_links_enabled", enabled, raising=False)
+
+        request = SimpleNamespace(app=SimpleNamespace(routes=[], state=SimpleNamespace()))
+        flags = await get_features(request=request, _current_user=None)
+
+        assert flags.chat_document_links_enabled is enabled

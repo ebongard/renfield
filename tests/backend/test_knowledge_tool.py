@@ -297,6 +297,8 @@ def _doc_title_row(id, generated_title, title, filename, circle_tier):
         circle_tier=circle_tier,
         # The row shape of `_visible_document_meta`'s SELECT.
         paperless_document_id=None,
+        document_date=None,
+        page_count=None,
     )
 
 

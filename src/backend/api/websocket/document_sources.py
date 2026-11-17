@@ -1,12 +1,21 @@
-"""Open targets for the chat's provenance chips (`CHAT_DOCUMENT_LINKS_ENABLED`).
+"""The documents of a chat turn, as sources the client renders as document
+cards (`CHAT_DOCUMENT_LINKS_ENABLED`).
 
-A chip names a document the answer drew on. Until this module it only named
-knowledge-base documents found through `internal.knowledge_search`, and its
-link led to a list row. With the flag on, `turn_sources` additionally
+A source names a document the answer drew on. Until this module it only named
+knowledge-base documents found through `internal.knowledge_search`. With the
+flag on, `turn_sources` additionally
 
 * turns Paperless tool results into sources (`paperless_sources`),
 * gives the direct RAG path sources (it had none),
-* attaches a SERVER-built open target to every source.
+* attaches a SERVER-built open target to every source,
+* attaches the few fields a card shows beside the title: the document's own
+  date and its page count (knowledge base), date, document type, correspondent
+  and page count (Paperless). No snippet, no content, no tags, no facts.
+
+🛑 A card is built from the turn's sources and from nothing the model wrote.
+The card fields of a knowledge-base source come from the circle-filtered
+lookup, never from the tool result; those of a Paperless source are a typed,
+bounded subset of the tool result that already reached this turn.
 
 🛑 Nothing here reads a URL, a host or a base from a tool result or from model
 output. A link is assembled by `paperless_document_url` from the configured
@@ -22,6 +31,8 @@ source is still named, it just has no link.
 
 from __future__ import annotations
 
+import re
+from datetime import date
 from typing import Any
 
 from loguru import logger
@@ -56,6 +67,15 @@ _TITLE_MAX_CHARS = 200
 #: Document ids are Postgres `integer` primary keys, here and in Paperless.
 _MAX_DOCUMENT_ID = 2**31 - 1
 
+#: Correspondent and document type are names from a third system, shown in the
+#: one meta line of a card.
+_CARD_TEXT_MAX_CHARS = 120
+
+#: A page count above this is not a page count.
+_MAX_PAGE_COUNT = 100_000
+
+_ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
 
 def _document_id(value: Any) -> int | None:
     """The value as a document id, or None.
@@ -80,6 +100,64 @@ def _title(value: Any) -> str:
     return " ".join(value.split())[:_TITLE_MAX_CHARS]
 
 
+def _iso_day(value: Any) -> str | None:
+    """The value as `YYYY-MM-DD`, or None.
+
+    Accepts an ISO date and an ISO timestamp (Paperless answers `created` in
+    either form, depending on its version) and keeps the DAY as written -- no
+    timezone arithmetic, the day of a document is not an instant. Anything
+    else, a calendar day that does not exist included, is no date.
+    """
+    if not isinstance(value, str) or not _ISO_DAY.match(value):
+        return None
+    if len(value) > 10 and value[10] not in "T ":
+        return None
+    try:
+        return date.fromisoformat(value[:10]).isoformat()
+    except ValueError:
+        return None
+
+
+def _card_text(value: Any) -> str | None:
+    """Bounded single-line display text, or None when there is none."""
+    if not isinstance(value, str):
+        return None
+    return " ".join(value.split())[:_CARD_TEXT_MAX_CHARS] or None
+
+
+def _page_count(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 1 <= value <= _MAX_PAGE_COUNT else None
+
+
+#: The fields a document card shows beside the title, and the ONE check each
+#: value passes -- when a source is written and again when it is served.
+_CARD_FIELD_CHECKS = {
+    "document_date": _iso_day,
+    "created": _iso_day,
+    "correspondent": _card_text,
+    "document_type": _card_text,
+    "page_count": _page_count,
+}
+
+#: Knowledge base: the document's OWN date (`documents.document_date`, derived
+#: from its content) -- never the upload day in its place -- and its page count.
+_KNOWLEDGE_CARD_FIELDS = ("document_date", "page_count")
+_PAPERLESS_CARD_FIELDS = ("created", "correspondent", "document_type", "page_count")
+
+
+def _card_fields(row: dict | None, names: tuple[str, ...]) -> dict:
+    """The card fields `names` of `row` that pass their check; the rest is
+    left out (a card then shows fewer parts, never a wrong one)."""
+    out: dict = {}
+    for name in names:
+        value = _CARD_FIELD_CHECKS[name]((row or {}).get(name))
+        if value is not None:
+            out[name] = value
+    return out
+
+
 def _paperless_url(paperless_document_id: Any) -> str | None:
     # Late import: `api.routes.knowledge` pulls the whole document route in.
     from api.routes.knowledge import paperless_document_url
@@ -98,6 +176,7 @@ def _paperless_source(doc: Any) -> dict | None:
         "kind": "paperless",
         "paperless_document_id": doc_id,
         "title": _title(doc.get("title")),
+        **_card_fields(doc, _PAPERLESS_CARD_FIELDS),
     }
     url = _paperless_url(doc_id)
     if url:
@@ -121,7 +200,8 @@ def paperless_sources(tool_results: list) -> list[dict]:
     circle-filtered; the gate is the `mcp.paperless.read` permission, checked
     when the tool ran. Every source here is a document whose id and title that
     tool result ALREADY handed to this user's turn (the agent read them, the
-    answer may quote them) -- a chip shows a subset of it and adds nothing.
+    answer may quote them) -- a card shows a subset of it and adds nothing.
+    The same holds for its date, document type, correspondent and page count.
     """
     from api.websocket.chat_handler import _parse_mcp_raw_data
 
@@ -181,8 +261,9 @@ def _result_document_ids(search_results: list | None) -> list[int]:
 
 
 async def _visible_meta(doc_ids: set[int], user_id: int | None) -> dict[Any, dict]:
-    """`_visible_document_meta` on a session of its own: title, tier and
-    Paperless id of ONLY the documents `user_id` may see."""
+    """`_visible_document_meta` on a session of its own: title, tier,
+    Paperless id, document date and page count of ONLY the documents `user_id`
+    may see."""
     from services.database import AsyncSessionLocal
     from services.knowledge_tool import _visible_document_meta
 
@@ -190,13 +271,21 @@ async def _visible_meta(doc_ids: set[int], user_id: int | None) -> dict[Any, dic
         return await _visible_document_meta(db, doc_ids, user_id)
 
 
-def _with_open_target(source: dict, meta_row: dict | None) -> dict:
-    """`source` with the server-built Paperless link of its document, if any.
+def _as_card(source: dict, meta_row: dict | None) -> dict:
+    """A knowledge-base `source` with what the SERVER knows about its
+    document: the card fields and the Paperless link, if any.
 
-    A `paperless_url` that arrived inside the source is DROPPED first: the only
-    link a source may carry is the one built here.
+    A `paperless_url` or a card field that arrived inside the source is
+    DROPPED first: the only link and the only card fields a source may carry
+    are the ones attached here, from the circle-filtered `meta_row`. Without a
+    row (the document is not visible to this turn, or the lookup failed) the
+    source keeps its name and gets neither.
     """
-    out = {k: v for k, v in source.items() if k != "paperless_url"}
+    out = {
+        k: v for k, v in source.items()
+        if k != "paperless_url" and k not in _CARD_FIELD_CHECKS
+    }
+    out.update(_card_fields(meta_row, _KNOWLEDGE_CARD_FIELDS))
     url = _paperless_url((meta_row or {}).get("paperless_document_id"))
     if url:
         out["paperless_url"] = url
@@ -216,12 +305,15 @@ async def turn_sources(
     of the direct RAG path (`rag_search_results`, the path had no sources
     before), then Paperless documents. A Paperless document that is ALSO a
     knowledge-base source of this turn appears once, as the knowledge-base
-    chip -- that one carries the tier and both targets.
+    card -- that one carries the tier and both targets. It does NOT take over
+    the Paperless fields of the dropped hit: on the read side those are gated
+    by the Paperless permission, the knowledge-base source by the circles.
 
     🛑 `user_id` is the server-side identity of the turn. Document metadata is
     resolved through `_visible_document_meta`, i.e. `documents_circles_filter`:
     - a `knowledge_search` source keeps its chip either way (the tool already
-      filtered it) but gets a Paperless link only if the document is visible;
+      filtered it) but gets a Paperless link and card fields only if the
+      document is visible;
     - a RAG-path document gets a chip ONLY if it is visible. The retrieval
       filtered by `user_id` too, but a follow-up turn reuses CACHED results and
       access may have changed since.
@@ -245,14 +337,14 @@ async def turn_sources(
                 f"the RAG path gets none): {error_text_without_content(e)}"
             )
 
-    sources = [_with_open_target(s, meta.get(s.get("document_id"))) for s in kb_sources]
+    sources = [_as_card(s, meta.get(s.get("document_id"))) for s in kb_sources]
     seen = {s.get("document_id") for s in sources}
     for doc_id in rag_ids:
         row = meta.get(doc_id)
         if row is None or doc_id in seen:
             continue
         seen.add(doc_id)
-        sources.append(_with_open_target({
+        sources.append(_as_card({
             "document_id": doc_id,
             "filename": row.get("filename") or "",
             # Empty for a nameless document; the frontend labels it (i18n).
@@ -291,10 +383,29 @@ PAPERLESS_READ_PERMISSION = "mcp.paperless.read"
 CLIENT_METADATA_KEYS = ("agent_role", "artifacts", "attachments", "wb_entities")
 
 #: What a source of each kind may carry out, and the type each value must have.
+#: A card field (`_CARD_FIELD_CHECKS`) additionally passes the check it passed
+#: when it was written.
+#:
+#: 🛑 Each kind has its OWN list because each is gated by its own right: a
+#: knowledge-base source by the reader's circles, a Paperless source by the
+#: Paperless permission. A field of one kind stored on a source of the other
+#: is not served.
+#:
+#: The knowledge-base card fields are served from the STORED source, as
+#: `title`, `filename` and `tier` are, and are covered by the visibility check
+#: that gates the whole source: `_source_for_reader` returns None before any
+#: field is copied unless the document is visible to the reader NOW. They are
+#: columns of that same `documents` row, so a reader who gets them could read
+#: them from the document itself. There is no path on which a field leaves
+#: without its source.
 _KNOWLEDGE_SOURCE_FIELDS: dict[str, type | tuple[type, ...]] = {
     "filename": str, "title": str, "tier": int,
+    "document_date": str, "page_count": int,
 }
-_PAPERLESS_SOURCE_FIELDS: dict[str, type | tuple[type, ...]] = {"title": str}
+_PAPERLESS_SOURCE_FIELDS: dict[str, type | tuple[type, ...]] = {
+    "title": str,
+    "created": str, "correspondent": str, "document_type": str, "page_count": int,
+}
 
 
 def _may_read_paperless(reader: Any) -> bool:
@@ -331,10 +442,20 @@ def _had_link(source: dict) -> bool:
 
 
 def _typed_fields(source: dict, fields: dict) -> dict:
-    return {
-        key: source[key] for key, kind in fields.items()
-        if isinstance(source.get(key), kind) and not isinstance(source.get(key), bool)
-    }
+    """The allowlisted fields of a stored source whose value has the listed
+    type and, for a card field, passes its check. The rest is left out."""
+    out: dict = {}
+    for key, kind in fields.items():
+        value = source.get(key)
+        if not isinstance(value, kind) or isinstance(value, bool):
+            continue
+        check = _CARD_FIELD_CHECKS.get(key)
+        if check is not None:
+            value = check(value)
+            if value is None:
+                continue
+        out[key] = value
+    return out
 
 
 def _source_for_reader(

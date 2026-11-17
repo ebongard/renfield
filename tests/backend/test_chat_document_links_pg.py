@@ -122,6 +122,77 @@ class TestRagPathSourcesAreCircleFiltered:
         assert await ch._turn_sources([], _rag(doc), carol.id) == []
 
 
+class TestCardFieldsComeFromTheCircleFilteredRow:
+    """Document cards: the document's own date and its page count are columns
+    of the row `_visible_document_meta` already selects -- the same statement,
+    the same circle filter, no further query."""
+
+    @staticmethod
+    async def _dated(db, owner_id):
+        import datetime
+
+        kb_id, doc = await _private_document(db, owner_id)
+        doc.document_date = datetime.date(2025, 3, 14)
+        doc.page_count = 3
+        await db.commit()
+        return kb_id, doc
+
+    async def test_the_owner_gets_date_and_pages(self, db_session, people):
+        alice, _bob, _carol = people
+        _kb, doc = await self._dated(db_session, alice.id)
+
+        row = (await ds._visible_meta({doc.id}, alice.id))[doc.id]
+        [source] = await ch._turn_sources([], _rag(doc), alice.id)
+
+        # The lookup hands out a JSON value, not a `date`: the row is persisted.
+        assert row["document_date"] == "2025-03-14" and row["page_count"] == 3
+        assert source == {
+            "document_id": doc.id, "filename": "doclinks.pdf", "title": "Privater Bescheid",
+            "tier": TIER_SELF, "document_date": "2025-03-14", "page_count": 3,
+            "paperless_url": f"{PUBLIC}/documents/{PAPERLESS_ID}/details",
+        }
+
+    async def test_a_stranger_gets_neither_from_lookup_nor_from_a_tool_source(
+        self, db_session, people,
+    ):
+        alice, _bob, carol = people
+        _kb, doc = await self._dated(db_session, alice.id)
+        kb_source = {"document_id": doc.id, "filename": "x.pdf", "title": "X", "tier": 4}
+        tool_results = [("internal.knowledge_search", {"sources": [kb_source]})]
+        # Control: the owner's turn carries both.
+        [for_owner] = await ch._turn_sources(tool_results, [], alice.id)
+        assert for_owner["document_date"] == "2025-03-14" and for_owner["page_count"] == 3
+
+        assert await ds._visible_meta({doc.id}, carol.id) == {}
+        assert await ch._turn_sources(tool_results, [], carol.id) == [kb_source]
+        assert await ch._turn_sources([], _rag(doc), carol.id) == []
+
+    async def test_a_document_without_a_date_carries_no_date_and_never_the_upload_day(
+        self, db_session, people,
+    ):
+        alice, _bob, _carol = people
+        _kb, doc = await _private_document(db_session, alice.id)
+        assert doc.document_date is None and doc.created_at is not None
+
+        [source] = await ch._turn_sources([], _rag(doc), alice.id)
+
+        assert "document_date" not in source and "created_at" not in source
+        assert "page_count" not in source
+
+    async def test_with_the_flag_off_the_turn_has_no_card_fields(
+        self, db_session, people, monkeypatch,
+    ):
+        alice, _bob, _carol = people
+        _kb, doc = await self._dated(db_session, alice.id)
+        kb_source = {"document_id": doc.id, "filename": "x.pdf", "title": "X", "tier": 0}
+        tool_results = [("internal.knowledge_search", {"sources": [kb_source]})]
+        monkeypatch.setattr(settings, "chat_document_links_enabled", False, raising=False)
+
+        sources = await ch._turn_sources(tool_results, _rag(doc), alice.id)
+
+        assert sources == [kb_source] and sources[0] is kb_source
+
+
 class TestADocumentWithoutAName:
     async def test_the_lookup_invents_no_title_and_the_chip_carries_none(self, db_session, people):
         alice, _bob, _carol = people
@@ -238,9 +309,13 @@ async def kitchen(db_session: AsyncSession, monkeypatch, own_session_to_test_db)
     _kb, doc = await _private_document(db_session, anna.id)
     sources = [
         {"document_id": doc.id, "filename": "doclinks.pdf", "title": "Privater Bescheid",
-         "tier": TIER_SELF, "paperless_url": f"{PUBLIC}/documents/{PAPERLESS_ID}/details"},
+         "tier": TIER_SELF, "document_date": "2025-03-14", "page_count": 3,
+         "paperless_url": f"{PUBLIC}/documents/{PAPERLESS_ID}/details"},
+        # The first Paperless source is a document CARD (date, type,
+        # correspondent, pages); the second is one stored before cards existed.
         {"kind": "paperless", "paperless_document_id": 8001, "title": "Annas Beleg",
-         "paperless_url": f"{PUBLIC}/documents/8001/details"},
+         "created": "2026-01-02", "correspondent": "Annas Bank", "document_type": "Beleg",
+         "page_count": 2, "paperless_url": f"{PUBLIC}/documents/8001/details"},
         {"kind": "paperless", "paperless_document_id": 8002, "title": "Annas Vertrag"},
     ]
     # The metadata a REAL turn stores, built by the handler's own builders --
@@ -338,6 +413,9 @@ class TestAReaderOfASharedConversation:
         assert "Privater Bescheid" not in served and "Annas" not in served
         assert SECRET_CONTEXT not in served
         assert str(PAPERLESS_ID) not in served and "800" not in served
+        # ... nor a card field of either: document date, Paperless date, type.
+        assert "2025-03-14" not in served and "2026-01-02" not in served
+        assert "page_count" not in served and "Beleg" not in served
 
     async def test_only_the_keys_the_client_reads_leave_the_server(self, db_session, kitchen):
         """The history route is an allowlist. `action_summary` is the agent's
