@@ -32,7 +32,8 @@ needs `WEATHER_ENABLED`.
   🛑 READ side (`metadata_for_reader`, flag-independent): `GET /api/chat/history` is an ALLOWLIST — a client gets
   `CLIENT_METADATA_KEYS` + `sources`, never `action_summary` & co. (the agent's copy of the tool result). Under auth
   each source is rebuilt for the READER: `document_id` (on any kind) through the circle filter, Paperless needs
-  `mcp.paperless.read` + a valid id, unknown kind / non-list `sources` dropped. A new metadata key the client needs
+  `mcp.paperless.read` + a valid id, unknown kind / non-list `sources` dropped; the stored `paperless_url` is never
+  served, the link is rebuilt from the id (own session → 2 pool connections). A new metadata key the client needs
   goes into the allowlist; a new route that returns `message_metadata` goes through this function. NOT covered:
   `load_context` re-injecting `action_summary` into the next prompt (open decision). Enable the flag only AFTER the
   frontend has propagated (old bundle → `/knowledge?doc=undefined`).

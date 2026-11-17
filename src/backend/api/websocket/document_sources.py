@@ -324,6 +324,11 @@ def _stored_sources(meta: dict) -> list:
     return sources if isinstance(sources, list) else []
 
 
+def _had_link(source: dict) -> bool:
+    url = source.get("paperless_url")
+    return isinstance(url, str) and bool(url)
+
+
 def _typed_fields(source: dict, fields: dict) -> dict:
     return {
         key: source[key] for key, kind in fields.items()
@@ -343,11 +348,14 @@ def _source_for_reader(
       cover. A Paperless source never carries one out.
     * A Paperless source needs a valid `paperless_document_id` and the reader's
       Paperless permission.
-    * `paperless_url` survives only if it is exactly the link the server builds
-      for that document now; nothing else is ever a link.
+    * The stored `paperless_url` is never served. It only says that the source
+      HAD a link; the link that goes out is built now from the id -- the
+      Paperless id of a Paperless source, the looked-up Paperless id of a
+      knowledge-base document -- so a changed `PAPERLESS_PUBLIC_URL` moves the
+      old chips along, and without a base there is no link.
 
-    `check_rights=False` (auth off, one trust domain) keeps the shape rules and
-    skips the two access rules.
+    `check_rights=False` (auth off, one trust domain) keeps the shape and link
+    rules and skips the two access rules.
     """
     if not isinstance(source, dict):
         return None
@@ -374,11 +382,9 @@ def _source_for_reader(
         out = {"document_id": doc_id}
         out.update(_typed_fields(source, _KNOWLEDGE_SOURCE_FIELDS))
 
-    url = source.get("paperless_url")
-    if isinstance(url, str) and url:
-        # Auth off has no lookup, so a knowledge-base link cannot be re-derived
-        # there; it is the one the server stored.
-        if (kind is None and not check_rights) or url == _paperless_url(paperless_id):
+    if _had_link(source):
+        url = _paperless_url(paperless_id)
+        if url:
             out["paperless_url"] = url
     return out
 
@@ -398,10 +404,13 @@ async def metadata_for_reader(metadatas: list, reader: Any) -> list:
        For the asker this changes nothing unless access was lost or the
        document is gone -- and then the chip led nowhere anyway.
 
-    The visibility lookup runs on a session of its own (`_visible_meta`, as on
+    The document lookup runs on a session of its own (`_visible_meta`, as on
     the write side), so a failed statement cannot leave the caller's
-    transaction aborted. A failed lookup withholds every source that names a
-    knowledge-base document (fail-closed); it never fails the history.
+    transaction aborted -- at the price of a second pool connection held while
+    the route's is still checked out. Under auth it decides visibility and a
+    failure withholds every source that names a knowledge-base document
+    (fail-closed); with auth off it only supplies the Paperless id of a linked
+    document, and a failure costs the link. It never fails the history.
 
     Returns a list parallel to `metadatas`, built from new dicts -- the stored
     ones are ORM column values and are never modified.
@@ -413,11 +422,15 @@ async def metadata_for_reader(metadatas: list, reader: Any) -> list:
 
     visible: dict = {}
     paperless_ok = False
-    if check_rights and any(_stored_sources(m) for m in dicts):
+    if any(_stored_sources(m) for m in dicts):
+        # Under auth every named document is looked up (visibility); with auth
+        # off only those whose link has to be rebuilt.
         wanted: set[int] = set()
         for meta in dicts:
             for source in _stored_sources(meta):
-                doc_id = _document_id(source.get("document_id")) if isinstance(source, dict) else None
+                if not isinstance(source, dict) or not (check_rights or _had_link(source)):
+                    continue
+                doc_id = _document_id(source.get("document_id"))
                 if doc_id is not None:
                     wanted.add(doc_id)
         if wanted:
@@ -425,10 +438,12 @@ async def metadata_for_reader(metadatas: list, reader: Any) -> list:
                 visible = dict(await _visible_meta(wanted, getattr(reader, "id", None)))
             except Exception as e:
                 logger.warning(
-                    "chat sources: visibility lookup for a history reader failed, "
-                    f"knowledge-base sources withheld: {error_text_without_content(e)}"
+                    "chat sources: document lookup for a history reader failed, "
+                    "knowledge-base sources (auth on) or their links (auth off) "
+                    f"withheld: {error_text_without_content(e)}"
                 )
-        paperless_ok = _may_read_paperless(reader)
+        if check_rights:
+            paperless_ok = _may_read_paperless(reader)
 
     out: list = []
     for meta in metadatas:

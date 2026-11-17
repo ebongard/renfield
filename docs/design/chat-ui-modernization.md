@@ -371,10 +371,19 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
      every reader — the asker included — gets a source rebuilt key by key: the kind is `paperless` or absent
      (anything else is dropped); a `document_id` on ANY kind must pass `documents_circles_filter` for the reader; a
      Paperless source needs a valid `paperless_document_id` and `mcp.paperless.read`, and never carries
-     knowledge-base fields; `paperless_url` survives only if it equals the link the server builds now. A `sources`
-     value that is not a list is dropped. Under auth-off the shape rules hold and the two access rules are skipped.
-  The visibility lookup runs on a session of its own; a failed lookup withholds every source that names a
-  knowledge-base document and never fails the history. The stored row is never modified.
+     knowledge-base fields. A `sources` value that is not a list is dropped. Under auth-off the shape rules hold
+     and the two access rules are skipped.
+  3. **The stored `paperless_url` is never served**, auth on or off. It only marks that the source had a link; the
+     link that goes out is built NOW from the id (the stored Paperless id, or the knowledge-base document's
+     looked-up one). A changed `PAPERLESS_PUBLIC_URL` therefore moves old chips along; no base, or a document no
+     longer filed, means no link.
+  The document lookup runs on a session of its own, so a history request with knowledge-base sources holds two
+  pool connections at once (the route's and the lookup's; under auth-off only when a link has to be rebuilt).
+  Under auth a failed lookup withholds every source that names a knowledge-base document, under auth-off only the
+  link; it never fails the history. The stored row is never modified.
+  **By design:** a turn that ran without loaded permissions (`user_permissions=None` — a device token on the chat
+  socket) may have used Paperless; on reload its Paperless chips are gone, because the reader holds no
+  `mcp.paperless.read`.
   **Not covered — the same data on other paths:** `ConversationService.load_context` re-injects `action_summary`
   into the prompt of whoever continues the thread, and `conversations.context_vars` / `summary` travel by reach as
   well. Those feed the model, not the client, and are an open decision. `artifacts` are served unfiltered: they are

@@ -898,48 +898,114 @@ class TestMetadataForReader:
         assert page == before
         assert served == [{"agent_role": "a"}]
 
-    async def test_a_link_is_served_only_if_the_server_builds_the_same_one_now(
-        self, auth_on, monkeypatch,
-    ):
+    async def test_the_served_link_is_the_one_the_server_builds_now(self, auth_on, monkeypatch):
+        """The stored id is trusted, the stored URL never is: it only says that
+        the source had a link. Whatever it contains, the link that goes out is
+        built now from the id."""
         _visible(monkeypatch, 21, paperless=210)
-        own = f"{PUBLIC}/documents/210/details"
         reader = _Reader(permissions=["mcp.paperless.read"])
 
         meta = await _served([
-            {**KB, "paperless_url": own},
+            {**KB, "paperless_url": f"{PUBLIC}/documents/999/details"},
             {**PL, "paperless_url": f"{PUBLIC}/documents/31/details"},
             {**PL, "paperless_document_id": 32, "paperless_url": f"{PUBLIC}/documents/31/details"},
             {**PL, "paperless_document_id": 33, "paperless_url": "https://evil.example/x"},
             {**PL, "paperless_document_id": 34, "paperless_url": ["x"]},
+            {**PL, "paperless_document_id": 35, "paperless_url": ""},
+            {**PL, "paperless_document_id": 36},
         ], reader)
 
         assert meta["sources"] == [
-            {**KB, "paperless_url": own},
+            {**KB, "paperless_url": f"{PUBLIC}/documents/210/details"},
             {**PL, "paperless_url": f"{PUBLIC}/documents/31/details"},
-            {**PL, "paperless_document_id": 32},
-            {**PL, "paperless_document_id": 33},
+            {**PL, "paperless_document_id": 32, "paperless_url": f"{PUBLIC}/documents/32/details"},
+            {**PL, "paperless_document_id": 33, "paperless_url": f"{PUBLIC}/documents/33/details"},
+            # No stored link (or not a string) -> none is added: a source
+            # written before links existed keeps the chip it had.
             {**PL, "paperless_document_id": 34},
+            {**PL, "paperless_document_id": 35},
+            {**PL, "paperless_document_id": 36},
         ]
 
-    async def test_a_foreign_link_on_a_knowledge_source_is_dropped(self, auth_on, monkeypatch):
+    @pytest.mark.parametrize("auth", [True, False])
+    async def test_a_changed_public_base_moves_the_stored_links(self, monkeypatch, auth):
+        old = "https://old-paperless.example.org"
+        monkeypatch.setattr(settings, "auth_enabled", auth)
+        monkeypatch.setattr(settings, "paperless_public_url", PUBLIC, raising=False)
+        monkeypatch.setattr(settings, "paperless_api_url", INTERNAL, raising=False)
         _visible(monkeypatch, 21, paperless=210)
 
-        meta = await _served([{**KB, "paperless_url": f"{PUBLIC}/documents/999/details"}], _Reader())
+        meta = await _served([
+            {**KB, "paperless_url": f"{old}/documents/210/details"},
+            {**PL, "paperless_url": f"{old}/documents/31/details"},
+        ], _Reader(permissions=["mcp.paperless.read"]))
+
+        assert meta["sources"] == [
+            {**KB, "paperless_url": f"{PUBLIC}/documents/210/details"},
+            {**PL, "paperless_url": f"{PUBLIC}/documents/31/details"},
+        ]
+        assert old not in repr(meta)
+
+    @pytest.mark.parametrize("auth", [True, False])
+    async def test_without_a_public_base_no_link_is_served(self, monkeypatch, no_public_base, auth):
+        monkeypatch.setattr(settings, "auth_enabled", auth)
+        _visible(monkeypatch, 21, paperless=210)
+
+        meta = await _served([
+            {**KB, "paperless_url": f"{PUBLIC}/documents/210/details"},
+            {**PL, "paperless_url": f"{PUBLIC}/documents/31/details"},
+        ], _Reader(permissions=["mcp.paperless.read"]))
+
+        assert meta == {"sources": [KB, PL]}
+
+    async def test_a_document_no_longer_filed_in_paperless_loses_its_link(
+        self, auth_on, monkeypatch,
+    ):
+        _visible(monkeypatch, 21, paperless=None)
+
+        meta = await _served([{**KB, "paperless_url": f"{PUBLIC}/documents/210/details"}], _Reader())
 
         assert meta == {"sources": [KB]}
 
-    async def test_auth_off_keeps_the_shape_rules_and_asks_nobody(self, monkeypatch, public_base):
-        """One trust domain: no visibility lookup, no permission -- but still
-        only sources of the shape this module writes."""
+    async def test_auth_off_keeps_the_shape_rules_and_checks_no_rights(
+        self, monkeypatch, public_base,
+    ):
+        """One trust domain: no circle filter, no permission -- but still only
+        sources of the shape this module writes, and only a link the server
+        builds. The one lookup is for the Paperless id of a linked document."""
         monkeypatch.setattr(settings, "auth_enabled", False)
-        lookup = _visible(monkeypatch)
-        link = f"{PUBLIC}/documents/210/details"
+        lookup = _visible(monkeypatch, 21, paperless=210)
 
         meta = await _served(
-            [{**KB, "paperless_url": link, "content": "x"}, PL, {**KB, "kind": "note"}, "junk",
-             {**KB, "document_id": "21"}],
+            [{**KB, "paperless_url": "https://other.example/x", "content": "x"}, PL,
+             {**KB, "kind": "note"}, "junk", {**KB, "document_id": "21"},
+             {**KB, "document_id": 22}],
             None,
         )
 
-        assert meta == {"sources": [{**KB, "paperless_url": link}, PL]}
+        assert meta == {"sources": [
+            {**KB, "paperless_url": f"{PUBLIC}/documents/210/details"}, PL,
+            {**KB, "document_id": 22},
+        ]}
+        # Only the linked document is looked up; 22 has no link to rebuild.
+        assert lookup.calls == [({21}, None)]
+
+    async def test_auth_off_without_a_stored_link_asks_nobody(self, monkeypatch, public_base):
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        lookup = _visible(monkeypatch, 21, paperless=210)
+
+        assert await _served([KB, PL], None) == {"sources": [KB, PL]}
         assert lookup.calls == []
+
+    async def test_auth_off_a_failing_lookup_costs_the_link_not_the_source(
+        self, monkeypatch, public_base,
+    ):
+        monkeypatch.setattr(settings, "auth_enabled", False)
+
+        async def boom(doc_ids, user_id):
+            raise RuntimeError("db down")
+        monkeypatch.setattr(ds, "_visible_meta", boom)
+
+        meta = await _served([{**KB, "paperless_url": "https://other.example/x"}], None)
+
+        assert meta == {"sources": [KB]}
