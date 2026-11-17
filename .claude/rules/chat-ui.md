@@ -35,9 +35,7 @@ needs `WEATHER_ENABLED`.
   `mcp.paperless.read` + a valid id, unknown kind / non-list `sources` dropped; the stored `paperless_url` is never
   served, the link is rebuilt from the id (own session → 2 pool connections). 🛑 The Paperless link of a KB source
   needs `mcp.paperless.read` too — on read (the reader's) AND on write (the asker's): circles give the source, the
-  permission the link (it names the Paperless id). SYSTEM-WIDE rule, ONE module: `services/paperless_visibility.py`
-  (`paperless_visible(perms)` / `paperless_visible_to(user)`; auth off all, no identity denies) — also the document
-  API, duplicate proposals and `list_unfiled_documents`. A new surface with the id goes through it.
+  permission the link (it names the Paperless id). System-wide invariant: `documents-facts.md` (Paperless id).
   A new metadata key the client needs goes into the allowlist; a new route that returns `message_metadata` goes through this function. NOT covered:
   `load_context` re-injecting `action_summary` into the next prompt (open decision). Enable the flag only AFTER the
   frontend has propagated (old bundle → `/knowledge?doc=undefined`).

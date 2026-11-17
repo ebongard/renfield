@@ -5,6 +5,8 @@ paths:
   - "src/backend/services/document_search.py"
   - "src/backend/services/document_fact_retrieval.py"
   - "src/backend/services/document_dedupe*"
+  - "src/backend/services/paperless_visibility.py"
+  - "src/backend/api/routes/knowledge.py"
 ---
 # Documents & Schicht-A facts (titles, dates, search, per-fact tier)
 
@@ -16,6 +18,13 @@ Loaded only when a Schicht-A / document-date / document-search / dedupe service 
 be MORE visible than its document. Fact-source document titles are therefore circle-filtered **separately**
 (`_visible_document_meta` in `services/knowledge_tool.py`): a non-visible source falls back to a generic
 `Dokument {id}` label with no chip, so a tier-overridden-public fact on a private doc never leaks title/filename.
+
+## The Paperless id is the Paperless permission's to give, not the circles'
+🛑 EVERY surface that serves a Paperless id or a link built from it goes through `services/paperless_visibility.py`
+(`paperless_visible(perms)` / `paperless_visible_to(user)`; auth off: all; auth on: `mcp.paperless.read`, `mcp.paperless`
+or `mcp.*`; no identity denies): the document API (`paperless_url`, `paperless_link_withheld`), duplicate proposals,
+`internal.list_unfiled_documents`, the chat sources. `in_paperless` (status, no id) stays. Decide it BEFORE an
+`expire_all()` on the request session — after it the user's role is a lazy load that silently denies.
 
 ## Generated titles (`documents.generated_title`, migration `pc20260611`)
 `services/schicht_a_extractor.generate_document_title(facts)` synthesizes the title **from the facts, not the OCR

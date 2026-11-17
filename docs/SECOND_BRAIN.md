@@ -282,7 +282,8 @@ history, the tooling and the frontend wiring.
 - The response also carries `document_date` and `in_paperless` (`paperless_document_id` present OR
   `paperless_state='done'`). `paperless_url` (built from the Paperless id) is served under auth only to a caller
   with `mcp.paperless.read` (`services/paperless_visibility.py`); `in_paperless` is a status without the id and
-  stays for everyone who sees the document.
+  stays for everyone who sees the document. `paperless_link_withheld` (no id) is true when the document is filed
+  but the link was withheld — so the client does not mistake it for a duplicate without an id.
 - Frontend `/wissen/dokumente` (`pages/KnowledgePage.tsx`): a sort-button bar (Name / Importdatum / Dokumentdatum; the
   active arrow toggles asc/desc) plus per-row integration status icons (`Archive` = Paperless, green = present /
   muted = absent).
