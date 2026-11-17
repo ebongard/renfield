@@ -674,13 +674,17 @@ von `bin/run-backend-tests.sh` gesetzt). Der Harness in `tests/backend/conftest.
   `bin/throwaway_test_db.py` verweigert jeden Namen außerhalb von `renfield_test_<suffix>`
   (Kleinbuchstaben, Ziffern, Unterstrich; kein `prod`/`live`), verweigert eine bereits
   vorhandene Datenbank (weder wiederverwendet noch gelöscht) und löscht nur, was derselbe
-  Aufruf angelegt hat: `create` schreibt ein Zufallstoken in den Kommentar der Datenbank,
-  `drop` vergleicht es. Nach einem `SIGKILL` des Skripts, einem Stopp des Containers (auch
-  `bin/quick-update.sh` startet ihn neu) oder einer Unterbrechung zwischen `CREATE` und der
-  Übergabe des Tokens bleibt die Datenbank stehen und sperrt ihr Suffix (Exit 3); sie wird
-  dann von Hand entfernt, ihr Kommentar weist sie aus. Ein Leck, nie ein falsches Löschen.
-  pytest wird vor dem Löschen in jedem Fall beendet und abgewartet (`TERM`, nach einer
-  Frist `KILL`); auf `SIGINT` bekommt es zuerst die Frist, um seine Zusammenfassung zu drucken.
+  Aufruf angelegt hat: beim Anlegen schreibt es ein Zufallstoken in den Kommentar der
+  Datenbank, vor dem Löschen vergleicht es ihn; das Token verlässt den Prozess nie. Nach
+  einem `SIGKILL` oder einem Stopp des Containers (auch `bin/quick-update.sh` startet ihn
+  neu) bleibt die Datenbank stehen und sperrt ihr Suffix (Exit 3); sie wird dann von Hand
+  entfernt, ihr Kommentar weist sie aus. Ein Leck, nie ein falsches Löschen.
+  pytest läuft als Kind dieses Hilfsprogramms, nicht der Shell: es wird vor dem Löschen in
+  jedem Fall beendet und abgewartet (`TERM`, nach einer Frist `KILL`; Frist
+  `RENFIELD_TEST_STOP_GRACE`, Vorgabe 10 s, ganze Sekunden), auf `SIGINT` bekommt es zuerst
+  die Frist, um seine Zusammenfassung zu drucken. Ein Signal während des Anlegens oder
+  Löschens wird nur vermerkt, beides läuft zu Ende. Ein Löschen, das nach 120 s nicht fertig
+  ist, endet mit einer Warnung; bleibt die Datenbank stehen, ist auch ein grüner Lauf Exit 1.
   Voraussetzung: die Rolle aus `DATABASE_URL` darf Datenbanken anlegen und `vector`
   installieren (auf der Build-Box: Superuser; `vector` ist nicht `trusted`).
 

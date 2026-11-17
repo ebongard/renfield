@@ -8,13 +8,16 @@ What is pinned is what could cost data, not that the happy path exists:
   pytest -- checked in the shell AND in the Python helper;
 - a database that already exists is refused: not reused, not dropped;
 - ``drop`` removes only a database carrying THIS invocation's token;
-- the database is dropped when pytest fails and when the script is signalled;
+- the database is dropped when pytest fails and when the run is signalled --
+  and never while pytest is still alive;
 - without the variable the script behaves as it always did.
 
-The shell half runs the real script against a stub ``python``. The stub hands
-the URL derivation (``python -``) to the real interpreter, so that part -- and
-its redaction -- is the real code. It runs under ``sh`` AND under ``bash`` with
-a UTF-8 locale: a check that holds in one shell only is not a check.
+The middle section runs the real script against a stub ``python``. The stub
+hands the URL derivation (``python -``) to the real interpreter, so that part
+-- and its redaction -- is the real code; a call of the helper goes to the REAL
+helper too, with only its connection replaced by a recording one and its
+pytest by a stub. It runs under ``sh`` AND under ``bash``: a check that holds
+in one shell only is not a check.
 
 The last section uses neither stub nor fake: the real helper, and the real
 script with the real pytest launcher, against real Postgres -- on a database
@@ -159,19 +162,54 @@ def test_an_unparsable_application_url_is_refused(admin):
 
 @pytest.mark.parametrize(
     "argv",
-    [["drop", "renfield_test", _TOKEN], ["drop", "renfield", _TOKEN], ["create", "renfield_test"],
-     ["create", "renfield_test2"], ["drop", "renfield_test_x"], ["create"], [], ["truncate", "renfield_test_x"]],
+    [["run", "renfield_test", "--"], ["run", "renfield", "--"], ["run", "renfield_test2", "--"],
+     ["run", "renfield_test_x"], ["run", "renfield_test_x", "-q"], ["run"], [],
+     ["create", "renfield_test_x"], ["drop", "renfield_test_x", _TOKEN], ["truncate", "renfield_test_x", "--"]],
 )
 def test_a_refused_call_never_opens_a_connection(admin, monkeypatch, capsys, argv):
-    async def _no_connection(_url):
+    async def _no_connection(_url, database="postgres"):
         raise AssertionError("connected to Postgres for a refused call")
 
     monkeypatch.setattr(admin, "_connect", _no_connection)
+    monkeypatch.setattr(admin, "PYTEST_COMMAND", ["false"])
     monkeypatch.setenv("DATABASE_URL", _APP_URL)
     assert admin.main(argv) == admin.EXIT_REFUSED
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "s3cr3t-pw" not in captured.err
+
+
+@pytest.mark.parametrize("grace", ["abc", "-1", "1.5", " 3", "3 ", "1e3", "12345", "٣"])
+def test_a_grace_period_that_is_no_whole_number_is_refused_before_anything_is_created(
+    admin, monkeypatch, capsys, grace
+):
+    # A value `sleep` chokes on used to mean TERM and KILL with no grace at all.
+    async def _no_connection(_url, database="postgres"):
+        raise AssertionError("connected to Postgres although the grace period is unusable")
+
+    monkeypatch.setattr(admin, "_connect", _no_connection)
+    monkeypatch.setenv("DATABASE_URL", _APP_URL)
+    monkeypatch.setenv(admin.STOP_GRACE_ENV, grace)
+    assert admin.main(["run", "renfield_test_a", "--"]) == admin.EXIT_REFUSED
+    assert admin.STOP_GRACE_ENV in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("grace,seconds", [("0", 0), ("7", 7), ("0010", 10), ("", 10), (None, 10)])
+def test_a_whole_number_of_seconds_is_the_grace_period_and_unset_is_ten(admin, monkeypatch, grace, seconds):
+    if grace is None:
+        monkeypatch.delenv(admin.STOP_GRACE_ENV, raising=False)
+    else:
+        monkeypatch.setenv(admin.STOP_GRACE_ENV, grace)
+    assert admin.stop_grace() == seconds
+
+
+def test_noted_signals_do_not_stay_noted_afterwards(admin):
+    before = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)}
+    with admin.signals_noted() as received:
+        if before[signal.SIGTERM] is not signal.SIG_IGN:
+            os.kill(os.getpid(), signal.SIGTERM)
+            assert received == [signal.SIGTERM], "a noted signal must neither kill nor raise"
+    assert {s: signal.getsignal(s) for s in before} == before
 
 
 # --------------------------------------------------------------------------
@@ -250,6 +288,35 @@ def test_drop_refuses_a_malformed_token_before_any_statement(admin, token):
     with pytest.raises(admin.Refused):
         asyncio.run(admin.drop(conn, "renfield_test_a", token))
     assert conn.statements == []
+
+
+def test_a_drop_that_hangs_ends_with_a_clear_error_instead_of_hanging(admin, monkeypatch):
+    # After a signal nothing but SIGKILL could end a run stuck in its drop.
+    class _Stuck(_Conn):
+        async def execute(self, sql):
+            if sql.startswith("DROP"):
+                await asyncio.sleep(3600)
+            await super().execute(sql)
+
+    monkeypatch.setattr(admin, "DROP_TIMEOUT_SECONDS", 0.05)
+    conn = _Stuck()
+    token = asyncio.run(admin.create(conn, "renfield_test_a"))
+    started = time.monotonic()
+    with pytest.raises(admin.DropTimedOut, match="dropping renfield_test_a did not finish"):
+        asyncio.run(admin.drop(conn, "renfield_test_a", token))
+    assert time.monotonic() - started < 10
+
+
+def test_a_mark_that_cannot_be_read_in_time_is_the_same_error_and_drops_nothing(admin, monkeypatch):
+    class _Stuck(_Conn):
+        async def fetchrow(self, _sql, name):
+            await asyncio.sleep(3600)
+
+    monkeypatch.setattr(admin, "DROP_TIMEOUT_SECONDS", 0.05)
+    conn = _Stuck({"renfield_test_a": admin.MARK + _TOKEN})
+    with pytest.raises(admin.DropTimedOut):
+        asyncio.run(admin.drop(conn, "renfield_test_a", _TOKEN))
+    assert conn.drops == []
 
 
 def test_drop_of_a_database_that_is_gone_is_not_an_error(admin):
@@ -381,15 +448,13 @@ async def _noop_close():
     return None
 
 
-def test_a_new_database_gets_the_vector_extension_the_shared_one_has(admin, monkeypatch, capsys):
+def test_a_new_database_gets_the_vector_extension_the_shared_one_has(admin, monkeypatch):
     maintenance, inside = _Conn(), _Inside()
-    maintenance.close = _noop_close
     opened = _connections(admin, monkeypatch, maintenance, inside)
-    assert admin.main(["create", "renfield_test_a"]) == 0
-    assert opened == ["postgres", "renfield_test_a"]
+    token = asyncio.run(admin.create_ready(maintenance, "renfield_test_a", _APP_URL))
+    assert opened == ["renfield_test_a"]
     assert inside.statements == ["CREATE EXTENSION IF NOT EXISTS vector SCHEMA public"]
     assert inside.closed
-    token = capsys.readouterr().out.strip()
     assert maintenance.existing == {"renfield_test_a": admin.MARK + token}
 
 
@@ -397,10 +462,11 @@ def test_a_database_that_cannot_get_its_extension_is_dropped_again(admin, monkey
     maintenance, inside = _Conn(), _Inside(fail=True)
     maintenance.close = _noop_close
     _connections(admin, monkeypatch, maintenance, inside)
-    assert admin.main(["create", "renfield_test_a"]) == 1
+    monkeypatch.setattr(admin, "PYTEST_COMMAND", ["false"])
+    assert admin.main(["run", "renfield_test_a", "--"]) == 1
     assert maintenance.existing == {}, "a half-prepared database must not block the suffix"
     captured = capsys.readouterr()
-    assert captured.out == "", "no token for a database that does not exist"
+    assert "TEST_DB" not in captured.out, "nothing may be announced for a database that does not exist"
     assert "permission denied to create extension" in captured.err
 
 
@@ -410,34 +476,31 @@ def test_a_driver_error_prints_its_type_only(admin, monkeypatch, capsys):
 
     monkeypatch.setattr(admin, "_connect", _boom)
     monkeypatch.setenv("DATABASE_URL", _APP_URL)
-    assert admin.main(["create", "renfield_test_a"]) == 1
+    assert admin.main(["run", "renfield_test_a", "--"]) == 1
     captured = capsys.readouterr()
     assert "OSError" in captured.err
     assert "s3cr3t-pw" not in captured.out + captured.err
 
 
 # --------------------------------------------------------------------------
-# The shell script against a stub `python`
+# The real script and the real helper; stubbed are Postgres and pytest only
 # --------------------------------------------------------------------------
 
 # 🛑 Drains stdin on every call it answers itself: the script feeds `python -`
 # a here-document, and a reader that exits without reading turns that into a
 # SIGPIPE (exit 141) the real interpreter never produces -- see
 # test_deploy_migration_gate.py. The `-` call goes to the real interpreter,
-# which reads it. The pytest call KEEPS what it read: the script has to hand
-# pytest its own stdin, not /dev/null.
-#
-# The drop call records whether the stub pytest is still alive at that moment:
-# the database must never be dropped under a running pytest.
+# which reads it. The pytest call KEEPS what it read: pytest has to get the
+# script's own stdin, not /dev/null. The helper call does not touch stdin at
+# all -- it is pytest's.
 _PYTHON_STUB = r"""#!/bin/bash
 if [[ "$1" == "-" ]]; then
   echo "derive-url" >> "$STUB_LOG"
   exec "$STUB_REAL_PYTHON" -
 fi
 case "$1" in
-  -m|-c)
-    # `-m pytest` on the shared database, `-c <launcher>` on a run's own.
-    how="$1"; shift 2
+  -m)
+    shift 2
     echo $$ > "$STUB_PYTEST_PID"
     case "${STUB_PYTEST_MODE:-}" in
       hang)        exec sleep 60 ;;
@@ -448,30 +511,103 @@ case "$1" in
     esac
     stdin=$(cat)
     db="${RENFIELD_TEST_PG_URL##*/}"
-    echo "pytest $how db=$db scheme=${RENFIELD_TEST_PG_URL%%://*} stdin=[$stdin] args=$*" >> "$STUB_LOG"
+    echo "pytest db=$db scheme=${RENFIELD_TEST_PG_URL%%://*} stdin=[$stdin] args=$*" >> "$STUB_LOG"
     exit "${STUB_PYTEST_RC:-0}" ;;
   */throwaway_test_db.py)
-    cat >/dev/null
-    case "$2" in
-      create) echo "admin create $3" >> "$STUB_LOG"
-              [[ -n "${STUB_EXISTS:-}" ]] && { echo "REFUSED: exists" >&2; exit 3; }
-              echo "$STUB_TOKEN"; exit 0 ;;
-      drop)   alive=no
-              if [[ -s "$STUB_PYTEST_PID" ]] && kill -0 "$(cat "$STUB_PYTEST_PID")" 2>/dev/null; then alive=yes; fi
-              echo "admin drop $3 $4 pytest_alive=$alive" >> "$STUB_LOG"
-              exit "${STUB_DROP_RC:-0}" ;;
-    esac ;;
+    exec "$STUB_REAL_PYTHON" "$STUB_DRIVER" "$@" ;;
 esac
 cat >/dev/null
 echo "unexpected $*" >> "$STUB_LOG"
 exit 97
 """
 
+# Loads the REAL helper and runs its `main`, with two things replaced: the
+# connection (a recording one -- no Postgres here) and the pytest command (the
+# stub above). Everything that decides when the database is created, when
+# pytest is signalled and when the drop is issued is the code under test.
+#
+# The drop records whether the stub pytest is still alive at that moment: the
+# database must never be dropped under a running pytest.
+_DRIVER = r"""
+import asyncio
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("throwaway_test_db", sys.argv[1])
+admin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(admin)
+
+
+def log(line):
+    with open(os.environ["STUB_LOG"], "a") as out:
+        out.write(line + "\n")
+
+
+def pytest_alive():
+    try:
+        with open(os.environ["STUB_PYTEST_PID"]) as pidfile:
+            os.kill(int(pidfile.read()), 0)
+    except (OSError, ValueError):
+        return "no"
+    return "yes"
+
+
+class Conn:
+    marks = {}
+
+    async def execute(self, sql):
+        name = sql.split('"')[1] if '"' in sql else ""
+        if sql.startswith("CREATE DATABASE"):
+            log(f"admin create {name}")
+            await asyncio.sleep(float(os.environ.get("STUB_CREATE_DELAY", "0")))
+            if os.environ.get("STUB_EXISTS"):
+                from asyncpg.exceptions import DuplicateDatabaseError
+
+                raise DuplicateDatabaseError(f'database "{name}" already exists')
+            Conn.marks[name] = None
+        elif sql.startswith("COMMENT ON DATABASE"):
+            Conn.marks[name] = sql.split("'")[1]
+        elif sql.startswith("DROP DATABASE"):
+            log(f"admin drop {name} pytest_alive={pytest_alive()}")
+            mode = os.environ.get("STUB_DROP", "")
+            if mode == "fail":
+                raise RuntimeError("connection lost")
+            if mode == "hang":
+                await asyncio.sleep(3600)
+            if mode == "slow":
+                await asyncio.sleep(2)
+            Conn.marks.pop(name, None)
+            log(f"admin dropped {name}")
+
+    async def fetchrow(self, _sql, name):
+        return {"mark": Conn.marks[name]} if name in Conn.marks else None
+
+    async def close(self):
+        pass
+
+    def terminate(self):
+        pass
+
+
+async def connect(_url, database="postgres"):
+    return Conn()
+
+
+admin._connect = connect
+admin.PYTEST_COMMAND = [os.environ["STUB_PYTHON"], "-m", "pytest"]
+if os.environ.get("STUB_DROP_TIMEOUT"):
+    admin.DROP_TIMEOUT_SECONDS = float(os.environ["STUB_DROP_TIMEOUT"])
+sys.exit(admin.main(sys.argv[2:]))
+"""
+
 
 def _a_utf8_locale() -> str | None:
-    """A locale whose collation is NOT the C one, if this machine has any.
+    """A UTF-8 locale of this machine, the ones with a collation of their own first.
 
-    That is where `[a-z]` in bash stops meaning "the 26 lowercase letters".
+    In those, `[a-z]` in bash stops meaning "the 26 lowercase letters". The
+    last two candidates collate by codepoint, exactly like C -- see
+    test_the_bash_runs_carry_a_negative_control_on_this_machine.
     """
     try:
         have = subprocess.run(["locale", "-a"], capture_output=True, text=True, timeout=10).stdout.split()
@@ -481,6 +617,18 @@ def _a_utf8_locale() -> str | None:
         if wanted in have:
             return wanted
     return None
+
+
+def test_the_bash_runs_carry_a_negative_control_on_this_machine():
+    # Not a check of the script: it says, in every run's summary, what the
+    # `bash` half of the parametrisation below is worth HERE.
+    name = _a_utf8_locale()
+    if name is None or name.upper().startswith("C."):
+        pytest.skip(
+            f"only {name or 'the inherited locale'} here: it collates by codepoint like C, so a range "
+            "pattern `[!a-z0-9_]` would pass the bash runs too -- they carry no negative control on this "
+            "image. The script lists every character and does not depend on it."
+        )
 
 
 @pytest.fixture(params=["sh", "bash"])
@@ -499,17 +647,23 @@ def script(request, tmp_path):
     stub = stub_dir / "python"
     stub.write_text(_PYTHON_STUB)
     stub.chmod(0o755)
+    driver = tmp_path / "driver.py"
+    driver.write_text(_DRIVER)
     log = tmp_path / "calls.log"
     log.write_text("")
 
     def _env(suffix, stub_env):
-        env = {k: v for k, v in os.environ.items() if k not in ("RENFIELD_TEST_DB_SUFFIX", "LC_ALL", "LC_COLLATE")}
+        env = {
+            k: v for k, v in os.environ.items()
+            if k not in ("RENFIELD_TEST_DB_SUFFIX", "RENFIELD_TEST_STOP_GRACE", "LC_ALL", "LC_COLLATE")
+        }
         env["PATH"] = f"{stub_dir}{os.pathsep}{env.get('PATH', '')}"
         env["DATABASE_URL"] = _APP_URL
         env["STUB_LOG"] = str(log)
         env["STUB_PYTEST_PID"] = str(tmp_path / "pytest.pid")
         env["STUB_REAL_PYTHON"] = sys.executable
-        env["STUB_TOKEN"] = _TOKEN
+        env["STUB_PYTHON"] = str(stub)
+        env["STUB_DRIVER"] = str(driver)
         env["RENFIELD_TEST_STOP_GRACE"] = "1"
         locale_name = _a_utf8_locale()
         if shell == "bash" and locale_name:
@@ -531,9 +685,9 @@ def script(request, tmp_path):
             [shell, str(_SCRIPT), str(_REPO), *pytest_args],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env=_env(suffix, stub_env), stdin=subprocess.DEVNULL,
-            # A shell cannot trap a signal it inherited as IGNORED, and this
+            # A signal inherited as IGNORED stays ignored, by design; and this
             # test may itself run under `nohup` (SIGHUP) or as a background
-            # job (SIGINT, SIGQUIT) -- the throwaway mode starts pytest so.
+            # job of a shell (SIGINT, SIGQUIT).
             preexec_fn=_default_signals,
         )
 
@@ -544,7 +698,16 @@ def _calls(log: Path) -> list[str]:
     return log.read_text().splitlines()
 
 
-_DROP_A1 = f"admin drop renfield_test_a1 {_TOKEN} pytest_alive=no"
+def _wait_for(condition, proc, what: str):
+    deadline = time.monotonic() + 30
+    while not condition():
+        assert proc.poll() is None, f"the run ended before {what}: {proc.stderr.read()}"
+        assert time.monotonic() < deadline, f"never saw: {what}"
+        time.sleep(0.02)
+
+
+_DROP_A1 = ["admin drop renfield_test_a1 pytest_alive=no", "admin dropped renfield_test_a1"]
+_PYTEST_A1 = "pytest db=renfield_test_a1 scheme=postgresql+asyncpg stdin=[] args=-o asyncio_mode=auto -p no:cacheprovider"
 
 
 def test_without_the_variable_the_shared_database_is_used_and_nothing_is_created(script):
@@ -553,7 +716,7 @@ def test_without_the_variable_the_shared_database_is_used_and_nothing_is_created
     assert proc.returncode == 5, proc.stderr
     assert _calls(log) == [
         "derive-url",
-        "pytest -m db=renfield_test scheme=postgresql+asyncpg stdin=[] "
+        "pytest db=renfield_test scheme=postgresql+asyncpg stdin=[] "
         "args=-o asyncio_mode=auto -p no:cacheprovider tests/x.py -q",
     ]
     assert "//<redacted>@db:5432/renfield_test" in proc.stdout
@@ -563,7 +726,7 @@ def test_without_the_variable_the_shared_database_is_used_and_nothing_is_created
 def test_an_empty_variable_is_the_shared_database_too(script):
     run, _, log = script
     assert run("").returncode == 0
-    assert [c.split(" stdin=")[0] for c in _calls(log)] == ["derive-url", "pytest -m db=renfield_test scheme=postgresql+asyncpg"]
+    assert [c.split(" stdin=")[0] for c in _calls(log)] == ["derive-url", "pytest db=renfield_test scheme=postgresql+asyncpg"]
 
 
 @pytest.mark.parametrize("suffix", _BAD_SUFFIXES)
@@ -579,15 +742,17 @@ def test_the_shell_rule_and_the_python_rule_accept_the_same_suffixes(script, adm
     # Nothing but this ties the `case` pattern in the script to NAME_RE. A
     # suffix the shell lets through and Python refuses is "validated once";
     # one the shell refuses and Python accepts is a usable name locked out.
+    # Here the two are compared through the real chain: a suffix the shell
+    # passed reaches the real helper, whose own check then has to agree.
     run, _, log = script
     wrong = []
     for suffix in _generated_suffixes("a9_Aé", 2):
         log.write_text("")
-        by_shell = run(suffix).returncode != 2
+        by_script = run(suffix).returncode != 2
         by_python = bool(admin.NAME_RE.fullmatch("renfield_test_" + suffix))
-        if by_shell != by_python or by_python != _rule(suffix):
-            wrong.append((suffix, by_shell, by_python))
-        if not by_shell:
+        if by_script != by_python or by_python != _rule(suffix):
+            wrong.append((suffix, by_script, by_python))
+        if not by_script:
             assert _calls(log) == [], suffix
     assert wrong == []
 
@@ -599,17 +764,18 @@ def test_a_run_of_its_own_creates_points_pytest_at_it_and_drops(script):
     assert _calls(log) == [
         "derive-url",
         "admin create renfield_test_agent_7",
-        "pytest -c db=renfield_test_agent_7 scheme=postgresql+asyncpg stdin=[] "
+        "pytest db=renfield_test_agent_7 scheme=postgresql+asyncpg stdin=[] "
         "args=-o asyncio_mode=auto -p no:cacheprovider -q",
-        f"admin drop renfield_test_agent_7 {_TOKEN} pytest_alive=no",
+        "admin drop renfield_test_agent_7 pytest_alive=no",
+        "admin dropped renfield_test_agent_7",
     ]
     assert "//<redacted>@db:5432/renfield_test_agent_7" in proc.stdout
+    assert "TEST_DB: renfield_test_agent_7" in proc.stdout
     assert "s3cr3t-pw" not in proc.stdout + proc.stderr
 
 
 def test_pytest_gets_the_scripts_own_stdin_on_a_database_of_its_own(script):
-    # A background command of a non-interactive shell gets /dev/null; `--pdb`
-    # would have nothing to read from.
+    # `--pdb` needs something to read from.
     run, _, log = script
     proc = run("a1", stdin_text="typed into the debugger")
     assert proc.returncode == 0, proc.stderr
@@ -621,7 +787,7 @@ def test_the_database_is_dropped_when_pytest_fails_and_its_code_is_kept(script, 
     run, _, log = script
     proc = run("a1", STUB_PYTEST_RC=rc)
     assert proc.returncode == rc
-    assert _calls(log)[-1] == _DROP_A1
+    assert _calls(log)[-2:] == _DROP_A1
 
 
 def test_an_existing_database_stops_the_run_and_is_never_dropped(script):
@@ -631,27 +797,46 @@ def test_an_existing_database_stops_the_run_and_is_never_dropped(script):
     assert _calls(log) == ["derive-url", "admin create renfield_test_a1"], "no pytest, and above all no drop"
 
 
-def test_a_failed_drop_is_reported_and_does_not_mask_the_result(script):
+@pytest.mark.parametrize("pytest_rc,code", [(1, 1), (5, 5), (0, 1)])
+def test_a_failed_drop_is_reported_never_hides_a_failure_and_fails_a_green_run(script, pytest_rc, code):
     run, _, log = script
-    proc = run("a1", STUB_DROP_RC=4, STUB_PYTEST_RC=1)
+    proc = run("a1", STUB_DROP="fail", STUB_PYTEST_RC=pytest_rc)
+    assert proc.returncode == code
+    assert "renfield_test_a1 was NOT dropped" in proc.stderr
+    assert sum(c.startswith("admin drop ") for c in _calls(log)) == 1
+
+
+def test_a_drop_that_hangs_ends_the_run_with_a_message_and_a_failure(script):
+    run, _, log = script
+    started = time.monotonic()
+    proc = run("a1", STUB_DROP="hang", STUB_DROP_TIMEOUT=1)
+    assert time.monotonic() - started < 60
     assert proc.returncode == 1
     assert "renfield_test_a1 was NOT dropped" in proc.stderr
-    assert sum(c.startswith("admin drop") for c in _calls(log)) == 1
+    assert "did not finish within" in proc.stderr
+    assert _calls(log)[-1] == "admin drop renfield_test_a1 pytest_alive=no"
+
+
+@pytest.mark.parametrize("grace", ["abc", "-1", "1.5"])
+def test_an_unusable_grace_period_is_refused_before_anything_is_created(script, grace):
+    run, _, log = script
+    proc = run("a1", RENFIELD_TEST_STOP_GRACE=grace)
+    assert proc.returncode == 2
+    assert "RENFIELD_TEST_STOP_GRACE" in proc.stderr
+    assert _calls(log) == ["derive-url"]
 
 
 def _signal_a_running_pytest(popen, tmp_path, signum, mode, *pytest_args, **stub_env):
+    """Returns (exit code, pid the stub pytest had, seconds from signal to exit)."""
     pidfile = tmp_path / "pytest.pid"
     proc = popen("a1", *pytest_args, STUB_PYTEST_MODE=mode, **stub_env)
     try:
-        deadline = time.monotonic() + 30
-        while not (pidfile.exists() and pidfile.read_text().strip()):
-            assert proc.poll() is None, proc.stderr.read()
-            assert time.monotonic() < deadline, "the stub pytest never started"
-            time.sleep(0.02)
+        _wait_for(lambda: pidfile.exists() and pidfile.read_text().strip(), proc, "the stub pytest starting")
         pytest_pid = int(pidfile.read_text())
         time.sleep(0.1)  # let the stub reach its `sleep` / install its trap
+        sent = time.monotonic()
         proc.send_signal(signum)
-        return proc.wait(timeout=60), pytest_pid
+        return proc.wait(timeout=60), pytest_pid, time.monotonic() - sent
     finally:
         if proc.poll() is None:  # pragma: no cover - only on a failing run
             proc.kill()
@@ -663,11 +848,11 @@ def _signal_a_running_pytest(popen, tmp_path, signum, mode, *pytest_args, **stub
 )
 def test_a_signal_stops_pytest_and_drops_the_database(script, tmp_path, signum, code):
     _, popen, log = script
-    returncode, pytest_pid = _signal_a_running_pytest(popen, tmp_path, signum, "hang")
+    returncode, pytest_pid, _ = _signal_a_running_pytest(popen, tmp_path, signum, "hang")
     assert returncode == code
     calls = _calls(log)
-    assert calls[-1] == _DROP_A1, "the drop must be issued, and only once pytest is dead"
-    assert sum(c.startswith("admin drop") for c in calls) == 1, "signal trap and EXIT trap must not both drop"
+    assert calls[-2:] == _DROP_A1, "the drop must be issued, and only once pytest is dead"
+    assert sum(c.startswith("admin drop ") for c in calls) == 1
     with pytest.raises(ProcessLookupError):
         os.kill(pytest_pid, 0)
 
@@ -675,14 +860,59 @@ def test_a_signal_stops_pytest_and_drops_the_database(script, tmp_path, signum, 
 @pytest.mark.parametrize("mode", ["slow-term", "ignore-term"])
 def test_the_database_is_never_dropped_under_a_pytest_that_is_still_alive(script, tmp_path, mode):
     # A pytest that takes its time over SIGTERM, and one that ignores it (a
-    # test installed its own handler, or hangs in one): the script waits, then
-    # kills -- and only THEN drops. The stub's drop records what it saw.
+    # test installed its own handler, or hangs in one): the run waits, then
+    # kills -- and only THEN drops. The recording connection notes what it saw.
     _, popen, log = script
-    returncode, pytest_pid = _signal_a_running_pytest(popen, tmp_path, signal.SIGTERM, mode)
+    returncode, pytest_pid, _ = _signal_a_running_pytest(popen, tmp_path, signal.SIGTERM, mode)
     assert returncode == 143
-    assert _calls(log)[-1] == _DROP_A1
+    assert _calls(log)[-2:] == _DROP_A1
     with pytest.raises(ProcessLookupError):
         os.kill(pytest_pid, 0)
+
+
+def test_a_signal_while_the_database_is_being_created_starts_no_pytest_and_drops_it(script):
+    # The create is not interrupted half-way (that would leave a database whose
+    # token nobody holds): it finishes, pytest is never started, the drop runs.
+    _, popen, log = script
+    proc = popen("a1", STUB_CREATE_DELAY=2)
+    try:
+        _wait_for(lambda: "admin create renfield_test_a1" in _calls(log), proc, "the create")
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=60) == 143
+    finally:
+        if proc.poll() is None:  # pragma: no cover - only on a failing run
+            proc.kill()
+    assert _calls(log) == ["derive-url", "admin create renfield_test_a1", *_DROP_A1]
+
+
+def test_a_signal_while_the_database_is_being_dropped_does_not_abort_the_drop(script):
+    # pytest has ended by itself, so its own exit code is the result.
+    _, popen, log = script
+    proc = popen("a1", STUB_DROP="slow", STUB_PYTEST_RC=5)
+    try:
+        _wait_for(lambda: any(c.startswith("admin drop ") for c in _calls(log)), proc, "the drop")
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=60) == 5
+    finally:
+        if proc.poll() is None:  # pragma: no cover - only on a failing run
+            proc.kill()
+    assert _calls(log)[-2:] == _DROP_A1
+
+
+def test_a_reader_that_closed_the_output_stops_neither_the_run_nor_the_drop(script):
+    # `... | head -1`: the reader is gone when the helper announces its
+    # database. Dying of that line (SIGPIPE, or the exception Python makes of
+    # it) would skip pytest -- or, in a shell, the drop.
+    _, popen, log = script
+    proc = popen("a1", "-q", STUB_CREATE_DELAY=2, STUB_PYTEST_RC=5)
+    try:
+        _wait_for(lambda: "admin create renfield_test_a1" in _calls(log), proc, "the create")
+        proc.stdout.close()  # the script's own lines are out; the helper's are still to come
+        assert proc.wait(timeout=60) == 5, proc.stderr.read()
+    finally:
+        if proc.poll() is None:  # pragma: no cover - only on a failing run
+            proc.kill()
+    assert _calls(log) == ["derive-url", "admin create renfield_test_a1", _PYTEST_A1 + " -q", *_DROP_A1]
 
 
 def _processes_mentioning(marker: str) -> list[str]:
@@ -699,18 +929,19 @@ def _processes_mentioning(marker: str) -> list[str]:
 
 
 @pytest.mark.skipif(not Path("/proc/self/cmdline").exists(), reason="needs /proc to look for leftover processes")
-def test_no_copy_of_the_script_outlives_it(script, tmp_path):
-    # The watchdog that escalates to SIGKILL is a subshell -- a copy of the
-    # script. It inherits the ignored signals of the trap that started it, so
-    # a plain `kill` did not stop it (measured on the build box): it sat there
-    # for the grace period and then fired SIGKILL at a pid that was no longer
-    # pytest's.
+def test_nothing_of_the_run_outlives_it_and_a_dead_pytest_is_not_waited_out(script, tmp_path):
+    # An earlier version escalated through a watchdog subshell that survived a
+    # plain `kill` and sat there for the grace period, to fire SIGKILL at a pid
+    # that was no longer pytest's. Both halves are pinned: no process of the
+    # run is left, AND the run is over long before the grace period is -- a
+    # leftover that is merely waited for would pass the first half.
     _, popen, _log = script
     marker = f"marker-{secrets.token_hex(8)}"
-    returncode, _pid = _signal_a_running_pytest(
+    returncode, _pid, seconds = _signal_a_running_pytest(
         popen, tmp_path, signal.SIGTERM, "hang", marker, RENFIELD_TEST_STOP_GRACE=20,
     )
     assert returncode == 143
+    assert seconds < 10, f"took {seconds:.1f} s of a 20 s grace period although pytest died at once"
     assert _processes_mentioning(marker) == []
 
 
@@ -729,17 +960,30 @@ _EXISTS_SQL = "SELECT count(*) FROM pg_database WHERE datname = $1"
 _READ_MARK_SQL = "SELECT d.description FROM pg_shdescription d JOIN pg_database b ON b.oid = d.objoid WHERE b.datname = $1"
 
 
-def _own_name() -> str:
-    return f"renfield_test_selftest_{secrets.token_hex(4)}"
+_SELFTEST_PREFIX = "renfield_test_selftest_"
 
 
 class _Server:
-    """Two maintenance connections plus the bookkeeping to clean up by token."""
+    """Two maintenance connections plus the bookkeeping to clean up.
+
+    Two layers. Inside the scenario, by token and through the code under test.
+    And after the test, whatever happened in it (`remove_leftovers`): by the
+    exact NAME this test generated -- the one place where a name is enough,
+    because nobody else can have created `renfield_test_selftest_<8 random hex
+    digits>`, and a test that fails the way it is meant to detect has no token
+    to drop by.
+    """
 
     def __init__(self, admin, url):
         self.admin, self.url = admin, url
         self.conn = self.other = None
         self.created: dict[str, str] = {}
+        self.names: list[str] = []
+
+    def new_name(self) -> str:
+        name = f"{_SELFTEST_PREFIX}{secrets.token_hex(4)}"
+        self.names.append(name)
+        return name
 
     async def __aenter__(self):
         self.conn = await self.admin._connect(self.url)
@@ -772,16 +1016,58 @@ class _Server:
         # Read from the catalogue directly, not through the helper's own query.
         return await self.other.fetchval(_READ_MARK_SQL, name)
 
+    async def remove_leftovers(self) -> list[str]:
+        """Drop what is still there of the names this test generated."""
+        removed = []
+        conn = await self.admin._connect(self.url)
+        try:
+            for name in self.names:
+                self.admin.require_throwaway_name(name)
+                assert name.startswith(_SELFTEST_PREFIX) and len(name) == len(_SELFTEST_PREFIX) + 8, name
+                if await conn.fetchval(_EXISTS_SQL, name):
+                    await conn.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+                    removed.append(name)
+        finally:
+            await conn.close()
+        return removed
+
 
 @pytest.fixture
 def server(admin, pg_url):
-    return _Server(admin, pg_url)
+    server = _Server(admin, pg_url)
+    yield server
+    # A FRESH connection and a fresh loop: the test may have failed anywhere.
+    asyncio.run(server.remove_leftovers())
+
+
+def test_the_finalizer_removes_only_names_the_test_generated_itself(admin):
+    # The guard of the by-name cleanup, without a server: a foreign name is
+    # refused before any statement.
+    class _NoStatements:
+        async def fetchval(self, *_args):
+            raise AssertionError("a statement was issued for a name the test did not generate")
+
+        execute = fetchval
+
+        async def close(self):
+            pass
+
+    async def _fake_connect(_url, database="postgres"):
+        return _NoStatements()
+
+    for foreign in ("renfield_test", "renfield", "renfield_test_agent_7", "renfield_test_selftest_"):
+        server = _Server(admin, _APP_URL)
+        admin._connect = _fake_connect  # `admin` is a fresh module per test
+        server.names.append(foreign)
+        # Refused by the helper's rule, or by the selftest shape on top of it.
+        with pytest.raises((admin.Refused, AssertionError)):
+            asyncio.run(server.remove_leftovers())
 
 
 @pytest.mark.postgres
 class TestTheRealHelperOnRealPostgres:
     def test_the_whole_life_of_a_database_of_ones_own(self, admin, server):
-        name = _own_name()
+        name = server.new_name()
 
         async def scenario():
             async with server:
@@ -810,7 +1096,7 @@ class TestTheRealHelperOnRealPostgres:
         asyncio.run(scenario())
 
     def test_a_ready_database_has_the_vector_extension(self, admin, server):
-        name = _own_name()
+        name = server.new_name()
 
         async def scenario():
             from asyncpg.exceptions import InsufficientPrivilegeError
@@ -833,7 +1119,9 @@ class TestTheRealHelperOnRealPostgres:
         asyncio.run(scenario())
 
     def test_a_database_that_cannot_be_marked_does_not_stay(self, admin, server):
-        name = _own_name()
+        # No token ever exists here; if the cleanup under test is broken, the
+        # `server` fixture removes the database by its generated name.
+        name = server.new_name()
 
         class _CommentFails:
             def __init__(self, conn):
@@ -861,7 +1149,7 @@ class TestTheRealHelperOnRealPostgres:
         asyncio.run(scenario())
 
     def test_the_unmarked_cleanup_does_not_touch_a_marked_database(self, admin, server):
-        name = _own_name()
+        name = server.new_name()
 
         async def scenario():
             async with server:
@@ -873,7 +1161,7 @@ class TestTheRealHelperOnRealPostgres:
         asyncio.run(scenario())
 
     def test_of_several_creates_at_once_one_wins_and_the_rest_are_refused(self, admin, server):
-        name = _own_name()
+        name = server.new_name()
 
         async def scenario():
             from asyncpg.exceptions import InsufficientPrivilegeError
@@ -934,12 +1222,16 @@ def test_where_am_i():
 
 
 @pytest.fixture
-def real_script(admin, pg_url, tmp_path):
-    """The real script, the real helper, the real launcher -- no stub in PATH.
+def real_script(admin, pg_url, server, tmp_path):
+    """The real script, the real helper, the real pytest -- no stub in PATH.
 
     The script derives its server from DATABASE_URL, as it does in real use; it
     must be the server the test URL points at, or the test would look for its
     database in the wrong place.
+
+    Returns (run, out, server). Take the database name from `server.new_name()`:
+    the `server` fixture then removes it on every path, including the timeout
+    below and a script that failed to drop.
     """
     from sqlalchemy.engine import make_url
 
@@ -953,22 +1245,34 @@ def real_script(admin, pg_url, tmp_path):
     inner.write_text(_INNER_TEST)
     out = tmp_path / "probe.out"
 
-    def _run(suffix, **extra):
-        env = {k: v for k, v in os.environ.items() if k != "RENFIELD_TEST_PG_URL"}
+    def _run(name, **extra):
+        assert name in server.names, "take the name from server.new_name(), or nothing cleans it up"
+        env = {k: v for k, v in os.environ.items() if k not in ("RENFIELD_TEST_PG_URL", "RENFIELD_TEST_STOP_GRACE")}
         env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
-        env["RENFIELD_TEST_DB_SUFFIX"] = suffix
+        env["RENFIELD_TEST_DB_SUFFIX"] = name.removeprefix("renfield_test_")
         env["PROBE_OUT"] = str(out)
         env.update(extra)
-        proc = subprocess.run(
+        # A session of its own: on a timeout the helper AND the pytest under
+        # it are killed, not the helper alone -- an orphaned pytest would keep
+        # running against a database the finalizer is about to drop.
+        proc = subprocess.Popen(
             ["sh", str(_SCRIPT), str(_REPO), str(inner), "-q"],
-            capture_output=True, text=True, env=env, timeout=300, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+            stdin=subprocess.DEVNULL, start_new_session=True,
         )
+        try:
+            stdout, stderr = proc.communicate(timeout=300)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise
         password = app.password
         if password:
-            assert password not in proc.stdout + proc.stderr, "the script printed the database password"
-        return proc
+            assert password not in stdout + stderr, "the script printed the database password"
+        return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
-    return _run, out, _Server(admin, pg_url)
+    return _run, out, server
 
 
 @pytest.mark.postgres
@@ -976,10 +1280,9 @@ class TestTheRealScriptOnRealPostgres:
     @pytest.mark.parametrize("fail,code", [("0", 0), ("1", 1)])
     def test_pytest_runs_inside_its_own_database_which_is_gone_afterwards(self, admin, real_script, fail, code):
         run, out, server = real_script
-        suffix = f"selftest_{secrets.token_hex(4)}"
-        name = f"renfield_test_{suffix}"
+        name = server.new_name()
 
-        proc = run(suffix, PROBE_FAIL=fail)
+        proc = run(name, PROBE_FAIL=fail)
 
         if "permission denied" in proc.stderr:
             pytest.skip("the test role may not create databases or install vector")
@@ -998,13 +1301,12 @@ class TestTheRealScriptOnRealPostgres:
 
     def test_an_existing_database_is_refused_with_3_and_left_exactly_as_it_was(self, admin, real_script):
         run, out, server = real_script
-        suffix = f"selftest_{secrets.token_hex(4)}"
-        name = f"renfield_test_{suffix}"
+        name = server.new_name()
 
         async def scenario():
             async with server:
                 token = await server.create(name)
-                proc = await asyncio.to_thread(run, suffix)
+                proc = await asyncio.to_thread(run, name)
                 assert proc.returncode == admin.EXIT_EXISTS, proc.stdout + proc.stderr
                 assert "already exists" in proc.stderr
                 assert not out.exists(), "pytest must not have run"
@@ -1012,3 +1314,48 @@ class TestTheRealScriptOnRealPostgres:
                 assert await admin.drop(server.conn, name, token) is True
 
         asyncio.run(scenario())
+
+    def test_a_real_pytest_is_stopped_by_a_signal_and_its_database_is_gone(self, admin, real_script, tmp_path):
+        # The one signal run with nothing stubbed: the real helper, a real
+        # pytest that sits in a test, real Postgres.
+        _run, out, server = real_script
+        name = server.new_name()
+        inner = tmp_path / "test_inner_sleeper.py"
+        inner.write_text(
+            "import os, time\n\n\ndef test_sits_there():\n"
+            "    open(os.environ['PROBE_OUT'], 'w').write('started')\n    time.sleep(120)\n"
+        )
+        env = {k: v for k, v in os.environ.items() if k != "RENFIELD_TEST_PG_URL"}
+        env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
+        env.update(RENFIELD_TEST_DB_SUFFIX=name.removeprefix("renfield_test_"), PROBE_OUT=str(out),
+                   RENFIELD_TEST_STOP_GRACE="5")
+        proc = subprocess.Popen(
+            ["sh", str(_SCRIPT), str(_REPO), str(inner), "-q"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+            stdin=subprocess.DEVNULL, start_new_session=True, preexec_fn=_default_signals,
+        )
+        try:
+            deadline = time.monotonic() + 120
+            while not out.exists():
+                if proc.poll() is not None:
+                    stderr = proc.stderr.read()
+                    if "permission denied" in stderr:
+                        pytest.skip("the test role may not create databases or install vector")
+                    raise AssertionError(f"the run ended before the test started: {stderr}")
+                assert time.monotonic() < deadline, "the inner test never started"
+                time.sleep(0.05)
+            proc.send_signal(signal.SIGTERM)
+            _stdout, stderr = proc.communicate(timeout=120)
+        finally:
+            if proc.poll() is None:  # still ours, not yet reaped: the group id is not reused
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                proc.communicate()
+        assert proc.returncode == 143, stderr
+        assert f"dropped {name}" in stderr
+
+        async def gone():
+            async with server:
+                return not await server.exists(name)
+
+        assert asyncio.run(gone()), f"{name} is still there"

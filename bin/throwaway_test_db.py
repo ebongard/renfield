@@ -1,10 +1,12 @@
-"""Create and drop a run's OWN test database -- nothing else, ever.
+"""Run pytest on a database of the run's OWN -- create it, drop it, nothing else.
 
 Called by ``bin/run-backend-tests.sh`` when ``RENFIELD_TEST_DB_SUFFIX`` is set,
 so that concurrent runs need not queue behind the shared ``renfield_test``:
 
-    python throwaway_test_db.py create renfield_test_<suffix>   -> prints a token
-    python throwaway_test_db.py drop   renfield_test_<suffix> <token>
+    python throwaway_test_db.py run renfield_test_<suffix> -- <pytest args>
+
+creates the database, runs ``python -m pytest <args>`` as a child, and drops
+the database when pytest has ended -- also when it failed or a signal came.
 
 The connection is derived here, in the container, from ``DATABASE_URL`` -- the
 maintenance database ``postgres`` on the same server. No DSN is ever printed.
@@ -22,21 +24,33 @@ Three rules, each enforced in THIS file and not only by the caller:
    The one exception is spelled out at ``_drop_unmarked``: a database this very
    call created and could not mark.
 
-What can be left behind (a leak, never a wrong drop): a SIGKILL, a container
-stop, or an interrupt that lands between CREATE and the moment the caller holds
-the token. The orphan blocks its suffix (exit 3) until it is removed by hand;
-its comment identifies it.
+Why pytest is supervised HERE and not by traps in the shell script: a shell
+reaps a finished child on its own and then knows it only by a NUMBER, so any
+``kill`` it sends after that can reach whoever holds the number now (and a job
+spec, ``kill %1``, signals nothing in dash without job control -- measured).
+``subprocess.Popen`` keeps the child unreaped until this process waits for it,
+and refuses to signal one it has already reaped. "Is it still ours" and "signal
+it" are one step here. The token never leaves this process either.
 
-Exit codes: 0 done, 2 refused (name / usage), 3 the database already exists,
-4 not ours (token mismatch), 1 anything else.
+What can be left behind (a leak, never a wrong drop): a SIGKILL of this
+process, or a stop of the container. The orphan blocks its suffix (exit 3)
+until it is removed by hand; its comment identifies it.
+
+Exit codes: pytest's own; 128+N when signal N ended pytest; 2 refused (name /
+usage / grace period), 3 the database already exists, 1 anything else --
+including a green run whose database could not be dropped.
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import secrets
+import signal
+import subprocess
 import sys
+import time
 
 # Stricter than the harness guard (`_TEST_DB_NAME_RE` in tests/backend/
 # conftest.py), and a subset of it: every name accepted here is accepted there.
@@ -49,11 +63,24 @@ EXIT_REFUSED = 2
 EXIT_EXISTS = 3
 EXIT_NOT_OURS = 4
 
+# Seconds pytest gets to end before the next, harder signal.
+STOP_GRACE_ENV = "RENFIELD_TEST_STOP_GRACE"
+STOP_GRACE_DEFAULT = 10
+# A drop that takes longer than this is reported, not waited for: once a signal
+# has come, nothing but SIGKILL could end this process otherwise.
+DROP_TIMEOUT_SECONDS = 120
+# The same command the script's `exec` branch runs on the shared database.
+PYTEST_COMMAND = [sys.executable, "-m", "pytest"]
+
 
 class Refused(Exception):
     def __init__(self, message: str, code: int = EXIT_REFUSED) -> None:
         super().__init__(message)
         self.code = code
+
+
+class DropTimedOut(Exception):
+    """The server did not finish the drop in time; the database may still exist."""
 
 
 def _database_of(url: str) -> str:
@@ -165,7 +192,10 @@ async def drop(conn, name: str, token: str) -> bool:
     require_throwaway_name(name)
     if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
         raise Refused("malformed run token.")
-    row = await conn.fetchrow(_MARK_SQL, name)
+    try:
+        row = await asyncio.wait_for(conn.fetchrow(_MARK_SQL, name), DROP_TIMEOUT_SECONDS)
+    except TimeoutError:
+        raise DropTimedOut(f"reading the mark of {name} did not finish within {DROP_TIMEOUT_SECONDS} s") from None
     if row is None:
         return False
     if row["mark"] != MARK + token:
@@ -176,7 +206,10 @@ async def drop(conn, name: str, token: str) -> bool:
         )
     # FORCE: an interrupted pytest can leave connections behind, and a plain
     # DROP would then fail with "is being accessed by other users".
-    await conn.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+    try:
+        await asyncio.wait_for(conn.execute(f'DROP DATABASE "{name}" WITH (FORCE)'), DROP_TIMEOUT_SECONDS)
+    except TimeoutError:
+        raise DropTimedOut(f"dropping {name} did not finish within {DROP_TIMEOUT_SECONDS} s") from None
     return True
 
 
@@ -229,42 +262,150 @@ async def create_ready(conn, name: str, application_url: str) -> str:
     return token
 
 
-async def _main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[0] not in ("create", "drop") or len(argv) != (2 if argv[0] == "create" else 3):
-        raise Refused("usage: throwaway_test_db.py create <name> | drop <name> <token>")
-    action, name = argv[0], argv[1]
+def _describe(exc: BaseException) -> str:
+    """What may be printed about an error: never a DSN.
+
+    A message from the SERVER ("permission denied to create database") names no
+    credential and is what the reader needs; so does our own timeout. Anything
+    else -- a connection error may quote the DSN -- is reduced to its type.
+    """
+    from asyncpg import PostgresError
+
+    if isinstance(exc, (PostgresError, DropTimedOut)):
+        return f"{type(exc).__name__}: {exc}"
+    return type(exc).__name__
+
+
+def _say(text: str, stream=None) -> None:
+    """Print without ever dying of it: a reader that closed our output
+    (`| head`) must not end this process before the database is dropped."""
+    stream = stream or sys.stderr
+    try:
+        print(text, file=stream, flush=True)
+    except OSError:
+        # Nobody is listening. Point the descriptor somewhere harmless so the
+        # interpreter's own flush at exit does not fail either.
+        with open(os.devnull, "w") as devnull:
+            os.dup2(devnull.fileno(), stream.fileno())
+
+
+def stop_grace() -> int:
+    raw = os.environ.get(STOP_GRACE_ENV) or str(STOP_GRACE_DEFAULT)
+    if not re.fullmatch(r"[0-9]{1,4}", raw):
+        raise Refused(f"{STOP_GRACE_ENV} must be a whole number of seconds (0-9999), not {raw!r}.")
+    return int(raw)
+
+
+def supervise(pytest_args: list[str], grace: int, received: list[int]) -> int:
+    """Run pytest as a child and return only when it is DEAD and reaped.
+
+    `received` is filled by the signal handlers of `run`. On SIGINT pytest gets
+    the grace period BEFORE the first signal: Ctrl-C at a terminal has already
+    reached it, let it print its interrupt summary. Any other signal is passed
+    on as SIGTERM at once. Either way the escalation ends in SIGKILL -- a test
+    may have installed its own SIGTERM handler, or hang in one.
+
+    `Popen` signals only a child it has not reaped yet, so none of this can
+    reach a process that merely inherited pytest's pid.
+    """
+    if received:
+        return 128 + received[0]  # came during the create: pytest is not started
+    # stdin, stdout and stderr are inherited: `--pdb` works, as in the `exec` branch.
+    proc = subprocess.Popen([*PYTEST_COMMAND, *pytest_args])
+    terminate_at = kill_at = None
+    try:
+        while True:
+            try:
+                proc.wait(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            now = time.monotonic()
+            if received and terminate_at is None:
+                terminate_at = now + (grace if received[0] == signal.SIGINT else 0)
+            if terminate_at is not None and kill_at is None and now >= terminate_at:
+                proc.terminate()
+                kill_at = now + grace
+            if kill_at is not None and now >= kill_at:
+                proc.kill()
+    finally:
+        # Whatever ended the loop -- the drop that follows must never run
+        # under a pytest that is still alive.
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+    if terminate_at is not None:
+        return 128 + received[0]
+    return 128 - proc.returncode if proc.returncode < 0 else proc.returncode
+
+
+async def _on_the_server(application_url: str, action):
+    conn = await _connect(application_url)
+    try:
+        return await action(conn)
+    finally:
+        # A server that does not answer must not hold the exit up either.
+        try:
+            await asyncio.wait_for(conn.close(), 10)
+        except Exception:
+            conn.terminate()
+
+
+@contextlib.contextmanager
+def signals_noted():
+    """While this is open, a signal is only NOTED, in the list it yields.
+
+    That keeps it from interrupting the create (where it would leave a database
+    whose token nobody holds) and the drop; `supervise` acts on it while pytest
+    runs. A signal that was already ignored when we started (`nohup`, a
+    background job) stays ignored.
+    """
+    received: list[int] = []
+    previous = {}
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
+        if signal.getsignal(signum) is not signal.SIG_IGN:
+            previous[signum] = signal.signal(signum, lambda number, _frame: received.append(number))
+    try:
+        yield received
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def run(name: str, pytest_args: list[str]) -> int:
     application_url = os.environ.get("DATABASE_URL", "")
     if not application_url:
         raise Refused("DATABASE_URL is not set.")
     check_name(name, application_url)
+    grace = stop_grace()  # refused HERE, before anything is created
 
-    conn = await _connect(application_url)
-    try:
-        if action == "create":
-            print(await create_ready(conn, name, application_url))
-        elif await drop(conn, name, argv[2]):
-            print(f"dropped {name}", file=sys.stderr)
-        else:
-            print(f"{name} is already gone", file=sys.stderr)
-    finally:
-        await conn.close()
-    return 0
+    with signals_noted() as received:
+        token = asyncio.run(_on_the_server(application_url, lambda conn: create_ready(conn, name, application_url)))
+        code = 1
+        try:
+            _say(f"TEST_DB: {name} (created for this run, dropped when it ends)", sys.stdout)
+            code = supervise(pytest_args, grace, received)
+        finally:
+            # `supervise` has returned or raised: pytest is dead and reaped.
+            try:
+                asyncio.run(_on_the_server(application_url, lambda conn: drop(conn, name, token)))
+                _say(f"dropped {name}")
+            except Exception as exc:
+                _say(f"WARNING: {name} was NOT dropped ({_describe(exc)}) -- remove it by hand.")
+                code = code or 1
+    return code
 
 
 def main(argv: list[str]) -> int:
     try:
-        return asyncio.run(_main(argv))
+        if len(argv) < 3 or argv[0] != "run" or argv[2] != "--":
+            raise Refused("usage: throwaway_test_db.py run renfield_test_<suffix> -- <pytest args>")
+        return run(argv[1], argv[3:])
     except Refused as exc:
-        print(f"REFUSED: {exc}", file=sys.stderr)
+        _say(f"REFUSED: {exc}")
         return exc.code
     except Exception as exc:
-        # A message from the SERVER ("permission denied to create database")
-        # names no credential and is what the reader needs. Anything else --
-        # a connection error may quote the DSN -- is reduced to its type.
-        from asyncpg import PostgresError
-
-        detail = f": {exc}" if isinstance(exc, PostgresError) else ""
-        print(f"ERROR: {type(exc).__name__} while talking to Postgres{detail}", file=sys.stderr)
+        _say(f"ERROR: {_describe(exc)}")
         return 1
 
 
