@@ -37,8 +37,9 @@ needs `WEATHER_ENABLED`.
   goes into the allowlist; a new route that returns `message_metadata` goes through this function. NOT covered:
   `load_context` re-injecting `action_summary` into the next prompt (open decision). Enable the flag only AFTER the
   frontend has propagated (old bundle → `/knowledge?doc=undefined`).
-  Chip row = DESIGN.md §Accessibility: 44 px hit area as an invisible `::after` behind the chips (`isolate` row,
-  `gap-y-6`), ONE outline focus ring (`accent-500`, never `outline-none` beside it), and NO backend-made title —
+  Chip row: TWO owner-approved deviations from DESIGN.md — the spacing stays (`gap-1.5`), so the invisible
+  `::after` hit area is chip ± 3 px high (26 px, not 44; ≥ 44 px wide, behind the chips via `isolate`), and the
+  ONE focus ring is `primary-500` as an outline (never `outline-none` beside it). NO backend-made title —
   a nameless document has `title: ""`, the label is `chat.sources.untitled`. The model keeps "Dokument N" only in
   the FAKTEN line; in the `sources` of the tool result (agent prompt, `action_summary`) it reads `"title": ""` too.
 - **Follow-up chips** (`services/followup_service.py`): best-effort small-model call in the background AFTER the `done`

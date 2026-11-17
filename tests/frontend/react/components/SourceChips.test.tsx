@@ -174,16 +174,16 @@ describe('SourceChips', () => {
   });
 
   // jsdom has no layout: these tests prove that the classes are ON the right
-  // elements, not that the area measures 44 px or that neighbours do not
-  // overlap. That needs a browser.
-  describe('touch targets and focus ring (DESIGN.md §Accessibility)', () => {
+  // elements, not what the area measures or that neighbours do not overlap.
+  // That needs a browser.
+  describe('hit area and focus ring (owner-approved deviations from DESIGN.md)', () => {
     const HIT_AREA = [
-      'relative', 'after:absolute', 'after:min-h-[44px]', 'after:min-w-[44px]',
-      'after:left-1/2', 'after:top-1/2', 'after:-translate-x-1/2', 'after:-translate-y-1/2',
+      'relative', 'after:absolute', 'after:top-[-3px]', 'after:bottom-[-3px]',
+      'after:left-1/2', 'after:-translate-x-1/2', 'after:w-full', 'after:min-w-[44px]',
     ];
     const RING = [
       'focus-visible:outline-2', 'focus-visible:outline-offset-2',
-      'focus-visible:outline-accent-500',
+      'focus-visible:outline-primary-500',
     ];
     const has = (el: Element, cls: string) => el.classList.contains(cls);
 
@@ -195,7 +195,7 @@ describe('SourceChips', () => {
       );
     }
 
-    it('gives every interactive element of the row the invisible 44px hit area', () => {
+    it('gives every interactive element of the row the invisible hit area', () => {
       const { container } = renderAll();
       const interactive = Array.from(container.querySelectorAll('a, button'));
       // Paperless chip, KB chip + its Paperless segment, 3 more KB chips, "+N".
@@ -206,13 +206,6 @@ describe('SourceChips', () => {
       }
     });
 
-    it('raises the bare "+N" to 20px so its hit area stays inside the row', () => {
-      // 16 px text button -> the area would reach 14 px beyond it, the row
-      // provides 12. Measured in a browser; here only the class is checked.
-      renderAll();
-      expect(has(screen.getByRole('button'), 'min-h-5')).toBe(true);
-    });
-
     it('gives a chip that opens nothing no hit area', () => {
       renderAll();
       const plain = screen.getByText('Vertrag').parentElement as HTMLElement;
@@ -220,26 +213,32 @@ describe('SourceChips', () => {
       expect(plain.className).not.toMatch(/after:|\brelative\b/);
     });
 
-    it('keeps the hit areas of wrapped lines apart and behind the visible chips', () => {
+    it('leaves the row spacing as it was and adds nothing that takes space', () => {
       const { container } = renderAll();
       const row = container.firstElementChild as HTMLElement;
-      // 20px chip + 24px line gap = 44px line pitch; `isolate` keeps the
-      // negative z-index of the hit areas inside the row.
-      expect(has(row, 'gap-y-6')).toBe(true);
-      expect(has(row, 'isolate')).toBe(true);
+      // The row's classes before the hit areas, plus `isolate` (z-index scope
+      // of the areas, no layout effect).
+      expect(Array.from(row.classList).sort()).toEqual(
+        ['flex', 'flex-wrap', 'gap-1.5', 'isolate', 'items-center', 'mt-2'].sort(),
+      );
       for (const el of Array.from(container.querySelectorAll('a, button'))) {
+        const cls = el.getAttribute('class') ?? '';
+        // Behind the visible chips; no minimum height on the element or its
+        // area -- the area is 3 px (half the 6 px gap) taller on each side.
         expect(has(el, 'after:-z-10')).toBe(true);
+        expect(cls).not.toMatch(/min-h-/);
       }
     });
 
-    it('uses the one DESIGN.md focus ring on every focusable element, never primary', () => {
+    it('uses one focus ring colour on every focusable element of the row', () => {
       const { container } = renderAll();
       for (const el of Array.from(container.querySelectorAll('a, button'))) {
         for (const cls of RING) expect(has(el, cls), `${el.textContent}: ${cls}`).toBe(true);
       }
       for (const el of Array.from(container.querySelectorAll('*'))) {
         const cls = el.getAttribute('class') ?? '';
-        expect(cls).not.toMatch(/(ring|outline)-primary-/);
+        expect(cls).not.toMatch(/(ring|outline)-accent-/);
+        expect(cls).not.toMatch(/focus-visible:ring-/);
         // Tailwind v4: `outline-none` zeroes the outline style the ring needs.
         expect(cls).not.toMatch(/outline-none/);
       }

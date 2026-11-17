@@ -390,25 +390,27 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
   the answer's own typed content, like the message text.
 - **Enable order:** roll out the frontend first, flip the flag after it has propagated — a stale PWA bundle renders
   a `kind: 'paperless'` source as a chip to `/knowledge?doc=undefined`.
-- **The chip row follows DESIGN.md §Accessibility** (`SourceChips.tsx`):
-  - *Touch target.* Every interactive element (both chip forms, the Paperless segment, "+N") carries an invisible
-    `::after`, centred on it, at least 44×44 px and at least as large as the element; the chip itself keeps its
-    size. A chip that opens nothing has none. Measured in a browser: a chip with tier badge is 23.3 px high, the
-    Paperless segment and a bare "+N" 16 px; "+N" carries `min-h-5` (20 px). A line is thus at least 20 px high
-    and `gap-y-6` (24 px) keeps wrapped lines at least 44 px apart, so hit areas of neighbouring lines do not
-    overlap; the row's `py-1` plus the 8 px margin around it gives 12 px beyond the first and last line, which is
-    the reach of a 20 px element's area (without `min-h-5` a lone "+N" on the last line reached 2 px into the
-    element below). Horizontally an area can reach over a neighbour (the 24 px segment, a short "+N"): the areas
-    lie BEHIND the visible chips (`after:-z-10`, the row is `isolate`), so the neighbour's visible body always
-    wins and only empty space is claimed — where two areas meet in empty space the later element wins, the space
-    is not split evenly. For the segment the 44×44 px is therefore a bounding box; its solid target is about
-    34×44 px. Measured reach above/below the visible body: 12/12 px on a 20 px chip, about 11/10.5 px on a
-    23.3 px chip with tier badge, about 14–15/14 px on the 16 px segment. The row is a stacking context painted
-    ABOVE its non-positioned siblings, so `after:-z-10` protects only what is inside the row — towards the
-    elements above and below it, only the row's own space does.
-  - *Focus ring.* One ring for every focusable element: `accent-500`, `:focus-visible`, 2 px at 2 px offset, drawn
-    as an OUTLINE (as the button classes in `index.css` do) — no offset colour to match against the bubble. Never
-    `outline-none` beside it: in Tailwind v4 that zeroes the outline style.
+- **The chip row keeps its look; two owner-approved deviations from DESIGN.md §Accessibility**
+  (`SourceChips.tsx`). The owner compared a 44 px variant (wrapped lines 24 px apart) in a browser and chose the
+  original spacing: the row's classes are those it always had (`mt-2 flex flex-wrap items-center gap-1.5`) plus
+  `isolate`, which has no layout effect.
+  - *Hit area — deviation from the 44×44 px touch target.* Every interactive element (both chip forms, the
+    Paperless segment, "+N") carries an invisible, absolutely positioned `::after` that cannot change the layout.
+    Vertically it extends the element by 3 px on each side — half the row's 6 px gap — so the areas of
+    neighbouring wrapped lines meet and never overlap; horizontally it is centred and at least 44 px wide.
+    Effective height: **26 px** for a chip (20 px from `text-xs` + `py-0.5`; 29.3 px with a tier badge, measured
+    23.3 px), **22 px** for the segment and "+N" (16 px). A chip that opens nothing has none. The areas lie
+    BEHIND the visible chips (`after:-z-10`, row `isolate`), so where one reaches sideways over a neighbour the
+    neighbour's visible body wins; the segment's 44 px width is therefore a bounding box. Beyond the row an area
+    reaches 3 px at most: above, the row's `mt-2` takes it; below, the row provides nothing itself — the 3 px
+    fall into the next block's top margin (`mt-2` on follow-up chips and cards) or the bubble's padding. The row
+    is a stacking context painted above its non-positioned siblings, so `after:-z-10` protects only what is
+    inside the row.
+  - *Focus ring — deviation from the accent ring.* `primary-500` for EVERY focusable element of the row (the
+    colour the chips always had; `accent-500` measured 1.49:1 against the light bubble), `:focus-visible`, 2 px
+    at 2 px offset, drawn as an OUTLINE (as the button classes in `index.css` do) — no offset colour to match
+    against the bubble in either theme. Never `outline-none` beside it: in Tailwind v4 that zeroes the outline
+    style.
   - *No invented title.* A document with neither title nor filename gets `title: ""` from the backend
     (`knowledge_search` sources, RAG-path sources; `_visible_document_meta` returns `None`), and the frontend
     labels it through `chat.sources.untitled` (de/en/fr/it). The MODEL keeps the German "Dokument N" in ONE
