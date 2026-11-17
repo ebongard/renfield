@@ -38,6 +38,7 @@ import signal
 import subprocess
 import sys
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -177,6 +178,74 @@ def test_a_refused_call_never_opens_a_connection(admin, monkeypatch, capsys, arg
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "s3cr3t-pw" not in captured.err
+
+
+def test_the_application_database_is_refused_by_a_run_before_any_connection(admin, monkeypatch, capsys):
+    # `check_name` is tested above; this pins that `run` is where it is called.
+    async def _no_connection(_url, database="postgres"):
+        raise AssertionError("connected to Postgres for the application database")
+
+    monkeypatch.setattr(admin, "_connect", _no_connection)
+    monkeypatch.setattr(admin, "PYTEST_COMMAND", ["false"])
+    monkeypatch.setenv("DATABASE_URL", "postgresql://app:s3cr3t-pw@db:5432/renfield_test_app")
+    assert admin.main(["run", "renfield_test_app", "--"]) == admin.EXIT_REFUSED
+    captured = capsys.readouterr()
+    assert "application database" in captured.err
+    assert "s3cr3t-pw" not in captured.out + captured.err
+
+
+@pytest.mark.parametrize(
+    "application_url,expected",
+    [
+        ("postgresql://app:s3cr3t-pw@db:5432/renfield", "postgresql+asyncpg://app:s3cr3t-pw@db:5432/renfield_test_a"),
+        ("postgresql+asyncpg://app:s3cr3t-pw@db/renfield", "postgresql+asyncpg://app:s3cr3t-pw@db/renfield_test_a"),
+        # A slash in the query string: the part a naive split takes for the name.
+        (
+            "postgresql://app:s3cr3t-pw@db:5432/renfield?options=a/b",
+            "postgresql+asyncpg://app:s3cr3t-pw@db:5432/renfield_test_a?options=a%2Fb",
+        ),
+    ],
+)
+def test_pytests_url_is_the_applications_server_with_the_validated_name(admin, application_url, expected):
+    from sqlalchemy.engine import make_url
+
+    built = admin.pytest_url(application_url, "renfield_test_a")
+    assert make_url(built) == make_url(expected)
+    assert make_url(built).database == "renfield_test_a"
+    with pytest.raises(admin.Refused):
+        admin.pytest_url(application_url, "renfield_test")
+
+
+def test_pytest_is_dead_and_reaped_even_when_supervising_it_fails(admin, monkeypatch):
+    # The `finally` in `supervise`: whatever ends the loop, the drop that
+    # follows must not run under a living pytest. Nothing raises in there
+    # today -- so something is made to.
+    started = []
+
+    class _Recorded(subprocess.Popen):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            started.append(self)
+
+    class _BrokenClock:
+        @staticmethod
+        def monotonic():
+            raise RuntimeError("the clock broke")
+
+    monkeypatch.setattr(admin, "PYTEST_COMMAND", ["sleep", "60"])
+    # On the helper's own names, not on the real modules pytest uses too.
+    monkeypatch.setattr(admin, "subprocess", types.SimpleNamespace(Popen=_Recorded, TimeoutExpired=subprocess.TimeoutExpired))
+    monkeypatch.setattr(admin, "time", _BrokenClock)
+    try:
+        with pytest.raises(RuntimeError, match="the clock broke"):
+            admin.supervise([], 1, [])
+        (proc,) = started
+        assert proc.returncode is not None, "pytest was left running (or unreaped) behind a failed supervision"
+    finally:
+        for proc in started:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
 
 @pytest.mark.parametrize("grace", ["abc", "-1", "1.5", " 3", "3 ", "1e3", "12345", "٣"])
@@ -514,6 +583,8 @@ case "$1" in
     echo "pytest db=$db scheme=${RENFIELD_TEST_PG_URL%%://*} stdin=[$stdin] args=$*" >> "$STUB_LOG"
     exit "${STUB_PYTEST_RC:-0}" ;;
   */throwaway_test_db.py)
+    # As if the helper were called by hand, with a leftover variable around.
+    [[ -n "${STUB_STALE_URL:-}" ]] && export RENFIELD_TEST_PG_URL="$STUB_STALE_URL"
     exec "$STUB_REAL_PYTHON" "$STUB_DRIVER" "$@" ;;
 esac
 cat >/dev/null
@@ -774,6 +845,17 @@ def test_a_run_of_its_own_creates_points_pytest_at_it_and_drops(script):
     assert "s3cr3t-pw" not in proc.stdout + proc.stderr
 
 
+def test_pytest_runs_in_the_database_just_created_whatever_url_was_lying_around(script):
+    # The helper builds pytest's URL from the name it validated and created. A
+    # stale RENFIELD_TEST_PG_URL -- the shared database, say -- must not reach
+    # pytest: it would run there while an unused throwaway one comes and goes.
+    run, _, log = script
+    proc = run("a1", STUB_STALE_URL="postgresql+asyncpg://app:s3cr3t-pw@db:5432/renfield_test")
+    assert proc.returncode == 0, proc.stderr
+    assert _calls(log)[2].startswith("pytest db=renfield_test_a1 scheme=postgresql+asyncpg "), _calls(log)
+    assert "s3cr3t-pw" not in proc.stdout + proc.stderr
+
+
 def test_pytest_gets_the_scripts_own_stdin_on_a_database_of_its_own(script):
     # `--pdb` needs something to read from.
     run, _, log = script
@@ -885,14 +967,16 @@ def test_a_signal_while_the_database_is_being_created_starts_no_pytest_and_drops
     assert _calls(log) == ["derive-url", "admin create renfield_test_a1", *_DROP_A1]
 
 
-def test_a_signal_while_the_database_is_being_dropped_does_not_abort_the_drop(script):
-    # pytest has ended by itself, so its own exit code is the result.
+@pytest.mark.parametrize("pytest_rc,code", [(5, 5), (0, 143)])
+def test_a_signal_while_the_database_is_being_dropped_does_not_abort_the_drop(script, pytest_rc, code):
+    # pytest has ended by itself: a failure keeps its own exit code. A green
+    # run does not answer a TERM with "0, all fine" -- the sender gets its 143.
     _, popen, log = script
-    proc = popen("a1", STUB_DROP="slow", STUB_PYTEST_RC=5)
+    proc = popen("a1", STUB_DROP="slow", STUB_PYTEST_RC=pytest_rc)
     try:
         _wait_for(lambda: any(c.startswith("admin drop ") for c in _calls(log)), proc, "the drop")
         proc.send_signal(signal.SIGTERM)
-        assert proc.wait(timeout=60) == 5
+        assert proc.wait(timeout=60) == code
     finally:
         if proc.poll() is None:  # pragma: no cover - only on a failing run
             proc.kill()
@@ -968,10 +1052,11 @@ class _Server:
 
     Two layers. Inside the scenario, by token and through the code under test.
     And after the test, whatever happened in it (`remove_leftovers`): by the
-    exact NAME this test generated -- the one place where a name is enough,
-    because nobody else can have created `renfield_test_selftest_<8 random hex
-    digits>`, and a test that fails the way it is meant to detect has no token
-    to drop by.
+    exact NAME this test generated -- a test that fails the way it is meant to
+    detect has no token to drop by. A name is enough there only because
+    `new_name` hands out, and registers, a name it has SEEN ABSENT on the
+    server: a database that was there before is never this test's, is never
+    used and never dropped.
     """
 
     def __init__(self, admin, url):
@@ -981,9 +1066,19 @@ class _Server:
         self.names: list[str] = []
 
     def new_name(self) -> str:
-        name = f"{_SELFTEST_PREFIX}{secrets.token_hex(4)}"
-        self.names.append(name)
-        return name
+        return asyncio.run(self._a_name_nobody_has())
+
+    async def _a_name_nobody_has(self) -> str:
+        conn = await self.admin._connect(self.url)
+        try:
+            for _ in range(20):
+                name = f"{_SELFTEST_PREFIX}{secrets.token_hex(4)}"
+                if not await conn.fetchval(_EXISTS_SQL, name):
+                    self.names.append(name)
+                    return name
+        finally:
+            await conn.close()
+        raise AssertionError("twenty random selftest names all exist already")
 
     async def __aenter__(self):
         self.conn = await self.admin._connect(self.url)
@@ -1038,6 +1133,42 @@ def server(admin, pg_url):
     yield server
     # A FRESH connection and a fresh loop: the test may have failed anywhere.
     asyncio.run(server.remove_leftovers())
+
+
+def test_a_database_that_was_there_before_is_neither_used_nor_removed_by_the_finalizer(admin):
+    # The by-name cleanup may only ever meet a database this test created.
+    class _Recording:
+        def __init__(self):
+            self.present: set[str] = set()
+            self.asked: list[str] = []
+            self.statements: list[str] = []
+
+        async def fetchval(self, _sql, name):
+            if not self.asked:
+                self.present.add(name)  # the first name offered is somebody else's
+            self.asked.append(name)
+            return int(name in self.present)
+
+        async def execute(self, sql):
+            self.statements.append(sql)
+
+        async def close(self):
+            pass
+
+    conn = _Recording()
+
+    async def _fake_connect(_url, database="postgres"):
+        return conn
+
+    admin._connect = _fake_connect  # `admin` is a fresh module per test
+    server = _Server(admin, _APP_URL)
+    name = server.new_name()
+    foreign = conn.asked[0]
+    assert name != foreign and server.names == [name], "a name that already exists must not be handed out"
+    conn.present.add(name)  # the test's own database, left behind by a failure
+    assert asyncio.run(server.remove_leftovers()) == [name]
+    assert conn.statements == [f'DROP DATABASE "{name}" WITH (FORCE)']
+    assert foreign in conn.present and foreign not in "".join(conn.statements)
 
 
 def test_the_finalizer_removes_only_names_the_test_generated_itself(admin):

@@ -75,6 +75,9 @@ fi
 # the branch above. No traps here on purpose: a shell knows a reaped child only
 # by its pid and would signal whoever holds that number (see the helper).
 #
+# The helper hands pytest a RENFIELD_TEST_PG_URL it builds itself from the
+# name it validated; the one exported above is only what is echoed.
+#
 # What differs from the branch above, on a signal only:
 # - SIGINT to this process alone (not Ctrl-C at a terminal, which reaches
 #   pytest too) reaches pytest as SIGTERM after the grace period

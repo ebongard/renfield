@@ -685,6 +685,8 @@ von `bin/run-backend-tests.sh` gesetzt). Der Harness in `tests/backend/conftest.
   die Frist, um seine Zusammenfassung zu drucken. Ein Signal während des Anlegens oder
   Löschens wird nur vermerkt, beides läuft zu Ende. Ein Löschen, das nach 120 s nicht fertig
   ist, endet mit einer Warnung; bleibt die Datenbank stehen, ist auch ein grüner Lauf Exit 1.
+  Die URL für pytest baut das Hilfsprogramm selbst aus dem geprüften Namen. Nicht beendet
+  werden Prozesse, die pytest seinerseits gestartet hat; `WITH (FORCE)` trennt ihre Verbindungen.
   Voraussetzung: die Rolle aus `DATABASE_URL` darf Datenbanken anlegen und `vector`
   installieren (auf der Build-Box: Superuser; `vector` ist nicht `trusted`).
 

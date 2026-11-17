@@ -32,6 +32,10 @@ spec, ``kill %1``, signals nothing in dash without job control -- measured).
 and refuses to signal one it has already reaped. "Is it still ours" and "signal
 it" are one step here. The token never leaves this process either.
 
+Not stopped before the drop: processes pytest itself started (it is signalled
+by pid, not as a group, so that a terminal's Ctrl-C and `--pdb` work as usual).
+``WITH (FORCE)`` cuts their connections and the database cannot come back.
+
 What can be left behind (a leak, never a wrong drop): a SIGKILL of this
 process, or a stop of the container. The orphan blocks its suffix (exit 3)
 until it is removed by hand; its comment identifies it.
@@ -296,7 +300,22 @@ def stop_grace() -> int:
     return int(raw)
 
 
-def supervise(pytest_args: list[str], grace: int, received: list[int]) -> int:
+def pytest_url(application_url: str, name: str) -> str:
+    """The URL pytest gets: the application's server and credentials, THIS database.
+
+    Built here from the validated name and handed to the child explicitly, so
+    pytest cannot run anywhere but in the database just created -- whatever
+    RENFIELD_TEST_PG_URL the caller's environment carries. The async scheme is
+    the documented form (see run-backend-tests.sh). Never printed.
+    """
+    from sqlalchemy.engine import make_url
+
+    require_throwaway_name(name)
+    url = make_url(application_url).set(drivername="postgresql+asyncpg", database=name)
+    return url.render_as_string(hide_password=False)
+
+
+def supervise(pytest_args: list[str], grace: int, received: list[int], env: dict[str, str] | None = None) -> int:
     """Run pytest as a child and return only when it is DEAD and reaped.
 
     `received` is filled by the signal handlers of `run`. On SIGINT pytest gets
@@ -311,7 +330,7 @@ def supervise(pytest_args: list[str], grace: int, received: list[int]) -> int:
     if received:
         return 128 + received[0]  # came during the create: pytest is not started
     # stdin, stdout and stderr are inherited: `--pdb` works, as in the `exec` branch.
-    proc = subprocess.Popen([*PYTEST_COMMAND, *pytest_args])
+    proc = subprocess.Popen([*PYTEST_COMMAND, *pytest_args], env=env)
     terminate_at = kill_at = None
     try:
         while True:
@@ -378,13 +397,14 @@ def run(name: str, pytest_args: list[str]) -> int:
         raise Refused("DATABASE_URL is not set.")
     check_name(name, application_url)
     grace = stop_grace()  # refused HERE, before anything is created
+    env = {**os.environ, "RENFIELD_TEST_PG_URL": pytest_url(application_url, name)}
 
     with signals_noted() as received:
         token = asyncio.run(_on_the_server(application_url, lambda conn: create_ready(conn, name, application_url)))
         code = 1
         try:
             _say(f"TEST_DB: {name} (created for this run, dropped when it ends)", sys.stdout)
-            code = supervise(pytest_args, grace, received)
+            code = supervise(pytest_args, grace, received, env)
         finally:
             # `supervise` has returned or raised: pytest is dead and reaped.
             try:
@@ -393,6 +413,8 @@ def run(name: str, pytest_args: list[str]) -> int:
             except Exception as exc:
                 _say(f"WARNING: {name} was NOT dropped ({_describe(exc)}) -- remove it by hand.")
                 code = code or 1
+        if code == 0 and received:
+            code = 128 + received[0]  # came during the drop: not acted on, but not swallowed
     return code
 
 
