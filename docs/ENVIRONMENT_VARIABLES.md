@@ -3577,6 +3577,30 @@ PAPERLESS_API_URL=http://paperless.local:8000
 # nicht taugt (`http://paperless:8000` unter Compose, LAN-Adresse ausserhalb des Heimnetzes).
 # PAPERLESS_PUBLIC_URL=https://paperless.example.org
 
+# Chat-Dokumentlinks: ein Quellen-Chip unter einer Chat-Antwort ÖFFNET das Dokument.
+# Aus (Vorgabe): Chips wie bisher -- nur Wissensdatenbank-Treffer von
+# `internal.knowledge_search`, Ziel `/knowledge?doc=<id>`; `done`-Frame und
+# `message_metadata.sources` sind byte-identisch.
+# An: zusätzlich werden Paperless-Treffer (`mcp.paperless.search_documents`, höchstens 3 je
+# Zug; jedes per `get_document` geholte Dokument) und der direkte RAG-Pfad (Rollen
+# `knowledge` und `conversation` mit `use_rag`) zu Chips, und jede Quelle trägt ein vom
+# SERVER gebautes Ziel.
+# 🛑 Der Paperless-Link entsteht NUR aus PAPERLESS_PUBLIC_URL. Der Rückfall auf
+# PAPERLESS_API_URL gilt hier bewusst NICHT: die Adresse wird in die Unterhaltung
+# gespeichert, und die API-Adresse ist auf einer Instanz ein clusterinterner Dienstname,
+# den kein Browser auflöst. Ohne PAPERLESS_PUBLIC_URL wird eine Paperless-Quelle genannt,
+# hat aber KEINEN Link; ein Wissensdatenbank-Chip öffnet dann nur die Dokumentansicht.
+# 🛑 Reihenfolge beim Einschalten: ERST das neue Frontend ausrollen und abwarten, bis es
+# in den Browsern angekommen ist (PWA-Service-Worker), DANN den Schalter umlegen. Ein
+# altes Bundle kennt die Paperless-Quelle nicht und zeigt sie als Chip mit dem toten Ziel
+# `/knowledge?doc=undefined`.
+# Lesende Seite (unabhängig vom Schalter): `GET /api/chat/history` liefert von
+# `message_metadata` nur die Schlüssel, die der Client liest (`agent_role`, `artifacts`,
+# `attachments`, `wb_entities`, `sources`) — mit und ohne AUTH_ENABLED. Bei
+# AUTH_ENABLED=true zusätzlich `sources` je LESER: eine Wissensdatenbank-Quelle nur, wenn
+# das Dokument für ihn sichtbar ist, eine Paperless-Quelle nur mit `mcp.paperless.read`.
+# CHAT_DOCUMENT_LINKS_ENABLED=false
+
 # Calendar (Unified Calendar MCP Server — EWS, Google, CalDAV)
 # Config via config/calendar_accounts.yaml
 # CALENDAR_CONFIG=/config/calendar_accounts.yaml

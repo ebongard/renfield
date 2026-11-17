@@ -58,7 +58,8 @@ Source: `services/knowledge_tool.py`
   falls back to a generic `Dokument {id}` label with no chip.
 - Flag-off = chunk-only (byte-identical context/message).
 - Also returns structured `data.sources` (deduped per document) that `chat_handler._extract_agent_sources` surfaces
-  as chat **provenance chips**.
+  as chat **provenance chips**. With `CHAT_DOCUMENT_LINKS_ENABLED` each chip also gets a server-built open target
+  (`api/websocket/document_sources.py`); the tool's own result is unchanged.
 
 ### `internal.list_my_memories`
 

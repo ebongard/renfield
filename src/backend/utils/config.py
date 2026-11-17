@@ -309,6 +309,14 @@ class Settings(BaseSettings):
     # follow-up questions, attached to the `done` frame (ephemeral, not persisted).
     # Failure/timeout silently yields no chips — never blocks the turn.
     followup_chips_enabled: bool = False
+    # Chat document links: a provenance chip OPENS its document. With the flag
+    # on, Paperless tool results (`search_documents`, `get_document`) and the
+    # direct RAG path produce source chips too, and every source carries a
+    # SERVER-built open target (`paperless_url`, only when PAPERLESS_PUBLIC_URL
+    # is set -- never the backend-facing API URL). Off: the `done` frame and
+    # `message_metadata.sources` are byte-identical to before
+    # (`api/websocket/document_sources.py`). Env: CHAT_DOCUMENT_LINKS_ENABLED.
+    chat_document_links_enabled: bool = False
     followup_chips_model: str = ""              # "" → ollama_intent_model (small/fast tier)
     followup_chips_count: int = Field(default=3, ge=1, le=5)
     followup_chips_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)

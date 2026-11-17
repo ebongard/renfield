@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 import { useSearchParams, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -43,6 +43,7 @@ import type { KbDocument } from '../hooks/useDocumentPolling';
 import type { DocPages } from '../components/knowledge/StatusBadge';
 import { useInflightTabTitle } from '../hooks/useInflightTabTitle';
 import {
+  useDocumentQuery,
   useKnowledgeDocumentsQuery,
   useKnowledgeBasesQuery,
   useKnowledgeStatsQuery,
@@ -199,7 +200,49 @@ export default function KnowledgePage() {
   });
   const basesQuery = useKnowledgeBasesQuery();
   const statsQuery = useKnowledgeStatsQuery();
-  const documents = documentsQuery.data ?? [];
+  // Inbound deep link: /knowledge?doc={id} (chat source chips, obligations
+  // agenda). The list is ONE page (the backend's default limit), ordered and
+  // filtered -- a linked document beyond it used to be a dead end: the page
+  // opened and nothing happened. So a target the loaded list does not contain
+  // is fetched BY ID and shown as the first row. The endpoint enforces access
+  // (401/403/404 → `isError`), and then there is simply no extra row.
+  const [searchParams] = useSearchParams();
+  const deepLinkDoc = searchParams.get('doc');
+  const deepLinkId = deepLinkDoc !== null && /^\d+$/.test(deepLinkDoc) ? Number(deepLinkDoc) : null;
+  const listedDocuments = documentsQuery.data;
+  // Embedded at scope=everything the cross-corpus overlay owns `?q=`: the
+  // document list is NOT searched then, although the query is mirrored into
+  // `searchQuery` (see the two effects below).
+  const omniScope = searchParams.get('scope');
+  const docSearchSuppressed = embedded && omniScope === 'everything';
+  const deepLinkOutsideList =
+    deepLinkId !== null
+    && listedDocuments !== undefined
+    && !documentsQuery.isFetching
+    // The deep-link effect below first widens the KB/status filter; only a
+    // target missing from the UNFILTERED page is really outside the list.
+    && selectedKnowledgeBase === null
+    && statusFilter === 'all'
+    // A document search is the user's own narrowing: a target it does not
+    // match must not sit on top of unrelated results. Both the typed value
+    // and its debounced copy, so the pin goes with the first keystroke. A
+    // query that does not search this list (overlay mode) narrows nothing.
+    && (docSearchSuppressed || searchQuery.trim() === '')
+    && docSearchQuery.trim() === ''
+    && !listedDocuments.some((d) => d.id === deepLinkId);
+  const deepLinkQuery = useDocumentQuery(deepLinkId ?? 0, deepLinkOutsideList);
+  // 🛑 `isError` decides, not `data`: every knowledge mutation invalidates
+  // `keys.knowledge.all`, the by-id key included, and react-query KEEPS the
+  // last successful data when the refetch fails. Without this check a
+  // document deleted here (404) or no longer readable (403) stayed pinned.
+  const deepLinkedDocument =
+    deepLinkOutsideList && !deepLinkQuery.isError ? deepLinkQuery.data : undefined;
+  const documents = useMemo(
+    () => (deepLinkedDocument
+      ? [deepLinkedDocument, ...(listedDocuments ?? [])]
+      : listedDocuments ?? []),
+    [deepLinkedDocument, listedDocuments],
+  );
   const knowledgeBases = basesQuery.data ?? [];
   // The KB whose share dialog is open; null = closed.
   const [shareKb, setShareKb] = useState<KnowledgeBaseRow | null>(null);
@@ -384,15 +427,12 @@ export default function KnowledgePage() {
   // contains it — scroll to it and auto-expand its Fakten panel. Async-race
   // safe: we gate the scroll/expand on the query having resolved with the row
   // present, and fire exactly once via the ref so it can't loop.
-  const [searchParams] = useSearchParams();
-  const deepLinkDoc = searchParams.get('doc');
   const deepLinkHandled = useRef(false);
 
   // D9 (embedded): drive the chunk search from the workspace omnisearch `?q=`,
   // debounced. At scope=everything the cross-corpus overlay owns the query, so
   // we clear our inline results and stay out of the way.
   const omniQ = searchParams.get('q') ?? '';
-  const omniScope = searchParams.get('scope');
   // Embedded with a non-empty query and not in cross-corpus mode → the
   // Documents lens owns the query and renders inline results.
   const embeddedActiveQuery = embedded && omniScope !== 'everything' && omniQ.trim().length > 0;
@@ -419,11 +459,10 @@ export default function KnowledgePage() {
   // embedded). Suppressed only when the lens defers to the cross-corpus overlay
   // (embedded + scope=everything), so the list isn't hijacked there.
   useEffect(() => {
-    const suppressed = embedded && omniScope === 'everything';
-    const next = suppressed ? '' : searchQuery.trim();
+    const next = docSearchSuppressed ? '' : searchQuery.trim();
     const id = setTimeout(() => setDocSearchQuery(next), 300);
     return () => clearTimeout(id);
-  }, [searchQuery, embedded, omniScope]);
+  }, [searchQuery, docSearchSuppressed]);
 
   useEffect(() => {
     // New target id → allow handling again (e.g. agenda → doc A, back, → doc B).
@@ -439,7 +478,9 @@ export default function KnowledgePage() {
     if (statusFilter !== 'all') setStatusFilter('all');
     // Wait for the (possibly refetched) list before touching the DOM.
     if (documentsQuery.isLoading || documentsQuery.isFetching) return;
-    if (!documents.some((d) => d.id === id)) return; // not reachable — fail quietly
+    // Not in the list: the by-id fetch above prepends it; until it resolves
+    // (or when the document does not exist / is not readable) there is no row.
+    if (!documents.some((d) => d.id === id)) return;
     deepLinkHandled.current = true;
     setExpandedFacts((prev) => ({ ...prev, [id]: true }));
     requestAnimationFrame(() => {

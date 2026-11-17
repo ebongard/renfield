@@ -330,6 +330,98 @@ propagation").
 - `knowledge_tool` emits `data.sources`; `chat_handler._extract_agent_sources` rides them on the `done` frame and
   persists them as `message_metadata.sources`.
 - Circle-safe via `rag.search(user_id)` — the chips can only name documents the asker could retrieve.
+- `/knowledge?doc={id}` loads the document BY ID when the fetched list page does not contain it (the list is one
+  page, default limit 100; the link used to open the page and do nothing).
+
+### A chip opens its document (`CHAT_DOCUMENT_LINKS_ENABLED`, opt-in/dark)
+Reported: "when I search for a document in the chat I get information but no way to open it". Three causes, one
+module (`api/websocket/document_sources.py`), one list for the `done` frame and `message_metadata.sources`
+(`chat_handler._turn_sources`); flag off returns `_extract_agent_sources` untouched.
+- **Paperless results were dropped.** `mcp.paperless.get_document` → every fetched document is a source;
+  `mcp.paperless.search_documents` → at most `PAPERLESS_SEARCH_SOURCE_CAP` (3) per TURN, taken rank-wise across
+  the turn's searches (first hit of each, then second …), so a refined query is not starved by the first one.
+  One chip per document; a Paperless document that is also a knowledge-base source of the turn appears once, as the
+  knowledge-base chip. The cap is positional, not semantic (Paperless orders by `-created`): matching titles against
+  the answer would make the chip depend on what the model wrote — the thing this feature must not do.
+- **The direct RAG path had no sources** (`_stream_rag_response`: role `knowledge`, and `conversation` with
+  `use_rag`). It now hands out the results the answer was generated from — also the CACHED ones of a follow-up.
+- **The chip led nowhere useful.** Every source carries a server-built `paperless_url` where one exists.
+- **Link construction:** `paperless_document_url(id, public_only=True)` — `PAPERLESS_PUBLIC_URL` + an id validated
+  as a plain integer. No URL, host or base is ever read from a tool result or model output; a `paperless_url`
+  arriving inside a source is dropped. No fallback to `PAPERLESS_API_URL`: the link is persisted, and that address
+  is a cluster-internal name on one instance. No public base → the source is named without a link (the frontend
+  renders a non-interactive chip). The frontend additionally refuses any target that is not `http(s)://`.
+- **Access:** knowledge-base metadata (title, tier, Paperless id) is read through `_visible_document_meta`
+  (`documents_circles_filter`, server-injected `user_id`). A `knowledge_search` source keeps its chip but gets a
+  link only when the document is visible; a RAG-path document gets a chip only when it is visible NOW (cached
+  follow-up results may predate an access change). Paperless is read through ONE backend token and is not
+  circle-filtered — gated by `mcp.paperless.read` when the tool ran; a chip repeats only id + title that tool result
+  already put into the user's turn. No new read path for persisted sources: they sit in `message_metadata` and
+  are readable exactly where the answer text of that message is.
+- **Read side (`metadata_for_reader`, independent of the flag):** a conversation is a shared artifact, and
+  `GET /api/chat/history/{session_id}` is the one route that serves `message_metadata` to a reader by REACH. Two
+  rules apply there, and nowhere else:
+  1. **Key allowlist, auth on or off.** A client gets `sources` plus `CLIENT_METADATA_KEYS` (`agent_role`,
+     `artifacts`, `attachments`, `wb_entities` — the keys `historyToUiMessage` reads). Everything else stays on the
+     server: `action_summary` (the agent's copy of the tool result — Paperless ids/titles of up to ten hits, or the
+     `knowledge_search` payload with retrieved text), `action_result`, `intent`, `action_success`,
+     `subsystems_used`, `room_context`, `speaker`, `scanner_job`, `handoff_source`, `attachment_ids`. A new key is
+     invisible to clients until it is added to the allowlist.
+  2. **Sources by the reader's rights, auth-on.** Sources are per-asker and messages do not record who asked, so
+     every reader — the asker included — gets a source rebuilt key by key: the kind is `paperless` or absent
+     (anything else is dropped); a `document_id` on ANY kind must pass `documents_circles_filter` for the reader; a
+     Paperless source needs a valid `paperless_document_id` and `mcp.paperless.read`, and never carries
+     knowledge-base fields. A `sources` value that is not a list is dropped. Under auth-off the shape rules hold
+     and the two access rules are skipped.
+  3. **The stored `paperless_url` is never served**, auth on or off. It only marks that the source had a link; the
+     link that goes out is built NOW from the id (the stored Paperless id, or the knowledge-base document's
+     looked-up one). A changed `PAPERLESS_PUBLIC_URL` therefore moves old chips along; no base, or a document no
+     longer filed, means no link.
+  The document lookup runs on a session of its own, so a history request with knowledge-base sources holds two
+  pool connections at once (the route's and the lookup's; under auth-off only when a link has to be rebuilt).
+  Under auth a failed lookup withholds every source that names a knowledge-base document, under auth-off only the
+  link; it never fails the history. The stored row is never modified.
+  **By design:** a turn that ran without loaded permissions (`user_permissions=None` — a device token on the chat
+  socket) may have used Paperless; on reload its Paperless chips are gone, because the reader holds no
+  `mcp.paperless.read`.
+  **Not covered — the same data on other paths:** `ConversationService.load_context` re-injects `action_summary`
+  into the prompt of whoever continues the thread, and `conversations.context_vars` / `summary` travel by reach as
+  well. Those feed the model, not the client, and are an open decision. `artifacts` are served unfiltered: they are
+  the answer's own typed content, like the message text.
+- **Enable order:** roll out the frontend first, flip the flag after it has propagated — a stale PWA bundle renders
+  a `kind: 'paperless'` source as a chip to `/knowledge?doc=undefined`.
+- **The chip row keeps its look; two owner-approved deviations from DESIGN.md §Accessibility**
+  (`SourceChips.tsx`). The owner compared a 44 px variant (wrapped lines 24 px apart) in a browser and chose the
+  original spacing: the row's classes are those it always had (`mt-2 flex flex-wrap items-center gap-1.5`) plus
+  `isolate`, which has no layout effect.
+  - *Hit area — deviation from the 44×44 px touch target.* Every interactive element (both chip forms, the
+    Paperless segment, "+N") carries an invisible, absolutely positioned `::after` that cannot change the layout.
+    Vertically it extends the element by 3 px on each side — half the row's 6 px gap — so the areas of
+    neighbouring wrapped lines meet and never overlap; horizontally it is centred and at least 44 px wide.
+    Effective height: **26 px** for a chip (20 px from `text-xs` + `py-0.5`; 29.3 px with a tier badge, measured
+    23.3 px), **22 px** for the segment and "+N" (16 px). A chip that opens nothing has none. The areas lie
+    BEHIND the visible chips (`after:-z-10`, row `isolate`), so where one reaches sideways over a neighbour the
+    neighbour's visible body wins; the segment's 44 px width is therefore a bounding box. Beyond the row an area
+    reaches 3 px at most: above, the row's `mt-2` takes it; below, the row provides nothing itself — the 3 px
+    fall into the next block's top margin (`mt-2` on follow-up chips and cards) or the bubble's padding. The row
+    is a stacking context painted above its non-positioned siblings, so `after:-z-10` protects only what is
+    inside the row.
+  - *Focus ring — deviation from the accent ring.* `primary-500` for EVERY focusable element of the row (the
+    colour the chips always had; `accent-500` measured 1.49:1 against the light bubble), `:focus-visible`, 2 px
+    at 2 px offset, drawn as an OUTLINE (as the button classes in `index.css` do) — no offset colour to match
+    against the bubble in either theme. Never `outline-none` beside it: in Tailwind v4 that zeroes the outline
+    style.
+  - *No invented title.* A document with neither title nor filename gets `title: ""` from the backend
+    (`knowledge_search` sources, RAG-path sources; `_visible_document_meta` returns `None`), and the frontend
+    labels it through `chat.sources.untitled` (de/en/fr/it). The MODEL keeps the German "Dokument N" in ONE
+    place only, the FAKTEN line of the context. The `sources` list itself is part of the tool result and reaches
+    the model too — serialized into the agent prompt (`agent_service`, the `tool_result` step) and into
+    `action_summary` (`chat_handler._build_action_summary`) — so there the model reads `"title": ""` for a
+    nameless document. This changes the `knowledge_search` source of a nameless document with the flag OFF too
+    (`"Dokument N"` → `""`). Rows stored earlier keep their literal "Dokument N" title.
+- **Not built:** opening the ORIGINAL file of a knowledge-base document that is not filed in Paperless. It needs a
+  download endpoint behind `check_document_access` and an authenticated blob fetch in the frontend (one instance
+  has no cookie session, a plain `href` would 401).
 
 ### Follow-up suggestion chips (`FOLLOWUP_CHIPS_ENABLED`, opt-in/dark)
 - `services/followup_service.py`: a best-effort small-model call **in the background AFTER the `done` frame**,

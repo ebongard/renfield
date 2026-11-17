@@ -8,12 +8,31 @@ export type MessageRole = 'user' | 'assistant' | 'system';
 // Provenance source — a knowledge-base document a knowledge-backed answer drew
 // on. Surfaced as a "source chip" under the assistant turn. `tier` is the
 // circle access-tier (0=self … 4=public); null when the row carried no tier.
-export interface MessageSource {
+//
+// With CHAT_DOCUMENT_LINKS_ENABLED the server adds an OPEN TARGET
+// (`paperless_url`, built server-side from the configured public Paperless
+// base -- never from model output) and a second kind of source: a document the
+// agent found in Paperless itself, which has no knowledge-base id.
+export interface KnowledgeMessageSource {
+  kind?: undefined;
   document_id: number | string;
   filename: string;
   title: string;
   tier?: number | null;
+  /** The filed original in Paperless; absent when not filed or no public base. */
+  paperless_url?: string | null;
 }
+
+export interface PaperlessMessageSource {
+  kind: 'paperless';
+  paperless_document_id: number;
+  /** Empty when Paperless returned none; the chip then shows a generic label. */
+  title: string;
+  /** Absent when no browser-reachable Paperless base is configured. */
+  paperless_url?: string | null;
+}
+
+export type MessageSource = KnowledgeMessageSource | PaperlessMessageSource;
 
 // Chat message
 // Chat branching (Phase 2): sibling-branch info for the ‹n/m› switcher. Present
