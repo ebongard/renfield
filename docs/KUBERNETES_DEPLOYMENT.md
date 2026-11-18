@@ -24,6 +24,7 @@ compatibility limits that decide which cards can be bought at all:
 - Ingress: Traefik v3.3 with both the `kubernetesingress` and `kubernetescrd` providers enabled (lives in the sibling `private_k8s/` repo)
 - GPU: NVIDIA device plugin DaemonSet on k8s-gpu-3 (`nvidia.com/gpu: 1`); k8s-gpu-1 allocates via a **DRA claim** (`ollama-gpu-5070ti`) because the plugin could no longer allocate after the Xid 79 failure; k8s-gpu-2 has none
 - LLM models: NFS `192.168.1.9:/mnt/data/llm` → `/mnt/llm` on both workers, hostPath-mounted into Ollama pods
+- Chat/vision LLM: **not in the cluster** — llama.cpp on the 5090 host `cuda.local:8081` (systemd unit in `deploy/cuda-host/`, see `GPU_TOPOLOGY.md` §2); the backend's `wait-for-deps` init container waits for its `/health`
 
 Cluster-wide Traefik changes (entrypoints, TLS, CRDs) are tracked in `../private_k8s/traefik.yaml` and `../private_k8s/traefik-crds.yaml`; this document only covers the renfield-namespace workload.
 
@@ -281,11 +282,15 @@ Some GPU-backed services in the `renfield` namespace are exposed to **other clus
 |---|---|---|---|
 | `ollama.test.local` | `ollama` | 11434 | Reva router / embeddings |
 | `voice.test.local` | `voice-server` | 8080 | Reva voice (`VOICE_SERVER_URL`) |
-| `llama-agent.test.local` | `llama-server-agent` | 8080 | (dead end — the agent is scaled to 0 and cannot schedule: it requests 2 GPUs on k8s-gpu-1, which allocates none; see `docs/GPU_TOPOLOGY.md` §1) |
+
+The former `llama-agent.test.local` ingress (`llm-agent-external` → `llama-server-agent`) and the in-cluster
+`llama-server-agent` / `llama-server-embed` Deployments were retired on 2026-11-18: both sat at 0/0, the agent could
+not schedule (it requested 2 GPUs on k8s-gpu-1, which allocates none) and embeddings had long moved to Ollama. The
+chat/vision LLM runs **outside the cluster** on the 5090 host `cuda.local:8081` (see `docs/GPU_TOPOLOGY.md` §2).
 
 > In-cluster Renfield (`backend`) reaches these same services via the ClusterIP Services (`voice-server:8080`, `ollama:11434`) and does **not** use these ingresses.
 
-**Security — IP allowlist.** `ollama`/`llama-server` have no built-in auth, so these ingresses are gated by a Traefik `IPAllowList` middleware (`llm-ingress-allowlist`, namespace `renfield`) restricting the source to the consuming cluster's subnet — otherwise any LAN host could drive unauthenticated, uncapped inference on the GPU (DoS / cost-abuse).
+**Security — IP allowlist.** `ollama` and `voice-server` have no built-in auth, so these ingresses are gated by a Traefik `IPAllowList` middleware (`llm-ingress-allowlist`, namespace `renfield`) restricting the source to the consuming cluster's subnet — otherwise any LAN host could drive unauthenticated, uncapped inference on the GPU (DoS / cost-abuse).
 
 ```yaml
 apiVersion: traefik.io/v1alpha1

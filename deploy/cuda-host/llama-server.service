@@ -1,0 +1,69 @@
+# llama-server on the RTX 5090 host `cuda.local` — the chat and vision LLM of both
+# Renfield instances (cuda.local:8081). Install steps: README.md next to this file.
+#
+# Why a unit and not `docker run --restart unless-stopped`: dockerd started the
+# container at boot before the NFS share /mnt/llm was mounted, the bind mount of
+# the model file failed, the container exited 127 and dockerd never retried it.
+# Here systemd orders the start after the mount (RequiresMountsFor), the
+# ExecStartPre checks fail fast while the model files are missing, and
+# Restart=always retries every 10 s instead of giving up.
+#
+# The container runs with --rm and no docker restart policy: systemd is the only
+# thing that starts it. Image by DIGEST (= tag server-cuda-b10423): the bare
+# `server-cuda` tag moves with every llama.cpp release.
+
+[Unit]
+Description=llama.cpp server (Qwen3.6-35B-A3B, chat + vision) on :8081
+Documentation=https://github.com/ebongard/renfield/blob/main/docs/GPU_TOPOLOGY.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/mnt/llm
+# Never stop retrying (the default start limit would give up after 5 quick failures).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Touch the model files first: this triggers the /mnt/llm automount and fails
+# (-> Restart after RestartSec) while they are absent, so docker never gets to
+# create an empty placeholder in their place.
+ExecStartPre=/usr/bin/test -r /mnt/llm/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
+ExecStartPre=/usr/bin/test -r /mnt/llm/mmproj-F16.gguf
+ExecStartPre=-/usr/bin/docker rm -f llama-server
+ExecStart=/usr/bin/docker run --rm --name llama-server \
+  --network host \
+  --gpus all \
+  --health-cmd "curl -fsS http://localhost:8081/health || exit 1" \
+  --health-interval 30s \
+  --health-timeout 5s \
+  --health-start-period 10m \
+  --health-retries 3 \
+  -v /mnt/llm/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf:/models/qwen3.6-35b-a3b.gguf:ro \
+  -v /mnt/llm/mmproj-F16.gguf:/models/qwen3.6-35b-a3b-mmproj.gguf:ro \
+  ghcr.io/ggml-org/llama.cpp@sha256:a475c08c7c472425e3ebf7f6be9c6cb3a17e82ec28070ddeb22fffe3ca754a94 \
+  --model /models/qwen3.6-35b-a3b.gguf \
+  --mmproj /models/qwen3.6-35b-a3b-mmproj.gguf \
+  --alias qwen3.6 \
+  --host 0.0.0.0 \
+  --port 8081 \
+  --ctx-size 262144 \
+  --n-gpu-layers 99 \
+  --cache-type-k q8_0 \
+  --cache-type-v q8_0 \
+  --flash-attn on \
+  --reasoning off \
+  --temp 0.6 \
+  --top-p 0.95 \
+  --top-k 20 \
+  --jinja \
+  --metrics
+ExecStop=/usr/bin/docker stop llama-server
+Restart=always
+RestartSec=10
+# Covers the ExecStartPre steps (the NFS automount may take up to its
+# x-systemd.mount-timeout=180). The model load itself runs after "started".
+TimeoutStartSec=300
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

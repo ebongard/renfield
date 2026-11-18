@@ -62,16 +62,14 @@ falsche Karte.
 GPU-Node 2 heißt nur so (der echte Knotenname enthält ebenfalls „gpu“): Die VM hat keinen GPU-Passthrough, `lspci` zeigt
 nur eine QEMU-VGA. Die installierten NVIDIA-Pakete ändern daran nichts.
 
-**Ruhende Manifeste (Stand 2026-11-18):** `k8s/llama-server.yaml` (`llama-server-agent`,
-`replicas: 0`) fordert **2 GPUs** auf GPU-Node 1 an; der Knoten teilt aber **0**
-`nvidia.com/gpu` zu (eine Karte, per DRA an Ollama vergeben). Hochskalieren ergäbe nur einen
-hängenden Pod — **das ist kein Ausweichweg.** Der echte Ausweichweg bei ausgefallenem
-5090-Host ist `LLM_OPENAI_FALLBACK_ENABLED` (Cluster-Ollama, `qwen3:8b`). Das Manifest
-bleibt nur, weil das Ingress `llm-agent-external` (Cluster-Repo `private_k8s`) noch auf
-seinen Service zeigt; sein Image ist per Digest auf denselben Build gepinnt wie der
-5090-Host (§2). `k8s/llama-server-embed.yaml` ist **stillgelegt**: nicht mehr in
-`kustomization.yaml`, von nichts referenziert (beide Instanzen betten über Ollama ein);
-die Live-Objekte stehen noch auf 0/0. `k8s/speaches.yaml` ruht ebenso (`replicas: 0`).
+**Kein llama-server im Cluster (seit 2026-11-18):** Die beiden ruhenden Deployments
+`llama-server-agent` und `llama-server-embed` (samt Services) und das Ingress
+`llm-agent-external` (Cluster-Repo `private_k8s`) sind gelöscht, ihre Manifeste aus dem
+Repo entfernt. Der Agent konnte ohnehin nicht laufen — er verlangte **2 GPUs** auf GPU-Node 1,
+der Knoten teilt aber **0** `nvidia.com/gpu` zu (eine Karte, per DRA an Ollama vergeben); die
+Einbettungen laufen seit 2026-05-13 über Ollama. Der Ausweichweg bei ausgefallenem 5090-Host
+ist `LLM_OPENAI_FALLBACK_ENABLED` (Cluster-Ollama, `qwen3:8b`). `k8s/speaches.yaml` ruht
+weiterhin (`replicas: 0`).
 
 ## 2. Was worauf läuft
 
@@ -80,9 +78,8 @@ die Live-Objekte stehen noch auf 0/0. `k8s/speaches.yaml` ruht ebenso (`replicas
   **Zusätzlich der VLM-/OCR-Pfad**: `OLLAMA_VISION_URL` und `OLLAMA_VISION_MODEL=qwen3.6`
   zeigen hierher, also laufen auch OCR-Nachbearbeitung und PDF-Split hier.
 
-  **Definition des Containers** (am 2026-11-18 per `docker inspect` gelesen; er ist
-  **nirgends in git** definiert — weder Compose-Datei noch Skript, er wurde am 2026-08-22
-  von Hand mit `docker run` angelegt):
+  **Definition des Containers** (am 2026-11-18 per `docker inspect` gelesen; er wurde am
+  2026-08-22 von Hand mit `docker run` angelegt — seine Nachbildung in git steht unten):
 
   | Feld | Wert |
   |---|---|
@@ -94,10 +91,23 @@ die Live-Objekte stehen noch auf 0/0. `k8s/speaches.yaml` ruht ebenso (`replicas
 
   Die 4 Slots kommen aus der Voreinstellung, nicht aus `--parallel` (`/props`:
   `total_slots 4`). Wer den Container neu anlegt, nimmt die **Digest-Referenz**, nicht
-  `server-cuda`: ein `docker pull` des Tags holte heute einen anderen Build. Dass der
-  Container nicht in git steht, ist eine offene Lücke (Eigentümerentscheidung: Compose-Datei
-  oder systemd-Unit mit `RequiresMountsFor=/mnt/llm`, die zugleich das NFS-Startrennen
-  behebt).
+  `server-cuda`: ein `docker pull` des Tags holte heute einen anderen Build. Dazu ein
+  eigener Healthcheck (`curl -fsS http://localhost:8081/health`, 30 s Takt, 10 min
+  Anlaufzeit); Umgebung und Labels sind die des Images.
+
+  **In git: [`deploy/cuda-host/llama-server.service`](../deploy/cuda-host/llama-server.service)**
+  (Installation im README daneben) — eine systemd-Unit, die genau diesen Container mit
+  `docker run --rm` startet: selbes Image per Digest, selbe Argumente, Einbindungen, Netz,
+  GPUs und Healthcheck; nur die Docker-Restart-Policy entfällt, systemd übernimmt sie
+  (`Restart=always`, `RestartSec=10`). Das behebt das NFS-Startrennen: Beim Booten startete
+  dockerd den Container, bevor `/mnt/llm` eingehängt war, die Einbindung der Modelldatei schlug
+  fehl, der Container endete mit 127 und wurde nie wiederholt — und beide Backends hingen im
+  Init (`wait-for-deps`). Die Unit ordnet sich per `RequiresMountsFor=/mnt/llm` hinter
+  `mnt-llm.mount` (fstab-Eintrag mit `x-systemd.automount`, `_netdev`), prüft vor dem Start,
+  dass beide Modelldateien lesbar sind, und versucht es sonst alle 10 s erneut.
+  **Stand 2026-11-18: Unit geschrieben und auf dem Host mit `systemd-analyze verify` geprüft,
+  aber noch nicht installiert** (`sudo` verlangt dort ein Passwort) — live läuft weiter der
+  handangelegte Container.
 - **GPU-Node 1 (5070 Ti)** — Cluster-Ollama mit llama3.2:3b, qwen3:8b, qwen3-embedding:4b
   und nomic-embed-text, zusammen etwa 10,1 von 16,3 GB, geteilt mit Reva.
   `qwen3-vl:8b` lief früher hier und brauchte gemessen **11,9 GB** — es verdrängte alle

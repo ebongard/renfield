@@ -7,7 +7,7 @@
 #      phrase ("meine Frau", "der Benutzer"); those would mint junk KG entities
 #      via the bridge. Such cases must yield subject=null instead.
 #
-# Not a CI test — needs the prod extraction model (qwen3.6 via llama-server-agent).
+# Not a CI test — needs the prod extraction model (qwen3.6 on the 5090 host's llama-server, cuda.local:8081).
 # Run in-pod:  python bin/run_memory_subject_eval.py /tests/eval/memory_subject_extraction_eval.yaml
 #
 # expect keys (per case):

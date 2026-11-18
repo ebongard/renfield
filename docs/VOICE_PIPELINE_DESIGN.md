@@ -570,7 +570,7 @@ docker push your-registry.example/renfield/voice-server:latest"
 
 **hostPath → PVC migration (review-cycle 3 NIT-3, deferred to Phase B.next):**
 
-The B.1 manifest mounts `/mnt/llm` via `hostPath` because that's the existing pattern for llama-server-agent and llama-server-embed. This works as long as the `nodeSelector: renfield.io/role=voice-llm` is the only label-mechanism that determines scheduling. If a second voice-tier node is added later without the NFS mount, applying the same node label would let voice-server schedule there and crash with `MountVolume.SetUp failed: /mnt/llm not found`.
+The B.1 manifest mounts `/mnt/llm` via `hostPath` because that's the existing pattern for llama-server-agent and llama-server-embed (both retired 2026-11-18; Ollama still mounts it this way). This works as long as the `nodeSelector: renfield.io/role=voice-llm` is the only label-mechanism that determines scheduling. If a second voice-tier node is added later without the NFS mount, applying the same node label would let voice-server schedule there and crash with `MountVolume.SetUp failed: /mnt/llm not found`.
 
 The clean primitive is a `PersistentVolumeClaim` bound to a `PersistentVolume` for the NFS share — Kubernetes then refuses to schedule the pod if the PV isn't bindable (clear scheduling failure, not a runtime crash). Tracked as a Phase B.next hardening ticket along with AEC and reconnect-and-resume. Not a B.1 blocker because the node-label discipline is sufficient at the current 1-voice-node scale.
 
