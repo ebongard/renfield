@@ -127,7 +127,12 @@ All three items shipped; the self-heal is gated `mcp_health_self_heal_enabled`
    instead of its TimeoutError. Now a refused server logs "connection failed:
    All connection attempts failed", the loop keeps retrying with backoff, and a
    session that dies after the connect marks the server disconnected
-   (`_session_lost`). Guard: `test_mcp_session_owner_1579.py` (incl. an AST check
+   (`_session_lost`; the dead session object stays, so a call already under way
+   fails as a dead session and reconnects). A cancellation that escapes INSIDE the
+   owner while the caller waits is handed over as a ConnectionError, never as a
+   bare CancelledError; a new session is installed before a stale owner is
+   closed; and the refresh loop reconnects under `reconnect_lock` like every
+   other path (two unlocked connects leaked the first owner). Guard: `test_mcp_session_owner_1579.py` (incl. an AST check
    that `mcp_client.py` never calls `__aenter__`/`__aexit__` by hand).
    Observability: every COMPLETED tick increments
    `renfield_mcp_health_ticks_total` + sets `renfield_mcp_health_problem_servers`

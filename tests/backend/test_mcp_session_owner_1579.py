@@ -230,8 +230,100 @@ async def test_a_session_that_dies_marks_the_server_disconnected(monkeypatch):
             break
         await asyncio.sleep(0.02)
     assert state.connected is False
-    assert state.session is None
+    assert state.owner is None
+    # The dead session object stays, so a call already under way fails on it as
+    # a dead session (reconnect + retry) instead of on None.
+    assert state.session is not None
     assert "server went away" in (state.last_error or ""), state.last_error
+
+
+# --- review findings ------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_a_cancellation_inside_the_owner_reaches_the_caller_as_a_failure(monkeypatch):
+    """A transport-internal cancel that escapes while the caller still waits must
+    not end the caller with a bare CancelledError (the refresh loop would die)."""
+    import mcp.client.streamable_http as sh
+
+    class _CancelsItself:
+        async def __aenter__(self):
+            raise asyncio.CancelledError()
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(sh, "streamablehttp_client", lambda **kw: _CancelsItself())
+    manager = MCPManager()
+    state = MCPServerState(
+        config=MCPServerConfig(name="srv", url="http://srv:1/mcp"), backoff=ExponentialBackoff()
+    )
+
+    await manager._connect_server(state)  # must not raise
+
+    assert state.connected is False
+    assert "cancelled inside the session owner" in (state.last_error or ""), state.last_error
+    assert state.backoff.attempt_count == 1
+    assert asyncio.current_task().cancelling() == 0
+
+
+@pytest.mark.unit
+async def test_a_stale_owner_is_closed_only_after_the_new_session_is_installed(monkeypatch):
+    import mcp as mcp_mod
+    import mcp.client.streamable_http as sh
+
+    from services.mcp_client import _SessionOwner
+
+    class _Transport:
+        async def __aenter__(self):
+            return (MagicMock(), MagicMock())
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(sh, "streamablehttp_client", lambda **kw: _Transport())
+    monkeypatch.setattr(mcp_mod, "ClientSession", _FakeSession)
+
+    manager = MCPManager()
+    state = MCPServerState(config=MCPServerConfig(name="srv", url="http://srv:1/mcp"))
+    old_session = object()
+    seen: dict = {}
+    stop = asyncio.Event()
+
+    async def _hold():
+        await stop.wait()
+        seen["session_at_close"] = state.session
+
+    stale = _SessionOwner(task=asyncio.get_running_loop().create_task(_hold()), stop=stop)
+    state.owner, state.session = stale, old_session
+
+    await manager._connect_server(state)
+
+    assert stale.task.done()
+    assert seen["session_at_close"] is not old_session, "the stale owner was closed first"
+    assert state.owner is not stale and state.connected is True
+    await manager.shutdown()
+
+
+@pytest.mark.unit
+async def test_the_refresh_reconnect_waits_for_the_reconnect_lock():
+    """Two unlocked connects would each install an owner and leak the first."""
+    manager = MCPManager()
+    state = MCPServerState(config=MCPServerConfig(name="srv", url="http://srv:1/mcp"))
+    manager._servers["srv"] = state
+    calls = []
+
+    async def _connect(s):
+        calls.append(s.config.name)
+
+    manager._connect_server = _connect
+
+    async with state.reconnect_lock:
+        task = asyncio.create_task(manager.refresh_tools())
+        await asyncio.sleep(0.1)
+        assert calls == [], "the refresh path connected while another reconnect held the lock"
+    await asyncio.wait_for(task, 5)
+    assert calls == ["srv"]
 
 
 # --- structural guard: nobody but the owner touches the stack -----------------

@@ -1751,8 +1751,13 @@ class MCPManager:
                 ready.set_result((session, tools_result))
                 await stop.wait()
         except asyncio.CancelledError:
+            # A caller that gave up has already cancelled `ready`. Still pending
+            # means the caller WAITS and this cancellation is not its own -- a
+            # transport's internal cancel that escaped (e.g. its scope cancel
+            # racing a stage timeout). Hand it over as a failure: a bare
+            # CancelledError would end the caller, the refresh loop included.
             if not ready.done():
-                ready.cancel()
+                ready.set_exception(ConnectionError("connect cancelled inside the session owner"))
             raise
         except Exception as exc:
             if not ready.done():
@@ -1770,7 +1775,8 @@ class MCPManager:
             return  # already replaced
         root = _root_error(exc)
         self._set_connected(state, False)
-        state.session = None
+        # The dead session object stays: a call already past _ensure_connected
+        # then fails on it as a dead session (reconnect + retry), not on None.
         state.owner = None
         state.last_error = str(root) or type(root).__name__
         reason = error_text_without_content(root) or type(root).__name__
@@ -1800,11 +1806,14 @@ class MCPManager:
             async with asyncio.timeout(settings.mcp_connect_timeout * 3 + _TEARDOWN_TIMEOUT_S):
                 session, tools_result = await ready
 
-            if state.owner is not None:
-                await state.owner.close()
+            # Install the new session BEFORE closing a stale owner: should the new
+            # one die during that close, _session_lost must already see it.
+            stale = state.owner
             state.session = session
             state.owner = owner
             self._set_connected(state, True)
+            if stale is not None:
+                await stale.close()
             # The same function refresh_tools uses: hints, filter and index must not
             # depend on which of the two happened to discover the tools.
             self._install_discovered_tools(state, tools_result.tools)
@@ -3405,12 +3414,17 @@ class MCPManager:
                     )
                     continue
 
-                # Try to reconnect
-                logger.info(
-                    f"MCP reconnecting to '{state.config.name}' "
-                    f"(attempt {state.backoff.attempt_count + 1 if state.backoff else 1})..."
-                )
-                await self._connect_server(state)
+                # Under the same lock as every other reconnect: two concurrent
+                # connects would each install an owner, and the first would be
+                # overwritten without ever being closed (its transport leaked).
+                async with state.reconnect_lock:
+                    if state.connected:  # another path reconnected it meanwhile
+                        continue
+                    logger.info(
+                        f"MCP reconnecting to '{state.config.name}' "
+                        f"(attempt {state.backoff.attempt_count + 1 if state.backoff else 1})..."
+                    )
+                    await self._connect_server(state)
 
     def _refilter_server(self, server_name: str) -> None:
         """Re-build state.tools + _tool_index from all_discovered_tools using current filter."""
