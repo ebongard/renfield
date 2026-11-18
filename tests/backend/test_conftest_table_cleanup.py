@@ -14,10 +14,11 @@ module's tests in file order.
 import pytest
 from sqlalchemy import text
 
-from models.database import Conversation, Message, Role, User
+from models.database import Atom, Conversation, Document, DocumentChunk, Message, Role, User
 from tests.backend import conftest as harness
 from tests.backend.conftest import (
     _EXISTING_TABLES_SQL,
+    _FK_EDGES_SQL,
     _delete_order,
     _empty_tables,
     _non_empty_tables_sql,
@@ -97,20 +98,74 @@ async def test_2_the_next_test_finds_every_table_empty_and_ids_at_one(db_session
     assert role.id == 1
 
 
+async def _schema_edges(async_engine) -> tuple[list[str], list[tuple[str, str]]]:
+    async with async_engine.connect() as conn:
+        tables = [r[0] for r in (await conn.execute(text(_EXISTING_TABLES_SQL))).all()]
+        edges = [(r[0], r[1]) for r in (await conn.execute(text(_FK_EDGES_SQL))).all()]
+    return tables, edges
+
+
 @pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_conversations_and_messages_are_no_cycle(async_engine):
-    """The active-leaf pointer (SET NULL) and `messages.conversation_id`
-    (CASCADE) point at each other, but neither can refuse a DELETE. Counted as
-    a cycle, they sent every chat test to the 2.4-s TRUNCATE."""
-    from tests.backend.conftest import _FK_EDGES_SQL
+async def test_the_whole_schema_has_a_delete_order(async_engine):
+    """The class, not the instance: if ALL tables have an order, every subset a
+    test can dirty has one, and no table combination falls back to the 2.4-s
+    TRUNCATE. A new model with a NO ACTION / CASCADE cycle turns this red."""
+    tables, edges = await _schema_edges(async_engine)
+    assert _delete_order(tables, edges) is not None
 
-    async with async_engine.connect() as conn:
-        edges = [(r[0], r[1]) for r in (await conn.execute(text(_FK_EDGES_SQL))).all()]
-    dirty = ["roles", "users", "conversations", "messages"]
-    order = _delete_order(dirty, edges)
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_the_known_traps_are_ordered(async_engine):
+    """`conversations` <-> `messages`: the active-leaf pointer is SET NULL, so
+    no cycle. `atoms` -> `documents` is CASCADE, so `document_chunks` (NO
+    ACTION on `documents`) must go before `atoms`, not only before `documents`."""
+    _, edges = await _schema_edges(async_engine)
+    order = _delete_order(
+        ["roles", "users", "conversations", "messages",
+         "atoms", "documents", "document_chunks", "knowledge_bases", "kb_shares"],
+        edges,
+    )
     assert order is not None
     assert order.index("conversations") < order.index("users") < order.index("roles")
+    assert order.index("document_chunks") < order.index("documents") < order.index("atoms")
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_documents_with_chunks_are_emptied_by_delete(db_session, async_engine):
+    """The case that fell back 109 times in one full run, end to end."""
+    async with async_engine.connect() as conn:
+        fk = (await conn.execute(text(
+            "SELECT count(*) FROM pg_constraint WHERE conname = 'document_chunks_document_id_fkey'"
+        ))).scalar()
+    assert fk == 1
+    role = Role(name="doc-role", description="t", permissions=[])
+    db_session.add(role)
+    await db_session.flush()
+    user = User(username="doc-user", password_hash="x", is_active=True, role_id=role.id)
+    db_session.add(user)
+    await db_session.flush()
+    # The atom row is what made the DELETE fail: `documents.atom_id` cascades,
+    # so deleting `atoms` deleted the document under its still-present chunk.
+    atom = Atom(
+        atom_id="00000000-0000-0000-0000-000000000001", atom_type="kb_document",
+        source_table="documents", source_id="1", owner_user_id=user.id, policy={},
+    )
+    db_session.add(atom)
+    await db_session.flush()
+    doc = Document(filename="a.pdf", file_path="/tmp/a.pdf", status="completed", atom_id=atom.atom_id)
+    db_session.add(doc)
+    await db_session.flush()
+    db_session.add(DocumentChunk(document_id=doc.id, content="x", chunk_index=0))
+    await db_session.commit()
+
+    tables, _ = await _schema_edges(async_engine)
+    before = harness._CLEANUP_COUNTS["truncate_fallback"]
+    async with async_engine.begin() as conn:
+        await _empty_tables(conn, tables)
+    assert harness._CLEANUP_COUNTS["truncate_fallback"] == before
 
 
 @pytest.mark.postgres

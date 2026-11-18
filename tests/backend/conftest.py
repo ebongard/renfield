@@ -237,11 +237,14 @@ def _truncate_sql(names: list[str]) -> str:
     return f"TRUNCATE {joined} RESTART IDENTITY CASCADE"
 
 
-# The foreign keys that can REFUSE a parent's DELETE, as (child, parent):
-# NO ACTION ('a') and RESTRICT ('r'). A CASCADE / SET NULL / SET DEFAULT key
-# never blocks it -- it rewrites the child -- so it orders nothing; counting it
-# made `conversations` <-> `messages` (the active-leaf pointer, SET NULL,
-# against CASCADE) a cycle and sent every chat test to the slow TRUNCATE.
+# The foreign keys that order the DELETEs, as (child, parent): NO ACTION ('a')
+# and RESTRICT ('r') refuse the parent's DELETE while the child holds rows;
+# CASCADE ('c') does not refuse it, but deletes the child's rows WITH it, and
+# those can have children of their own (`atoms` -> `documents` cascades, and
+# `document_chunks` then refuses — 109 fallbacks in one full run). Only SET
+# NULL / SET DEFAULT order nothing: they rewrite the child and delete no row.
+# Counting those made `conversations` <-> `messages` (the active-leaf pointer,
+# SET NULL) a cycle and sent every chat test to the slow TRUNCATE.
 # A self-reference orders nothing either: one DELETE removes all its rows.
 _FK_EDGES_SQL = """
     SELECT DISTINCT c.relname, p.relname
@@ -250,7 +253,7 @@ _FK_EDGES_SQL = """
       JOIN pg_class p ON p.oid = con.confrelid
       JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE con.contype = 'f' AND n.nspname = 'public' AND c.oid <> p.oid
-       AND con.confdeltype IN ('a', 'r')
+       AND con.confdeltype IN ('a', 'r', 'c')
 """
 
 
