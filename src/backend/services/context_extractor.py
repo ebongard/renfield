@@ -147,33 +147,24 @@ def merge_writer_context_vars(
     stored: dict[str, Any] | None,
     writer_id: int,
     update: dict[str, Any],
-    *,
-    fold_legacy: bool,
 ) -> dict[str, Any]:
     """Merge one writer's ``update`` into THEIR bucket only (#1568).
 
     Another member's bucket is never touched: one member's turn -- its values,
     its ``None`` delete markers, the key cap -- cannot erase what the next
-    member's load would see. ``fold_legacy`` (the writer is the one person the
-    legacy layer is visible to: a private conversation of their own) moves the
-    legacy values into the writer's bucket first, so the delete markers of
-    ``merge_context_vars`` act on them exactly as before and nothing stale
-    shines through from underneath. Otherwise the legacy layer stays as it is.
+    member's load would see. The legacy layer (values written before the
+    writer was recorded) is kept as it is and never folded into a bucket:
+    nobody can say whose it is, so under auth it reaches no prompt at all.
     """
     stored = dict(stored or {})
     buckets = _buckets(stored)
     key = str(int(writer_id))
-    own = buckets.get(key, {})
-    legacy = legacy_context_vars(stored)
-    if fold_legacy and legacy:
-        own = {**legacy, **own}
-        legacy = {}
-    merged = merge_context_vars(own, update)
+    merged = merge_context_vars(buckets.get(key, {}), update)
     if merged:
         buckets[key] = merged
     else:
         buckets.pop(key, None)
-    result = dict(legacy)
+    result = legacy_context_vars(stored)
     if buckets:
         result[WRITERS_KEY] = buckets
     return result

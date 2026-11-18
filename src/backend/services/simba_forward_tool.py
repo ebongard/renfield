@@ -356,6 +356,21 @@ async def simba_commit_upload(
     if record.get("session_id") and session_id and record["session_id"] != session_id:
         return {"success": False, "message": "confirm_token gehört zu einer anderen Sitzung.", "action_taken": False}
 
+    # Under auth the preview is the preparer's (#1568): in a shared thread
+    # another member's "ja" must not send it. No caller identity reaches none.
+    from utils.config import settings
+
+    # Answered like an unknown token: the reply must not confirm that it exists.
+    if settings.auth_enabled and (user_id is None or record.get("user_id") != user_id):
+        return {
+            "success": False,
+            "message": (
+                "Die Vorschau ist abgelaufen oder unbekannt. Bitte die Datei erneut "
+                "mit internal.forward_attachment_to_simba vorbereiten."
+            ),
+            "action_taken": False,
+        }
+
     # Interpret the user's reply. Anything not clearly yes/no → ask again (no upload).
     words = {w.strip(".,!?").lower() for w in response_text.split()}
     said_yes = bool(words & _AFFIRMATIVE)

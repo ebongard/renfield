@@ -582,16 +582,21 @@ async def room_history_owner_id() -> int | None:
     return account[0] if account else None
 
 
-async def speaker_prompt_identity(speaker_id: int | None) -> int | None:
+async def speaker_prompt_identity(speaker_id: int | None, confidence: float) -> int | None:
     """The PERSON a recognised speaker is, for the prompt gate (#1568).
 
     The user linked to the speaker, and nobody when there is none or it is a
     device account: a device account stands for every voice in the house, so
     keying a tool result on it would hand the result to whoever speaks next.
-    ``None`` means "no caller identity" -- under auth such a turn gets no
-    stored tool result into its prompt and records no asker.
+    A recognition below ``settings.voice_auth_min_confidence`` -- the floor
+    the browser's voice promotion uses -- counts as an unknown speaker: the
+    asker's tool results are handed out on this identity, so it needs the
+    confidence of an identity claim, not of a display label. ``None`` means
+    "no caller identity" -- under auth such a turn gets no stored tool result
+    into its prompt and records no asker. The turn's PERMISSIONS are resolved
+    separately and are not affected.
     """
-    if speaker_id is None:
+    if speaker_id is None or confidence < settings.voice_auth_min_confidence:
         return None
     try:
         from sqlalchemy import select
@@ -1395,8 +1400,11 @@ async def satellite_websocket(
                             logger.warning(f"⚠️ Conversation handoff failed: {error_text_without_content(e)}")
 
                     # Who is asking, for the prompt gate (#1568): the person the
-                    # recognised speaker is, else nobody.
-                    speaker_user_id = await speaker_prompt_identity(spk.id if spk else None)
+                    # recognised speaker is -- above the identity-claim floor --,
+                    # else nobody.
+                    speaker_user_id = await speaker_prompt_identity(
+                        spk.id if spk else None, speaker_confidence,
+                    )
 
                     # Load conversation history from DB if not already loaded (once
                     # per day) -- or, under auth, again for a new speaker (#1568).

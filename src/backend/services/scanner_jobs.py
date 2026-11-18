@@ -536,8 +536,7 @@ async def _conversation_is_private(db: Any, conversation: Any) -> bool:
     to the document; the owner decision (#1390) is that it does not go further
     than the document. A shared thread -- a room history at tier 2, or one
     granted to a single person -- would hand it to every member. The rule
-    itself lives in `ConversationService.is_private` (the prompt gate of #1568
-    asks the same question)."""
+    itself lives in `ConversationService.is_private`."""
     from services.conversation_service import ConversationService
 
     return await ConversationService(db).is_private(conversation)
@@ -726,6 +725,7 @@ async def handle_job_event(
         ConversationDeletedError,
         ConversationNotOwnedError,
         ConversationService,
+        record_asker,
     )
 
     conversation_deleted = False
@@ -765,6 +765,9 @@ async def handle_job_event(
                 "action_success": status in _STATES_COUNTING_AS_SUCCESS,
             }
             attach_document_ref(meta, status, result, job_id)
+            # The requester is the asker of this answer (#1568), taken from the
+            # authenticated turn recorded at start, never from the event.
+            record_asker(meta, requester.get("user_id"))
 
             message = await ConversationService(db).save_message(
                 session_id=session_id,

@@ -799,11 +799,18 @@ def _looks_like_confirm_reply(text: str) -> bool:
     return bool(_CONFIRM_REPLY_RE.match(t) or _CONFIRM_FIELD_RE.search(t))
 
 
-async def _pending_paperless_confirm(session_id: str) -> str | None:
+async def _pending_paperless_confirm(session_id: str, caller_id: int | None) -> str | None:
     """confirm_token of the most recent *fresh* pending Paperless confirm for
     this session, else None. The row exists only while a confirm awaits the
     user (forward creates it; commit/abort deletes it; edit-rounds keep it). A
-    freshness window guards against an abandoned row hijacking a later message."""
+    freshness window guards against an abandoned row hijacking a later message.
+
+    Under auth the confirm is the uploader's (#1568): a shared room thread has
+    several members, and another member's "ja" must neither commit it nor see
+    its token in their prompt. ``caller_id`` is the server's identity of the
+    turn; without one nothing matches."""
+    if settings.auth_enabled and caller_id is None:
+        return None
     try:
         from datetime import datetime, timedelta
 
@@ -818,6 +825,10 @@ async def _pending_paperless_confirm(session_id: str) -> str | None:
                 .where(
                     PaperlessPendingConfirm.session_id == session_id,
                     PaperlessPendingConfirm.created_at >= cutoff,
+                    *(
+                        (PaperlessPendingConfirm.user_id == caller_id,)
+                        if settings.auth_enabled else ()
+                    ),
                 )
                 .order_by(PaperlessPendingConfirm.created_at.desc())
                 .limit(1)
@@ -1802,7 +1813,9 @@ async def websocket_endpoint(
             # pending). Non-confirm-like messages fall through to the agent,
             # which then sees the [PENDING_PAPERLESS_CONFIRM] directive below.
             if not media_shortcut_handled and message_type == "text" and content and msg_session_id:
-                pending_confirm_token = await _pending_paperless_confirm(msg_session_id)
+                pending_confirm_token = await _pending_paperless_confirm(
+                    msg_session_id, asker_user_id if settings.auth_enabled else user_id,
+                )
                 if pending_confirm_token and _looks_like_confirm_reply(content):
                     try:
                         from services.action_executor import ActionExecutor

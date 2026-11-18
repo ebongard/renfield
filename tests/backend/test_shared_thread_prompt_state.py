@@ -11,8 +11,8 @@ carriers re-enter the prompt from such a thread:
 
 Owner decision: every assistant message names its asker (`asker_user_id`),
 every context variable its writer; under auth a caller gets only their own.
-Rows without one (legacy) reach only the owner of a PRIVATE conversation; no
-caller identity gets nothing; auth-off is unchanged.
+Rows without one (legacy) reach nobody, the owner of a private conversation
+included; no caller identity gets nothing; auth-off is unchanged.
 
 Everything here runs on real Postgres: reach is the four-branch circle SQL.
 """
@@ -183,6 +183,10 @@ class TestSharedThread:
 # ============================================================================
 
 class TestLegacyRows:
+    """Owner decision: a tool result that names no writer reaches NO prompt
+    under auth -- private conversation and owner included. Nobody can say
+    whose it is."""
+
     async def _legacy(self, db, session_id: str, owner: int, tier: int) -> None:
         await _thread(db, session_id, owner, tier)
         await _turn(db, session_id, owner, A_SUMMARY, legacy=True)
@@ -191,49 +195,38 @@ class TestLegacyRows:
         conv.context_vars = {"last_document_title": "Befund alt", "_active_domain": "documents"}
         await db.commit()
 
-    async def test_private_and_owner_gets_them(self, db_session, household):
-        await self._legacy(db_session, "privat", ANNA, 0)
-        assert PREFIX in await _prompt(db_session, "privat", ANNA)
-        assert await _vars(db_session, "privat", ANNA) == {
-            "last_document_title": "Befund alt", "_active_domain": "documents"}
-
-    async def test_a_room_thread_gives_them_to_nobody(self, db_session, household):
-        await self._legacy(db_session, "kueche", DEVICE, 2)
+    @pytest.mark.parametrize(("session_id", "owner", "tier"), [
+        ("privat", ANNA, 0), ("geteilt", ANNA, 1), ("kueche", DEVICE, 2),
+    ])
+    async def test_they_reach_nobody(self, db_session, household, session_id, owner, tier):
+        if tier == 1:
+            await _member_of(db_session, ANNA, BERT, 1)
+        await self._legacy(db_session, session_id, owner, tier)
         for caller in (DEVICE, ANNA, BERT, None):
-            assert PREFIX not in await _prompt(db_session, "kueche", caller)
-            assert await _vars(db_session, "kueche", caller) == {}
+            prompt = await _prompt(db_session, session_id, caller)
+            assert PREFIX not in prompt
+            assert await _vars(db_session, session_id, caller) == {}
+        # The thread itself stays readable where it is reached.
+        assert "Gefunden." in await _prompt(db_session, session_id, owner)
 
-    async def test_the_owner_of_a_shared_conversation_does_not_get_them(
-        self, db_session, household,
+    @pytest.mark.parametrize(("session_id", "tier"), [("privat", 0), ("geteilt", 1)])
+    async def test_a_write_neither_folds_nor_erases_the_legacy_layer(
+        self, db_session, household, session_id, tier,
     ):
-        """Above tier 0 somebody else may have written them -- nobody gets them."""
-        await _member_of(db_session, ANNA, BERT, 1)
-        await self._legacy(db_session, "geteilt", ANNA, 1)
-        for caller in (ANNA, BERT):
-            assert PREFIX not in await _prompt(db_session, "geteilt", caller)
-            assert await _vars(db_session, "geteilt", caller) == {}
+        """The writer gets only what they write -- the owner of a private
+        conversation too: folding the legacy layer into their bucket would
+        hand it to them. It stays stored at the top level, untouched."""
+        if tier == 1:
+            await _member_of(db_session, ANNA, BERT, 1)
+        await self._legacy(db_session, session_id, ANNA, tier)
+        await _write_vars(db_session, session_id, ANNA, {"x": 1, "last_document_title": None})
 
-    async def test_a_depth_0_member_reaching_a_private_row_is_not_its_owner(
-        self, db_session, household,
-    ):
-        await _member_of(db_session, ANNA, BERT, 0)
-        await self._legacy(db_session, "privat", ANNA, 0)
-        assert "Gefunden." in await _prompt(db_session, "privat", BERT), "Bert reaches it"
-        assert PREFIX not in await _prompt(db_session, "privat", BERT)
-        assert await _vars(db_session, "privat", BERT) == {}
-
-    async def test_an_explicit_grant_makes_it_shared(self, db_session, household):
-        from models.database import AtomExplicitGrant
-
-        await self._legacy(db_session, "privat", ANNA, 0)
-        conv = (await db_session.execute(
-            select(Conversation).where(Conversation.session_id == "privat"))).scalar_one()
-        assert conv.atom_id is not None
-        db_session.add(AtomExplicitGrant(
-            atom_id=conv.atom_id, granted_to_user_id=BERT, granted_by=ANNA))
-        await db_session.commit()
-        assert PREFIX not in await _prompt(db_session, "privat", ANNA)
-        assert await _vars(db_session, "privat", ANNA) == {}
+        assert await _vars(db_session, session_id, ANNA) == {"x": 1}
+        assert await _vars(db_session, session_id, BERT) == {}
+        assert await _stored(db_session, session_id) == {
+            "last_document_title": "Befund alt", "_active_domain": "documents",
+            "_per_writer": {str(ANNA): {"x": 1}},
+        }
 
 
 # ============================================================================
@@ -287,14 +280,11 @@ class TestNoIdentityAndAuthOff:
 
 class TestPrivateChatUnchanged:
     async def _run(self, db, session_id: str, user: int | None) -> tuple[str, list[dict]]:
-        """The same private conversation, from a legacy start through new turns."""
+        """The same private conversation through several new turns."""
         svc = ConversationService(db)
         await _thread(db, session_id, user, 0)
-        await _turn(db, session_id, user, "alt → id=1", legacy=True)
-        conv = (await db.execute(
-            select(Conversation).where(Conversation.session_id == session_id))).scalar_one()
-        conv.context_vars = {"last_document_title": "Alt", "last_document_correspondent": "Telekom"}
-        await db.commit()
+        await _write_vars(db, session_id, user, {
+            "last_document_title": "Alt", "last_document_correspondent": "Telekom"})
 
         views = [await _vars(db, session_id, user)]
         await _turn(db, session_id, user, A_SUMMARY)
@@ -316,8 +306,9 @@ class TestPrivateChatUnchanged:
         off_prompt, off_views = await self._run(db_session, "privat-aus", ANNA)
 
         assert on_prompt == off_prompt
-        assert on_prompt.count(PREFIX) == 2
+        assert on_prompt.count(PREFIX) == 1
         assert on_views == off_views
+        assert on_views[0] == {"last_document_title": "Alt", "last_document_correspondent": "Telekom"}
         assert on_views[1] == {"last_document_title": "Neu"}
         assert list(on_views[2]) == list(off_views[2]), "recency order is kept too"
 
@@ -398,10 +389,26 @@ class TestSatelliteIdentity:
             (await db_session.execute(select(User).where(User.id == uid))).scalar_one().speaker_id = spk.id
         await db_session.commit()
 
-        assert await speaker_prompt_identity(anna_spk.id) == ANNA
-        assert await speaker_prompt_identity(dev_spk.id) is None
-        assert await speaker_prompt_identity(3) is None
-        assert await speaker_prompt_identity(None) is None
+        assert await speaker_prompt_identity(anna_spk.id, 0.9) == ANNA
+        assert await speaker_prompt_identity(dev_spk.id, 0.9) is None
+        assert await speaker_prompt_identity(3, 0.9) is None
+        assert await speaker_prompt_identity(None, 0.9) is None
+
+    async def test_below_the_identity_floor_the_speaker_is_unknown(
+        self, db_session, household, own_session_to_test_db, monkeypatch,
+    ):
+        """The browser's voice-promotion floor: a weaker match is no identity
+        claim, so it gets no asker and no stored results of its own."""
+        from ha_glue.api.websocket.satellite_handler import speaker_prompt_identity
+        from models.database import User
+
+        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.7)
+        spk = await ensure_speaker(db_session, 1, "anna")
+        (await db_session.execute(select(User).where(User.id == ANNA))).scalar_one().speaker_id = spk.id
+        await db_session.commit()
+
+        assert await speaker_prompt_identity(spk.id, 0.69) is None
+        assert await speaker_prompt_identity(spk.id, 0.7) == ANNA
 
 
 @pytest.mark.unit
@@ -466,16 +473,16 @@ class TestWriterBuckets:
         from services.context_extractor import WRITERS_KEY, merge_writer_context_vars
 
         stored = {"legacy": 1, WRITERS_KEY: {"3": {"k": "bert"}}}
-        out = merge_writer_context_vars(stored, 2, {"k": "anna"}, fold_legacy=False)
+        out = merge_writer_context_vars(stored, 2, {"k": "anna"})
         assert out == {"legacy": 1, WRITERS_KEY: {"3": {"k": "bert"}, "2": {"k": "anna"}}}
-        out = merge_writer_context_vars(out, 2, {"k": None}, fold_legacy=False)
+        out = merge_writer_context_vars(out, 2, {"k": None})
         assert out == {"legacy": 1, WRITERS_KEY: {"3": {"k": "bert"}}}
 
-    def test_fold_moves_the_legacy_layer_into_the_writer(self):
+    def test_a_delete_marker_never_reaches_the_legacy_layer(self):
         from services.context_extractor import WRITERS_KEY, merge_writer_context_vars
 
-        out = merge_writer_context_vars({"a": 1, "b": 2}, 2, {"b": None}, fold_legacy=True)
-        assert out == {WRITERS_KEY: {"2": {"a": 1}}}
+        out = merge_writer_context_vars({"a": 1, "b": 2}, 2, {"b": None, "c": 3})
+        assert out == {"a": 1, "b": 2, WRITERS_KEY: {"2": {"c": 3}}}
 
     def test_handoff_without_buckets_is_the_plain_copy(self):
         from services.context_extractor import handoff_context_vars

@@ -85,22 +85,18 @@ def record_asker(metadata: dict, asker_user_id: int | None) -> dict:
     return metadata
 
 
-def tool_result_reaches_caller(
-    writer_id: int | None, caller_id: int | None, *, legacy_visible: bool,
-) -> bool:
+def tool_result_reaches_caller(writer_id: int | None, caller_id: int | None) -> bool:
     """The one rule for a stored tool result re-entering a prompt (#1568).
 
     In a shared thread the next person to continue is not necessarily the one
     who asked, and what the asker's tools returned is the asker's. So, under
-    auth: a result reaches the caller who wrote it and nobody else; a result
-    without a writer (written before the writer was recorded) reaches only
-    where ``legacy_visible`` (`ConversationService.legacy_prompt_state_visible`);
-    a caller without identity gets nothing. Auth-off callers never ask.
+    auth: a result reaches the caller who wrote it and nobody else. A result
+    without a writer (written before the writer was recorded) reaches nobody,
+    in a private conversation too (owner decision): it cannot say whose it
+    is. A caller without identity gets nothing. Auth-off callers never ask.
     """
-    if caller_id is None:
+    if caller_id is None or writer_id is None:
         return False
-    if writer_id is None:
-        return legacy_visible
     return writer_id == caller_id
 
 
@@ -187,8 +183,7 @@ class ConversationService:
 
         Tier 0 is a document's own default reach too; a circle member at depth
         0 reaches both alike, so this is "not shared beyond tier 0", not
-        "owner-only" -- callers that mean "the caller's own" check the owner
-        as well (`legacy_prompt_state_visible`).
+        "owner-only".
 
         Takes anything with ``id``, ``circle_tier`` and ``atom_id`` (an ORM row
         or a column tuple, as the scanner passes).
@@ -222,24 +217,6 @@ class ConversationService:
             )
         ).scalar_one_or_none()
         return grant is None
-
-    async def legacy_prompt_state_visible(
-        self, conversation: Conversation, caller_id: int | None,
-    ) -> bool:
-        """May a tool result that names no asker reach this caller's prompt? (#1568)
-
-        Rows written before the asker was recorded (an ``action_summary``
-        without ``asker_user_id``, a context variable outside the per-writer
-        buckets) cannot say who they belong to. They are the owner's only where
-        nobody else can have written them: a PRIVATE conversation of the
-        caller's own. Everywhere else -- a room thread, a conversation shared
-        at a tier above 0 or by grant -- they reach nobody.
-        """
-        if caller_id is None or conversation.user_id is None:
-            return False
-        if conversation.user_id != caller_id:
-            return False
-        return await self.is_private(conversation)
 
     async def ensure_atom(self, conversation: Conversation) -> None:
         """Give an owned conversation its atoms row (circles rule: never a bare
@@ -643,7 +620,6 @@ class ConversationService:
             # summary leaves the metadata too, so no later reader of the list
             # can pick it up there.
             gate = settings.auth_enabled
-            legacy_visible: bool | None = None
             context = []
             for msg in reversed(messages):
                 content = msg.content
@@ -653,13 +629,8 @@ class ConversationService:
                     if msg.role == "assistant" and isinstance(metadata, dict) else None
                 )
                 if summary and gate:
-                    asker = metadata.get(ASKER_METADATA_KEY)
-                    if asker is None and legacy_visible is None:
-                        legacy_visible = await self.legacy_prompt_state_visible(
-                            conversation, user_id,
-                        )
                     if not tool_result_reaches_caller(
-                        asker, user_id, legacy_visible=bool(legacy_visible),
+                        metadata.get(ASKER_METADATA_KEY), user_id,
                     ):
                         summary = None
                         metadata = {k: v for k, v in metadata.items() if k != "action_summary"}
@@ -1107,13 +1078,10 @@ class ConversationService:
         Under auth (read from the flag, like the read side) the values go into
         the writer's own bucket (`context_extractor.merge_writer_context_vars`,
         #1568); ``user_id`` is the writer and must be the server's identity of
-        the turn. Under auth-off the flat merge is unchanged.
+        the turn. The legacy flat layer stays stored as it is and is never
+        folded into a bucket. Under auth-off the flat merge is unchanged.
         """
-        from services.context_extractor import (
-            legacy_context_vars,
-            merge_context_vars,
-            merge_writer_context_vars,
-        )
+        from services.context_extractor import merge_context_vars, merge_writer_context_vars
 
         try:
             # FOR UPDATE: read-modify-write of one JSON column. Two writers
@@ -1143,11 +1111,7 @@ class ConversationService:
                 if user_id is None:
                     await self.db.rollback()
                     return False
-                current = merge_writer_context_vars(
-                    before, user_id, vars_dict,
-                    fold_legacy=bool(legacy_context_vars(before))
-                    and await self.legacy_prompt_state_visible(conversation, user_id),
-                )
+                current = merge_writer_context_vars(before, user_id, vars_dict)
             else:
                 current = merge_context_vars(before, vars_dict)
             if current == before:
@@ -1236,9 +1200,9 @@ class ConversationService:
 
         And within reach, under auth, only what THIS caller wrote (#1568): a
         shared thread holds one bucket per writer, and the legacy layer
-        (values without a writer) is read only in a private conversation of
-        the caller's own (`legacy_prompt_state_visible`). No identity under
-        auth reads nothing. Auth-off reads the flat layer as before.
+        (values without a writer) is read by nobody, in a private
+        conversation too. No identity under auth reads nothing. Auth-off
+        reads the flat layer as before.
         """
         from services.context_extractor import legacy_context_vars, writer_context_vars
 
@@ -1259,12 +1223,7 @@ class ConversationService:
                 return legacy_context_vars(stored)
             if user_id is None:
                 return {}
-            view: dict = {}
-            legacy = legacy_context_vars(stored)
-            if legacy and await self.legacy_prompt_state_visible(conversation, user_id):
-                view.update(legacy)
-            view.update(writer_context_vars(stored, user_id))
-            return view
+            return writer_context_vars(stored, user_id)
         except Exception as e:
             logger.warning(f"Failed to load context vars: {error_text_without_content(e)}")
             return {}
