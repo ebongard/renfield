@@ -237,3 +237,26 @@ async def test_commit_yes_but_zero_transferred_is_honest_failure():
         )
     assert r["success"] is False and "NICHT angekommen" in r["message"]
     assert "401" in r["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("caller", "uploads"), [(2, 0), (None, 0), (1, 1)])
+async def test_commit_under_auth_is_the_preparers_only(monkeypatch, caller, uploads):
+    """#1568: in a shared thread another member's "ja" must not send the
+    preview; a caller without identity reaches none; the preparer still can."""
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    redis = FakeRedis()
+    _seed(redis)  # prepared by user 1
+    mcp = _mcp({"success": True, "message": '{"uebertragen":1,"fehlgeschlagen":0}'})
+    p_isfile, p_open = _fs()
+    with _redis_patch(redis), _db_patch(_upload()), p_isfile, p_open:
+        r = await simba_commit_upload(
+            {"confirm_token": "tok-1", "user_response_text": "ja"},
+            mcp_manager=mcp, session_id="sess", user_id=caller,
+        )
+    assert mcp.execute_tool.await_count == uploads
+    if not uploads:
+        assert r["success"] is False and "abgelaufen" in r["message"].lower()
+        assert "simba:pending:tok-1" in redis.store, "the preparer can still answer"

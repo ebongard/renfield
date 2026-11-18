@@ -33,6 +33,7 @@ from ha_glue.services.voice_empty_turn import (
 )
 from ha_glue.utils.config import ha_glue_settings
 from models.websocket_messages import WSErrorCode
+from services.conversation_service import record_asker
 from services.database import AsyncSessionLocal
 from services.turn_extraction import (
     TurnExtractionSpawn,
@@ -581,6 +582,78 @@ async def room_history_owner_id() -> int | None:
     return account[0] if account else None
 
 
+async def speaker_prompt_identity(speaker_id: int | None, confidence: float) -> int | None:
+    """The PERSON a recognised speaker is, for the prompt gate (#1568).
+
+    The user linked to the speaker, and nobody when there is none or it is a
+    device account: a device account stands for every voice in the house, so
+    keying a tool result on it would hand the result to whoever speaks next.
+    A recognition below ``settings.voice_auth_min_confidence`` -- the floor
+    the browser's voice promotion uses -- counts as an unknown speaker: the
+    asker's tool results are handed out on this identity, so it needs the
+    confidence of an identity claim, not of a display label. ``None`` means
+    "no caller identity" -- under auth such a turn gets no stored tool result
+    into its prompt and records no asker. The turn's PERMISSIONS are resolved
+    separately and are not affected.
+    """
+    if speaker_id is None or confidence < settings.voice_auth_min_confidence:
+        return None
+    try:
+        from sqlalchemy import select
+
+        from models.database import User
+
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(
+                select(User.id, User.is_device_account).where(User.speaker_id == speaker_id)
+            )).first()
+    except Exception as e:
+        logger.warning(f"⚠️ Speaker identity lookup failed: {error_text_without_content(e)}")
+        return None
+    if row is None or row.is_device_account:
+        return None
+    return int(row.id)
+
+
+async def refresh_room_history(
+    ollama,
+    session_id: str,
+    history: list[dict],
+    *,
+    loaded: bool,
+    loaded_for: int | None,
+    caller: int | None,
+) -> tuple[bool, int | None]:
+    """Fill the room's in-memory history from the database; returns the new
+    ``(loaded, loaded_for)``.
+
+    Once per connection-day, as always. 🛑 But under auth the loaded list
+    carries the stored tool results of the caller it was loaded FOR
+    (`ConversationService.load_context`, #1568), and this list is the ROOM's:
+    the next voice may be somebody else. A change of caller therefore reloads
+    it for the new one, and the old list is emptied FIRST -- a failed reload
+    leaves nothing of the previous speaker's behind. Auth-off keeps the
+    once-per-day load untouched.
+    """
+    reload_for_caller = settings.auth_enabled and loaded and caller != loaded_for
+    if loaded and not reload_for_caller:
+        return loaded, loaded_for
+    if reload_for_caller:
+        history.clear()
+    try:
+        async with AsyncSessionLocal() as db_session:
+            db_history = await ollama.load_conversation_context(
+                session_id, db_session, max_messages=5, user_id=caller,
+            )
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to load satellite conversation history: {error_text_without_content(e)}")
+        return loaded, loaded_for
+    if db_history:
+        history.extend(db_history)
+        logger.info(f"📚 Satellite conversation history loaded: {len(db_history)} messages")
+    return True, caller
+
+
 async def resolve_anonymous_identity() -> AnonymousIdentity:
     """Identity and grants for a turn whose speaker was not recognised (D-4a/D-4b).
 
@@ -744,6 +817,8 @@ async def satellite_websocket(
     # Conversation history tracking for satellite (in-memory per connection)
     satellite_conversation_history: list[dict] = []
     satellite_history_loaded = False
+    # The speaker identity the loaded history was gated for (#1568).
+    satellite_history_caller: int | None = None
     satellite_db_session_id = None  # Will be set after registration
 
     # Read the socket also while a voice turn runs inline below, or uvicorn
@@ -1324,19 +1399,22 @@ async def satellite_websocket(
                         except Exception as e:
                             logger.warning(f"⚠️ Conversation handoff failed: {error_text_without_content(e)}")
 
-                    # Load conversation history from DB if not already loaded (once per day)
-                    if satellite_db_session_id and not satellite_history_loaded:
-                        try:
-                            async with AsyncSessionLocal() as db_session:
-                                db_history = await ollama.load_conversation_context(
-                                    satellite_db_session_id, db_session, max_messages=5
-                                )
-                                if db_history:
-                                    satellite_conversation_history.extend(db_history)
-                                    logger.info(f"📚 Satellite conversation history loaded: {len(db_history)} messages")
-                                satellite_history_loaded = True
-                        except Exception as e:
-                            logger.warning(f"⚠️ Failed to load satellite conversation history: {error_text_without_content(e)}")
+                    # Who is asking, for the prompt gate (#1568): the person the
+                    # recognised speaker is -- above the identity-claim floor --,
+                    # else nobody.
+                    speaker_user_id = await speaker_prompt_identity(
+                        spk.id if spk else None, speaker_confidence,
+                    )
+
+                    # Load conversation history from DB if not already loaded (once
+                    # per day) -- or, under auth, again for a new speaker (#1568).
+                    if satellite_db_session_id:
+                        satellite_history_loaded, satellite_history_caller = await refresh_room_history(
+                            ollama, satellite_db_session_id, satellite_conversation_history,
+                            loaded=satellite_history_loaded,
+                            loaded_for=satellite_history_caller,
+                            caller=speaker_user_id,
+                        )
 
                     # Build room context for satellite
                     satellite = satellite_manager.get_satellite(satellite_id)
@@ -1592,6 +1670,9 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     # keys, so keeping ``metadata`` on the in-memory dict is safe — it
                     # never reaches the LLM, only the agent prompt builder and the DB.
                     assistant_metadata = _build_assistant_metadata(intent, action_result)
+                    # The asker is the recognised PERSON, never the device
+                    # account; no speaker, no key (#1568).
+                    record_asker(assistant_metadata, speaker_user_id)
 
                     # Kiosk active-subsystem pulse (VOICE path — mirrors the web-chat
                     # emit in chat_handler). Without this a spoken "turn off the light"

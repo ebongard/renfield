@@ -15,7 +15,7 @@ from models.permissions import Permission
 from services.api_rate_limiter import limiter
 from services.auth_service import get_current_user, require_permission
 from services.circle_sql import conversations_circles_filter
-from services.conversation_service import ConversationService
+from services.conversation_service import ConversationService, prompt_asker, record_asker
 from services.database import get_db
 from services.input_guard import detect_injection
 from services.ollama_service import OllamaService
@@ -210,6 +210,9 @@ async def send_message(
         # and thread them into both call sites. Fail closed: an authenticated
         # request whose permissions can't be resolved gets [] (deny), never None.
         user_id = current_user.id if current_user else None
+        # Who ASKED (#1568): the caller, unless a device account (a room panel
+        # is every person in front of it) -- then nobody.
+        asker_id = await prompt_asker(db, user_id)
         user_permissions = None
         if user_id is not None:
             try:
@@ -297,19 +300,22 @@ async def send_message(
                     conversation_id=conversation.id,
                     role="assistant",
                     content=response_text,
-                    message_metadata={"agent": True}
+                    # Names its asker like every answer (#1568).
+                    message_metadata=record_asker({"agent": True}, asker_id),
                 )
                 db.add(assistant_msg)
                 conversation.updated_at = datetime.now(UTC).replace(tzinfo=None)
                 await db.commit()
 
-                # After the turn is saved, like the WS path.
-                await conv_service.save_turn_context_vars(
-                    session_id, turn_context_vars,
-                    tool_summaries=tool_summaries,
-                    user_id=user_id,
-                    enforce_ownership=settings.auth_enabled,
-                )
+                # After the turn is saved, like the WS path. Without an asker
+                # under auth the variables would reach nobody: not stored.
+                if asker_id is not None or not settings.auth_enabled:
+                    await conv_service.save_turn_context_vars(
+                        session_id, turn_context_vars,
+                        tool_summaries=tool_summaries,
+                        user_id=asker_id if settings.auth_enabled else user_id,
+                        enforce_ownership=settings.auth_enabled,
+                    )
 
                 return ChatResponse(
                     message=response_text,
@@ -387,10 +393,10 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
             conversation_id=conversation.id,
             role="assistant",
             content=response_text,
-            message_metadata={
+            message_metadata=record_asker({
                 "intent": intent,
                 "action_result": action_result
-            }
+            }, asker_id),
         )
         db.add(assistant_msg)
 

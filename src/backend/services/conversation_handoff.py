@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Conversation, Message
+from services.context_extractor import handoff_context_vars
 from services.conversation_service import ConversationService
 from utils.config import settings
 from utils.log_safety import error_text_without_content
@@ -107,7 +108,12 @@ async def try_handoff_context(
             await ConversationService(db).ensure_atom(target)
         else:
             if source.context_vars:
-                target.context_vars = source.context_vars
+                # Per-writer buckets travel with their writer and never
+                # replace another member's bucket in the target (#1568); with
+                # no buckets this is the plain copy it always was.
+                target.context_vars = handoff_context_vars(
+                    source.context_vars, target.context_vars,
+                )
             if source.summary:
                 target.summary = source.summary
             if not target.speaker_id:
@@ -117,7 +123,10 @@ async def try_handoff_context(
                 await db.flush()
                 await ConversationService(db).ensure_atom(target)
 
-        # If summary is NULL, copy last 5 messages as seed context
+        # If summary is NULL, copy last 5 messages as seed context. The
+        # metadata goes along whole, the asker (`asker_user_id`) with it: the
+        # target room's prompt gate then decides on the same name as the
+        # source's did (#1568) -- a seed row without one counts as legacy.
         if not source.summary:
             msg_result = await db.execute(
                 select(Message)

@@ -398,10 +398,12 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
   **By design:** a turn that ran without loaded permissions (`user_permissions=None` — a device token on the chat
   socket) may have used Paperless; on reload its Paperless chips are gone, because the reader holds no
   `mcp.paperless.read`.
-  **Not covered — the same data on other paths:** `ConversationService.load_context` re-injects `action_summary`
-  into the prompt of whoever continues the thread, and `conversations.context_vars` / `summary` travel by reach as
-  well. Those feed the model, not the client, and are an open decision. `artifacts` are served unfiltered: they are
-  the answer's own typed content, like the message text.
+  **The same data on the prompt side (#1568):** under auth `ConversationService.load_context` re-injects
+  `action_summary` only for the caller recorded as `asker_user_id`, and `conversations.context_vars` keep one bucket
+  per writer; legacy rows (no asker, no writer) reach nobody, the owner of a private conversation included (owner
+  decision 2026-11-18; `docs/CIRCLES.md` → Gesprächsvariablen).
+  `summary` is built from visible text only and follows reach. `asker_user_id` is not in the allowlist and is never
+  served. `artifacts` are served unfiltered: they are the answer's own typed content, like the message text.
 - **Enable order:** roll out the frontend first, flip the flag after it has propagated — a stale PWA bundle renders
   a `kind: 'paperless'` source as a chip to `/knowledge?doc=undefined`.
 - **The chip row keeps its look; two owner-approved deviations from DESIGN.md §Accessibility**

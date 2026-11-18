@@ -19,7 +19,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from models.websocket_messages import WSChatMessage, WSErrorCode
-from services.conversation_service import ConversationNotOwnedError
+from services.conversation_service import ConversationNotOwnedError, record_asker
 from services.database import AsyncSessionLocal
 from services.input_guard import detect_injection
 from services.turn_extraction import (
@@ -361,6 +361,10 @@ async def _persist_turn_context_vars(
     Never fails the turn: the variables are a convenience for follow-ups.
     """
     if not extracted and not tool_summaries:
+        return
+    if settings.auth_enabled and user_id is None:
+        # No asker (a device account, an unidentified voice): the variables
+        # would reach nobody, and the write would be refused anyway.
         return
     try:
         from services.conversation_service import ConversationService
@@ -799,11 +803,18 @@ def _looks_like_confirm_reply(text: str) -> bool:
     return bool(_CONFIRM_REPLY_RE.match(t) or _CONFIRM_FIELD_RE.search(t))
 
 
-async def _pending_paperless_confirm(session_id: str) -> str | None:
+async def _pending_paperless_confirm(session_id: str, caller_id: int | None) -> str | None:
     """confirm_token of the most recent *fresh* pending Paperless confirm for
     this session, else None. The row exists only while a confirm awaits the
     user (forward creates it; commit/abort deletes it; edit-rounds keep it). A
-    freshness window guards against an abandoned row hijacking a later message."""
+    freshness window guards against an abandoned row hijacking a later message.
+
+    Under auth the confirm is the uploader's (#1568): a shared room thread has
+    several members, and another member's "ja" must neither commit it nor see
+    its token in their prompt. ``caller_id`` is the server's identity of the
+    turn; without one nothing matches."""
+    if settings.auth_enabled and caller_id is None:
+        return None
     try:
         from datetime import datetime, timedelta
 
@@ -818,6 +829,10 @@ async def _pending_paperless_confirm(session_id: str) -> str | None:
                 .where(
                     PaperlessPendingConfirm.session_id == session_id,
                     PaperlessPendingConfirm.created_at >= cutoff,
+                    *(
+                        (PaperlessPendingConfirm.user_id == caller_id,)
+                        if settings.auth_enabled else ()
+                    ),
                 )
                 .order_by(PaperlessPendingConfirm.created_at.desc())
                 .limit(1)
@@ -1579,6 +1594,20 @@ async def websocket_endpoint(
 
             # Retrieve user info and permissions
             user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
+            # Who ASKED (#1568): the authenticated socket user, taken before
+            # any voice promotion below. It is recorded on the assistant message
+            # and, under auth, keys the context variables, so a stored tool
+            # result re-enters only this caller's prompt -- the history and the
+            # vars are READ under the same JWT identity. Under auth-off the
+            # variables keep the effective identity they always had. A device
+            # account is nobody's asker (`prompt_asker`): a room panel stands
+            # for every person who uses it.
+            asker_user_id = None
+            if user_id is not None:
+                from services.conversation_service import prompt_asker
+
+                async with AsyncSessionLocal() as _asker_db:
+                    asker_user_id = await prompt_asker(_asker_db, user_id)
 
             # Voice-driven identity claim: when no JWT user is set
             # (AUTH_ENABLED=false household deployment) and the wire
@@ -1795,7 +1824,9 @@ async def websocket_endpoint(
             # pending). Non-confirm-like messages fall through to the agent,
             # which then sees the [PENDING_PAPERLESS_CONFIRM] directive below.
             if not media_shortcut_handled and message_type == "text" and content and msg_session_id:
-                pending_confirm_token = await _pending_paperless_confirm(msg_session_id)
+                pending_confirm_token = await _pending_paperless_confirm(
+                    msg_session_id, asker_user_id if settings.auth_enabled else user_id,
+                )
                 if pending_confirm_token and _looks_like_confirm_reply(content):
                     try:
                         from services.action_executor import ActionExecutor
@@ -1963,7 +1994,7 @@ async def websocket_endpoint(
                             from services.conversation_service import ConversationService
                             await ConversationService(_ad_db).save_context_vars(
                                 msg_session_id, {"_active_domain": role.name},
-                                user_id=user_id,
+                                user_id=asker_user_id if settings.auth_enabled else user_id,
                                 enforce_ownership=settings.auth_enabled,
                             )
                     except Exception:
@@ -2756,6 +2787,8 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             }
             if action_summary:
                 assistant_metadata["action_summary"] = action_summary
+            # Every answer names its asker; the prompt gate reads it (#1568).
+            record_asker(assistant_metadata, asker_user_id)
             # Provenance: which documents this answer drew on (circle-filtered at
             # retrieval). Persisted so chips rehydrate on history load; also sent
             # on the `done` frame below for the live turn. Empty → key omitted.
@@ -3003,7 +3036,8 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # above rebound `msg_session_id` to the caller's fresh thread).
             if msg_session_id and saved_assistant_message_id is not None:
                 await _persist_turn_context_vars(
-                    msg_session_id, turn_context_vars, agent_tool_results, user_id
+                    msg_session_id, turn_context_vars, agent_tool_results,
+                    asker_user_id if settings.auth_enabled else user_id,
                 )
 
             # Check for output routing if we have room context

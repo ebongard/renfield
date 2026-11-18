@@ -37,8 +37,8 @@ needs `WEATHER_ENABLED`.
   served, the link is rebuilt from the id (own session → 2 pool connections). 🛑 The Paperless link of a KB source
   needs `mcp.paperless.read` too — on read (the reader's) AND on write (the asker's): circles give the source, the
   permission the link (it names the Paperless id). System-wide invariant: `documents-facts.md` (Paperless id).
-  A new metadata key the client needs goes into the allowlist; a new route that returns `message_metadata` goes through this function. NOT covered:
-  `load_context` re-injecting `action_summary` into the next prompt (open decision). Enable the flag only AFTER the
+  A new metadata key the client needs goes into the allowlist; a new route that returns `message_metadata` goes through this function. The PROMPT
+  side (`action_summary`, `context_vars`) is per asker, legacy rows reach nobody (#1568) — `chat-branching.md`. Enable the flag only AFTER the
   frontend has propagated (old bundle → `/knowledge?doc=undefined`).
   Chip row: TWO owner-approved deviations from DESIGN.md — the spacing stays (`gap-1.5`), so the invisible
   `::after` hit area is chip ± 3 px high (26 px, not 44; ≥ 44 px wide, behind the chips via `isolate`), and the

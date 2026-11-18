@@ -530,47 +530,16 @@ def _unattended_room(client_id: str) -> int | None:
 
 
 async def _conversation_is_private(db: Any, conversation: Any) -> bool:
-    """Whether the conversation reaches no further than the document does: tier
-    0 (`self`) on the row AND on every atom of it (`atoms.policy` is
-    canonical), and no explicit grant.
-
-    Tier 0 is the document's own default reach; a circle member at depth 0
-    reaches both alike, so this is "not shared beyond the document", not
-    "owner-only".
+    """Whether the conversation reaches no further than the document does.
 
     🛑 The completion message carries the document id, the target and a button
     to the document; the owner decision (#1390) is that it does not go further
     than the document. A shared thread -- a room history at tier 2, or one
-    granted to a single person -- would hand it to every member.
+    granted to a single person -- would hand it to every member. The rule
+    itself lives in `ConversationService.is_private`."""
+    from services.conversation_service import ConversationService
 
-    🛑 The atoms are found the way the READ path finds them
-    (`circle_sql.conversations_circles_filter`: ``source_table='conversations'
-    AND source_id = c.id``), plus ``conversations.atom_id``. Following only the
-    pointer would let a drifted second atom carry a grant the reader honours.
-    Fail-closed: an atom without a readable tier counts as shared."""
-    if conversation.circle_tier != 0:
-        return False
-    from sqlalchemy import or_, select
-
-    from models.database import Atom, AtomExplicitGrant
-
-    match = (Atom.source_table == "conversations") & (Atom.source_id == str(conversation.id))
-    if conversation.atom_id is not None:
-        match = or_(match, Atom.atom_id == conversation.atom_id)
-    atoms = (await db.execute(select(Atom.atom_id, Atom.policy).where(match))).all()
-    for atom in atoms:
-        if not isinstance(atom.policy, dict) or atom.policy.get("tier") != 0:
-            return False
-    if not atoms:
-        return True
-    grant = (
-        await db.execute(
-            select(AtomExplicitGrant.atom_id)
-            .where(AtomExplicitGrant.atom_id.in_([a.atom_id for a in atoms]))
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    return grant is None
+    return await ConversationService(db).is_private(conversation)
 
 
 async def _unattended_requester(db: Any, ingest_client: Any, job_id: str) -> dict | str | None:
@@ -756,6 +725,8 @@ async def handle_job_event(
         ConversationDeletedError,
         ConversationNotOwnedError,
         ConversationService,
+        prompt_asker,
+        record_asker,
     )
 
     conversation_deleted = False
@@ -795,6 +766,10 @@ async def handle_job_event(
                 "action_success": status in _STATES_COUNTING_AS_SUCCESS,
             }
             attach_document_ref(meta, status, result, job_id)
+            # The requester is the asker of this answer (#1568), taken from the
+            # authenticated turn recorded at start, never from the event.
+            # A device account is nobody's asker (`prompt_asker`).
+            record_asker(meta, await prompt_asker(db, requester.get("user_id")))
 
             message = await ConversationService(db).save_message(
                 session_id=session_id,

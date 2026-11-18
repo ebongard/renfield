@@ -517,7 +517,43 @@ weil sie sonst einen Faden zeigten, dessen Inhalt niemand findet.
 des Quellobjekts.** Sie stammen aus Werkzeugergebnissen (Titel und Korrespondent eines Paperless-Dokuments, Betreff
 und Absender einer Mail) und werden geschrieben (`save_turn_context_vars`) und gelesen (`load_context_vars`,
 ebenso `load_summary`) nur, wenn die Unterhaltung in der Reichweite des Aufrufers liegt (`ConversationService.reaches`,
-ohne Identität: nichts). Folge, die man wollen muss: in einem GETEILTEN Verlauf (Raumverlauf, Stufe 2) sieht jedes
-erreichende Mitglied im nächsten Zug die Variablen, die ein anderes Mitglied mit SEINEN Werkzeugen erzeugt hat —
-auch wenn das Quelldokument selbst Stufe 0 trägt. Das ist dieselbe Eigenschaft wie bei den Nachrichten des Verlaufs,
-in denen das Ergebnis ohnehin steht; eine zweite, objektgenaue Prüfung je Variable gibt es nicht.
+ohne Identität: nichts).
+
+**Innerhalb der Reichweite bekommt jeder nur SEINE Werkzeugergebnisse (#1568).** Ein geteilter Verlauf
+(Raumverlauf, Stufe 2; jede Unterhaltung über Stufe 0; die Übergabe in einen anderen Raum) wird vom nächsten
+Mitglied fortgesetzt, das nicht gefragt hat. Den TEXT des Verlaufs teilen alle, die ihn erreichen; die beiden Träger
+von Werkzeugergebnissen, die in den Prompt zurückkehren, nicht:
+
+- `message_metadata.action_summary` (Paperless-Treffer, abgerufener Text): jede Antwort trägt
+  `asker_user_id` — die serverseitige Identität des Zuges (Browser: der JWT-Nutzer der Verbindung, vor jeder
+  Stimm-Anhebung; Satellit: die Person des erkannten Sprechers ab `VOICE_AUTH_MIN_CONFIDENCE` — derselben Schwelle
+  wie die Stimm-Anhebung im Browser —, nie das Gerätekonto; ohne Sprecher oder darunter kein Schlüssel und keine
+  eigenen Ergebnisse, die Berechtigungen des Zuges bleiben davon unberührt; REST: der Aufrufer; Scan-Fertigmeldung
+  und Paperless-Ablagemeldung: die anfragende bzw. bestätigende Person). **Ein Gerätekonto ist auf KEINEM Weg der
+  Fragende** — ein Raum-Tablet steht wie der Satellit für jede Person davor; vor dem Review zu #1578 galt das nur
+  auf dem Satellitenpfad. Jeder `record_asker` bezieht den Fragenden aus `prompt_asker` bzw.
+  `speaker_prompt_identity` (AST-Test). `ConversationService.load_context` spielt die Zusammenfassung unter auth nur ein, wenn der
+  Fragende der Aufrufer ist, und entfernt sie sonst auch aus den mitgegebenen Metadaten. Der Schlüssel steht nicht
+  in `CLIENT_METADATA_KEYS` und verlässt den Server nie.
+- `conversations.context_vars`: unter auth je Schreiber ein Fach, `{"_per_writer": {"<user_id>": {…}}}` in
+  derselben JSON-Spalte — keine Migration. Alle übrigen Schlüssel sind die Altschicht (vor #1568 oder unter
+  auth-off geschrieben, das unverändert flach schreibt). Ein Zug mischt nur ins eigene Fach
+  (`merge_writer_context_vars`): Werte, Löschmarken und die 16-Schlüssel-Grenze wirken nie auf ein fremdes Fach,
+  auch nicht `_active_domain` (die Bereichsbindung des Routers ist damit je Person). Ein Werkzeug- oder
+  Pluginschlüssel kann das Fach nicht erreichen (`_KEY_RE` verlangt einen Buchstaben vorn). Die Übergabe ersetzt
+  die Altschicht wie bisher und übernimmt die Fächer je Schreiber, ohne fremde Fächer im Ziel anzurühren.
+- **Altbestand ohne Fragenden/Schreiber erreicht unter auth KEINEN Prompt** — auch nicht den Eigentümer einer
+  privaten Unterhaltung (Eigentümerentscheidung 2026-11-18): niemand kann sagen, wem er gehört. Er bleibt
+  unverändert gespeichert; ein Schreibender bekommt ihn nicht in sein Fach verschoben, seine Löschmarken wirken
+  nur im eigenen Fach. Unter auth-off ist die flache Schicht weiter der Speicher.
+- **Eine offene Ablagebestätigung gehört dem, der sie vorbereitet hat.** Paperless
+  (`chat_handler._pending_paperless_confirm`, `paperless_commit_upload`) und Simba (`simba_commit_upload`)
+  verlangen unter auth zusätzlich `user_id` = Aufrufer; ohne Identität nichts. Das „ja" eines anderen Mitglieds im
+  selben Verlauf legt nichts ab und sieht das `confirm_token` nicht im Prompt; ein fremdes Token wird wie ein
+  unbekanntes beantwortet.
+- Ohne Identität unter auth: nichts, auch kein Altbestand. Unter auth wird ohne Schreiber nichts mehr geschrieben.
+- Der Satellit hält EINE Liste je Raum im Speicher; wechselt unter auth der Sprecher, wird sie für den neuen
+  geleert und neu geladen (`refresh_room_history`), damit nichts vom Vorgänger übrig bleibt.
+- Die Zusammenfassung (`summary`) entsteht nur aus sichtbarem Text und folgt weiter der Reichweite.
+
+Jeder Lade- und Schreibaufruf übergibt den Aufrufer als `user_id=` — ein AST-Test über `src/backend` hält das fest.

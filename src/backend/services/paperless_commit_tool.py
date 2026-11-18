@@ -148,16 +148,23 @@ async def paperless_commit_upload(
 
     from models.database import PaperlessPendingConfirm
     from services.database import AsyncSessionLocal
+    from utils.config import settings
 
-    # Look up the pending row (session-scoped).
-    async with AsyncSessionLocal() as db:
-        query = select(PaperlessPendingConfirm).where(
-            PaperlessPendingConfirm.confirm_token == confirm_token
-        )
-        if session_id is not None:
-            query = query.where(PaperlessPendingConfirm.session_id == session_id)
-        result = await db.execute(query)
-        pending = result.scalar_one_or_none()
+    # Look up the pending row (session-scoped; under auth also the uploader's
+    # own, #1568 -- in a shared thread the token is not the caller's to use,
+    # and a caller without identity reaches none).
+    pending = None
+    if not (settings.auth_enabled and user_id is None):
+        async with AsyncSessionLocal() as db:
+            query = select(PaperlessPendingConfirm).where(
+                PaperlessPendingConfirm.confirm_token == confirm_token
+            )
+            if session_id is not None:
+                query = query.where(PaperlessPendingConfirm.session_id == session_id)
+            if settings.auth_enabled:
+                query = query.where(PaperlessPendingConfirm.user_id == user_id)
+            result = await db.execute(query)
+            pending = result.scalar_one_or_none()
 
     if pending is None:
         # Soft-404 — don't distinguish cross-session probe from
@@ -832,7 +839,11 @@ async def _finalize_paperless_commit(
             # tracking row, the finalize stamp and the counter bump -- the
             # reconciler then re-ran the finalize on every pass. A refusal
             # costs the announcement, not the filing.
-            from services.conversation_service import ConversationNotOwnedError
+            from services.conversation_service import (
+                ConversationNotOwnedError,
+                prompt_asker,
+                record_asker,
+            )
             from utils.config import settings
 
             try:
@@ -840,6 +851,9 @@ async def _finalize_paperless_commit(
                     await ConversationService(announce_db).save_message(
                         session_id, "assistant", message, user_id=user_id,
                         enforce_ownership=settings.auth_enabled,
+                        # The confirmer is the asker of this answer (#1568).
+                        metadata=record_asker(
+                            {}, await prompt_asker(announce_db, user_id)) or None,
                     )
             except ConversationNotOwnedError:
                 logger.warning(

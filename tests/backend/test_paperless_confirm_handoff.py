@@ -88,7 +88,7 @@ class TestPendingPaperlessConfirm:
             "api.websocket.chat_handler.AsyncSessionLocal",
             _mock_session_returning(row),
         )
-        token = await _pending_paperless_confirm("session-abc")
+        token = await _pending_paperless_confirm("session-abc", None)
         assert token == "7e171057-beef-dead"
 
     @pytest.mark.unit
@@ -97,7 +97,7 @@ class TestPendingPaperlessConfirm:
             "api.websocket.chat_handler.AsyncSessionLocal",
             _mock_session_returning(None),
         )
-        token = await _pending_paperless_confirm("session-abc")
+        token = await _pending_paperless_confirm("session-abc", None)
         assert token is None
 
     @pytest.mark.unit
@@ -112,5 +112,5 @@ class TestPendingPaperlessConfirm:
         monkeypatch.setattr(
             "api.websocket.chat_handler.AsyncSessionLocal", _boom,
         )
-        token = await _pending_paperless_confirm("session-abc")
+        token = await _pending_paperless_confirm("session-abc", None)
         assert token is None
