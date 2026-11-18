@@ -2829,7 +2829,7 @@ VITE_SSO_LEGACY_FRAGMENT=true
 - `PASSWORD_MIN_LENGTH`: `8`
 - `ALLOW_REGISTRATION`: `true` (auf einer auth-on Produktions-/Staging-Instanz muss der Wert ausdrücklich gesetzt sein, sonst Boot-Fehler)
 - `DEFAULT_ADMIN_USERNAME`: `admin`
-- `DEFAULT_ADMIN_PASSWORD`: `changeme`
+- `DEFAULT_ADMIN_PASSWORD`: `changeme` — nur das Backend (API-Prozess) braucht es; die Worker bekommen es nicht und warnen deshalb auch nicht. Steht es in Produktion noch auf dem Platzhalter, warnt der Backend-Start „INSECURE DEFAULT(S) IN USE“.
 - `VOICE_AUTH_ENABLED`: `false`
 - `VOICE_AUTH_MIN_CONFIDENCE`: `0.7` · `VOICE_SECOND_FACTOR_TTL_SECONDS`: `180` (Zusatzfaktor, s. oben)
 - `AUTH_PROVIDER_TIMEOUT_SECONDS`: `10.0`

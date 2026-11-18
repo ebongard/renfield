@@ -11,6 +11,8 @@ W13: three secret/password fields (postgres_password, secret_key,
 default_admin_password) ship with `changeme` placeholder defaults
 that must trigger a startup WARNING when in use, so deploys against
 real environments don't silently run with insecure credentials.
+The admin password is read only by the API process, so it is checked at
+API startup (`warn_on_api_changeme_defaults`), not in every worker.
 """
 
 from __future__ import annotations
@@ -233,3 +235,109 @@ def test_w13_changeme_fields_match_settings_defaults():
             f"`{name}` should ship with a string placeholder default (so the "
             f"validator has a known value to compare against), got: {default!r}"
         )
+
+
+@pytest.mark.unit
+def test_w13_api_changeme_fields_match_settings_defaults():
+    """Same drift guard for the API-only list, and the two lists stay apart:
+    a name in both would be checked twice in the backend and still in every
+    worker."""
+    from pydantic import SecretStr
+
+    from utils.config import _API_CHANGEME_FIELDS, _CHANGEME_FIELDS, Settings
+
+    assert not set(_API_CHANGEME_FIELDS) & set(_CHANGEME_FIELDS)
+    for name in _API_CHANGEME_FIELDS:
+        assert name in Settings.model_fields, f"`{name}` is not a Settings field"
+        default = Settings.model_fields[name].default
+        if isinstance(default, SecretStr):
+            default = default.get_secret_value()
+        assert isinstance(default, str) and default
+
+
+def _settings_like_a_worker_pod():
+    """Settings the way a worker pod builds them: production, the shared
+    secrets set, the API-only admin password NOT given (its placeholder)."""
+    from utils.config import Settings
+
+    admin_default = Settings.model_fields["default_admin_password"].default
+    return Settings(
+        _env_file=None,
+        renfield_env="production",
+        postgres_password="real-strong-password-from-secret",
+        secret_key="x" * 48,
+        default_admin_password=(
+            admin_default.get_secret_value()
+            if hasattr(admin_default, "get_secret_value")
+            else admin_default
+        ),
+    )
+
+
+def _warnings_during(fn) -> str:
+    captured = io.StringIO()
+    sink_id = logger.add(captured, level="WARNING", format="{level}|{message}")
+    try:
+        fn()
+    finally:
+        logger.remove(sink_id)
+    return captured.getvalue()
+
+
+@pytest.mark.unit
+def test_w13_a_worker_without_the_admin_password_starts_without_the_warning():
+    """A worker never reads the default admin password and is not given it;
+    building its Settings must not warn about it (it did on every worker start
+    in both instances, which trains everyone to skip the warning)."""
+    output = _warnings_during(_settings_like_a_worker_pod)
+    assert "INSECURE DEFAULT" not in output, output
+
+
+@pytest.mark.unit
+def test_w13_the_api_check_still_names_the_admin_password():
+    settings = _settings_like_a_worker_pod()
+    output = _warnings_during(settings.warn_on_api_changeme_defaults)
+    assert "INSECURE DEFAULT" in output, output
+    assert "default_admin_password" in output and "DEFAULT_ADMIN_PASSWORD" in output, output
+    assert "postgres_password" not in output and "secret_key" not in output, output
+
+
+@pytest.mark.unit
+def test_w13_the_api_check_is_silent_in_development():
+    from utils.config import Settings
+
+    settings = Settings(_env_file=None, renfield_env="development")
+    assert "INSECURE DEFAULT" not in _warnings_during(settings.warn_on_api_changeme_defaults)
+
+
+@pytest.mark.unit
+async def test_w13_the_api_auth_startup_runs_the_admin_password_check(monkeypatch):
+    """The API startup is where the check moved to: `_init_auth` must run it,
+    and before its own try, so a failing auth init cannot swallow it."""
+    import api.lifecycle as lifecycle
+    import services.auth_service as auth_service
+
+    monkeypatch.setattr(lifecycle, "settings", _settings_like_a_worker_pod())
+
+    async def _fail(*_a, **_k):
+        raise RuntimeError("no database in this test")
+
+    monkeypatch.setattr(auth_service, "ensure_default_roles", _fail)
+
+    class _NoSession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(lifecycle, "AsyncSessionLocal", lambda: _NoSession())
+
+    captured = io.StringIO()
+    sink_id = logger.add(captured, level="WARNING", format="{level}|{message}")
+    try:
+        await lifecycle._init_auth()
+    finally:
+        logger.remove(sink_id)
+    output = captured.getvalue()
+    assert "INSECURE DEFAULT" in output and "default_admin_password" in output, output
