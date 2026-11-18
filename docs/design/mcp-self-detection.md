@@ -109,11 +109,27 @@ All three items shipped; the self-heal is gated `mcp_health_self_heal_enabled`
    `wait_for`): each self-heal probe (`mcp_health_self_heal_probe_timeout`, 45s),
    the transport `__aenter__` in `_connect_server` (`mcp_connect_timeout` — init/
    tools-list were always bounded, the transport connect was not), and every
-   exit-stack teardown (`_TEARDOWN_TIMEOUT_S`, runs under `reconnect_lock`). A
-   cancelled connect hands its partially-entered stack to a detached bounded
-   closer (a rare leak beats a frozen loop); the failed-connect path now closes
-   the LOCAL exit stack (previously leaked — only the always-None
-   `state.exit_stack` was closed). Observability: every COMPLETED tick increments
+   session teardown (`_TEARDOWN_TIMEOUT_S`, runs under `reconnect_lock`).
+   **Since #1579 (2026-11-18) one session owner task per connection** enters AND
+   exits the transport + session (`MCPManager._own_session`, handle
+   `state.owner`); connect, reconnect and shutdown only ask it to stop
+   (`_SessionOwner.close()` bounded, then a cancel delivered inside the owner;
+   `request_stop()` from a cancelled caller). Before, the stack was entered in the
+   connecting task and exited in whichever task reconnected, shut down or ran a
+   "detached closer" — anyio's "Attempted to exit cancel scope in a different
+   task", every time. Worse, a REFUSED connection surfaced as a bare
+   CancelledError (the transport's task group cancels its own scope; only that
+   scope's exit raises the ConnectError): `_connect_server` logged nothing and
+   the cancellation stayed with the caller. The refresh loop died on its first
+   reconnect of a refused server — the build box showed "reconnecting to 'dlna'
+   (attempt 2)…" and then silence for 15 days, with a core spinning in anyio's
+   `_deliver_cancellation` (older anyio). A self-heal guard got a CancelledError
+   instead of its TimeoutError. Now a refused server logs "connection failed:
+   All connection attempts failed", the loop keeps retrying with backoff, and a
+   session that dies after the connect marks the server disconnected
+   (`_session_lost`). Guard: `test_mcp_session_owner_1579.py` (incl. an AST check
+   that `mcp_client.py` never calls `__aenter__`/`__aexit__` by hand).
+   Observability: every COMPLETED tick increments
    `renfield_mcp_health_ticks_total` + sets `renfield_mcp_health_problem_servers`
    (a flatlining counter under a running backend = the monitor is stuck — exactly
    the ambiguity that cost the diagnosis) plus a DEBUG tick-complete line.

@@ -18,6 +18,10 @@ Flags: `MCP_HEALTH_MONITOR_ENABLED` dark (delivery needs `PROACTIVE_ENABLED`) ·
 `MCP_RATE_LIMIT_BACKOFF_ENABLED` **on in the household since 2026-09-21** (BL-0416: only the backoff — a tool's
 Retry-After is honoured, no automatic retry; signal + alert stay dark).
 
+🛑 **One task enters AND exits a server's transport + session: its session owner (`_own_session`, `state.owner`,
+#1579).** Everyone else calls `owner.close()` / `request_stop()` — never `__aexit__` by hand (AST test). A cross-task
+exit turned a refused connection into a bare CancelledError that killed the refresh loop. Long form: design doc.
+
 ## Verdict (`_server_health`, fed by `MCPManager.get_status()`)
 - **`degraded/calls_failing` counts ONLY timeouts** (rolling window on `MCPServerState`: clean result = ok, timeout =
   fail). App-level `isError`/not-found/device-off envelopes are NEVER counted — an app error says nothing about the
