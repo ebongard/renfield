@@ -18,7 +18,8 @@ resources:
   - frontend.yaml
   - middleware-https-redirect.yaml
   - ingress.yaml
-  - external-llm-ingress.yaml
+  # The external *.test.local LLM ingresses (+ their IP allowlist) are owned
+  # by the cluster repo: private_k8s/renfield-llm-voice-ingress.yaml.
   - backend-tts-cache-route.yaml
   - shared-pvcs.yaml
   - document-worker.yaml
