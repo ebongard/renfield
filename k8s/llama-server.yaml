@@ -24,12 +24,16 @@ metadata:
     app.kubernetes.io/name: llama-server-agent
     app.kubernetes.io/part-of: renfield
 spec:
-  # Idle in steady state — primary chat/agent moved to cuda.local (RTX 5090)
-  # for both Reva and Renfield (see reva/docs/architecture/gpu-allocation.md).
-  # This Q4 deployment stays as a fast failover: `kubectl scale deploy/llama-server-agent
-  # -n renfield --replicas=1` boots the model in ~30-45s. While idle, the
-  # 5070 Ti + 5060 Ti on k8s-gpu-1 are free for the Ollama small-models tier
-  # (one GPU claimed by Ollama; the other available for failover or future workloads).
+  # Dormant, NOT a working failover. The chat/agent LLM runs outside k8s on
+  # the RTX 5090 host (docker container `llama-server`, cuda.local:8081; the
+  # definition is in docs/GPU_TOPOLOGY.md §2). Scaling this to 1 does not
+  # help: it requests 2 GPUs on k8s-gpu-1, which has one card left (the
+  # 5060 Ti failed, Xid 79) and that card is DRA-claimed by Ollama, so the
+  # node allocates 0 `nvidia.com/gpu` and the pod would stay Pending. The
+  # real fallback when cuda.local is down is LLM_OPENAI_FALLBACK_ENABLED
+  # (in-cluster Ollama, see configmap.yaml).
+  # Kept only because the `llm-agent-external` Ingress (private_k8s repo)
+  # still routes to this Service; retiring it is the owner's decision.
   replicas: 0
   strategy:
     type: Recreate
@@ -50,7 +54,9 @@ spec:
           effect: NoSchedule
       containers:
         - name: llama-server
-          image: ghcr.io/ggml-org/llama.cpp:server-cuda
+          # Pinned: the same build the 5090 host runs (b10423, CUDA 12.8.1).
+          # The bare `server-cuda` tag moves with every llama.cpp release.
+          image: ghcr.io/ggml-org/llama.cpp:server-cuda-b10423@sha256:a475c08c7c472425e3ebf7f6be9c6cb3a17e82ec28070ddeb22fffe3ca754a94
           imagePullPolicy: IfNotPresent
           args:
             - "-m"

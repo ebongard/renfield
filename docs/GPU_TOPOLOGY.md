@@ -62,9 +62,16 @@ falsche Karte.
 GPU-Node 2 heißt nur so (der echte Knotenname enthält ebenfalls „gpu“): Die VM hat keinen GPU-Passthrough, `lspci` zeigt
 nur eine QEMU-VGA. Die installierten NVIDIA-Pakete ändern daran nichts.
 
-**Veraltete Manifeste:** `k8s/llama-server.yaml` fordert **2 GPUs** auf GPU-Node 1 an
-(`replicas: 0`) und passt nicht mehr zur Ein-Karten-Bestückung. `k8s/speaches.yaml`
-ebenso (`replicas: 0`).
+**Ruhende Manifeste (Stand 2026-11-18):** `k8s/llama-server.yaml` (`llama-server-agent`,
+`replicas: 0`) fordert **2 GPUs** auf GPU-Node 1 an; der Knoten teilt aber **0**
+`nvidia.com/gpu` zu (eine Karte, per DRA an Ollama vergeben). Hochskalieren ergäbe nur einen
+hängenden Pod — **das ist kein Ausweichweg.** Der echte Ausweichweg bei ausgefallenem
+5090-Host ist `LLM_OPENAI_FALLBACK_ENABLED` (Cluster-Ollama, `qwen3:8b`). Das Manifest
+bleibt nur, weil das Ingress `llm-agent-external` (Cluster-Repo `private_k8s`) noch auf
+seinen Service zeigt; sein Image ist per Digest auf denselben Build gepinnt wie der
+5090-Host (§2). `k8s/llama-server-embed.yaml` ist **stillgelegt**: nicht mehr in
+`kustomization.yaml`, von nichts referenziert (beide Instanzen betten über Ollama ein);
+die Live-Objekte stehen noch auf 0/0. `k8s/speaches.yaml` ruht ebenso (`replicas: 0`).
 
 ## 2. Was worauf läuft
 
@@ -72,6 +79,25 @@ ebenso (`replicas: 0`).
   (`--ctx-size 262144`, KV-Cache `q8_0`, `--flash-attn on`), rund 26,5 von 32 GB belegt.
   **Zusätzlich der VLM-/OCR-Pfad**: `OLLAMA_VISION_URL` und `OLLAMA_VISION_MODEL=qwen3.6`
   zeigen hierher, also laufen auch OCR-Nachbearbeitung und PDF-Split hier.
+
+  **Definition des Containers** (am 2026-11-18 per `docker inspect` gelesen; er ist
+  **nirgends in git** definiert — weder Compose-Datei noch Skript, er wurde am 2026-08-22
+  von Hand mit `docker run` angelegt):
+
+  | Feld | Wert |
+  |---|---|
+  | Name | `llama-server`, Restart-Policy `unless-stopped`, `--network host`, `--gpus all` |
+  | Image (Referenz) | `ghcr.io/ggml-org/llama.cpp:server-cuda` — **wanderndes Tag** |
+  | Image (tatsächlich) | `ghcr.io/ggml-org/llama.cpp@sha256:a475c08c7c472425e3ebf7f6be9c6cb3a17e82ec28070ddeb22fffe3ca754a94` = Tag `server-cuda-b10423` (bei ghcr gegengeprüft), CUDA 12.8.1, Build `b10423-a94d563ed` |
+  | Einbindungen (nur lesend) | `/mnt/llm/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` → `/models/qwen3.6-35b-a3b.gguf`, `/mnt/llm/mmproj-F16.gguf` → `/models/qwen3.6-35b-a3b-mmproj.gguf` |
+  | Argumente | `--model /models/qwen3.6-35b-a3b.gguf --mmproj /models/qwen3.6-35b-a3b-mmproj.gguf --alias qwen3.6 --host 0.0.0.0 --port 8081 --ctx-size 262144 --n-gpu-layers 99 --cache-type-k q8_0 --cache-type-v q8_0 --flash-attn on --reasoning off --temp 0.6 --top-p 0.95 --top-k 20 --jinja --metrics` |
+
+  Die 4 Slots kommen aus der Voreinstellung, nicht aus `--parallel` (`/props`:
+  `total_slots 4`). Wer den Container neu anlegt, nimmt die **Digest-Referenz**, nicht
+  `server-cuda`: ein `docker pull` des Tags holte heute einen anderen Build. Dass der
+  Container nicht in git steht, ist eine offene Lücke (Eigentümerentscheidung: Compose-Datei
+  oder systemd-Unit mit `RequiresMountsFor=/mnt/llm`, die zugleich das NFS-Startrennen
+  behebt).
 - **GPU-Node 1 (5070 Ti)** — Cluster-Ollama mit llama3.2:3b, qwen3:8b, qwen3-embedding:4b
   und nomic-embed-text, zusammen etwa 10,1 von 16,3 GB, geteilt mit Reva.
   `qwen3-vl:8b` lief früher hier und brauchte gemessen **11,9 GB** — es verdrängte alle
