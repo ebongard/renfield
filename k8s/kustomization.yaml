@@ -8,7 +8,6 @@ resources:
   - configmap.yaml
   - postgres.yaml
   - redis.yaml
-  - llama-server.yaml
   - ollama.yaml
   - searxng.yaml
   - dlna-mcp.yaml

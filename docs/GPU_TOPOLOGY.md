@@ -62,16 +62,14 @@ falsche Karte.
 GPU-Node 2 heißt nur so (der echte Knotenname enthält ebenfalls „gpu“): Die VM hat keinen GPU-Passthrough, `lspci` zeigt
 nur eine QEMU-VGA. Die installierten NVIDIA-Pakete ändern daran nichts.
 
-**Ruhende Manifeste (Stand 2026-11-18):** `k8s/llama-server.yaml` (`llama-server-agent`,
-`replicas: 0`) fordert **2 GPUs** auf GPU-Node 1 an; der Knoten teilt aber **0**
-`nvidia.com/gpu` zu (eine Karte, per DRA an Ollama vergeben). Hochskalieren ergäbe nur einen
-hängenden Pod — **das ist kein Ausweichweg.** Der echte Ausweichweg bei ausgefallenem
-5090-Host ist `LLM_OPENAI_FALLBACK_ENABLED` (Cluster-Ollama, `qwen3:8b`). Das Manifest
-bleibt nur, weil das Ingress `llm-agent-external` (Cluster-Repo `private_k8s`) noch auf
-seinen Service zeigt; sein Image ist per Digest auf denselben Build gepinnt wie der
-5090-Host (§2). `k8s/llama-server-embed.yaml` ist **stillgelegt**: nicht mehr in
-`kustomization.yaml`, von nichts referenziert (beide Instanzen betten über Ollama ein);
-die Live-Objekte stehen noch auf 0/0. `k8s/speaches.yaml` ruht ebenso (`replicas: 0`).
+**Kein llama-server im Cluster (seit 2026-11-18):** Die beiden ruhenden Deployments
+`llama-server-agent` und `llama-server-embed` (samt Services) und das Ingress
+`llm-agent-external` (Cluster-Repo `private_k8s`) sind gelöscht, ihre Manifeste aus dem
+Repo entfernt. Der Agent konnte ohnehin nicht laufen — er verlangte **2 GPUs** auf GPU-Node 1,
+der Knoten teilt aber **0** `nvidia.com/gpu` zu (eine Karte, per DRA an Ollama vergeben); die
+Einbettungen laufen seit 2026-05-13 über Ollama. Der Ausweichweg bei ausgefallenem 5090-Host
+ist `LLM_OPENAI_FALLBACK_ENABLED` (Cluster-Ollama, `qwen3:8b`). `k8s/speaches.yaml` ruht
+weiterhin (`replicas: 0`).
 
 ## 2. Was worauf läuft
 
