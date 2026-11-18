@@ -29,9 +29,8 @@ spec:
   # process overhead but benefit from GPU inference:
   #   - llama3.2:3b           ~2 GB  — Reva router, Renfield intent fallback
   #   - qwen3:8b              ~5 GB  — Renfield intent
-  #   - qwen3-embedding:4b    ~3 GB  — Renfield embeddings (shared with
-  #                                    legacy llama-server-embed until that's
-  #                                    retired; see follow-up note)
+  #   - qwen3-embedding:4b    ~3 GB  — Renfield embeddings (the old
+  #                                    llama-server-embed is retired)
   #   - nomic-embed-text     ~0.5 GB — Reva embeddings
   # Total resident: ~10 GB.
   #

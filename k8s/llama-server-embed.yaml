@@ -1,3 +1,13 @@
+# RETIRED — not in kustomization.yaml, do not apply.
+#
+# Embeddings moved to the in-cluster Ollama on 2026-05-13 (same
+# qwen3-embedding:4b, GPU-served); nothing references this Service any more
+# (LLM_OPENAI_EMBED_BASE_URL points at ollama on both instances). The live
+# Deployment + Service still exist at 0/0, so this file mirrors them exactly
+# and keeps bin/k8s-drift-check.sh honest. Once the owner deletes the live
+# objects (`kubectl -n renfield delete -f k8s/llama-server-embed.yaml`),
+# delete this file too. The image stays the unpinned tag the live object
+# carries — this manifest is not meant to be started again.
 apiVersion: v1
 kind: Service
 metadata:
