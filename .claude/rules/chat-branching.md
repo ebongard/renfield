@@ -58,9 +58,9 @@ the turn's whole transaction, so "best-effort" is only true inside one.
 **Reach shares the TEXT, never a member's tool results (#1568).** Under auth `load_context` injects an
 `action_summary` only for the caller named in `message_metadata.asker_user_id` (server-side: JWT / recognised person /
 REST caller; never served), and `context_vars` hold one bucket per writer (`_per_writer`, no migration) — one member's
-turn cannot erase another's. Writer-less legacy rows reach only the owner of a PRIVATE conversation
-(`legacy_prompt_state_visible`); no identity gets nothing; auth-off unchanged. Every load/save passes `user_id=`
-(AST test). Details: `docs/CIRCLES.md` → Gesprächsvariablen.
+turn cannot erase another's. Writer-less legacy rows reach NOBODY (private chats too; kept, never folded); no identity
+gets nothing; a satellite speaker counts only ≥ `VOICE_AUTH_MIN_CONFIDENCE`; a pending Paperless/Simba confirm is its
+preparer's; auth-off unchanged. Every load/save passes `user_id=` (AST test). Details: `docs/CIRCLES.md` → Gesprächsvariablen.
 
 ## Access to a conversation (`enforce_ownership`, auth-on only)
 The rule is REACH, on both sides, and its negative half is unchanged: a conversation out of the caller's reach is

@@ -526,8 +526,10 @@ von Werkzeugergebnissen, die in den Prompt zurückkehren, nicht:
 
 - `message_metadata.action_summary` (Paperless-Treffer, abgerufener Text): jede Antwort trägt
   `asker_user_id` — die serverseitige Identität des Zuges (Browser: der JWT-Nutzer der Verbindung, vor jeder
-  Stimm-Anhebung; Satellit: die Person des erkannten Sprechers, nie das Gerätekonto, ohne Sprecher kein Schlüssel;
-  REST: der Aufrufer). `ConversationService.load_context` spielt die Zusammenfassung unter auth nur ein, wenn der
+  Stimm-Anhebung; Satellit: die Person des erkannten Sprechers ab `VOICE_AUTH_MIN_CONFIDENCE` — derselben Schwelle
+  wie die Stimm-Anhebung im Browser —, nie das Gerätekonto; ohne Sprecher oder darunter kein Schlüssel und keine
+  eigenen Ergebnisse, die Berechtigungen des Zuges bleiben davon unberührt; REST: der Aufrufer; Scan-Fertigmeldung
+  und Paperless-Ablagemeldung: die anfragende bzw. bestätigende Person). `ConversationService.load_context` spielt die Zusammenfassung unter auth nur ein, wenn der
   Fragende der Aufrufer ist, und entfernt sie sonst auch aus den mitgegebenen Metadaten. Der Schlüssel steht nicht
   in `CLIENT_METADATA_KEYS` und verlässt den Server nie.
 - `conversations.context_vars`: unter auth je Schreiber ein Fach, `{"_per_writer": {"<user_id>": {…}}}` in
@@ -537,11 +539,15 @@ von Werkzeugergebnissen, die in den Prompt zurückkehren, nicht:
   auch nicht `_active_domain` (die Bereichsbindung des Routers ist damit je Person). Ein Werkzeug- oder
   Pluginschlüssel kann das Fach nicht erreichen (`_KEY_RE` verlangt einen Buchstaben vorn). Die Übergabe ersetzt
   die Altschicht wie bisher und übernimmt die Fächer je Schreiber, ohne fremde Fächer im Ziel anzurühren.
-- **Altbestand ohne Fragenden/Schreiber** erreicht nur den EIGENTÜMER einer PRIVATEN Unterhaltung
-  (`legacy_prompt_state_visible`: Eigentümer = Aufrufer UND `is_private` — Stufe 0 an Zeile und Atom, keine
-  Einzelfreigabe; dieselbe Prüfung, die der Knopfscan nimmt). Schreibt dieser Eigentümer, wird die Altschicht zuerst
-  in sein Fach verschoben, damit die Löschmarken wie vorher greifen — der private Chat bleibt in der Wirkung
-  unverändert (Test vergleicht auth-on privat mit auth-off).
+- **Altbestand ohne Fragenden/Schreiber erreicht unter auth KEINEN Prompt** — auch nicht den Eigentümer einer
+  privaten Unterhaltung (Eigentümerentscheidung 2026-11-18): niemand kann sagen, wem er gehört. Er bleibt
+  unverändert gespeichert; ein Schreibender bekommt ihn nicht in sein Fach verschoben, seine Löschmarken wirken
+  nur im eigenen Fach. Unter auth-off ist die flache Schicht weiter der Speicher.
+- **Eine offene Ablagebestätigung gehört dem, der sie vorbereitet hat.** Paperless
+  (`chat_handler._pending_paperless_confirm`, `paperless_commit_upload`) und Simba (`simba_commit_upload`)
+  verlangen unter auth zusätzlich `user_id` = Aufrufer; ohne Identität nichts. Das „ja" eines anderen Mitglieds im
+  selben Verlauf legt nichts ab und sieht das `confirm_token` nicht im Prompt; ein fremdes Token wird wie ein
+  unbekanntes beantwortet.
 - Ohne Identität unter auth: nichts, auch kein Altbestand. Unter auth wird ohne Schreiber nichts mehr geschrieben.
 - Der Satellit hält EINE Liste je Raum im Speicher; wechselt unter auth der Sprecher, wird sie für den neuen
   geleert und neu geladen (`refresh_room_history`), damit nichts vom Vorgänger übrig bleibt.

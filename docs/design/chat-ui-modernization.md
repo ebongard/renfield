@@ -400,7 +400,8 @@ module (`api/websocket/document_sources.py`), one list for the `done` frame and 
   `mcp.paperless.read`.
   **The same data on the prompt side (#1568):** under auth `ConversationService.load_context` re-injects
   `action_summary` only for the caller recorded as `asker_user_id`, and `conversations.context_vars` keep one bucket
-  per writer; legacy rows reach only the owner of a private conversation (`docs/CIRCLES.md` → Gesprächsvariablen).
+  per writer; legacy rows (no asker, no writer) reach nobody, the owner of a private conversation included (owner
+  decision 2026-11-18; `docs/CIRCLES.md` → Gesprächsvariablen).
   `summary` is built from visible text only and follows reach. `asker_user_id` is not in the allowlist and is never
   served. `artifacts` are served unfiltered: they are the answer's own typed content, like the message text.
 - **Enable order:** roll out the frontend first, flip the flag after it has propagated — a stale PWA bundle renders
