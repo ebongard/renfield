@@ -24,7 +24,7 @@ compatibility limits that decide which cards can be bought at all:
 - Ingress: Traefik v3.3 with both the `kubernetesingress` and `kubernetescrd` providers enabled (lives in the sibling `private_k8s/` repo)
 - GPU: NVIDIA device plugin DaemonSet on k8s-gpu-3 (`nvidia.com/gpu: 1`); k8s-gpu-1 allocates via a **DRA claim** (`ollama-gpu-5070ti`) because the plugin could no longer allocate after the Xid 79 failure; k8s-gpu-2 has none
 - LLM models: NFS `192.168.1.9:/mnt/data/llm` → `/mnt/llm` on both workers, hostPath-mounted into Ollama pods
-- Chat/vision LLM: **not in the cluster** — llama.cpp on the 5090 host `cuda.local:8081` (see `GPU_TOPOLOGY.md` §2); the backend's `wait-for-deps` init container waits for its `/health`
+- Chat/vision LLM: **not in the cluster** — llama.cpp on the 5090 host `cuda.local:8081` (systemd unit in `deploy/cuda-host/`, see `GPU_TOPOLOGY.md` §2); the backend's `wait-for-deps` init container waits for its `/health`
 
 Cluster-wide Traefik changes (entrypoints, TLS, CRDs) are tracked in `../private_k8s/traefik.yaml` and `../private_k8s/traefik-crds.yaml`; this document only covers the renfield-namespace workload.
 

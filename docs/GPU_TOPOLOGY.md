@@ -78,9 +78,8 @@ weiterhin (`replicas: 0`).
   **Zusätzlich der VLM-/OCR-Pfad**: `OLLAMA_VISION_URL` und `OLLAMA_VISION_MODEL=qwen3.6`
   zeigen hierher, also laufen auch OCR-Nachbearbeitung und PDF-Split hier.
 
-  **Definition des Containers** (am 2026-11-18 per `docker inspect` gelesen; er ist
-  **nirgends in git** definiert — weder Compose-Datei noch Skript, er wurde am 2026-08-22
-  von Hand mit `docker run` angelegt):
+  **Definition des Containers** (am 2026-11-18 per `docker inspect` gelesen; er wurde am
+  2026-08-22 von Hand mit `docker run` angelegt — seine Nachbildung in git steht unten):
 
   | Feld | Wert |
   |---|---|
@@ -92,10 +91,23 @@ weiterhin (`replicas: 0`).
 
   Die 4 Slots kommen aus der Voreinstellung, nicht aus `--parallel` (`/props`:
   `total_slots 4`). Wer den Container neu anlegt, nimmt die **Digest-Referenz**, nicht
-  `server-cuda`: ein `docker pull` des Tags holte heute einen anderen Build. Dass der
-  Container nicht in git steht, ist eine offene Lücke (Eigentümerentscheidung: Compose-Datei
-  oder systemd-Unit mit `RequiresMountsFor=/mnt/llm`, die zugleich das NFS-Startrennen
-  behebt).
+  `server-cuda`: ein `docker pull` des Tags holte heute einen anderen Build. Dazu ein
+  eigener Healthcheck (`curl -fsS http://localhost:8081/health`, 30 s Takt, 10 min
+  Anlaufzeit); Umgebung und Labels sind die des Images.
+
+  **In git: [`deploy/cuda-host/llama-server.service`](../deploy/cuda-host/llama-server.service)**
+  (Installation im README daneben) — eine systemd-Unit, die genau diesen Container mit
+  `docker run --rm` startet: selbes Image per Digest, selbe Argumente, Einbindungen, Netz,
+  GPUs und Healthcheck; nur die Docker-Restart-Policy entfällt, systemd übernimmt sie
+  (`Restart=always`, `RestartSec=10`). Das behebt das NFS-Startrennen: Beim Booten startete
+  dockerd den Container, bevor `/mnt/llm` eingehängt war, die Einbindung der Modelldatei schlug
+  fehl, der Container endete mit 127 und wurde nie wiederholt — und beide Backends hingen im
+  Init (`wait-for-deps`). Die Unit ordnet sich per `RequiresMountsFor=/mnt/llm` hinter
+  `mnt-llm.mount` (fstab-Eintrag mit `x-systemd.automount`, `_netdev`), prüft vor dem Start,
+  dass beide Modelldateien lesbar sind, und versucht es sonst alle 10 s erneut.
+  **Stand 2026-11-18: Unit geschrieben und auf dem Host mit `systemd-analyze verify` geprüft,
+  aber noch nicht installiert** (`sudo` verlangt dort ein Passwort) — live läuft weiter der
+  handangelegte Container.
 - **GPU-Node 1 (5070 Ti)** — Cluster-Ollama mit llama3.2:3b, qwen3:8b, qwen3-embedding:4b
   und nomic-embed-text, zusammen etwa 10,1 von 16,3 GB, geteilt mit Reva.
   `qwen3-vl:8b` lief früher hier und brauchte gemessen **11,9 GB** — es verdrängte alle
