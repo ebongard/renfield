@@ -78,13 +78,13 @@ weiterhin (`replicas: 0`).
   **Zusätzlich der VLM-/OCR-Pfad**: `OLLAMA_VISION_URL` und `OLLAMA_VISION_MODEL=qwen3.6`
   zeigen hierher, also laufen auch OCR-Nachbearbeitung und PDF-Split hier.
 
-  **Definition des Containers** (am 2026-11-18 per `docker inspect` gelesen; er wurde am
-  2026-08-22 von Hand mit `docker run` angelegt — seine Nachbildung in git steht unten):
+  **Definition des Containers** (am 2026-11-18 per `docker inspect` gelesen; bis dahin ein
+  am 2026-08-22 von Hand angelegter `docker run`, seither von der systemd-Unit unten gestartet):
 
   | Feld | Wert |
   |---|---|
-  | Name | `llama-server`, Restart-Policy `unless-stopped`, `--network host`, `--gpus all` |
-  | Image (Referenz) | `ghcr.io/ggml-org/llama.cpp:server-cuda` — **wanderndes Tag** |
+  | Name | `llama-server`, `--rm`, keine Docker-Restart-Policy (die führt systemd), `--network host`, `--gpus all` |
+  | Image (Referenz) | per Digest (bis 2026-11-18 das **wandernde Tag** `server-cuda`) |
   | Image (tatsächlich) | `ghcr.io/ggml-org/llama.cpp@sha256:a475c08c7c472425e3ebf7f6be9c6cb3a17e82ec28070ddeb22fffe3ca754a94` = Tag `server-cuda-b10423` (bei ghcr gegengeprüft), CUDA 12.8.1, Build `b10423-a94d563ed` |
   | Einbindungen (nur lesend) | `/mnt/llm/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` → `/models/qwen3.6-35b-a3b.gguf`, `/mnt/llm/mmproj-F16.gguf` → `/models/qwen3.6-35b-a3b-mmproj.gguf` |
   | Argumente | `--model /models/qwen3.6-35b-a3b.gguf --mmproj /models/qwen3.6-35b-a3b-mmproj.gguf --alias qwen3.6 --host 0.0.0.0 --port 8081 --ctx-size 262144 --n-gpu-layers 99 --cache-type-k q8_0 --cache-type-v q8_0 --flash-attn on --reasoning off --temp 0.6 --top-p 0.95 --top-k 20 --jinja --metrics` |
@@ -105,9 +105,10 @@ weiterhin (`replicas: 0`).
   Init (`wait-for-deps`). Die Unit ordnet sich per `RequiresMountsFor=/mnt/llm` hinter
   `mnt-llm.mount` (fstab-Eintrag mit `x-systemd.automount`, `_netdev`), prüft vor dem Start,
   dass beide Modelldateien lesbar sind, und versucht es sonst alle 10 s erneut.
-  **Stand 2026-11-18: Unit geschrieben und auf dem Host mit `systemd-analyze verify` geprüft,
-  aber noch nicht installiert** (`sudo` verlangt dort ein Passwort) — live läuft weiter der
-  handangelegte Container.
+  **Installiert und aktiv seit 2026-11-18, 09:48 Uhr (MEZ).** Der neu angelegte Container
+  gleicht dem alten in Image-ID, Argumenten, Einbindungen, Netz, GPUs und Healthcheck
+  (`docker inspect` verglichen); verschieden sind nur `--rm` und die fehlende Docker-Restart-Policy.
+  Den Neustart beim Booten deckt die Unit ab; ein Boot-Test steht noch aus.
 - **GPU-Node 1 (5070 Ti)** — Cluster-Ollama mit llama3.2:3b, qwen3:8b, qwen3-embedding:4b
   und nomic-embed-text, zusammen etwa 10,1 von 16,3 GB, geteilt mit Reva.
   `qwen3-vl:8b` lief früher hier und brauchte gemessen **11,9 GB** — es verdrängte alle
