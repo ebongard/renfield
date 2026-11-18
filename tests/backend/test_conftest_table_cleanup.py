@@ -8,7 +8,8 @@ handle: a row trigger that fills another table, and a cycle of foreign keys.
 
 The two `test_1…`/`test_2…` tests are a pair: the first writes, the second is
 set up by the harness after it and checks what the harness left. pytest runs a
-module's tests in file order.
+module's tests in file order. Run alone (or on another xdist worker) the second
+one skips; under xdist the pair needs `--dist loadfile` or an `xdist_group`.
 """
 
 import pytest
@@ -88,6 +89,8 @@ async def test_1_write_rows_a_trigger_and_a_rolled_back_insert(db_session):
 async def test_2_the_next_test_finds_every_table_empty_and_ids_at_one(db_session):
     # Emptied by DELETE, not by the slow TRUNCATE fallback -- which would leave
     # the same empty database and hide that the fast path broke.
+    if not _FALLBACKS_BEFORE:
+        pytest.skip("runs only right after test_1 in the same process (a pair, see the module docstring)")
     assert harness._CLEANUP_COUNTS["truncate_fallback"] == _FALLBACKS_BEFORE[-1]
     tables = [r[0] for r in (await db_session.execute(text(_EXISTING_TABLES_SQL))).all()]
     dirty = [r[0] for r in (await db_session.execute(text(_non_empty_tables_sql(tables)))).all()]
@@ -166,6 +169,9 @@ async def test_documents_with_chunks_are_emptied_by_delete(db_session, async_eng
     async with async_engine.begin() as conn:
         await _empty_tables(conn, tables)
     assert harness._CLEANUP_COUNTS["truncate_fallback"] == before
+    async with async_engine.connect() as conn:
+        dirty = [r[0] for r in (await conn.execute(text(_non_empty_tables_sql(tables)))).all()]
+    assert dirty == []
 
 
 @pytest.mark.postgres
