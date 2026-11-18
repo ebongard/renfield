@@ -517,7 +517,34 @@ weil sie sonst einen Faden zeigten, dessen Inhalt niemand findet.
 des Quellobjekts.** Sie stammen aus Werkzeugergebnissen (Titel und Korrespondent eines Paperless-Dokuments, Betreff
 und Absender einer Mail) und werden geschrieben (`save_turn_context_vars`) und gelesen (`load_context_vars`,
 ebenso `load_summary`) nur, wenn die Unterhaltung in der Reichweite des Aufrufers liegt (`ConversationService.reaches`,
-ohne Identität: nichts). Folge, die man wollen muss: in einem GETEILTEN Verlauf (Raumverlauf, Stufe 2) sieht jedes
-erreichende Mitglied im nächsten Zug die Variablen, die ein anderes Mitglied mit SEINEN Werkzeugen erzeugt hat —
-auch wenn das Quelldokument selbst Stufe 0 trägt. Das ist dieselbe Eigenschaft wie bei den Nachrichten des Verlaufs,
-in denen das Ergebnis ohnehin steht; eine zweite, objektgenaue Prüfung je Variable gibt es nicht.
+ohne Identität: nichts).
+
+**Innerhalb der Reichweite bekommt jeder nur SEINE Werkzeugergebnisse (#1568).** Ein geteilter Verlauf
+(Raumverlauf, Stufe 2; jede Unterhaltung über Stufe 0; die Übergabe in einen anderen Raum) wird vom nächsten
+Mitglied fortgesetzt, das nicht gefragt hat. Den TEXT des Verlaufs teilen alle, die ihn erreichen; die beiden Träger
+von Werkzeugergebnissen, die in den Prompt zurückkehren, nicht:
+
+- `message_metadata.action_summary` (Paperless-Treffer, abgerufener Text): jede Antwort trägt
+  `asker_user_id` — die serverseitige Identität des Zuges (Browser: der JWT-Nutzer der Verbindung, vor jeder
+  Stimm-Anhebung; Satellit: die Person des erkannten Sprechers, nie das Gerätekonto, ohne Sprecher kein Schlüssel;
+  REST: der Aufrufer). `ConversationService.load_context` spielt die Zusammenfassung unter auth nur ein, wenn der
+  Fragende der Aufrufer ist, und entfernt sie sonst auch aus den mitgegebenen Metadaten. Der Schlüssel steht nicht
+  in `CLIENT_METADATA_KEYS` und verlässt den Server nie.
+- `conversations.context_vars`: unter auth je Schreiber ein Fach, `{"_per_writer": {"<user_id>": {…}}}` in
+  derselben JSON-Spalte — keine Migration. Alle übrigen Schlüssel sind die Altschicht (vor #1568 oder unter
+  auth-off geschrieben, das unverändert flach schreibt). Ein Zug mischt nur ins eigene Fach
+  (`merge_writer_context_vars`): Werte, Löschmarken und die 16-Schlüssel-Grenze wirken nie auf ein fremdes Fach,
+  auch nicht `_active_domain` (die Bereichsbindung des Routers ist damit je Person). Ein Werkzeug- oder
+  Pluginschlüssel kann das Fach nicht erreichen (`_KEY_RE` verlangt einen Buchstaben vorn). Die Übergabe ersetzt
+  die Altschicht wie bisher und übernimmt die Fächer je Schreiber, ohne fremde Fächer im Ziel anzurühren.
+- **Altbestand ohne Fragenden/Schreiber** erreicht nur den EIGENTÜMER einer PRIVATEN Unterhaltung
+  (`legacy_prompt_state_visible`: Eigentümer = Aufrufer UND `is_private` — Stufe 0 an Zeile und Atom, keine
+  Einzelfreigabe; dieselbe Prüfung, die der Knopfscan nimmt). Schreibt dieser Eigentümer, wird die Altschicht zuerst
+  in sein Fach verschoben, damit die Löschmarken wie vorher greifen — der private Chat bleibt in der Wirkung
+  unverändert (Test vergleicht auth-on privat mit auth-off).
+- Ohne Identität unter auth: nichts, auch kein Altbestand. Unter auth wird ohne Schreiber nichts mehr geschrieben.
+- Der Satellit hält EINE Liste je Raum im Speicher; wechselt unter auth der Sprecher, wird sie für den neuen
+  geleert und neu geladen (`refresh_room_history`), damit nichts vom Vorgänger übrig bleibt.
+- Die Zusammenfassung (`summary`) entsteht nur aus sichtbarem Text und folgt weiter der Reichweite.
+
+Jeder Lade- und Schreibaufruf übergibt den Aufrufer als `user_id=` — ein AST-Test über `src/backend` hält das fest.

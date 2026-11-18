@@ -126,7 +126,7 @@ curl http://localhost:8000/api/chat/history/session-1234567890-abc?limit=20
 
 `metadata` enthält nur die Schlüssel, die der Client liest: `agent_role`, `artifacts`, `attachments`,
 `wb_entities` und `sources` (letztere bei `AUTH_ENABLED=true` nach den Rechten des Lesers gefiltert). Alle übrigen
-Schlüssel der gespeicherten `message_metadata` (`intent`, `action_success`, `action_summary`, …) verlassen den
+Schlüssel der gespeicherten `message_metadata` (`intent`, `action_success`, `action_summary`, `asker_user_id`, …) verlassen den
 Server über diese Route nicht; eine Nachricht ohne Metadaten liefert `null`.
 
 **Form einer Quelle (`sources[]`).** Zwei Arten; alle Felder außer der Kennung sind optional, ein Wert der
