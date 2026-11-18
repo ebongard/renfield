@@ -18,11 +18,23 @@ from pydantic_settings import BaseSettings
 # that can silently drift if someone changes the default literal.
 #
 # Update this list when introducing a new placeholder-defaulted secret.
+# These are the secrets EVERY process reads (backend and workers alike),
+# so the check runs wherever Settings is built.
 _CHANGEME_FIELDS: tuple[str, ...] = (
     "postgres_password",
     "secret_key",
-    "default_admin_password",
 )
+
+# Placeholder-defaulted secrets only the API process reads: the default admin
+# password is used by the admin bootstrap and the password change route, never
+# by a worker. The workers are not given it (one pod fewer holding a secret),
+# so checking it in the Settings validator made every worker start warn about
+# a secret it never uses — a warning that fires on every start trains everyone
+# to skip it, a real hit included. Checked by `warn_on_api_changeme_defaults()`,
+# which the API startup calls.
+_API_CHANGEME_FIELDS: tuple[str, ...] = ("default_admin_password",)
+
+_DEVELOPMENT_ENVS = frozenset({"development", "dev", "test"})
 
 
 # RENFIELD_ENV values that mean "a real deployment": they arm the boot guards
@@ -2292,13 +2304,26 @@ class Settings(BaseSettings):
         other than the default `"development"` (e.g. `"production"`,
         `"staging"`, or `"prod"`). Tests can opt in to the warning path
         by setting RENFIELD_ENV explicitly.
+
+        Only the secrets every process reads; the API-only ones are checked
+        by :meth:`warn_on_api_changeme_defaults` at API startup.
         """
+        self._warn_on_placeholders(_CHANGEME_FIELDS)
+        return self
+
+    def warn_on_api_changeme_defaults(self) -> None:
+        """The W13 warning for the secrets only the API process reads
+        (`_API_CHANGEME_FIELDS`). Called by the API startup, never by a
+        worker — a worker is not given these secrets."""
+        self._warn_on_placeholders(_API_CHANGEME_FIELDS)
+
+    def _warn_on_placeholders(self, field_names: tuple[str, ...]) -> None:
         env = self.renfield_env.strip().lower()
-        if env in {"development", "dev", "test"}:
-            return self
+        if env in _DEVELOPMENT_ENVS:
+            return
 
         offenders: list[str] = []
-        for field_name in _CHANGEME_FIELDS:
+        for field_name in field_names:
             field_info = type(self).model_fields.get(field_name)
             if field_info is None:
                 continue  # field renamed/removed — silent skip is intentional
@@ -2317,10 +2342,9 @@ class Settings(BaseSettings):
                 f"⚠ INSECURE DEFAULT(S) IN USE — RENFIELD_ENV={env!r} but the "
                 f"following fields are still on their class-level placeholder "
                 f"default: {', '.join(offenders)}. Set them via env vars "
-                "(POSTGRES_PASSWORD, SECRET_KEY, DEFAULT_ADMIN_PASSWORD) or "
+                f"({', '.join(name.upper() for name in offenders)}) or "
                 "Docker Secrets."
             )
-        return self
 
     @model_validator(mode="after")
     def fail_closed_on_insecure_jwt_key(self) -> "Settings":

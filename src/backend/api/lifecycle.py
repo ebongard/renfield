@@ -154,6 +154,9 @@ def _schedule_kb_shares_warning() -> None:
 
 async def _init_auth():
     """Initialize authentication system with default roles and admin user."""
+    # The admin password is an API-only secret: checked here, where it is
+    # used, not in every worker that builds Settings.
+    settings.warn_on_api_changeme_defaults()
     try:
         from services.auth_service import ensure_admin_user, ensure_default_roles
 
