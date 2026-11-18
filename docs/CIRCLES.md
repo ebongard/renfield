@@ -529,7 +529,10 @@ von Werkzeugergebnissen, die in den Prompt zurückkehren, nicht:
   Stimm-Anhebung; Satellit: die Person des erkannten Sprechers ab `VOICE_AUTH_MIN_CONFIDENCE` — derselben Schwelle
   wie die Stimm-Anhebung im Browser —, nie das Gerätekonto; ohne Sprecher oder darunter kein Schlüssel und keine
   eigenen Ergebnisse, die Berechtigungen des Zuges bleiben davon unberührt; REST: der Aufrufer; Scan-Fertigmeldung
-  und Paperless-Ablagemeldung: die anfragende bzw. bestätigende Person). `ConversationService.load_context` spielt die Zusammenfassung unter auth nur ein, wenn der
+  und Paperless-Ablagemeldung: die anfragende bzw. bestätigende Person). **Ein Gerätekonto ist auf KEINEM Weg der
+  Fragende** — ein Raum-Tablet steht wie der Satellit für jede Person davor; vor dem Review zu #1578 galt das nur
+  auf dem Satellitenpfad. Jeder `record_asker` bezieht den Fragenden aus `prompt_asker` bzw.
+  `speaker_prompt_identity` (AST-Test). `ConversationService.load_context` spielt die Zusammenfassung unter auth nur ein, wenn der
   Fragende der Aufrufer ist, und entfernt sie sonst auch aus den mitgegebenen Metadaten. Der Schlüssel steht nicht
   in `CLIENT_METADATA_KEYS` und verlässt den Server nie.
 - `conversations.context_vars`: unter auth je Schreiber ein Fach, `{"_per_writer": {"<user_id>": {…}}}` in
