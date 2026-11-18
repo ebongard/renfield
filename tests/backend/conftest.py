@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text as _sa_text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # The sqlite compatibility shims that used to live here (TSVECTOR→TEXT,
@@ -234,6 +235,103 @@ def _truncate_sql(names: list[str]) -> str:
     because the tables reference each other."""
     joined = ", ".join(f'"{n}"' for n in names)
     return f"TRUNCATE {joined} RESTART IDENTITY CASCADE"
+
+
+# The foreign keys that can REFUSE a parent's DELETE, as (child, parent):
+# NO ACTION ('a') and RESTRICT ('r'). A CASCADE / SET NULL / SET DEFAULT key
+# never blocks it -- it rewrites the child -- so it orders nothing; counting it
+# made `conversations` <-> `messages` (the active-leaf pointer, SET NULL,
+# against CASCADE) a cycle and sent every chat test to the slow TRUNCATE.
+# A self-reference orders nothing either: one DELETE removes all its rows.
+_FK_EDGES_SQL = """
+    SELECT DISTINCT c.relname, p.relname
+      FROM pg_constraint con
+      JOIN pg_class c ON c.oid = con.conrelid
+      JOIN pg_class p ON p.oid = con.confrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE con.contype = 'f' AND n.nspname = 'public' AND c.oid <> p.oid
+       AND con.confdeltype IN ('a', 'r')
+"""
+
+
+def _delete_order(dirty: list[str], edges: list[tuple[str, str]]) -> list[str] | None:
+    """The dirty tables, every child before its parent; None on a cycle.
+
+    Only edges between DIRTY tables order anything: an empty child holds no
+    row that could block deleting its parent.
+    """
+    pending = set(dirty)
+    children: dict[str, set[str]] = {t: set() for t in pending}
+    for child, parent in edges:
+        if child in pending and parent in pending:
+            children[parent].add(child)
+    order: list[str] = []
+    while pending:
+        free = sorted(t for t in pending if not (children[t] & pending))
+        if not free:
+            return None
+        order.extend(free)
+        pending.difference_update(free)
+    return order
+
+
+# Rounds of "delete, then ask again": a DELETE fires row triggers a TRUNCATE
+# never fired (the conversation tombstones, #1485), which fill another table.
+_MAX_DELETE_ROUNDS = 5
+
+# How often each path emptied the database; printed at the end of the run so a
+# fallback that creeps back (a new NO ACTION cycle) shows as a number, not as
+# a suite that is quietly an hour slower again.
+_CLEANUP_COUNTS = {"delete": 0, "truncate_fallback": 0}
+
+
+def pytest_terminal_summary(terminalreporter):
+    if any(_CLEANUP_COUNTS.values()):
+        terminalreporter.write_line(
+            "table cleanup between tests: "
+            f"{_CLEANUP_COUNTS['delete']} by DELETE, "
+            f"{_CLEANUP_COUNTS['truncate_fallback']} by the TRUNCATE fallback"
+        )
+
+
+async def _empty_tables(conn, tables: list[str]) -> None:
+    """Leave every table of `public` empty.
+
+    `TRUNCATE … CASCADE` on the dirty tables alone took 2.2–2.5 s per test
+    (measured 2026-11-18, #1577): two dirty tables (`users`, `roles`) dragged
+    66 of 79 tables into the CASCADE, and a TRUNCATE gives every one of them
+    new files. A DELETE of the few rows a test wrote costs milliseconds. The
+    TRUNCATE stays as the fallback for what DELETE cannot do in one pass — a
+    cycle between dirty tables, a RESTRICT that fires mid-statement, or a
+    trigger that keeps refilling a table — so the result is the same either
+    way: an empty database.
+    """
+    edges = [(r[0], r[1]) for r in (await conn.execute(_sa_text(_FK_EDGES_SQL))).all()]
+    for round_no in range(_MAX_DELETE_ROUNDS):
+        dirty = [
+            r[0] for r in (await conn.execute(_sa_text(_non_empty_tables_sql(tables)))).all()
+        ]
+        if not dirty:
+            if round_no:
+                _CLEANUP_COUNTS["delete"] += 1
+            return
+        order = _delete_order(dirty, edges)
+        if order is None:
+            break
+        try:
+            async with conn.begin_nested():
+                for name in order:
+                    await conn.execute(_sa_text(f'DELETE FROM "{name}"'))
+        except DBAPIError:
+            # The database refused a DELETE (a RESTRICT, a trigger); the
+            # savepoint is rolled back and the TRUNCATE below does the job.
+            break
+    dirty = [
+        r[0] for r in (await conn.execute(_sa_text(_non_empty_tables_sql(tables)))).all()
+    ]
+    if dirty:
+        _CLEANUP_COUNTS["truncate_fallback"] += 1
+        await conn.execute(_sa_text(_truncate_sql(dirty)))
 
 
 # `create_all` renders `search_vector` as a plain tsvector column: SQLAlchemy
@@ -453,23 +551,19 @@ async def async_engine():
     engine = create_async_engine(_pg_url_or_skip(), poolclass=NullPool, echo=False)
 
     # Empty every table instead of rebuilding the schema: dropping and creating
-    # ~120 tables costs seconds PER TEST (measured: 2.5 s), one TRUNCATE costs
-    # milliseconds, and both give the same thing that matters — a test starts
-    # with an empty database and sees committed rows, including those written
-    # by code that opens its own `AsyncSessionLocal`.
+    # the tables costs seconds PER TEST, deleting the rows a test wrote costs
+    # milliseconds (`_empty_tables`), and both give the same thing that
+    # matters — a test starts with an empty database and sees committed rows,
+    # including those written by code that opens its own `AsyncSessionLocal`.
     async with engine.begin() as conn:
         tables = [r[0] for r in (await conn.execute(_sa_text(_EXISTING_TABLES_SQL))).all()]
         if tables:
-            dirty = [
-                r[0] for r in
-                (await conn.execute(_sa_text(_non_empty_tables_sql(tables)))).all()
-            ]
-            if dirty:
-                await conn.execute(_sa_text(_truncate_sql(dirty)))
-            # A test that INSERTS and rolls back leaves the table empty but the
-            # sequence advanced — so the truncate above never touches it, and
-            # the next test's ids depend on run order. Reset every sequence that
-            # has been called; that is what `RESTART IDENTITY` promises.
+            await _empty_tables(conn, tables)
+            # A DELETE leaves the sequences where they were, and a test that
+            # INSERTS and rolls back advances one without leaving a row — so
+            # the next test's ids would depend on run order. Reset every
+            # sequence that has been called: a test that asserts on ids starts
+            # at 1.
             used = [
                 r[0] for r in (await conn.execute(_sa_text(_USED_SEQUENCES_SQL))).all()
             ]
