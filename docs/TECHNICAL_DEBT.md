@@ -716,6 +716,31 @@ auf), 8 GB Arbeitsspeicher (ein Lauf belegt bis 1,8 GB) und das Redis des Dev-St
 (`login_fail:*`/`login_lock:*` unter festen Schlüsseln). Der Gewinn der eigenen Datenbank
 ist, dass niemand mehr ansteht — nicht der Durchsatz.
 
+**Wohin die Zeit ging, und was davon behoben ist** (#1577, gemessen 2026-11-18, ein Lauf
+allein, `--durations=0`):
+
+| | vorher | nachher |
+|---|---|---|
+| Gesamtlaufzeit | 1:24:41 | 0:28:42 |
+| Vorbereitung (setup) aller Tests | 3.676 s | 333 s |
+| Testrümpfe (call) | 1.336 s | 1.322 s |
+
+- **Ursache: das Leeren zwischen den Tests**, nicht die Platte an sich. Schon zwei Tabellen
+  mit Zeilen (`users`, `roles`) zogen über `TRUNCATE … CASCADE` 66 von 79 Tabellen mit, und
+  jede bekam neue Dateien: 2,2 bis 2,5 s je Datenbanktest, 68 % des Laufs.
+- **Jetzt:** `DELETE` der Zeilen, Kinder vor Eltern. Es ordnen nur `NO ACTION`/`RESTRICT`/
+  `CASCADE`-Schlüssel. Ein `CASCADE` verweigert nichts, löscht aber Kinder mit, deren eigene
+  Kinder dann verweigern (`atoms` → `documents` → `document_chunks`). `SET NULL` ordnet
+  nichts, sonst wäre `conversations` ↔ `messages` ein Zyklus. Bei einem echten Zyklus bleibt
+  `TRUNCATE` als Ausweg. Der Lauf druckt, wie oft er nötig war; ein Strukturtest verlangt
+  eine Löschreihenfolge über das ganze Schema (`test_conftest_table_cleanup.py`).
+- **Was noch Zeit kostet:**
+  - ~9 min echte Ollama-Embeddings auf der CPU, allein `test_notes.py` 408 s;
+  - ~4 min Paperless-Uploadtests, die ein echtes 30-s-Abfrage-Timeout absitzen;
+  - der Rest sind ~10.600 Tests unter 0,1 s.
+  
+  Danach erst `pytest-xdist` (#1577, Schritte 2–4).
+
 Die Migrationstests arbeiten in eigenen Wegwerf-Schemata neben `public` und finden `vector`
 über `search_path = <schema>, public`; der Neuaufbau berührt sie nicht.
 
