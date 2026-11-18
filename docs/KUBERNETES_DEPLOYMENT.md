@@ -281,7 +281,7 @@ Some GPU-backed services in the `renfield` namespace are exposed to **other clus
 |---|---|---|---|
 | `ollama.test.local` | `ollama` | 11434 | Reva router / embeddings |
 | `voice.test.local` | `voice-server` | 8080 | Reva voice (`VOICE_SERVER_URL`) |
-| `llama-agent.test.local` | `llama-server-agent` | 8080 | (dormant — agent normally scaled to 0) |
+| `llama-agent.test.local` | `llama-server-agent` | 8080 | (dead end — the agent is scaled to 0 and cannot schedule: it requests 2 GPUs on k8s-gpu-1, which allocates none; see `docs/GPU_TOPOLOGY.md` §1) |
 
 > In-cluster Renfield (`backend`) reaches these same services via the ClusterIP Services (`voice-server:8080`, `ollama:11434`) and does **not** use these ingresses.
 
