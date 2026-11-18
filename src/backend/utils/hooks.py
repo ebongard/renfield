@@ -264,7 +264,9 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     #       the YAML-extracted ones (config/context_extraction.yaml) and then
     #       bounded (public keys only, scalar values, size caps — see
     #       services/context_extractor.bound_context_vars) before they are
-    #       stored and shown to the agent on the next turn.
+    #       stored and shown to the agent on the next turn. `user_id` is the
+    #       WRITER: under auth what the handler returns lands in that user's
+    #       own bucket and is shown only to that user's next turns (#1568).
     #   build_synthesis_context: (message, sub_results, lang) -> str | None
     #       Fired inside QueryOrchestrator._synthesize before the synth
     #       prompt is templated. Plugins return a text block that gets

@@ -15,7 +15,7 @@ from models.permissions import Permission
 from services.api_rate_limiter import limiter
 from services.auth_service import get_current_user, require_permission
 from services.circle_sql import conversations_circles_filter
-from services.conversation_service import ConversationService
+from services.conversation_service import ConversationService, record_asker
 from services.database import get_db
 from services.input_guard import detect_injection
 from services.ollama_service import OllamaService
@@ -297,7 +297,8 @@ async def send_message(
                     conversation_id=conversation.id,
                     role="assistant",
                     content=response_text,
-                    message_metadata={"agent": True}
+                    # Names its asker like every answer (#1568).
+                    message_metadata=record_asker({"agent": True}, user_id),
                 )
                 db.add(assistant_msg)
                 conversation.updated_at = datetime.now(UTC).replace(tzinfo=None)
@@ -387,10 +388,10 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
             conversation_id=conversation.id,
             role="assistant",
             content=response_text,
-            message_metadata={
+            message_metadata=record_asker({
                 "intent": intent,
                 "action_result": action_result
-            }
+            }, user_id),
         )
         db.add(assistant_msg)
 

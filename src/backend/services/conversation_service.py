@@ -69,6 +69,41 @@ class ConversationDeletedError(ConversationNotOwnedError):
     """
 
 
+#: The key of an assistant message's metadata that names who asked (#1568):
+#: the server-side user id of the turn (the authenticated socket user, the
+#: recognised speaker, the REST caller), never a value from the model or the
+#: client. Absent when the turn had no identity. Kept out of every client
+#: payload by the history route's allowlist (`CLIENT_METADATA_KEYS`).
+ASKER_METADATA_KEY = "asker_user_id"
+
+
+def record_asker(metadata: dict, asker_user_id: int | None) -> dict:
+    """Name the asker in an assistant message's metadata (in place); no
+    identity, no key -- such a row then counts as written by nobody."""
+    if asker_user_id is not None:
+        metadata[ASKER_METADATA_KEY] = int(asker_user_id)
+    return metadata
+
+
+def tool_result_reaches_caller(
+    writer_id: int | None, caller_id: int | None, *, legacy_visible: bool,
+) -> bool:
+    """The one rule for a stored tool result re-entering a prompt (#1568).
+
+    In a shared thread the next person to continue is not necessarily the one
+    who asked, and what the asker's tools returned is the asker's. So, under
+    auth: a result reaches the caller who wrote it and nobody else; a result
+    without a writer (written before the writer was recorded) reaches only
+    where ``legacy_visible`` (`ConversationService.legacy_prompt_state_visible`);
+    a caller without identity gets nothing. Auth-off callers never ask.
+    """
+    if caller_id is None:
+        return False
+    if writer_id is None:
+        return legacy_visible
+    return writer_id == caller_id
+
+
 class ConversationService:
     """
     Service for conversation persistence.
@@ -144,6 +179,67 @@ class ConversationService:
         if caller_has_chat_all:
             return True
         return conversation.user_id == user_id
+
+    async def is_private(self, conversation: Any) -> bool:
+        """Whether the conversation is shared with nobody: tier 0 (`self`) on
+        the row AND on every atom of it (`atoms.policy` is canonical), and no
+        explicit grant.
+
+        Tier 0 is a document's own default reach too; a circle member at depth
+        0 reaches both alike, so this is "not shared beyond tier 0", not
+        "owner-only" -- callers that mean "the caller's own" check the owner
+        as well (`legacy_prompt_state_visible`).
+
+        Takes anything with ``id``, ``circle_tier`` and ``atom_id`` (an ORM row
+        or a column tuple, as the scanner passes).
+
+        🛑 The atoms are found the way the READ path finds them
+        (`circle_sql.conversations_circles_filter`: ``source_table='conversations'
+        AND source_id = c.id``), plus ``conversations.atom_id``. Following only
+        the pointer would let a drifted second atom carry a grant the reader
+        honours. Fail-closed: an atom without a readable tier counts as shared.
+        """
+        if conversation.circle_tier != 0:
+            return False
+        from sqlalchemy import or_
+
+        from models.database import Atom, AtomExplicitGrant
+
+        match = (Atom.source_table == "conversations") & (Atom.source_id == str(conversation.id))
+        if conversation.atom_id is not None:
+            match = or_(match, Atom.atom_id == conversation.atom_id)
+        atoms = (await self.db.execute(select(Atom.atom_id, Atom.policy).where(match))).all()
+        for atom in atoms:
+            if not isinstance(atom.policy, dict) or atom.policy.get("tier") != 0:
+                return False
+        if not atoms:
+            return True
+        grant = (
+            await self.db.execute(
+                select(AtomExplicitGrant.atom_id)
+                .where(AtomExplicitGrant.atom_id.in_([a.atom_id for a in atoms]))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        return grant is None
+
+    async def legacy_prompt_state_visible(
+        self, conversation: Conversation, caller_id: int | None,
+    ) -> bool:
+        """May a tool result that names no asker reach this caller's prompt? (#1568)
+
+        Rows written before the asker was recorded (an ``action_summary``
+        without ``asker_user_id``, a context variable outside the per-writer
+        buckets) cannot say who they belong to. They are the owner's only where
+        nobody else can have written them: a PRIVATE conversation of the
+        caller's own. Everywhere else -- a room thread, a conversation shared
+        at a tier above 0 or by grant -- they reach nobody.
+        """
+        if caller_id is None or conversation.user_id is None:
+            return False
+        if conversation.user_id != caller_id:
+            return False
+        return await self.is_private(conversation)
 
     async def ensure_atom(self, conversation: Conversation) -> None:
         """Give an owned conversation its atoms row (circles rule: never a bare
@@ -469,7 +565,10 @@ class ConversationService:
         Args:
             session_id: session id of the conversation
             max_messages: Maximum number of messages to load
-            user_id: Authenticated caller identity (for the ownership check).
+            user_id: Server-side caller identity -- for the ownership check AND,
+                under auth, for the action-summary gate (#1568): a stored
+                ``action_summary`` enters the context only for the caller who
+                asked. ``None`` under auth gets no summary at all.
             enforce_ownership: When True (auth-enabled deployments), a conversation
                 owned by a DIFFERENT user is treated as not-found and yields an empty
                 context — closing the cross-user history-read IDOR on the WS path
@@ -535,13 +634,36 @@ class ConversationService:
 
             # Convert to the chat format (oldest first)
             # Reconstruct action summary prefix for LLM context (kept out of DB content for clean UI)
+            #
+            # 🛑 Under auth only for the caller who ASKED (#1568): in a shared
+            # thread the next one to continue is another member, and the
+            # summary is the asker's tool result (Paperless hits, retrieved
+            # text). Read from the flag here and not from `enforce_ownership`:
+            # the satellite does not enforce reach, yet must gate. A refused
+            # summary leaves the metadata too, so no later reader of the list
+            # can pick it up there.
+            gate = settings.auth_enabled
+            legacy_visible: bool | None = None
             context = []
             for msg in reversed(messages):
                 content = msg.content
-                if (msg.role == "assistant"
-                        and msg.message_metadata
-                        and msg.message_metadata.get("action_summary")):
-                    summary = msg.message_metadata["action_summary"]
+                metadata = msg.message_metadata
+                summary = (
+                    metadata.get("action_summary")
+                    if msg.role == "assistant" and isinstance(metadata, dict) else None
+                )
+                if summary and gate:
+                    asker = metadata.get(ASKER_METADATA_KEY)
+                    if asker is None and legacy_visible is None:
+                        legacy_visible = await self.legacy_prompt_state_visible(
+                            conversation, user_id,
+                        )
+                    if not tool_result_reaches_caller(
+                        asker, user_id, legacy_visible=bool(legacy_visible),
+                    ):
+                        summary = None
+                        metadata = {k: v for k, v in metadata.items() if k != "action_summary"}
+                if summary:
                     content = (
                         f"[Aktionsergebnis — Verwende diese Daten für "
                         f"Folgeanfragen (IDs, Titel, etc.):\n{summary}]\n\n{content}"
@@ -549,7 +671,7 @@ class ConversationService:
                 context.append({
                     "role": msg.role,
                     "content": content,
-                    "metadata": msg.message_metadata,
+                    "metadata": metadata,
                 })
 
             logger.info(f"Loaded: {len(context)} messages for session {session_id}")
@@ -981,8 +1103,17 @@ class ConversationService:
         like ``save_message``): a conversation outside the caller's reach is
         not written. A missing conversation is not created here — the vars
         belong to a turn whose messages are saved by their own path.
+
+        Under auth (read from the flag, like the read side) the values go into
+        the writer's own bucket (`context_extractor.merge_writer_context_vars`,
+        #1568); ``user_id`` is the writer and must be the server's identity of
+        the turn. Under auth-off the flat merge is unchanged.
         """
-        from services.context_extractor import merge_context_vars
+        from services.context_extractor import (
+            legacy_context_vars,
+            merge_context_vars,
+            merge_writer_context_vars,
+        )
 
         try:
             # FOR UPDATE: read-modify-write of one JSON column. Two writers
@@ -1005,7 +1136,20 @@ class ConversationService:
                 return False
 
             before = conversation.context_vars or {}
-            current = merge_context_vars(before, vars_dict)
+            if settings.auth_enabled:
+                # Per writer (#1568): what this caller's tools returned is
+                # theirs, and a shared thread has several callers. Under auth
+                # a value without a writer is not written any more.
+                if user_id is None:
+                    await self.db.rollback()
+                    return False
+                current = merge_writer_context_vars(
+                    before, user_id, vars_dict,
+                    fold_legacy=bool(legacy_context_vars(before))
+                    and await self.legacy_prompt_state_visible(conversation, user_id),
+                )
+            else:
+                current = merge_context_vars(before, vars_dict)
             if current == before:
                 # e.g. only delete markers for keys that are not there
                 await self.db.rollback()
@@ -1089,13 +1233,38 @@ class ConversationService:
         conversation within the caller's reach. The vars carry tool results
         (a document title, an email sender) — another person's must not reach
         this caller's prompt.
+
+        And within reach, under auth, only what THIS caller wrote (#1568): a
+        shared thread holds one bucket per writer, and the legacy layer
+        (values without a writer) is read only in a private conversation of
+        the caller's own (`legacy_prompt_state_visible`). No identity under
+        auth reads nothing. Auth-off reads the flat layer as before.
         """
+        from services.context_extractor import legacy_context_vars, writer_context_vars
+
         try:
-            row = await self._readable_column(
-                session_id, Conversation.context_vars,
-                user_id=user_id, enforce_ownership=enforce_ownership,
-            )
-            return dict(row) if row else {}
+            conversation = (await self.db.execute(
+                select(Conversation).where(Conversation.session_id == session_id)
+            )).scalar_one_or_none()
+            if conversation is None:
+                return {}
+            if enforce_ownership and not await self.reaches(conversation.id, user_id):
+                logger.warning(
+                    f"🚫 Refused conversation-state read outside the caller's reach: "
+                    f"session={session_id} caller={user_id}"
+                )
+                return {}
+            stored = conversation.context_vars or {}
+            if not settings.auth_enabled:
+                return legacy_context_vars(stored)
+            if user_id is None:
+                return {}
+            view: dict = {}
+            legacy = legacy_context_vars(stored)
+            if legacy and await self.legacy_prompt_state_visible(conversation, user_id):
+                view.update(legacy)
+            view.update(writer_context_vars(stored, user_id))
+            return view
         except Exception as e:
             logger.warning(f"Failed to load context vars: {error_text_without_content(e)}")
             return {}

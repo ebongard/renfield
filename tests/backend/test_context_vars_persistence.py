@@ -422,10 +422,13 @@ class TestTwoTurns:
                           if s.step_type == "tool_result" and s.success and s.data]
         await ch._persist_turn_context_vars(session_id, turn_vars, tool_summaries, 7)
 
-        assert await _row(db_session, session_id) == RECORDED_SHAPES[_PAPERLESS][1]
+        # Under auth the values sit in the writer's own bucket (#1568).
+        assert await _row(db_session, session_id) == {
+            "_per_writer": {"7": RECORDED_SHAPES[_PAPERLESS][1]}}
 
-        # --- turn 2 ---
-        context_vars_text = render_context_vars_text(await svc.load_context_vars(session_id))
+        # --- turn 2 --- (the same caller, as the handler loads it)
+        context_vars_text = render_context_vars_text(await svc.load_context_vars(
+            session_id, user_id=7, enforce_ownership=True))
         llm2, ollama2 = scripted_llm([
             json.dumps({"action": "final_answer", "answer": "Von Telekom.", "reason": "r"}),
         ])

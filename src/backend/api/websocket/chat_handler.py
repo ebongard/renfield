@@ -19,7 +19,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from models.websocket_messages import WSChatMessage, WSErrorCode
-from services.conversation_service import ConversationNotOwnedError
+from services.conversation_service import ConversationNotOwnedError, record_asker
 from services.database import AsyncSessionLocal
 from services.input_guard import detect_injection
 from services.turn_extraction import (
@@ -1579,6 +1579,13 @@ async def websocket_endpoint(
 
             # Retrieve user info and permissions
             user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
+            # Who ASKED (#1568): the authenticated socket user, taken before
+            # any voice promotion below. It is recorded on the assistant message
+            # and, under auth, keys the context variables, so a stored tool
+            # result re-enters only this caller's prompt -- the history and the
+            # vars are READ under the same JWT identity. Under auth-off the
+            # variables keep the effective identity they always had.
+            asker_user_id = user_id
 
             # Voice-driven identity claim: when no JWT user is set
             # (AUTH_ENABLED=false household deployment) and the wire
@@ -1963,7 +1970,7 @@ async def websocket_endpoint(
                             from services.conversation_service import ConversationService
                             await ConversationService(_ad_db).save_context_vars(
                                 msg_session_id, {"_active_domain": role.name},
-                                user_id=user_id,
+                                user_id=asker_user_id if settings.auth_enabled else user_id,
                                 enforce_ownership=settings.auth_enabled,
                             )
                     except Exception:
@@ -2756,6 +2763,8 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             }
             if action_summary:
                 assistant_metadata["action_summary"] = action_summary
+            # Every answer names its asker; the prompt gate reads it (#1568).
+            record_asker(assistant_metadata, asker_user_id)
             # Provenance: which documents this answer drew on (circle-filtered at
             # retrieval). Persisted so chips rehydrate on history load; also sent
             # on the `done` frame below for the live turn. Empty → key omitted.
@@ -3003,7 +3012,8 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # above rebound `msg_session_id` to the caller's fresh thread).
             if msg_session_id and saved_assistant_message_id is not None:
                 await _persist_turn_context_vars(
-                    msg_session_id, turn_context_vars, agent_tool_results, user_id
+                    msg_session_id, turn_context_vars, agent_tool_results,
+                    asker_user_id if settings.auth_enabled else user_id,
                 )
 
             # Check for output routing if we have room context

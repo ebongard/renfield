@@ -1,0 +1,552 @@
+"""A shared thread hands no member's tool results to the next member's prompt (#1568).
+
+A room history belongs to the device account at tier 2, and every member whose
+tier reaches it continues the ONE thread; a conversation above tier 0 is
+reached by others too, and a handoff copies messages into a room thread. Two
+carriers re-enter the prompt from such a thread:
+
+- `message_metadata.action_summary` (the asker's tool result: Paperless ids and
+  titles, retrieved text), re-injected by `ConversationService.load_context`;
+- `conversations.context_vars`, rendered into the agent prompt.
+
+Owner decision: every assistant message names its asker (`asker_user_id`),
+every context variable its writer; under auth a caller gets only their own.
+Rows without one (legacy) reach only the owner of a PRIVATE conversation; no
+caller identity gets nothing; auth-off is unchanged.
+
+Everything here runs on real Postgres: reach is the four-branch circle SQL.
+"""
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.database import Conversation, Message
+from services.conversation_service import ConversationService
+from tests.backend.dbrows import ensure_role, ensure_speaker, ensure_user
+from utils.config import settings
+
+pytestmark = [pytest.mark.backend, pytest.mark.database]
+
+BACKEND_ROOT = Path(__file__).resolve().parents[2] / "src" / "backend"
+
+DEVICE, ANNA, BERT = 1, 2, 3
+#: The stored key -- pinned by name: it is persisted, so renaming it would
+#: turn every recorded row into a legacy one.
+ASKER = "asker_user_id"
+PREFIX = "[Aktionsergebnis"
+A_SUMMARY = "mcp.paperless.search_documents → 1 Ergebnisse:\n  - id=4711, title=Befund Anna"
+
+
+async def _member_of(db: AsyncSession, owner_id: int, member_id: int, tier: int) -> None:
+    await db.execute(
+        text(
+            "INSERT INTO circle_memberships "
+            "(circle_owner_id, member_user_id, dimension, value, granted_by, granted_at) "
+            "VALUES (:o, :m, 'tier', :v, :o, NOW())"
+        ),
+        {"o": owner_id, "m": member_id, "v": str(tier)},
+    )
+    await db.commit()
+
+
+@pytest.fixture
+async def household(db_session: AsyncSession, monkeypatch):
+    """Device account plus Anna and Bert reaching its tier 2. Auth ON."""
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    await ensure_role(db_session)
+    device = await ensure_user(db_session, DEVICE, username="haushalt")
+    device.is_device_account = True
+    await ensure_user(db_session, ANNA, username="anna")
+    await ensure_user(db_session, BERT, username="bert")
+    await db_session.commit()
+    await _member_of(db_session, DEVICE, ANNA, 2)
+    await _member_of(db_session, DEVICE, BERT, 2)
+
+
+async def _thread(db, session_id: str, owner: int, tier: int) -> None:
+    svc = ConversationService(db)
+    await svc.save_message(session_id, "user", "Hallo", user_id=owner, circle_tier=tier)
+    await db.commit()
+
+
+async def _turn(db, session_id: str, asker: int | None, summary: str, *, legacy=False) -> None:
+    """One answered turn by `asker`, as the browser handler persists it."""
+    svc = ConversationService(db)
+    meta = {"intent": "agent", "action_success": True, "action_summary": summary}
+    if not legacy:
+        meta[ASKER] = asker
+    await svc.save_message(
+        session_id, "user", "Such meinen Befund", user_id=asker,
+        enforce_ownership=settings.auth_enabled,
+    )
+    await svc.save_message(
+        session_id, "assistant", "Gefunden.", metadata=meta, user_id=asker,
+        enforce_ownership=settings.auth_enabled,
+    )
+    await db.commit()
+
+
+async def _prompt(db, session_id: str, caller: int | None, *, enforce=True) -> str:
+    ctx = await ConversationService(db).load_context(
+        session_id, user_id=caller, enforce_ownership=enforce and settings.auth_enabled,
+    )
+    for m in ctx:
+        assert "action_summary" not in (m.get("metadata") or {}) or PREFIX in m["content"], (
+            "a refused summary must not ride along in the metadata")
+    return "\n".join(m["content"] for m in ctx)
+
+
+async def _vars(db, session_id: str, caller: int | None) -> dict:
+    return await ConversationService(db).load_context_vars(
+        session_id, user_id=caller, enforce_ownership=settings.auth_enabled,
+    )
+
+
+async def _write_vars(db, session_id: str, writer: int | None, values: dict) -> dict:
+    return await ConversationService(db).save_turn_context_vars(
+        session_id, values, user_id=writer, enforce_ownership=settings.auth_enabled,
+    )
+
+
+async def _stored(db, session_id: str):
+    db.expire_all()
+    return (await db.execute(
+        select(Conversation.context_vars).where(Conversation.session_id == session_id)
+    )).scalar_one()
+
+
+# ============================================================================
+# The shared thread: the asker gets their results, the next member does not
+# ============================================================================
+
+class TestSharedThread:
+    @pytest.mark.parametrize("shape", ["room_tier2_device_owner", "member_owned_tier1"])
+    async def test_the_next_member_gets_neither_the_asker_gets_both(
+        self, db_session, household, shape,
+    ):
+        if shape == "room_tier2_device_owner":
+            await _thread(db_session, "kueche", DEVICE, 2)
+        else:
+            # A conversation of Anna's own, shared at tier 1 with Bert.
+            await _member_of(db_session, ANNA, BERT, 1)
+            await _thread(db_session, "kueche", ANNA, 1)
+
+        await _turn(db_session, "kueche", ANNA, A_SUMMARY)
+        await _write_vars(db_session, "kueche", ANNA, {"last_document_title": "Befund Anna"})
+
+        bert_prompt = await _prompt(db_session, "kueche", BERT)
+        assert "Gefunden." in bert_prompt, "Bert reaches the thread -- the text is shared"
+        assert PREFIX not in bert_prompt and "Befund Anna" not in bert_prompt
+        assert await _vars(db_session, "kueche", BERT) == {}
+
+        anna_prompt = await _prompt(db_session, "kueche", ANNA)
+        assert PREFIX in anna_prompt and "id=4711" in anna_prompt
+        assert await _vars(db_session, "kueche", ANNA) == {"last_document_title": "Befund Anna"}
+
+    async def test_one_members_turn_neither_erases_nor_overwrites_anothers(
+        self, db_session, household,
+    ):
+        """Bert's turn writes the SAME key and clears another -- Anna's next
+        load still sees exactly what she wrote."""
+        await _thread(db_session, "kueche", DEVICE, 2)
+        await _write_vars(db_session, "kueche", ANNA, {
+            "last_document_title": "Befund Anna", "last_document_id": 4711})
+        await _write_vars(db_session, "kueche", BERT, {
+            "last_document_title": "Rechnung Bert", "last_document_id": None})
+        await ConversationService(db_session).save_context_vars(
+            "kueche", {"_active_domain": "media"}, user_id=BERT, enforce_ownership=True)
+
+        assert await _vars(db_session, "kueche", ANNA) == {
+            "last_document_title": "Befund Anna", "last_document_id": 4711}
+        assert await _vars(db_session, "kueche", BERT) == {
+            "last_document_title": "Rechnung Bert", "_active_domain": "media"}
+        # The routing state is per writer as well: Bert's domain does not
+        # steer Anna's next turn.
+        assert "_active_domain" not in await _vars(db_session, "kueche", ANNA)
+
+    async def test_the_device_owner_gets_no_members_results(self, db_session, household):
+        await _thread(db_session, "kueche", DEVICE, 2)
+        await _turn(db_session, "kueche", ANNA, A_SUMMARY)
+        await _write_vars(db_session, "kueche", ANNA, {"last_document_title": "Befund Anna"})
+        assert PREFIX not in await _prompt(db_session, "kueche", DEVICE)
+        assert await _vars(db_session, "kueche", DEVICE) == {}
+
+
+# ============================================================================
+# Legacy rows: no asker recorded
+# ============================================================================
+
+class TestLegacyRows:
+    async def _legacy(self, db, session_id: str, owner: int, tier: int) -> None:
+        await _thread(db, session_id, owner, tier)
+        await _turn(db, session_id, owner, A_SUMMARY, legacy=True)
+        conv = (await db.execute(
+            select(Conversation).where(Conversation.session_id == session_id))).scalar_one()
+        conv.context_vars = {"last_document_title": "Befund alt", "_active_domain": "documents"}
+        await db.commit()
+
+    async def test_private_and_owner_gets_them(self, db_session, household):
+        await self._legacy(db_session, "privat", ANNA, 0)
+        assert PREFIX in await _prompt(db_session, "privat", ANNA)
+        assert await _vars(db_session, "privat", ANNA) == {
+            "last_document_title": "Befund alt", "_active_domain": "documents"}
+
+    async def test_a_room_thread_gives_them_to_nobody(self, db_session, household):
+        await self._legacy(db_session, "kueche", DEVICE, 2)
+        for caller in (DEVICE, ANNA, BERT, None):
+            assert PREFIX not in await _prompt(db_session, "kueche", caller)
+            assert await _vars(db_session, "kueche", caller) == {}
+
+    async def test_the_owner_of_a_shared_conversation_does_not_get_them(
+        self, db_session, household,
+    ):
+        """Above tier 0 somebody else may have written them -- nobody gets them."""
+        await _member_of(db_session, ANNA, BERT, 1)
+        await self._legacy(db_session, "geteilt", ANNA, 1)
+        for caller in (ANNA, BERT):
+            assert PREFIX not in await _prompt(db_session, "geteilt", caller)
+            assert await _vars(db_session, "geteilt", caller) == {}
+
+    async def test_a_depth_0_member_reaching_a_private_row_is_not_its_owner(
+        self, db_session, household,
+    ):
+        await _member_of(db_session, ANNA, BERT, 0)
+        await self._legacy(db_session, "privat", ANNA, 0)
+        assert "Gefunden." in await _prompt(db_session, "privat", BERT), "Bert reaches it"
+        assert PREFIX not in await _prompt(db_session, "privat", BERT)
+        assert await _vars(db_session, "privat", BERT) == {}
+
+    async def test_an_explicit_grant_makes_it_shared(self, db_session, household):
+        from models.database import AtomExplicitGrant
+
+        await self._legacy(db_session, "privat", ANNA, 0)
+        conv = (await db_session.execute(
+            select(Conversation).where(Conversation.session_id == "privat"))).scalar_one()
+        assert conv.atom_id is not None
+        db_session.add(AtomExplicitGrant(
+            atom_id=conv.atom_id, granted_to_user_id=BERT, granted_by=ANNA))
+        await db_session.commit()
+        assert PREFIX not in await _prompt(db_session, "privat", ANNA)
+        assert await _vars(db_session, "privat", ANNA) == {}
+
+
+# ============================================================================
+# No caller identity; auth-off
+# ============================================================================
+
+class TestNoIdentityAndAuthOff:
+    async def test_satellite_without_a_speaker_gets_nothing(self, db_session, household):
+        """The satellite loads without `enforce_ownership` and, with no
+        recognised speaker, without identity: no summary at all, own or legacy."""
+        await _thread(db_session, "kueche", DEVICE, 2)
+        await _turn(db_session, "kueche", ANNA, A_SUMMARY)
+        await _turn(db_session, "kueche", ANNA, "alt → x", legacy=True)
+        prompt = await _prompt(db_session, "kueche", None, enforce=False)
+        assert "Gefunden." in prompt and PREFIX not in prompt
+        assert await ConversationService(db_session).load_context_vars("kueche") == {}
+
+    async def test_satellite_with_the_asker_speaking_gets_them(self, db_session, household):
+        await _thread(db_session, "kueche", DEVICE, 2)
+        await _turn(db_session, "kueche", ANNA, A_SUMMARY)
+        assert PREFIX in await _prompt(db_session, "kueche", ANNA, enforce=False)
+        assert PREFIX not in await _prompt(db_session, "kueche", BERT, enforce=False)
+
+    async def test_no_writer_under_auth_writes_nothing(self, db_session, household):
+        await _thread(db_session, "kueche", DEVICE, 2)
+        assert await ConversationService(db_session).save_context_vars(
+            "kueche", {"last_document_id": 1}) is False
+        assert await _stored(db_session, "kueche") is None
+
+    async def test_auth_off_is_unchanged(self, db_session, household, monkeypatch):
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        await _thread(db_session, "raum", None, 0)
+        await _turn(db_session, "raum", None, A_SUMMARY, legacy=True)
+        await _turn(db_session, "raum", ANNA, "zweite → y")  # an asker recorded, ignored
+        await _write_vars(db_session, "raum", None, {"last_document_title": "Befund"})
+        await _write_vars(db_session, "raum", BERT, {"last_document_id": 4711})
+
+        for caller in (None, ANNA, BERT):
+            prompt = await _prompt(db_session, "raum", caller, enforce=False)
+            assert prompt.count(PREFIX) == 2
+            assert await _vars(db_session, "raum", caller) == {
+                "last_document_title": "Befund", "last_document_id": 4711}
+        # Storage keeps the flat shape it always had.
+        assert await _stored(db_session, "raum") == {
+            "last_document_title": "Befund", "last_document_id": 4711}
+
+
+# ============================================================================
+# The private chat stays the same in effect
+# ============================================================================
+
+class TestPrivateChatUnchanged:
+    async def _run(self, db, session_id: str, user: int | None) -> tuple[str, list[dict]]:
+        """The same private conversation, from a legacy start through new turns."""
+        svc = ConversationService(db)
+        await _thread(db, session_id, user, 0)
+        await _turn(db, session_id, user, "alt → id=1", legacy=True)
+        conv = (await db.execute(
+            select(Conversation).where(Conversation.session_id == session_id))).scalar_one()
+        conv.context_vars = {"last_document_title": "Alt", "last_document_correspondent": "Telekom"}
+        await db.commit()
+
+        views = [await _vars(db, session_id, user)]
+        await _turn(db, session_id, user, A_SUMMARY)
+        # the second hit has no correspondent: the old one must go (delete marker)
+        await _write_vars(db, session_id, user, {
+            "last_document_title": "Neu", "last_document_correspondent": None})
+        views.append(await _vars(db, session_id, user))
+        await svc.save_context_vars(
+            session_id, {"_active_domain": "documents"}, user_id=user,
+            enforce_ownership=settings.auth_enabled)
+        await _write_vars(db, session_id, user, {"last_document_id": 9})
+        views.append(await _vars(db, session_id, user))
+        return await _prompt(db, session_id, user), views
+
+    async def test_auth_on_private_equals_auth_off(self, db_session, household, monkeypatch):
+        on_prompt, on_views = await self._run(db_session, "privat-an", ANNA)
+
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        off_prompt, off_views = await self._run(db_session, "privat-aus", ANNA)
+
+        assert on_prompt == off_prompt
+        assert on_prompt.count(PREFIX) == 2
+        assert on_views == off_views
+        assert on_views[1] == {"last_document_title": "Neu"}
+        assert list(on_views[2]) == list(off_views[2]), "recency order is kept too"
+
+
+# ============================================================================
+# Handoff carries the asker along
+# ============================================================================
+
+class TestHandoff:
+    async def _source(self, db) -> int:
+        from services import conversation_handoff
+
+        conversation_handoff._last_handoff.clear()
+        speaker_id = (await ensure_speaker(db, 1, "anna")).id
+        await _thread(db, "satellite-kueche", DEVICE, 2)
+        await _turn(db, "satellite-kueche", ANNA, A_SUMMARY)
+        await _write_vars(db, "satellite-kueche", ANNA, {"last_document_title": "Befund Anna"})
+        db.expire_all()
+        source = (await db.execute(select(Conversation).where(
+            Conversation.session_id == "satellite-kueche"))).scalar_one()
+        source.speaker_id = speaker_id
+        await db.commit()
+        return speaker_id
+
+    async def test_the_asker_travels_into_the_target_room(self, db_session, household):
+        from services.conversation_handoff import try_handoff_context
+
+        speaker_id = await self._source(db_session)
+        assert await try_handoff_context(speaker_id, "satellite-bad", db_session) is True
+
+        target = (await db_session.execute(select(Conversation).where(
+            Conversation.session_id == "satellite-bad"))).scalar_one()
+        copied = (await db_session.execute(select(Message.message_metadata).where(
+            Message.conversation_id == target.id, Message.role == "assistant"))).scalars().all()
+        assert [m.get(ASKER) for m in copied if m and m.get("action_summary")] == [ANNA]
+
+        assert PREFIX in await _prompt(db_session, "satellite-bad", ANNA)
+        assert "Gefunden." in await _prompt(db_session, "satellite-bad", BERT)
+        assert PREFIX not in await _prompt(db_session, "satellite-bad", BERT)
+        assert await _vars(db_session, "satellite-bad", ANNA) == {"last_document_title": "Befund Anna"}
+        assert await _vars(db_session, "satellite-bad", BERT) == {}
+
+    async def test_an_existing_target_keeps_the_other_members_variables(
+        self, db_session, household,
+    ):
+        from services.conversation_handoff import try_handoff_context
+
+        # The target room already holds Bert's own variables.
+        await _thread(db_session, "satellite-bad", DEVICE, 2)
+        await _write_vars(db_session, "satellite-bad", BERT, {"last_media_name": "Bert"})
+        await db_session.execute(text(
+            "UPDATE conversations SET updated_at = updated_at - interval '1 minute' "
+            "WHERE session_id = 'satellite-bad'"))
+        await db_session.commit()
+        speaker_id = await self._source(db_session)
+
+        assert await try_handoff_context(speaker_id, "satellite-bad", db_session) is True
+
+        assert await _vars(db_session, "satellite-bad", ANNA) == {"last_document_title": "Befund Anna"}
+        assert await _vars(db_session, "satellite-bad", BERT) == {"last_media_name": "Bert"}
+
+
+# ============================================================================
+# The satellite's identity and its room list
+# ============================================================================
+
+class TestSatelliteIdentity:
+    async def test_the_prompt_identity_is_the_person_never_the_device(
+        self, db_session, household, own_session_to_test_db,
+    ):
+        from ha_glue.api.websocket.satellite_handler import speaker_prompt_identity
+        from models.database import User
+
+        anna_spk = await ensure_speaker(db_session, 1, "anna")
+        dev_spk = await ensure_speaker(db_session, 2, "haushalt")
+        await ensure_speaker(db_session, 3, "gast")
+        for uid, spk in ((ANNA, anna_spk), (DEVICE, dev_spk)):
+            (await db_session.execute(select(User).where(User.id == uid))).scalar_one().speaker_id = spk.id
+        await db_session.commit()
+
+        assert await speaker_prompt_identity(anna_spk.id) == ANNA
+        assert await speaker_prompt_identity(dev_spk.id) is None
+        assert await speaker_prompt_identity(3) is None
+        assert await speaker_prompt_identity(None) is None
+
+
+@pytest.mark.unit
+class TestRoomHistoryRefresh:
+    """The satellite's in-memory list is the ROOM's; it must not carry one
+    speaker's results to the next."""
+
+    def _ollama(self, by_caller: dict):
+        calls = []
+
+        async def load(session_id, db, max_messages=20, user_id=None, enforce_ownership=False):
+            calls.append(user_id)
+            if by_caller.get(user_id) == "boom":
+                raise RuntimeError("db down")
+            return list(by_caller.get(user_id, []))
+
+        return SimpleNamespace(load_conversation_context=load), calls
+
+    async def _refresh(self, ollama, history, loaded, loaded_for, caller):
+        from ha_glue.api.websocket.satellite_handler import refresh_room_history
+
+        return await refresh_room_history(
+            ollama, "satellite-x", history, loaded=loaded, loaded_for=loaded_for, caller=caller)
+
+    async def test_a_new_speaker_reloads_and_the_old_list_goes(self, monkeypatch):
+        monkeypatch.setattr(settings, "auth_enabled", True)
+        ollama, calls = self._ollama({ANNA: [{"content": "A-Ergebnis"}], BERT: [{"content": "B"}]})
+        history: list = []
+        state = await self._refresh(ollama, history, False, None, ANNA)
+        assert state == (True, ANNA) and history == [{"content": "A-Ergebnis"}]
+        assert await self._refresh(ollama, history, *state, ANNA) == (True, ANNA)
+        assert calls == [ANNA], "the same speaker keeps the once-per-day load"
+
+        state = await self._refresh(ollama, history, True, ANNA, BERT)
+        assert state == (True, BERT) and history == [{"content": "B"}]
+        state = await self._refresh(ollama, history, *state, None)
+        assert state == (True, None) and history == []
+
+    async def test_a_failed_reload_leaves_nothing_behind(self, monkeypatch):
+        monkeypatch.setattr(settings, "auth_enabled", True)
+        ollama, _ = self._ollama({BERT: "boom"})
+        history = [{"content": "A-Ergebnis"}]
+        assert await self._refresh(ollama, history, True, ANNA, BERT) == (True, ANNA)
+        assert history == []
+
+    async def test_auth_off_loads_once(self, monkeypatch):
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        ollama, calls = self._ollama({ANNA: [{"content": "A"}]})
+        history: list = []
+        state = await self._refresh(ollama, history, False, None, ANNA)
+        assert await self._refresh(ollama, history, *state, BERT) == state
+        assert calls == [ANNA] and history == [{"content": "A"}]
+
+
+# ============================================================================
+# Pure storage helpers
+# ============================================================================
+
+@pytest.mark.unit
+class TestWriterBuckets:
+    def test_merge_touches_only_the_writers_bucket(self):
+        from services.context_extractor import WRITERS_KEY, merge_writer_context_vars
+
+        stored = {"legacy": 1, WRITERS_KEY: {"3": {"k": "bert"}}}
+        out = merge_writer_context_vars(stored, 2, {"k": "anna"}, fold_legacy=False)
+        assert out == {"legacy": 1, WRITERS_KEY: {"3": {"k": "bert"}, "2": {"k": "anna"}}}
+        out = merge_writer_context_vars(out, 2, {"k": None}, fold_legacy=False)
+        assert out == {"legacy": 1, WRITERS_KEY: {"3": {"k": "bert"}}}
+
+    def test_fold_moves_the_legacy_layer_into_the_writer(self):
+        from services.context_extractor import WRITERS_KEY, merge_writer_context_vars
+
+        out = merge_writer_context_vars({"a": 1, "b": 2}, 2, {"b": None}, fold_legacy=True)
+        assert out == {WRITERS_KEY: {"2": {"a": 1}}}
+
+    def test_handoff_without_buckets_is_the_plain_copy(self):
+        from services.context_extractor import handoff_context_vars
+
+        assert handoff_context_vars({"a": 1}, {"b": 2}) == {"a": 1}
+
+    def test_a_tool_or_plugin_key_cannot_reach_the_buckets(self):
+        from services.context_extractor import WRITERS_KEY, bound_context_vars
+
+        assert bound_context_vars({WRITERS_KEY: {"2": {"x": 1}}}) == {}
+
+
+# ============================================================================
+# Never served; every load passes its caller
+# ============================================================================
+
+@pytest.mark.unit
+async def test_the_asker_is_never_served_to_a_client():
+    import api.websocket.document_sources as ds
+    from services.conversation_service import ASKER_METADATA_KEY
+
+    assert ASKER_METADATA_KEY == ASKER
+    assert ASKER not in ds.CLIENT_METADATA_KEYS
+    [served] = await ds.metadata_for_reader(
+        [{ASKER: ANNA, "action_summary": A_SUMMARY, "agent_role": "documents"}], None)
+    assert served == {"agent_role": "documents"}
+
+
+#: The loads that feed a prompt, and the writes that key a value on its
+#: writer. Every call site in the backend passes the caller as `user_id=`.
+_IDENTITY_CALLS = {
+    "load_context", "load_conversation_context", "load_context_vars",
+    "save_context_vars", "save_turn_context_vars",
+}
+
+
+def _calls_missing_the_caller() -> list[str]:
+    missing = []
+    for path in sorted(BACKEND_ROOT.rglob("*.py")):
+        rel = path.relative_to(BACKEND_ROOT)
+        if rel.parts[0] in {"satellite", "alembic"}:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            if node.func.attr not in _IDENTITY_CALLS:
+                continue
+            if not any(kw.arg == "user_id" for kw in node.keywords):
+                missing.append(f"{rel}:{node.lineno} {node.func.attr}")
+    return missing
+
+
+@pytest.mark.unit
+def test_every_call_site_passes_the_caller_identity():
+    """The class, not the instance: a new prompt load without `user_id=` would
+    read as "no identity" -- under auth nothing, but under the satellite's
+    old call it was simply never asked."""
+    assert _calls_missing_the_caller() == []
+
+
+@pytest.mark.unit
+def test_the_structural_check_sees_a_missing_caller(tmp_path, monkeypatch):
+    """Negative control: the walker reports a call without `user_id=`."""
+    import tests.backend.test_shared_thread_prompt_state as me
+
+    (tmp_path / "x.py").write_text(
+        "async def f(svc):\n"
+        "    '''svc.load_context(sid) in prose does not count'''\n"
+        "    await svc.load_context(sid)\n"
+        "    await svc.load_context_vars(sid, user_id=u)\n"
+    )
+    monkeypatch.setattr(me, "BACKEND_ROOT", tmp_path)
+    assert me._calls_missing_the_caller() == ["x.py:3 load_context"]

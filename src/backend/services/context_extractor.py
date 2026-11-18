@@ -117,6 +117,85 @@ def merge_context_vars(current: dict[str, Any], update: dict[str, Any]) -> dict[
     return merged
 
 
+#: Where the per-writer variables live inside ``conversations.context_vars``
+#: (#1568): ``{"_per_writer": {"<user id>": {key: value, ...}}}``. Every other
+#: top-level key is the LEGACY layer -- written before writers were recorded,
+#: or under auth-off, which keeps writing it exactly as before. An ``_`` key, so
+#: no extracted or plugin key can reach it (``_KEY_RE``), the plain merge keeps
+#: it untouched and the renderer skips it.
+WRITERS_KEY = "_per_writer"
+
+
+def legacy_context_vars(stored: dict[str, Any] | None) -> dict[str, Any]:
+    """The variables that name no writer (every key but ``WRITERS_KEY``)."""
+    return {k: v for k, v in (stored or {}).items() if k != WRITERS_KEY}
+
+
+def _buckets(stored: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    raw = (stored or {}).get(WRITERS_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    return {k: dict(v) for k, v in raw.items() if isinstance(v, dict)}
+
+
+def writer_context_vars(stored: dict[str, Any] | None, writer_id: int) -> dict[str, Any]:
+    """The variables ``writer_id`` wrote into this conversation."""
+    return _buckets(stored).get(str(int(writer_id)), {})
+
+
+def merge_writer_context_vars(
+    stored: dict[str, Any] | None,
+    writer_id: int,
+    update: dict[str, Any],
+    *,
+    fold_legacy: bool,
+) -> dict[str, Any]:
+    """Merge one writer's ``update`` into THEIR bucket only (#1568).
+
+    Another member's bucket is never touched: one member's turn -- its values,
+    its ``None`` delete markers, the key cap -- cannot erase what the next
+    member's load would see. ``fold_legacy`` (the writer is the one person the
+    legacy layer is visible to: a private conversation of their own) moves the
+    legacy values into the writer's bucket first, so the delete markers of
+    ``merge_context_vars`` act on them exactly as before and nothing stale
+    shines through from underneath. Otherwise the legacy layer stays as it is.
+    """
+    stored = dict(stored or {})
+    buckets = _buckets(stored)
+    key = str(int(writer_id))
+    own = buckets.get(key, {})
+    legacy = legacy_context_vars(stored)
+    if fold_legacy and legacy:
+        own = {**legacy, **own}
+        legacy = {}
+    merged = merge_context_vars(own, update)
+    if merged:
+        buckets[key] = merged
+    else:
+        buckets.pop(key, None)
+    result = dict(legacy)
+    if buckets:
+        result[WRITERS_KEY] = buckets
+    return result
+
+
+def handoff_context_vars(
+    source: dict[str, Any] | None, target: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The target room's variables after a handoff from ``source`` (#1568).
+
+    The legacy layer is the source's, as the handoff always copied it; the
+    per-writer buckets travel with their writer -- a source bucket replaces the
+    same writer's bucket in the target, every other target bucket stays. With
+    no buckets on either side this IS ``source`` (auth-off unchanged).
+    """
+    result = legacy_context_vars(source)
+    buckets = {**_buckets(target), **_buckets(source)}
+    if buckets:
+        result[WRITERS_KEY] = buckets
+    return result
+
+
 def render_context_vars_text(context_vars: dict[str, Any] | None) -> str:
     """The prompt block for the agent: one ``key: value`` line per public key."""
     if not context_vars:

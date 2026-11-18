@@ -564,8 +564,9 @@ async def metadata_for_reader(metadatas: list, reader: Any) -> list:
        reader and with auth on or off. A metadata that is not a dict is `None`.
     2. `sources` are per-ASKER -- built from the asker's circle reach and
        Paperless permission -- while a conversation is a shared artifact
-       (auth-on §8.1) that every member its tier reaches reads. Messages do not
-       record who asked, so under auth each source is decided for EVERY reader,
+       (auth-on §8.1) that every member its tier reaches reads. Older messages
+       do not record who asked (`asker_user_id` exists since #1568 and is
+       itself never served), so under auth each source is decided for EVERY reader,
        the asker included, by the reader's own rights (`_source_for_reader`):
        the circles for a knowledge-base source, the Paperless permission for a
        Paperless source AND for the Paperless link of a knowledge-base source.
