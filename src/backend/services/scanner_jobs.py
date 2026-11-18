@@ -725,6 +725,7 @@ async def handle_job_event(
         ConversationDeletedError,
         ConversationNotOwnedError,
         ConversationService,
+        prompt_asker,
         record_asker,
     )
 
@@ -767,7 +768,8 @@ async def handle_job_event(
             attach_document_ref(meta, status, result, job_id)
             # The requester is the asker of this answer (#1568), taken from the
             # authenticated turn recorded at start, never from the event.
-            record_asker(meta, requester.get("user_id"))
+            # A device account is nobody's asker (`prompt_asker`).
+            record_asker(meta, await prompt_asker(db, requester.get("user_id")))
 
             message = await ConversationService(db).save_message(
                 session_id=session_id,

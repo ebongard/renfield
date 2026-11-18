@@ -839,7 +839,11 @@ async def _finalize_paperless_commit(
             # tracking row, the finalize stamp and the counter bump -- the
             # reconciler then re-ran the finalize on every pass. A refusal
             # costs the announcement, not the filing.
-            from services.conversation_service import ConversationNotOwnedError, record_asker
+            from services.conversation_service import (
+                ConversationNotOwnedError,
+                prompt_asker,
+                record_asker,
+            )
             from utils.config import settings
 
             try:
@@ -848,7 +852,8 @@ async def _finalize_paperless_commit(
                         session_id, "assistant", message, user_id=user_id,
                         enforce_ownership=settings.auth_enabled,
                         # The confirmer is the asker of this answer (#1568).
-                        metadata=record_asker({}, user_id) or None,
+                        metadata=record_asker(
+                            {}, await prompt_asker(announce_db, user_id)) or None,
                     )
             except ConversationNotOwnedError:
                 logger.warning(

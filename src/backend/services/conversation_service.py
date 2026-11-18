@@ -85,6 +85,29 @@ def record_asker(metadata: dict, asker_user_id: int | None) -> dict:
     return metadata
 
 
+async def prompt_asker(db: AsyncSession, user_id: int | None) -> int | None:
+    """The asker a server-side user id stands for (#1568): the user, unless it
+    is a device account -- a room panel or a satellite's account stands for
+    every person in front of it, so a tool result keyed on it would reach
+    whoever uses the device next. The satellite path applies the same rule in
+    `speaker_prompt_identity`. ``None`` = no asker; a failed lookup is ``None``
+    too (fail closed: the turn then stores nothing for the prompt)."""
+    if user_id is None:
+        return None
+    try:
+        from models.database import User
+
+        is_device = (await db.execute(
+            select(User.is_device_account).where(User.id == user_id)
+        )).scalar_one_or_none()
+    except Exception as e:
+        logger.warning(f"⚠️ Asker lookup failed: {error_text_without_content(e)}")
+        return None
+    if is_device is None or is_device:
+        return None
+    return int(user_id)
+
+
 def tool_result_reaches_caller(writer_id: int | None, caller_id: int | None) -> bool:
     """The one rule for a stored tool result re-entering a prompt (#1568).
 

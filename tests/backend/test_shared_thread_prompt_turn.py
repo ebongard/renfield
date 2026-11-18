@@ -232,6 +232,30 @@ async def test_a_voice_promoted_turn_records_no_asker_and_keys_no_vars(
 
 
 # ============================================================================
+# A device account is nobody's asker (#1578 review)
+# ============================================================================
+
+async def test_a_device_account_socket_keys_nothing_for_the_next_person(
+    client, asker, db_session,
+):
+    """A room panel logged in with the device account is used by Anna, then by
+    Bert -- the same JWT both times. Keyed on the device account, Anna's tool
+    result would reach Bert. The satellite path refused that already; the
+    browser path now does too."""
+    asker["id"] = DEVICE
+    _turn(client, "Such meinen Befund")
+    _turn(client, "Und was gibt es Neues?")
+
+    first, second = _FakeAgent.runs
+    assert first["user_id"] == DEVICE, "precondition: the panel's turn ran"
+    assert PREFIX not in second["history"] and "4711" not in second["history"]
+    assert second["context_vars_text"] == ""
+    metas = await _assistant_metas(db_session)
+    assert all("asker_user_id" not in m for m in metas)
+    assert "_per_writer" not in (await _stored_vars(db_session) or {})
+
+
+# ============================================================================
 # The REST fallback: same gate
 # ============================================================================
 

@@ -557,3 +557,105 @@ def test_the_structural_check_sees_a_missing_caller(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(me, "BACKEND_ROOT", tmp_path)
     assert me._calls_missing_the_caller() == ["x.py:3 load_context"]
+
+
+# ============================================================================
+# Every recorded asker went through a resolver that refuses device accounts
+# ============================================================================
+
+#: The functions that turn a server-side identity into an asker. Both return
+#: None for a device account (a room panel / a satellite's account is every
+#: person in front of it, so a result keyed on it reaches the next one).
+_ASKER_RESOLVERS = {"prompt_asker", "speaker_prompt_identity"}
+
+
+def _calls_resolver(node: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.Call)
+        and getattr(n.func, "id", getattr(n.func, "attr", None)) in _ASKER_RESOLVERS
+        for n in ast.walk(node)
+    )
+
+
+def _askers_not_resolved() -> list[str]:
+    """`record_asker(meta, X)` where X is neither a resolver call nor a name
+    whose every assignment in the enclosing function is None or a resolver call."""
+    bad = []
+    for path in sorted(BACKEND_ROOT.rglob("*.py")):
+        rel = path.relative_to(BACKEND_ROOT)
+        if rel.parts[0] in {"satellite", "alembic"}:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for func in ast.walk(tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            assigned: dict[str, list[ast.AST]] = {}
+            for n in ast.walk(func):
+                if isinstance(n, ast.Assign):
+                    for t in n.targets:
+                        if isinstance(t, ast.Name):
+                            assigned.setdefault(t.id, []).append(n.value)
+            for n in ast.walk(func):
+                if not (isinstance(n, ast.Call)
+                        and getattr(n.func, "id", getattr(n.func, "attr", None)) == "record_asker"):
+                    continue
+                if len(n.args) < 2:
+                    bad.append(f"{rel}:{n.lineno}")
+                    continue
+                arg = n.args[1]
+                if _calls_resolver(arg):
+                    continue
+                values = assigned.get(arg.id, []) if isinstance(arg, ast.Name) else []
+                if values and all(
+                    (isinstance(v, ast.Constant) and v.value is None) or _calls_resolver(v)
+                    for v in values
+                ):
+                    continue
+                bad.append(f"{rel}:{n.lineno}")
+    return sorted(set(bad))
+
+
+@pytest.mark.unit
+def test_every_recorded_asker_went_through_a_resolver():
+    """The class, not the instance (#1578 review): the browser and the REST
+    path recorded the JWT user as the asker, a device account included, while
+    the satellite path already refused it. Every `record_asker` now takes its
+    asker from `prompt_asker` / `speaker_prompt_identity`."""
+    assert _askers_not_resolved() == []
+
+
+@pytest.mark.unit
+def test_the_resolver_check_sees_a_raw_identity(tmp_path, monkeypatch):
+    """Negative control: a raw user id, and a name with one raw assignment."""
+    import tests.backend.test_shared_thread_prompt_state as me
+
+    (tmp_path / "x.py").write_text(
+        "async def f(db, user_id, meta):\n"
+        "    record_asker(meta, user_id)\n"
+        "    a = None\n"
+        "    a = user_id\n"
+        "    record_asker(meta, a)\n"
+        "    b = None\n"
+        "    b = await prompt_asker(db, user_id)\n"
+        "    record_asker(meta, b)\n"
+        "    record_asker(meta, await prompt_asker(db, user_id))\n"
+    )
+    monkeypatch.setattr(me, "BACKEND_ROOT", tmp_path)
+    assert me._askers_not_resolved() == ["x.py:2", "x.py:5"]
+
+
+@pytest.mark.database
+async def test_prompt_asker_refuses_a_device_account(db_session):
+    from services.conversation_service import prompt_asker
+    from tests.backend.dbrows import ensure_role, ensure_user
+
+    await ensure_role(db_session)
+    panel = await ensure_user(db_session, 61, username="panel-asker")
+    panel.is_device_account = True
+    await ensure_user(db_session, 62, username="person-asker")
+    await db_session.commit()
+
+    assert await prompt_asker(db_session, 61) is None
+    assert await prompt_asker(db_session, 62) == 62
+    assert await prompt_asker(db_session, None) is None
+    assert await prompt_asker(db_session, 9999) is None  # unknown: nobody

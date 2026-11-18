@@ -362,6 +362,10 @@ async def _persist_turn_context_vars(
     """
     if not extracted and not tool_summaries:
         return
+    if settings.auth_enabled and user_id is None:
+        # No asker (a device account, an unidentified voice): the variables
+        # would reach nobody, and the write would be refused anyway.
+        return
     try:
         from services.conversation_service import ConversationService
 
@@ -1595,8 +1599,15 @@ async def websocket_endpoint(
             # and, under auth, keys the context variables, so a stored tool
             # result re-enters only this caller's prompt -- the history and the
             # vars are READ under the same JWT identity. Under auth-off the
-            # variables keep the effective identity they always had.
-            asker_user_id = user_id
+            # variables keep the effective identity they always had. A device
+            # account is nobody's asker (`prompt_asker`): a room panel stands
+            # for every person who uses it.
+            asker_user_id = None
+            if user_id is not None:
+                from services.conversation_service import prompt_asker
+
+                async with AsyncSessionLocal() as _asker_db:
+                    asker_user_id = await prompt_asker(_asker_db, user_id)
 
             # Voice-driven identity claim: when no JWT user is set
             # (AUTH_ENABLED=false household deployment) and the wire
