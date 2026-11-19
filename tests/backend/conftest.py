@@ -24,7 +24,9 @@ import os as _os
 # re-checked its tokenizer on huggingface.co 58 times.
 # Removed HERE, before `utils.config` is imported below, because `settings`
 # reads the environment once. A test that needs Paperless sets its own fake URL
-# (monkeypatch), as the Paperless tests already do.
+# (monkeypatch), as the Paperless tests already do. The dev stack ALSO mounts
+# the token as a secret file, which `settings` reads -- it stays, but every
+# reader needs the URL as well (folder_ingest_paperless, chat_upload_tool).
 for _var in ("PAPERLESS_API_URL", "PAPERLESS_API_TOKEN"):
     _os.environ.pop(_var, None)
 # The tokenizer is in the container's cache; offline mode reads it from there.

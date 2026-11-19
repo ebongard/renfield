@@ -743,8 +743,9 @@ allein, `--durations=0`):
     ablief (~185 s), die Folder-Ingest-Tests durchsuchten seine Dokumente;
   - **huggingface.co**: 58 Metadaten-Abfragen des Docling-Tokenizers.
   
-  Behoben: `tests/backend/conftest.py` entfernt beide Paperless-Variablen, bevor `settings`
-  gebaut wird, und setzt `HF_HUB_OFFLINE=1` (der Tokenizer liegt im Cache); ein Test
+  Behoben: `tests/backend/conftest.py` entfernt beide Paperless-Variablen aus der Umgebung,
+  bevor `settings` gebaut wird (das Token kommt im Dev-Stack zusätzlich aus
+  `/run/secrets/paperless_api_token` und bleibt in `settings` — ohne URL ruft es niemand auf), und setzt `HF_HUB_OFFLINE=1` (der Tokenizer liegt im Cache); ein Test
   (`test_harness_no_real_services.py`) hält das fest. Danach **14:53**, 11.728 grün,
   34 übersprungen, 0 rot. Ein Test, der Paperless braucht, setzt seine eigene Attrappen-URL.
 - **`fsync = off` (Schritt 2) entfällt:** seit dem `DELETE` wartet der Lauf kaum noch auf die
