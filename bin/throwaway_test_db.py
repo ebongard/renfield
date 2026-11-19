@@ -3,10 +3,15 @@
 Called by ``bin/run-backend-tests.sh`` when ``RENFIELD_TEST_DB_SUFFIX`` is set,
 so that concurrent runs need not queue behind the shared ``renfield_test``:
 
-    python throwaway_test_db.py run renfield_test_<suffix> -- <pytest args>
+    python throwaway_test_db.py run renfield_test_<suffix> [--workers N] -- <pytest args>
 
 creates the database, runs ``python -m pytest <args>`` as a child, and drops
 the database when pytest has ended -- also when it failed or a signal came.
+With ``--workers N`` it creates ``renfield_test_<suffix>_gw0 .. _gw<N-1>``
+instead, under ONE run token, runs ``pytest -n N`` (pytest-xdist) with
+``RENFIELD_TEST_DB_PER_WORKER=1``, and drops all of them; each worker's harness
+swaps its id into the URL (tests/backend/conftest.py). If one of them cannot be
+created, the ones already made are dropped and the run does not start (#1577).
 
 The connection is derived here, in the container, from ``DATABASE_URL`` -- the
 maintenance database ``postgres`` on the same server. No DSN is ever printed.
@@ -152,14 +157,19 @@ async def _drop_unmarked(conn, name: str) -> None:
     await conn.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
 
 
-async def create(conn, name: str) -> str:
-    """Create the database and mark it as this invocation's. Returns the token."""
+async def create(conn, name: str, token: str | None = None) -> str:
+    """Create the database and mark it as this invocation's. Returns the token
+    -- a new one, or `token` for a further database of the same run."""
     from asyncpg.exceptions import DuplicateDatabaseError, UniqueViolationError
 
     # Checked HERE, where the SQL is built -- not only by whoever calls this.
-    # After it, nothing in the name needs quoting or escaping.
+    # After it, nothing in the name needs quoting or escaping -- the token is
+    # checked as well, since it goes into the COMMENT.
     require_throwaway_name(name)
-    token = secrets.token_hex(16)
+    if token is None:
+        token = secrets.token_hex(16)
+    elif not TOKEN_RE.fullmatch(token):
+        raise Refused("malformed run token.")
     try:
         await conn.execute(f'CREATE DATABASE "{name}"')
     except (DuplicateDatabaseError, UniqueViolationError):
@@ -241,6 +251,17 @@ async def _connect(application_url: str, database: str = "postgres"):
 async def create_ready(conn, name: str, application_url: str) -> str:
     """`create` plus the extensions -- or no database at all."""
     token = await create(conn, name)
+    await _prepare_or_drop(conn, name, application_url, token)
+    return token
+
+
+async def _create_ready_with(conn, name: str, application_url: str, token: str) -> None:
+    """`create_ready` for a further database of the same run, under its token."""
+    await create(conn, name, token)
+    await _prepare_or_drop(conn, name, application_url, token)
+
+
+async def _prepare_or_drop(conn, name: str, application_url: str, token: str) -> None:
     try:
         inside = await _connect(application_url, name)
         try:
@@ -263,7 +284,6 @@ async def create_ready(conn, name: str, application_url: str) -> str:
                 file=sys.stderr,
             )
         raise
-    return token
 
 
 def _describe(exc: BaseException) -> str:
@@ -391,28 +411,100 @@ def signals_noted():
             signal.signal(signum, handler)
 
 
-def run(name: str, pytest_args: list[str]) -> int:
+#: Set for pytest to the BASE name when every xdist worker has a database of
+#: its own (`<base>_gw<k>`); the harness (tests/backend/conftest.py) builds each
+#: worker's URL from it, and refuses a worker -- or a run that does not
+#: distribute after all -- that would end up elsewhere.
+PER_WORKER_ENV = "RENFIELD_TEST_DB_PER_WORKER"
+MAX_WORKERS = 16
+
+
+def worker_names(name: str, workers: int) -> list[str]:
+    """The databases of a run: NAME itself, or NAME_gw0 .. NAME_gw<N-1> -- one
+    per xdist worker, named the way xdist names the workers. Each is checked
+    like any other name, so a suffix too long for the worker tag is refused."""
+    if workers == 0:
+        names = [name]
+    elif 1 <= workers <= MAX_WORKERS:
+        names = [f"{name}_gw{i}" for i in range(workers)]
+    else:
+        raise Refused(f"--workers must be 1..{MAX_WORKERS}, not {workers}.")
+    for n in names:
+        require_throwaway_name(n)
+    return names
+
+
+async def _create_all(conn, names: list[str], application_url: str) -> str:
+    """Create every database under ONE token -- or none of them."""
+    token = await create_ready(conn, names[0], application_url)
+    made = [names[0]]
+    try:
+        for n in names[1:]:
+            await _create_ready_with(conn, n, application_url, token)
+            made.append(n)
+    except BaseException:
+        for n in made:
+            try:
+                await drop(conn, n, token)
+            except Exception as cleanup_error:
+                print(
+                    f"WARNING: {n} could not be removed again "
+                    f"({type(cleanup_error).__name__}) -- remove it by hand.",
+                    file=sys.stderr,
+                )
+        raise
+    return token
+
+
+async def _drop_all(conn, names: list[str], token: str) -> list[str]:
+    """Drop every database of the run; returns the names that were NOT dropped."""
+    left: list[str] = []
+    for n in names:
+        try:
+            await drop(conn, n, token)
+        except Exception as exc:
+            _say(f"WARNING: {n} was NOT dropped ({_describe(exc)}) -- remove it by hand.")
+            left.append(n)
+    return left
+
+
+def run(name: str, pytest_args: list[str], workers: int = 0) -> int:
     application_url = os.environ.get("DATABASE_URL", "")
     if not application_url:
         raise Refused("DATABASE_URL is not set.")
     check_name(name, application_url)
+    names = worker_names(name, workers)
+    for n in names:
+        check_name(n, application_url)
     grace = stop_grace()  # refused HERE, before anything is created
+    # With workers, the URL names NAME itself, which is never created: each
+    # worker's harness swaps in NAME_<its id>. A worker that does not is
+    # pointed at a database that does not exist -- an error, not a shared one.
     env = {**os.environ, "RENFIELD_TEST_PG_URL": pytest_url(application_url, name)}
+    if workers:
+        env[PER_WORKER_ENV] = name
+        pytest_args = ["-n", str(workers), *pytest_args]
+    else:
+        env.pop(PER_WORKER_ENV, None)
 
     with signals_noted() as received:
-        token = asyncio.run(_on_the_server(application_url, lambda conn: create_ready(conn, name, application_url)))
+        token = asyncio.run(_on_the_server(application_url, lambda conn: _create_all(conn, names, application_url)))
         code = 1
         try:
-            _say(f"TEST_DB: {name} (created for this run, dropped when it ends)", sys.stdout)
+            shown = names[0] if len(names) == 1 else f"{names[0]} .. {names[-1]}"
+            _say(f"TEST_DB: {shown} (created for this run, dropped when it ends)", sys.stdout)
             code = supervise(pytest_args, grace, received, env)
         finally:
             # `supervise` has returned or raised: pytest is dead and reaped.
             try:
-                asyncio.run(_on_the_server(application_url, lambda conn: drop(conn, name, token)))
-                _say(f"dropped {name}")
+                left = asyncio.run(_on_the_server(application_url, lambda conn: _drop_all(conn, names, token)))
             except Exception as exc:
-                _say(f"WARNING: {name} was NOT dropped ({_describe(exc)}) -- remove it by hand.")
+                _say(f"WARNING: the databases were NOT dropped ({_describe(exc)}) -- remove them by hand.")
+                left = names
+            if left:
                 code = code or 1
+            else:
+                _say(f"dropped {shown}")
         if code == 0 and received:
             code = 128 + received[0]  # came during the drop: not acted on, but not swallowed
     return code
@@ -420,9 +512,21 @@ def run(name: str, pytest_args: list[str]) -> int:
 
 def main(argv: list[str]) -> int:
     try:
-        if len(argv) < 3 or argv[0] != "run" or argv[2] != "--":
-            raise Refused("usage: throwaway_test_db.py run renfield_test_<suffix> -- <pytest args>")
-        return run(argv[1], argv[3:])
+        usage = "usage: throwaway_test_db.py run renfield_test_<suffix> [--workers N] -- <pytest args>"
+        if len(argv) < 3 or argv[0] != "run":
+            raise Refused(usage)
+        workers = 0
+        rest = argv[2:]
+        if rest[0] == "--workers":
+            if len(rest) < 3 or not re.fullmatch(r"[0-9]{1,2}", rest[1]):
+                raise Refused(usage)
+            workers = int(rest[1])
+            if workers == 0:
+                raise Refused(f"--workers must be 1..{MAX_WORKERS}, not 0.")
+            rest = rest[2:]
+        if rest[0] != "--":
+            raise Refused(usage)
+        return run(argv[1], rest[1:], workers)
     except Refused as exc:
         _say(f"REFUSED: {exc}")
         return exc.code

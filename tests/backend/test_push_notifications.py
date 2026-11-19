@@ -126,6 +126,10 @@ class TestPreconditions:
             (PRIVATE_KEY, "A" + PUBLIC_KEY[1:]),     # not an uncompressed point
             ("A" * 43, PUBLIC_KEY),                  # zero scalar: not on the curve
         ],
+        # Fixed ids: the keys are generated at import, so ids made from them
+        # differ per process -- and pytest-xdist refuses workers that collected
+        # different test ids (#1577).
+        ids=["not-base64", "private-too-short", "public-too-short", "not-a-point", "zero-scalar"],
     )
     def test_malformed_key(self, push_on, monkeypatch, private_key, public_key):
         monkeypatch.setattr(settings, "push_vapid_private_key", SecretStr(private_key))

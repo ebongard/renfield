@@ -5,6 +5,7 @@ pytest==7.4.4
 pytest-asyncio==0.23.3
 pytest-cov==4.1.0         # Coverage reporting
 pytest-html>=4.1          # HTML test report for bin/run-e2e.sh
+pytest-xdist==3.8.0       # RENFIELD_TEST_WORKERS: one database per worker (bin/run-backend-tests.sh)
 aiosqlite==0.19.0         # Async SQLite for testing
 ruff==0.16.9              # Linter & formatter — Version festgenagelt, s. bin/lint-backend.sh
 

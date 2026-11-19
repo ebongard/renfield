@@ -10,6 +10,9 @@
 #       a database of this run's own, `renfield_test_<name>`: created before
 #       the run and dropped after it -- also when pytest fails or the run is
 #       signalled. Takes no lock; concurrent runs each pick their own suffix.
+#   RENFIELD_TEST_DB_SUFFIX=<name> RENFIELD_TEST_WORKERS=<n> run-backend-tests.sh ...
+#       the same on <n> pytest-xdist workers, each with a database of its own
+#       (`renfield_test_<name>_gw0` .. `_gw<n-1>`), all dropped afterwards.
 set -e
 ROOT="$1"; shift
 
@@ -34,6 +37,33 @@ if [ -n "$SUFFIX" ]; then
     exit 2
   fi
   TEST_DB="renfield_test_$SUFFIX"
+fi
+
+# RENFIELD_TEST_WORKERS=N: run the suite on N pytest-xdist workers, each on a
+# database of its own (renfield_test_<suffix>_gw0 .. _gw<N-1>, created and
+# dropped by throwaway_test_db.py). Only with a suffix: the shared
+# `renfield_test` is ONE database, and two workers on it would drop each
+# other's schema. pytest-xdist is not in the image -- install it like pytest
+# (requirements-test.txt).
+WORKERS="${RENFIELD_TEST_WORKERS:-}"
+if [ -n "$WORKERS" ]; then
+  case "$WORKERS" in
+    *[!0123456789]*|0*)
+      echo "REFUSED: RENFIELD_TEST_WORKERS must be a number from 1 to 16." >&2
+      exit 2 ;;
+  esac
+  if [ "$WORKERS" -gt 16 ]; then
+    echo "REFUSED: RENFIELD_TEST_WORKERS must be a number from 1 to 16." >&2
+    exit 2
+  fi
+  if [ -z "$SUFFIX" ]; then
+    echo "REFUSED: RENFIELD_TEST_WORKERS needs RENFIELD_TEST_DB_SUFFIX -- every worker gets a database of its own." >&2
+    exit 2
+  fi
+  if ! python -c "import xdist" 2>/dev/null; then
+    echo "REFUSED: pytest-xdist is not installed in this container (pip install -r requirements-test.txt)." >&2
+    exit 2
+  fi
 fi
 
 RENFIELD_TEST_PG_URL=$(TEST_DB="$TEST_DB" python - <<'PY'
@@ -84,5 +114,9 @@ fi
 #   (RENFIELD_TEST_STOP_GRACE seconds, default 10): no interrupt summary.
 # - A SIGKILL, or a stop of the container, leaves the database behind. It then
 #   blocks its suffix until it is removed by hand.
+if [ -n "$WORKERS" ]; then
+  PYTHONPATH="$ROOT/src/backend" exec python "$ROOT/bin/throwaway_test_db.py" run "$TEST_DB" \
+    --workers "$WORKERS" -- -o asyncio_mode=auto -p no:cacheprovider "$@"
+fi
 PYTHONPATH="$ROOT/src/backend" exec python "$ROOT/bin/throwaway_test_db.py" run "$TEST_DB" -- \
   -o asyncio_mode=auto -p no:cacheprovider "$@"
