@@ -9,8 +9,9 @@
 # Restart=always retries every 10 s instead of giving up.
 #
 # The container runs with --rm and no docker restart policy: systemd is the only
-# thing that starts it. Image by DIGEST (= tag server-cuda-b10423): the bare
-# `server-cuda` tag moves with every llama.cpp release.
+# thing that starts it. Image by DIGEST (= server-cuda, CUDA 12.8.1, build
+# b12532-08c252e22, untagged upstream -- see README.md): the bare `server-cuda`
+# tag moves with every llama.cpp release.
 
 [Unit]
 Description=llama.cpp server (Qwen3.6-35B-A3B, chat + vision) on :8081
@@ -40,7 +41,7 @@ ExecStart=/usr/bin/docker run --rm --name llama-server \
   --health-retries 3 \
   -v /mnt/llm/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf:/models/qwen3.6-35b-a3b.gguf:ro \
   -v /mnt/llm/mmproj-F16.gguf:/models/qwen3.6-35b-a3b-mmproj.gguf:ro \
-  ghcr.io/ggml-org/llama.cpp@sha256:a475c08c7c472425e3ebf7f6be9c6cb3a17e82ec28070ddeb22fffe3ca754a94 \
+  ghcr.io/ggml-org/llama.cpp@sha256:853b023acf6c10d093f5566129d93a69638b1a0c83213e62696952b00bb3881c \
   --model /models/qwen3.6-35b-a3b.gguf \
   --mmproj /models/qwen3.6-35b-a3b-mmproj.gguf \
   --alias qwen3.6 \

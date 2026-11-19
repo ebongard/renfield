@@ -85,7 +85,7 @@ weiterhin (`replicas: 0`).
   |---|---|
   | Name | `llama-server`, `--rm`, keine Docker-Restart-Policy (die führt systemd), `--network host`, `--gpus all` |
   | Image (Referenz) | per Digest (bis 2026-11-18 das **wandernde Tag** `server-cuda`) |
-  | Image (tatsächlich) | `ghcr.io/ggml-org/llama.cpp@sha256:a475c08c7c472425e3ebf7f6be9c6cb3a17e82ec28070ddeb22fffe3ca754a94` = Tag `server-cuda-b10423` (bei ghcr gegengeprüft), CUDA 12.8.1, Build `b10423-a94d563ed` |
+  | Image (tatsächlich) | seit 2026-11-19 `ghcr.io/ggml-org/llama.cpp@sha256:853b023acf6c10d093f5566129d93a69638b1a0c83213e62696952b00bb3881c` = `server-cuda`, CUDA 12.8.1, Build `b12532-08c252e22` (enthält llama.cpp #32407, K/V-Lesereihenfolge für den L2-Cache). Upstream **ohne Tag** (der Tag-Job von `docker.yml` fiel aus, weil der `musa`-Zweig scheiterte); Digest aus dem Lauf-Artefakt `digests-cuda_cuda12-amd64`, Build per `llama-server --version` im Bild bestätigt. Vorher `sha256:a475c08c…` = Tag `server-cuda-b10423`. A/B mit `deploy/cuda-host/llm-ab.sh` am 2026-11-19: beide PASS (Chat, Werkzeugaufruf), Dekodierung 245,5 statt ~231 tok/s (+6 %) |
   | Einbindungen (nur lesend) | `/mnt/llm/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` → `/models/qwen3.6-35b-a3b.gguf`, `/mnt/llm/mmproj-F16.gguf` → `/models/qwen3.6-35b-a3b-mmproj.gguf` |
   | Argumente | `--model /models/qwen3.6-35b-a3b.gguf --mmproj /models/qwen3.6-35b-a3b-mmproj.gguf --alias qwen3.6 --host 0.0.0.0 --port 8081 --ctx-size 262144 --n-gpu-layers 99 --cache-type-k q8_0 --cache-type-v q8_0 --flash-attn on --reasoning off --temp 0.6 --top-p 0.95 --top-k 20 --jinja --metrics` |
 

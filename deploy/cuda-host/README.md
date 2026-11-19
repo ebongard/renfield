@@ -7,6 +7,8 @@ container definition are in [`docs/GPU_TOPOLOGY.md`](../../docs/GPU_TOPOLOGY.md)
 | File | Purpose |
 |---|---|
 | `llama-server.service` | systemd unit that runs the `llama-server` container (llama.cpp, image by digest) |
+| `llm-ab.sh` | A/B of the installed image against a candidate, on port 8082, while the unit is stopped |
+| `llm-check.py` | the check `llm-ab.sh` runs: plain chat, one tool call, decode speed (3 runs) |
 
 ## Why a systemd unit
 
@@ -54,6 +56,20 @@ Edit `llama-server.service` here, commit, copy it to `/etc/systemd/system/`, the
 `sudo systemctl daemon-reload && sudo systemctl restart llama-server`. Pin a new image by
 digest (`docker buildx imagetools inspect ghcr.io/ggml-org/llama.cpp:server-cuda-<build>`),
 never by the moving `server-cuda` tag. Update `docs/GPU_TOPOLOGY.md` §2 in the same commit.
+
+A build can be pushed **without any tag**: upstream's `docker.yml` creates the
+`server-cuda-b<N>` tags in a final job that is skipped as soon as ANY platform leg fails
+(on 2026-11-18 and 2026-11-19 the unrelated `musa` leg did). The images are pushed by digest
+all the same, and each leg uploads its digests as a run artifact:
+`gh run download <run-id> -R ggml-org/llama.cpp -n digests-cuda_cuda12-amd64` lists
+`cuda12 amd64 server sha256:…`. Before pinning such a digest, confirm the build from the image
+itself — `docker run --rm --entrypoint /app/llama-server <image@digest> --version` and the
+label `org.opencontainers.image.version` — because no tag vouches for it.
+
+Test a new image before switching: with the unit stopped, `sh llm-ab.sh <image>` (both files
+copied next to each other on the host) runs the installed image and the candidate one after
+the other with the production arguments on port 8082 (plain chat, a tool call, decode speed). A long `sha256:` reference typed into the console is fragile — give
+the pulled image a short local name first (`docker tag <image@digest> llama-new:b<N>`).
 
 Never `docker restart` / `docker run` the container by hand while the unit is active: the
 unit owns it and recreates it with `--rm`.
