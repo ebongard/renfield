@@ -59,9 +59,17 @@
     "ssoDefaultHelp": "Cette connexion découle automatiquement de votre authentification. Il n'y a aucun jeton à coller ni à révoquer.",
     "ssoConnected": "Active. Reva utilise vos propres droits tant que votre session est valide. Déconnectez-vous pour y mettre fin.",
     "ssoNotConnected": "Votre session ne contient actuellement aucun jeton valide pour cet outil. Reconnectez-vous via l'interface web et la connexion sera rétablie. Il n'est pas possible de coller un jeton ici.",
+    "check": {
+      "rejected": "Le jeton enregistré est refusé (expiré ou révoqué). Remplacez-le, sinon Reva ne peut pas utiliser cet outil pour vous.",
+      "rejectedSso": "Fonctionne via votre connexion SSO. Le jeton enregistré ne sert que de secours et est refusé – remplacez-le ou supprimez-le.",
+      "expiring": "Le jeton enregistré expire le {{date}}. Remplacez-le à temps.",
+      "unchecked": "Le jeton n’a pas pu être vérifié la dernière fois.",
+      "validUntil": "Jeton valide jusqu’au {{date}}"
+    },
     "status": {
       "connected": "Connecté",
-      "notConnected": "Non connecté"
+      "notConnected": "Non connecté",
+      "rejected": "Jeton refusé"
     },
     "errors": {
       "load": "Impossible de charger vos connexions.",

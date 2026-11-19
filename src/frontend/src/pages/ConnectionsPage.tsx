@@ -7,7 +7,7 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plug, ExternalLink, Loader2, CheckCircle2, Circle, KeyRound } from 'lucide-react';
+import { Plug, ExternalLink, Loader2, CheckCircle2, Circle, KeyRound, AlertTriangle } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
 import Badge from '../components/Badge';
@@ -17,11 +17,33 @@ import {
   useConnect,
   useDisconnect,
   isSsoProvider,
+  credentialHealth,
+  expiryTime,
   type ConnectionProvider,
 } from '../api/resources/connections';
 
 export default function ConnectionsPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const fmtDate = (iso: string) =>
+    new Date(iso).toLocaleDateString(i18n.language, { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  /** One line under the provider name about the stored token, or null. The
+   *  SSO case matters most: a rejected fallback token next to a tool that keeps
+   *  answering reads as a contradiction unless the page says why. */
+  const tokenLine = (p: ConnectionProvider): { text: string; warn: boolean } | null => {
+    const health = credentialHealth(p);
+    if (health === 'rejected') {
+      return { text: t(p.sso_active ? 'connections.check.rejectedSso' : 'connections.check.rejected'), warn: true };
+    }
+    if (health === 'expiring' && p.expires_at) {
+      return { text: t('connections.check.expiring', { date: fmtDate(p.expires_at) }), warn: true };
+    }
+    if (health === 'unchecked') return { text: t('connections.check.unchecked'), warn: false };
+    if (p.connected && p.check_state === 'valid' && p.expires_at && expiryTime(p) !== null) {
+      return { text: t('connections.check.validUntil', { date: fmtDate(p.expires_at) }), warn: false };
+    }
+    return null;
+  };
   const { data: providers, isLoading, isError, errorMessage } = useConnections();
   const connect = useConnect();
   const disconnect = useDisconnect();
@@ -75,6 +97,10 @@ export default function ConnectionsPage() {
         <div className="card divide-y divide-gray-100 dark:divide-gray-700 p-0 overflow-hidden">
           {(providers ?? []).map((p) => {
             const sso = isSsoProvider(p);
+            const line = tokenLine(p);
+            // A rejected token with no SSO behind it means the tool is not
+            // reachable for this user — "Connected" would be false.
+            const broken = credentialHealth(p) === 'rejected' && !p.sso_active;
             return (
               <div key={p.provider_key} className="flex items-center gap-4 px-5 py-4">
                 <div className="flex-1 min-w-0">
@@ -94,8 +120,22 @@ export default function ConnectionsPage() {
                       {t('connections.viaSso')}
                     </div>
                   )}
+                  {line && (
+                    <div
+                      className={`text-xs mt-0.5 inline-flex items-center gap-1 ${
+                        line.warn
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-gray-500 dark:text-gray-400'
+                      }`}
+                    >
+                      {line.warn && <AlertTriangle className="w-3 h-3 shrink-0" aria-hidden="true" />}
+                      {line.text}
+                    </div>
+                  )}
                 </div>
-                {p.connected ? (
+                {broken ? (
+                  <Badge color="amber" icon={AlertTriangle}>{t('connections.status.rejected')}</Badge>
+                ) : p.connected ? (
                   <Badge color="green" icon={CheckCircle2}>{t('connections.status.connected')}</Badge>
                 ) : (
                   <Badge color="gray" icon={Circle}>{t('connections.status.notConnected')}</Badge>
@@ -219,6 +259,10 @@ export default function ConnectionsPage() {
                 <p className="text-sm text-gray-600 dark:text-gray-300">
                   {t('connections.manageBody', { name: active.display_name ?? active.provider_key })}
                 </p>
+                {(() => {
+                  const line = tokenLine(active);
+                  return line?.warn ? <Alert variant="warning">{line.text}</Alert> : null;
+                })()}
                 {disconnect.errorMessage && <Alert variant="error">{disconnect.errorMessage}</Alert>}
                 <div className="flex justify-between gap-2 pt-1">
                   <button

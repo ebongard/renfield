@@ -59,9 +59,17 @@
     "ssoDefaultHelp": "This connection comes from your login automatically. There is no token to paste and none to revoke.",
     "ssoConnected": "Active. Reva uses your own permissions for as long as your login is valid. Sign out to end it.",
     "ssoNotConnected": "Your login currently carries no valid token for this tool. Sign in again through the web interface and the connection comes back. Pasting a token is not possible here.",
+    "check": {
+      "rejected": "The stored token is rejected (expired or revoked). Replace it, or Reva cannot use this tool for you.",
+      "rejectedSso": "Runs on your SSO login. The stored token is only a fallback and is rejected – replace or remove it.",
+      "expiring": "The stored token expires on {{date}}. Replace it in time.",
+      "unchecked": "The token could not be checked last time.",
+      "validUntil": "Token valid until {{date}}"
+    },
     "status": {
       "connected": "Connected",
-      "notConnected": "Not connected"
+      "notConnected": "Not connected",
+      "rejected": "Token rejected"
     },
     "errors": {
       "load": "Could not load your connections.",
