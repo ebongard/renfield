@@ -77,7 +77,7 @@ async def test_reconnect_server_serialises_concurrent_callers():
     # Force "needs reconnect" state (drop session)
     state.connected = False
     state.session = None
-    state.exit_stack = None
+    state.owner = None
 
     # Spawn 50 concurrent callers
     tasks = [asyncio.create_task(mgr._reconnect_server(state)) for _ in range(50)]

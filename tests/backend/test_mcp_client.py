@@ -917,6 +917,24 @@ class TestGetStatus:
 # Shutdown
 # ============================================================================
 
+def _held_owner(on_exit=None, wedge_on_stop: bool = False):
+    """A real `_SessionOwner` whose task holds nothing but waits for its stop
+    like the real one; `on_exit` runs when it exits, `wedge_on_stop` makes its
+    teardown hang (the #1107 failure mode)."""
+    from services.mcp_client import _SessionOwner
+
+    stop = asyncio.Event()
+
+    async def _hold():
+        await stop.wait()
+        if wedge_on_stop:
+            await asyncio.sleep(3600)
+        if on_exit is not None:
+            on_exit()
+
+    return _SessionOwner(task=asyncio.get_running_loop().create_task(_hold()), stop=stop)
+
+
 class TestShutdown:
     """Test MCPManager.shutdown()."""
 
@@ -927,12 +945,12 @@ class TestShutdown:
         tool = MCPToolInfo("srv", "t", "mcp.srv.t", "desc")
         manager._tool_index["mcp.srv.t"] = tool
 
-        mock_exit_stack = AsyncMock()
+        owner = _held_owner()
         manager._servers["srv"] = MCPServerState(
             config=MCPServerConfig(name="srv"),
             connected=True,
             tools=[tool],
-            exit_stack=mock_exit_stack,
+            owner=owner,
         )
 
         await manager.shutdown()
@@ -940,7 +958,8 @@ class TestShutdown:
         assert len(manager._tool_index) == 0
         assert manager._servers["srv"].connected is False
         assert manager._servers["srv"].session is None
-        mock_exit_stack.__aexit__.assert_called_once()
+        assert manager._servers["srv"].owner is None
+        assert owner.task.done() and not owner.task.cancelled()  # stopped, not killed
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -2229,8 +2248,8 @@ class TestConnectHangGuards:
     @pytest.mark.asyncio
     async def test_connect_failure_closes_entered_transport(self, monkeypatch):
         """A transport that was ENTERED before a later stage fails must be
-        closed via the local exit stack (it used to leak: only the stale
-        state.exit_stack was closed)."""
+        closed by its session owner (it used to leak: only the stale session
+        was closed)."""
         import services.mcp_client as mc
 
         closed: list[str] = []
@@ -2258,17 +2277,12 @@ class TestConnectHangGuards:
     @pytest.mark.asyncio
     async def test_connect_failure_closes_stale_state_stack(self, monkeypatch):
         """Direct refresh_tools reconnects reach _connect_server with a STALE
-        state.exit_stack from the prior session (no teardown happened) — a
+        session owner from the prior session (no teardown happened) — a
         failed connect must close it, not silently drop it (regression vs the
         first hang-guard cut)."""
         import services.mcp_client as mc
 
         closed: list[str] = []
-
-        class _StaleStack:
-            async def __aexit__(self, *exc):
-                closed.append("stale")
-                return False
 
         class _FailingTransport:
             async def __aenter__(self):
@@ -2285,18 +2299,18 @@ class TestConnectHangGuards:
         state = MCPServerState(
             config=MCPServerConfig(name="stale2", url="http://stale2:1/mcp"),
         )
-        state.exit_stack = _StaleStack()
+        state.owner = _held_owner(on_exit=lambda: closed.append("stale"))
         state.session = object()
         await manager._connect_server(state)
         assert closed == ["stale"]
-        assert state.exit_stack is None
+        assert state.owner is None
         assert state.session is None
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_cancelled_connect_records_backoff_and_detached_close(self, monkeypatch):
+    async def test_cancelled_connect_records_backoff_and_stops_its_owner(self, monkeypatch):
         """An outer-guard-cancelled connect must advance backoff like an inner
-        timeout does, and schedule a strongly-referenced detached closer."""
+        timeout does, and its session owner must end by itself (#1579)."""
         import services.mcp_client as mc
 
         class _WedgedTransport:
@@ -2321,29 +2335,37 @@ class TestConnectHangGuards:
         state.backoff.record_failure.assert_called_once()
         assert state.connected is False
         assert "cancelled" in (state.last_error or "")
+        def _mine():
+            return [t for t in mc._session_owner_tasks if t.get_name() == "mcp-session:cancelled"]
+
+        for _ in range(100):
+            if not _mine():
+                break
+            await asyncio.sleep(0.01)
+        assert not _mine()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_reconnect_bounds_hanging_teardown(self, monkeypatch):
-        """A stale session whose exit-stack teardown wedges must not block the
-        reconnect (it runs under reconnect_lock) — bounded by _TEARDOWN_TIMEOUT_S."""
+        """A stale session whose teardown wedges must not block the reconnect
+        (it runs under reconnect_lock) — bounded by _TEARDOWN_TIMEOUT_S, after
+        which the owner is cancelled inside its own task."""
         import services.mcp_client as mc
 
         monkeypatch.setattr(mc, "_TEARDOWN_TIMEOUT_S", 0.05)
-
-        class _WedgedStack:
-            async def __aexit__(self, *exc):
-                await asyncio.sleep(3600)
+        wedged = _held_owner(wedge_on_stop=True)
 
         manager = MCPManager()
         state = MCPServerState(
             config=MCPServerConfig(name="stale", url="http://stale:1/mcp"),
             connected=False,
         )
-        state.exit_stack = _WedgedStack()
+        state.owner = wedged
         state.session = object()
         manager._connect_server = AsyncMock()  # reconnect proceeds after teardown
 
         await asyncio.wait_for(manager._reconnect_server(state), timeout=5.0)
-        assert state.exit_stack is None
+        assert state.owner is None
         manager._connect_server.assert_awaited_once()
+        await asyncio.sleep(0)
+        assert wedged.task.cancelled()
