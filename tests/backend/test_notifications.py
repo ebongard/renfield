@@ -312,6 +312,48 @@ class TestNotificationServiceCRUD:
         count = await notification_service.cleanup_expired()
         assert count >= 1
 
+    @pytest.mark.database
+    async def test_cleanup_expired_deletes_a_notification_still_referenced(
+        self, notification_service, db_session
+    ):
+        """#1585: a reminder and a learned suppression that point at an expired
+        notification used to make the WHOLE delete fail -- every expired row
+        stayed. Now the notification goes, both references become NULL, and the
+        reminder and the suppression rule themselves stay."""
+        from sqlalchemy import select
+
+        referenced = Notification(
+            event_type="test", title="Referenced", message="m",
+            expires_at=datetime.utcnow() - timedelta(hours=1),
+        )
+        unreferenced = Notification(
+            event_type="test", title="Plain", message="m",
+            expires_at=datetime.utcnow() - timedelta(hours=1),
+        )
+        db_session.add_all([referenced, unreferenced])
+        await db_session.flush()
+        ids = {referenced.id, unreferenced.id}
+        reminder = Reminder(message="r", trigger_at=datetime.utcnow(), notification_id=referenced.id)
+        suppression = NotificationSuppression(
+            event_pattern="test", source_notification_id=referenced.id, is_active=True
+        )
+        db_session.add_all([reminder, suppression])
+        await db_session.flush()
+        reminder_id, suppression_id = reminder.id, suppression.id
+        await db_session.commit()
+
+        count = await notification_service.cleanup_expired()
+
+        assert count >= 2
+        left = (await db_session.execute(select(Notification.id).where(Notification.id.in_(ids)))).all()
+        assert left == []
+        db_session.expire_all()
+        reminder = await db_session.get(Reminder, reminder_id)
+        suppression = await db_session.get(NotificationSuppression, suppression_id)
+        assert reminder is not None and reminder.notification_id is None
+        assert suppression is not None and suppression.source_notification_id is None
+        assert suppression.is_active is True
+
 
 # ============================================================================
 # WebSocket Message Validation Tests

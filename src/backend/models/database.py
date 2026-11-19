@@ -1569,7 +1569,9 @@ class NotificationSuppression(Base):
         Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
         nullable=True,
     )
-    source_notification_id = Column(Integer, ForeignKey("notifications.id"), nullable=True)
+    # Provenance only. SET NULL: an expired notification is deleted (hourly
+    # cleanup), the suppression learned from it must stay (#1585).
+    source_notification_id = Column(Integer, ForeignKey("notifications.id", ondelete="SET NULL"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     reason = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
@@ -1601,7 +1603,9 @@ class Reminder(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     session_id = Column(String(255), nullable=True)
     status = Column(String(20), default=REMINDER_PENDING)
-    notification_id = Column(Integer, ForeignKey("notifications.id"), nullable=True)
+    # The notification this reminder produced when it fired. SET NULL: the
+    # hourly cleanup deletes it once expired, the reminder stays (#1585).
+    notification_id = Column(Integer, ForeignKey("notifications.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     fired_at = Column(DateTime, nullable=True)
 
