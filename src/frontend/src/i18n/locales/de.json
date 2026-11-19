@@ -59,9 +59,17 @@
     "ssoDefaultHelp": "Diese Verbindung entsteht automatisch aus deiner Anmeldung. Es gibt kein Token zum Einfügen und keines zum Widerrufen.",
     "ssoConnected": "Aktiv. Reva greift mit deinen eigenen Rechten zu, solange deine Anmeldung gültig ist. Zum Beenden melde dich ab.",
     "ssoNotConnected": "Deine Anmeldung enthält derzeit kein gültiges Token für dieses Werkzeug. Melde dich über die Weboberfläche neu an — danach steht die Verbindung wieder. Ein Token einzufügen ist hier nicht möglich.",
+    "check": {
+      "rejected": "Der hinterlegte Token wird abgelehnt (abgelaufen oder widerrufen). Ersetze ihn, sonst kann Reva dieses Werkzeug nicht für dich nutzen.",
+      "rejectedSso": "Läuft über deine SSO-Anmeldung. Der hinterlegte Token ist nur Ersatz und wird abgelehnt – ersetze oder entferne ihn.",
+      "expiring": "Der hinterlegte Token läuft am {{date}} ab. Ersetze ihn rechtzeitig.",
+      "unchecked": "Der Token konnte zuletzt nicht geprüft werden.",
+      "validUntil": "Token gültig bis {{date}}"
+    },
     "status": {
       "connected": "Verbunden",
-      "notConnected": "Nicht verbunden"
+      "notConnected": "Nicht verbunden",
+      "rejected": "Token abgelehnt"
     },
     "errors": {
       "load": "Deine Verbindungen konnten nicht geladen werden.",

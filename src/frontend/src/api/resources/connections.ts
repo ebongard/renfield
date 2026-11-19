@@ -27,6 +27,50 @@ export interface ConnectionProvider {
    *  where `connected` is derived from. A provider name, never a secret. */
   sso_source?: string;
   connected: boolean;
+  /** Reva's latest verdict on the stored token (paste-token providers only):
+   *  'valid' | 'rejected' | 'error' | 'malformed'. Absent = never checked. */
+  check_state?: CredentialCheckState | null;
+  /** When the stored token expires, if the provider exposes it (ISO-8601). */
+  expires_at?: string | null;
+  /** When Reva last asked the provider (ISO-8601). */
+  checked_at?: string | null;
+  /** The tool currently reaches this user through their SSO login (OBO); a
+   *  stored token is then only the fallback for a failed exchange. */
+  sso_active?: boolean;
+}
+
+export type CredentialCheckState = 'valid' | 'rejected' | 'error' | 'malformed';
+
+/** Days before expiry the page starts warning. Mirrors Reva's default
+ *  REVA_CREDENTIAL_EXPIRY_WARN_DAYS, so page and chat notice agree. */
+export const EXPIRY_WARN_DAYS = 14;
+
+/** What the page should say about a stored token, derived only from the
+ *  server's verdict and expiry date — never from tool output.
+ *  - 'rejected': the provider refused it, it is unusable, or it is past expiry
+ *  - 'expiring': still valid, expires within EXPIRY_WARN_DAYS
+ *  - 'unchecked': the last check could not reach a verdict (provider error)
+ *  - null: nothing to say (valid, not checked yet, or not a stored token) */
+export type CredentialHealth = 'rejected' | 'expiring' | 'unchecked' | null;
+
+export function credentialHealth(p: ConnectionProvider, now: Date = new Date()): CredentialHealth {
+  if (!p.connected || isSsoProvider(p) || !p.check_state) return null;
+  if (p.check_state === 'rejected' || p.check_state === 'malformed') return 'rejected';
+  // The expiry date is known regardless of the last check's outcome: a
+  // provider outage ('error') must not hide a token that is past its date.
+  const exp = expiryTime(p);
+  if (exp !== null) {
+    if (exp <= now.getTime()) return 'rejected';
+    if (exp - now.getTime() <= EXPIRY_WARN_DAYS * 86_400_000) return 'expiring';
+  }
+  return p.check_state === 'error' ? 'unchecked' : null;
+}
+
+/** `expires_at` as epoch ms, or null when absent or unparseable. */
+export function expiryTime(p: ConnectionProvider): number | null {
+  if (!p.expires_at) return null;
+  const t = Date.parse(p.expires_at);
+  return Number.isNaN(t) ? null : t;
 }
 
 /** True when this connection is established by logging in, not by pasting. */
