@@ -266,6 +266,17 @@ Die Toast-Komponente (`NotificationToast`) erscheint oben rechts im Browser:
 
 Der Webhook-Token wird in `SystemSetting` (DB) gespeichert, nicht in `.env` — Runtime-Rotation via Admin-API.
 
+**Ablauf und Aufräumen.** Die geplante Aufgabe „Benachrichtigungen aufräumen“ (`notification_cleanup`,
+stündlich, nur mit `PROACTIVE_ENABLED`) löscht abgelaufene Benachrichtigungen mit EINER Anweisung
+(`NotificationService.cleanup_expired`). Zwei Spalten verweisen auf eine Benachrichtigung und tragen deshalb
+`ON DELETE SET NULL`: `reminders.notification_id` (die Benachrichtigung, die eine Erinnerung beim Auslösen
+erzeugt hat) und `notification_suppressions.source_notification_id` (aus welcher Benachrichtigung eine
+Unterdrückungsregel gelernt wurde). Beides ist nur Herkunft; Erinnerung und Regel bleiben. Ohne Löschregel
+reichte eine einzige noch referenzierte abgelaufene Benachrichtigung, und die ganze Löschung scheiterte jede
+Stunde — auf xidra blieben so 45 abgelaufene Zeilen liegen (#1585, Migration `pc20261119_fk_delete_rules`).
+`CASCADE` wäre falsch: es löschte mit der abgelaufenen Benachrichtigung die Unterdrückungsregel des Nutzers.
+Ein neuer Verweis auf `notifications.id` braucht dieselbe Regel.
+
 ---
 
 ## Deduplizierung
