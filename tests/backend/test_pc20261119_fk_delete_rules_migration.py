@@ -275,4 +275,5 @@ def test_the_chain_still_has_exactly_one_head():
 
     script = ScriptDirectory(str(_versions_dir().parent))
     heads = script.get_heads()
-    assert heads == [REVISION], heads
+    # One head, not THIS revision: a later one must not break this test.
+    assert len(heads) == 1, heads

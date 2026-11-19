@@ -1970,6 +1970,10 @@ class ProceduralSkill(Base):
     # `create_all` produced 25 such duplicates that NO instance has;
     # production never ran with them.
     id = Column(Integer, primary_key=True)
+    # NO delete rule, on purpose: deleting a user who still owns a skill is
+    # refused (409, `delete_user`). SET NULL would make the skill ownerless, and
+    # an ownerless row is what retrieval treats as a system seed
+    # (pc20261119_fk_rules_to_model, #1588).
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     title = Column(String(255), nullable=False)
@@ -3702,7 +3706,9 @@ class IngestCredential(Base):
     route = Column(String(32), nullable=False, index=True)
     # bcrypt. NEVER the plaintext — that is returned once, at mint time only.
     token_hash = Column(String(255), nullable=False)
-    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Provenance only: who minted it. The credential belongs to the instance and
+    # outlives that account (pc20261119_fk_rules_to_model, #1588).
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     rotated_at = Column(DateTime, nullable=True)
     # Stamped on every successful push. This is what makes retiring the legacy

@@ -423,11 +423,12 @@ class SkillService:
         #   (a) skill owned by the asker (any tier — owner sees everything)
         #   (b) public-tier system seed (user_id IS NULL, circle_tier=4,
         #       source = 'seed'). The `source = 'seed'` check is the
-        #       defense against orphaned user skills leaking: procedural
-        #       skills declare user_id ON DELETE SET NULL, so a deleted
-        #       user's tier-4 row becomes (NULL, tier=4) — without the
-        #       source filter that row would silently equal a system seed
-        #       in retrieval and become visible to every other user.
+        #       defense against orphaned user skills leaking: an ownerless
+        #       tier-4 user skill would otherwise equal a system seed and
+        #       be visible to every other user. `user_id` has no delete
+        #       rule (deleting its owner is refused), but the household
+        #       carried ON DELETE SET NULL until pc20261119_fk_rules_to_model
+        #       (#1588), so keep the filter.
         #   (c) circle reach: asker is a member of the owner's tier-X
         #       circle and skill.circle_tier >= X (parallel to the shared
         #       circle_sql.circles_filter_clause used by RAG/KG/memory
