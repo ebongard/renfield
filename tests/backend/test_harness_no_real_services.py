@@ -17,11 +17,14 @@ pytestmark = pytest.mark.unit
 def test_no_paperless_endpoint_reaches_a_test():
     from utils.config import settings
 
-    assert "PAPERLESS_API_URL" not in os.environ
-    assert "PAPERLESS_API_TOKEN" not in os.environ
+    # Names only: an `assert ... in os.environ` would print the whole
+    # environment on failure, DATABASE_URL with its password included.
+    present = sorted({"PAPERLESS_API_URL", "PAPERLESS_API_TOKEN"} & set(os.environ))
+    assert present == []
     # `settings` read the environment once, at import -- after the removal.
     assert not settings.paperless_api_url
 
 
 def test_the_hugging_face_hub_is_offline():
-    assert os.environ.get("HF_HUB_OFFLINE") == "1"
+    offline = os.environ.get("HF_HUB_OFFLINE")
+    assert offline == "1"

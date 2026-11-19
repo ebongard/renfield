@@ -51,6 +51,9 @@ _REPO = Path(__file__).resolve().parents[2]
 _SCRIPT = _REPO / "bin" / "run-backend-tests.sh"
 _ADMIN = _REPO / "bin" / "throwaway_test_db.py"
 _APP_URL = "postgresql://app:PASSWORD@db:5432/renfield"
+# What an OUTER run under pytest-xdist sets for its own workers. A run this
+# file starts must not inherit it, or it becomes an xdist run itself (#1577).
+_OUTER_XDIST_VARS = ("PYTEST_XDIST_WORKER", "RENFIELD_TEST_WORKERS", "RENFIELD_TEST_DB_PER_WORKER")
 _TOKEN = "0123456789abcdef0123456789abcdef"
 
 _BAD_SUFFIXES = [
@@ -568,8 +571,14 @@ if [[ "$1" == "-" ]]; then
   exec "$STUB_REAL_PYTHON" -
 fi
 case "$1" in
+  -c)
+    # `python -c "import xdist"`: is pytest-xdist installed?
+    echo "xdist-check" >> "$STUB_LOG"
+    [[ -n "${STUB_NO_XDIST:-}" ]] && exit 1
+    exit 0 ;;
   -m)
     shift 2
+    [[ -n "${RENFIELD_TEST_DB_PER_WORKER:-}" ]] && echo "per-worker=$RENFIELD_TEST_DB_PER_WORKER" >> "$STUB_LOG"
     echo $$ > "$STUB_PYTEST_PID"
     case "${STUB_PYTEST_MODE:-}" in
       hang)        exec sleep 60 ;;
@@ -726,7 +735,10 @@ def script(request, tmp_path):
     def _env(suffix, stub_env):
         env = {
             k: v for k, v in os.environ.items()
-            if k not in ("RENFIELD_TEST_DB_SUFFIX", "RENFIELD_TEST_STOP_GRACE", "LC_ALL", "LC_COLLATE")
+            if k not in (
+                "RENFIELD_TEST_DB_SUFFIX", "RENFIELD_TEST_STOP_GRACE", "LC_ALL", "LC_COLLATE",
+                *_OUTER_XDIST_VARS,
+            )
         }
         env["PATH"] = f"{stub_dir}{os.pathsep}{env.get('PATH', '')}"
         env["DATABASE_URL"] = _APP_URL
@@ -1348,7 +1360,12 @@ def test_where_am_i():
     database, vector, mark = asyncio.run(ask())
     with open(os.environ["PROBE_OUT"], "w") as out:
         out.write(f"{database}|{vector}|{mark}")
-    assert os.environ.get("PROBE_FAIL") != "1"
+    # Not `assert os.environ.get(...) != "1"`: pytest's introspection prints
+    # `os.environ` on failure -- DATABASE_URL and its password included. It
+    # stayed hidden behind the repr truncation until an xdist run reordered the
+    # environment (#1577).
+    asked_to_fail = os.environ.get("PROBE_FAIL") == "1"
+    assert not asked_to_fail
 '''
 
 
@@ -1378,7 +1395,10 @@ def real_script(admin, pg_url, server, tmp_path):
 
     def _run(name, **extra):
         assert name in server.names, "take the name from server.new_name(), or nothing cleans it up"
-        env = {k: v for k, v in os.environ.items() if k not in ("RENFIELD_TEST_PG_URL", "RENFIELD_TEST_STOP_GRACE")}
+        env = {
+            k: v for k, v in os.environ.items()
+            if k not in ("RENFIELD_TEST_PG_URL", "RENFIELD_TEST_STOP_GRACE", *_OUTER_XDIST_VARS)
+        }
         env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
         env["RENFIELD_TEST_DB_SUFFIX"] = name.removeprefix("renfield_test_")
         env["PROBE_OUT"] = str(out)
@@ -1456,7 +1476,7 @@ class TestTheRealScriptOnRealPostgres:
             "import os, time\n\n\ndef test_sits_there():\n"
             "    open(os.environ['PROBE_OUT'], 'w').write('started')\n    time.sleep(120)\n"
         )
-        env = {k: v for k, v in os.environ.items() if k != "RENFIELD_TEST_PG_URL"}
+        env = {k: v for k, v in os.environ.items() if k not in ("RENFIELD_TEST_PG_URL", *_OUTER_XDIST_VARS)}
         env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
         env.update(RENFIELD_TEST_DB_SUFFIX=name.removeprefix("renfield_test_"), PROBE_OUT=str(out),
                    RENFIELD_TEST_STOP_GRACE="5")
@@ -1490,3 +1510,112 @@ class TestTheRealScriptOnRealPostgres:
                 return not await server.exists(name)
 
         assert asyncio.run(gone()), f"{name} is still there"
+
+
+# --------------------------------------------------------------------------
+# RENFIELD_TEST_WORKERS: pytest-xdist, one database per worker (#1577)
+# --------------------------------------------------------------------------
+
+
+def test_workers_get_a_database_each_pytest_gets_n_and_all_are_dropped(script):
+    run, _, log = script
+    proc = run("a1", "-q", RENFIELD_TEST_WORKERS="3")
+    assert proc.returncode == 0, proc.stderr
+    assert _calls(log) == [
+        "xdist-check",
+        "derive-url",
+        "admin create renfield_test_a1_gw0",
+        "admin create renfield_test_a1_gw1",
+        "admin create renfield_test_a1_gw2",
+        "per-worker=1",
+        # The URL names the base; each worker's harness swaps its id in.
+        "pytest db=renfield_test_a1 scheme=postgresql+asyncpg stdin=[] "
+        "args=-n 3 -o asyncio_mode=auto -p no:cacheprovider -q",
+        "admin drop renfield_test_a1_gw0 pytest_alive=no",
+        "admin dropped renfield_test_a1_gw0",
+        "admin drop renfield_test_a1_gw1 pytest_alive=no",
+        "admin dropped renfield_test_a1_gw1",
+        "admin drop renfield_test_a1_gw2 pytest_alive=no",
+        "admin dropped renfield_test_a1_gw2",
+    ]
+    assert "TEST_DB: renfield_test_a1_gw0 .. renfield_test_a1_gw2" in proc.stdout
+    assert "PASSWORD" not in proc.stdout + proc.stderr
+
+
+def test_workers_without_a_suffix_are_refused_before_anything_runs(script):
+    # The shared renfield_test is ONE database.
+    run, _, log = script
+    proc = run(None, RENFIELD_TEST_WORKERS="2")
+    assert proc.returncode == 2
+    assert "needs RENFIELD_TEST_DB_SUFFIX" in proc.stderr
+    assert _calls(log) == []
+
+
+@pytest.mark.parametrize("workers", ["0", "17", "x", "03", "-1", "2 ", "1e1"])
+def test_a_bad_worker_count_is_refused_before_anything_runs(script, workers):
+    run, _, log = script
+    proc = run("a1", RENFIELD_TEST_WORKERS=workers)
+    assert proc.returncode == 2, (workers, proc.stderr)
+    assert "RENFIELD_TEST_WORKERS" in proc.stderr
+    assert _calls(log) == []
+
+
+def test_without_pytest_xdist_the_run_is_refused_before_a_database_exists(script):
+    run, _, log = script
+    proc = run("a1", RENFIELD_TEST_WORKERS="2", STUB_NO_XDIST="1")
+    assert proc.returncode == 2
+    assert "pytest-xdist is not installed" in proc.stderr
+    assert _calls(log) == ["xdist-check"]
+
+
+def test_a_suffix_too_long_for_the_worker_tag_is_refused_by_the_helper(script):
+    # The shell accepts 40 characters; `_gw0` makes the database name too long.
+    run, _, log = script
+    proc = run("a" * 40, RENFIELD_TEST_WORKERS="2")
+    assert proc.returncode == 2
+    assert "REFUSED" in proc.stderr
+    assert not any(c.startswith(("admin create", "pytest")) for c in _calls(log))
+
+
+def test_worker_names_follow_the_xdist_ids_and_are_checked(admin):
+    assert admin.worker_names("renfield_test_a", 0) == ["renfield_test_a"]
+    assert admin.worker_names("renfield_test_a", 2) == ["renfield_test_a_gw0", "renfield_test_a_gw1"]
+    for bad in (-1, 17):
+        with pytest.raises(admin.Refused):
+            admin.worker_names("renfield_test_a", bad)
+    with pytest.raises(admin.Refused):
+        admin.worker_names("renfield_test_" + "a" * 40, 1)
+
+
+def test_if_one_worker_database_exists_none_is_left_behind_and_it_is_untouched(admin, monkeypatch):
+    conn = _Conn(existing={"renfield_test_a_gw1": "somebody else's"})
+
+    async def no_extension(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(admin, "_prepare_or_drop", no_extension)
+    with pytest.raises(admin.Refused):
+        asyncio.run(admin._create_all(conn, ["renfield_test_a_gw0", "renfield_test_a_gw1"], _APP_URL))
+    assert conn.drops == ['DROP DATABASE "renfield_test_a_gw0" WITH (FORCE)']
+    assert conn.existing == {"renfield_test_a_gw1": "somebody else's"}
+
+
+def test_all_worker_databases_carry_one_token_and_drop_with_it(admin, monkeypatch):
+    conn = _Conn()
+
+    async def no_extension(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(admin, "_prepare_or_drop", no_extension)
+    names = ["renfield_test_a_gw0", "renfield_test_a_gw1"]
+    token = asyncio.run(admin._create_all(conn, names, _APP_URL))
+    assert conn.existing == {n: admin.MARK + token for n in names}
+    assert asyncio.run(admin._drop_all(conn, names, token)) == []
+    assert conn.existing == {}
+
+
+def test_a_given_token_is_checked_before_it_goes_into_sql(admin):
+    conn = _Conn()
+    with pytest.raises(admin.Refused):
+        asyncio.run(admin.create(conn, "renfield_test_a", "x'; DROP DATABASE renfield; --"))
+    assert conn.statements == []

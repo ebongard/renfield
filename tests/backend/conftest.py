@@ -184,6 +184,46 @@ def _endpoint_guard_resolves_nothing(monkeypatch):
 # skip rather than quietly fall back to sqlite.
 
 
+def _point_this_xdist_worker_at_its_own_database() -> None:
+    """Under pytest-xdist, give THIS worker its own database (#1577).
+
+    Every worker is a process of its own that builds the schema and empties
+    tables between tests -- two workers on one database would pull the tables
+    out from under each other (the run lock below would stop the second one,
+    with a misleading message). `bin/throwaway_test_db.py --workers N` creates
+    `<base>_gw0 .. <base>_gw<N-1>` and says so with RENFIELD_TEST_DB_PER_WORKER;
+    the worker swaps its id into the URL HERE, at import, before any test or
+    module reads RENFIELD_TEST_PG_URL (two dozen files read it directly).
+    A worker without that promise stops instead of sharing a database.
+    """
+    worker = _os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker:
+        return
+    if _os.environ.get("RENFIELD_TEST_DB_PER_WORKER") != "1":
+        pytest.exit(
+            "pytest-xdist needs a database per worker: run through "
+            "bin/run-backend-tests.sh with RENFIELD_TEST_DB_SUFFIX and "
+            "RENFIELD_TEST_WORKERS set.",
+            returncode=1,
+        )
+    if not _re.fullmatch(r"gw[0-9]{1,2}", worker):
+        pytest.exit(f"unexpected xdist worker id {worker!r}", returncode=1)
+    from sqlalchemy.engine import make_url
+
+    base = make_url(_os.environ["RENFIELD_TEST_PG_URL"])
+    # Idempotent: this module is imported a second time as
+    # `tests.backend.conftest` (test_conftest_table_cleanup.py), and a second
+    # swap would name `<base>_gw0_gw0`.
+    if (base.database or "").endswith(f"_{worker}"):
+        return
+    _os.environ["RENFIELD_TEST_PG_URL"] = base.set(
+        database=f"{base.database}_{worker}"
+    ).render_as_string(hide_password=False)
+
+
+_point_this_xdist_worker_at_its_own_database()
+
+
 def _pg_url_or_skip() -> str:
     dsn = _os.environ.get("RENFIELD_TEST_PG_URL")
     if not dsn:
@@ -307,6 +347,21 @@ _MAX_DELETE_ROUNDS = 5
 # fallback that creeps back (a new NO ACTION cycle) shows as a number, not as
 # a suite that is quietly an hour slower again.
 _CLEANUP_COUNTS = {"delete": 0, "truncate_fallback": 0}
+
+
+def pytest_sessionfinish(session):
+    """An xdist worker hands its counts to the controller, which prints them."""
+    workeroutput = getattr(session.config, "workeroutput", None)
+    if workeroutput is not None:
+        workeroutput["renfield_cleanup_counts"] = dict(_CLEANUP_COUNTS)
+
+
+@pytest.hookimpl(optionalhook=True)  # an xdist hook; absent without xdist
+def pytest_testnodedown(node, error):
+    """Controller side of `pytest_sessionfinish` (only called under xdist)."""
+    counts = getattr(node, "workeroutput", {}).get("renfield_cleanup_counts", {})
+    for key, value in counts.items():
+        _CLEANUP_COUNTS[key] = _CLEANUP_COUNTS.get(key, 0) + value
 
 
 def pytest_terminal_summary(terminalreporter):
