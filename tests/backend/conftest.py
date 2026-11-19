@@ -12,6 +12,25 @@ Provides:
 """
 
 import os as _os
+
+# ============================================================================
+# No real external service from a test (#1577)
+# ============================================================================
+# The suite runs inside the dev stack's backend container and inherits its
+# environment. Measured 2026-11-19 (every outbound httpx request recorded per
+# test): with PAPERLESS_API_URL/_TOKEN inherited, six upload tests polled a REAL
+# Paperless for a made-up task id until the 30 s deadline (~185 s of the run),
+# and the folder-ingest tests searched its documents; the docling chunker
+# re-checked its tokenizer on huggingface.co 58 times.
+# Removed HERE, before `utils.config` is imported below, because `settings`
+# reads the environment once. A test that needs Paperless sets its own fake URL
+# (monkeypatch), as the Paperless tests already do.
+for _var in ("PAPERLESS_API_URL", "PAPERLESS_API_TOKEN"):
+    _os.environ.pop(_var, None)
+# The tokenizer is in the container's cache; offline mode reads it from there.
+# setdefault: a run that deliberately wants the hub can still say so.
+_os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 import re as _re
 from collections.abc import AsyncGenerator
 from datetime import datetime
