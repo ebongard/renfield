@@ -95,6 +95,25 @@ weiterhin (`replicas: 0`).
   eigener Healthcheck (`curl -fsS http://localhost:8081/health`, 30 s Takt, 10 min
   Anlaufzeit); Umgebung und Labels sind die des Images.
 
+  **Messung b10423 → b12532 bei wachsendem Kontext** (2026-11-19, 5090, Unit gestoppt,
+  [`deploy/cuda-host/llm-longctx.sh`](../deploy/cuda-host/llm-longctx.sh): `llama-bench` aus den
+  `full-cuda`-Bildern desselben Builds, Produktionsmodell, KV `q8_0`, `-fa 1`, `pp512`/`tg64`,
+  2 Wiederholungen; tok/s):
+
+  | Kontext | Prompt alt → neu | Faktor | Dekodierung alt → neu | Faktor |
+  |---|---|---|---|---|
+  | 0 | 8.410 → 13.722 | 1,63 | 251,8 → 267,3 | 1,06 |
+  | 8k | 8.055 → 11.968 | 1,49 | 241,4 → 256,1 | 1,06 |
+  | 32k | 6.779 → 9.404 | 1,39 | 212,1 → 222,3 | 1,05 |
+  | 64k | 5.513 → 7.319 | 1,33 | 173,3 → 179,2 | 1,03 |
+  | 128k | 3.705 → 5.104 | 1,38 | 136,2 → 138,9 | 1,02 |
+
+  Der Gewinn stammt überwiegend NICHT aus llama.cpp #32407: Der größte Sprung liegt bei
+  Kontext 0, wo #32407 laut PR nichts tut. Er greift nur in den mehrstufigen
+  FP16-MMA-Flash-Attention-Kerneln (`cp.async`, ab Ampere) und laut PR erst ab ~32k Kontext.
+  Der Wiederanstieg des Faktors bei 128k passt dazu, isoliert ist er nicht (dafür bräuchte es
+  einen Build direkt vor #32407). Auf der V100 (Volta, kein `cp.async`) läuft #32407 nie.
+
   **In git: [`deploy/cuda-host/llama-server.service`](../deploy/cuda-host/llama-server.service)**
   (Installation im README daneben) — eine systemd-Unit, die genau diesen Container mit
   `docker run --rm` startet: selbes Image per Digest, selbe Argumente, Einbindungen, Netz,
