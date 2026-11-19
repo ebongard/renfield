@@ -655,6 +655,53 @@ class TestDeleteRefusesToTakeKnowledgeWithIt:
         )).scalar_one_or_none()
         assert gone is None
 
+    @pytest.mark.database
+    async def test_refuses_for_a_skill_owner_instead_of_orphaning_the_skill(
+        self, db_session: AsyncSession, test_role: Role
+    ):
+        """#1588: with SET NULL the skill turned ownerless -- the shape
+        retrieval treats as a system seed. The key has no delete rule now."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+        from models.database import ProceduralSkill
+
+        victim = await self._victim(db_session, "hat-skill")
+        db_session.add(ProceduralSkill(user_id=victim.id, title="t", body_md="b"))
+        await db_session.flush()
+
+        with pytest.raises(HTTPException) as err:
+            await users_routes.delete_user(
+                user_id=victim.id, db=db_session, current_user=self._admin(test_role),
+            )
+        assert err.value.status_code == 409
+        assert err.value.detail["blocked_by"] == "procedural_skills"
+
+    @pytest.mark.database
+    async def test_an_ingest_credential_outlives_the_account_that_minted_it(
+        self, db_session: AsyncSession, test_role: Role
+    ):
+        """#1588: `created_by_user_id` is provenance; the credential belongs to
+        the instance, so its creator can be deleted and the credential stays."""
+        from api.routes import users as users_routes
+        from models.database import IngestCredential
+
+        victim = await self._victim(db_session, "hat-credential")
+        cred = IngestCredential(client_id="t1588", label="l", route="folder_ingest",
+                                token_hash="x", created_by_user_id=victim.id)
+        db_session.add(cred)
+        await db_session.flush()
+        cred_id = cred.id
+
+        with patch("api.routes.users.run_hooks", new=AsyncMock()):
+            await users_routes.delete_user(
+                user_id=victim.id, db=db_session, current_user=self._admin(test_role),
+            )
+        creator = (await db_session.execute(
+            select(IngestCredential.created_by_user_id).where(IngestCredential.id == cred_id)
+        )).one()
+        assert creator == (None,)
+
 
 
 

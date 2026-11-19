@@ -56,7 +56,7 @@ ingest_credentials
   label                  str             -- shown in the UI
   route                  str             -- folder_ingest | email_ingest
   token_hash             str             -- bcrypt. NEVER the plaintext.
-  created_by_user_id     fk users.id
+  created_by_user_id     fk users.id     -- ON DELETE SET NULL: provenance, outlives the account (#1588)
   created_at             datetime
   last_authenticated_at  datetime        -- drives "last seen" in the UI
   rotated_at             datetime
