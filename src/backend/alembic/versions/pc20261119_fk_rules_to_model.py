@@ -17,7 +17,11 @@ What each key gets, and why:
 - ``documents.atom_id``: **CASCADE**, the model's rule and the rule of every
   other atom-bearing table. A document is visible through its atom; with SET
   NULL, deleting the atom left the document behind without an owner or a
-  policy.
+  policy. One behaviour change in the household: a document committed while
+  its atom still holds the ``__pending__`` placeholder (a crash between the two
+  commits in ``RAGService`` document creation) now goes with that atom when the
+  reaper removes it, as it already did in xidra; the document was stuck in
+  ``pending`` either way.
 - ``ingest_credentials.created_by_user_id``: **SET NULL**, both instances'
   rule; the model follows. The column only records who minted the credential;
   the credential belongs to the instance and must outlive that account.
