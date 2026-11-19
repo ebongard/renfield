@@ -28,7 +28,8 @@ Loaded only when a migration file is read. Deploy order and the migration Job: `
   columns, BM25 = 0 (2026-10-31), repaired by `pc20261031_sv_generated`. History: `docs/MULTILANGUAGE.md`.
   …nor without the FOREIGN-KEY DELETE RULE (`pg_constraint.confdeltype` vs the model's `ondelete`): on
   2026-11-19 five key/instance pairs differed from the model (household 3, xidra 2), one a refused delete
-  (#1585 fixed that one; the other four are an open decision there).
+  (#1585 fixed that one, #1588 the other four). Deleting a user who still holds data is REFUSED on
+  purpose (409, `delete_user`): a new key onto `users.id` gets SET NULL only for pure provenance.
 - 🛑 **Historisch (bis #B3): raw-SQL DDL in a migration NEVER reached a fresh install.** `create_all` builds
   tables and ORM-declared indexes; anything a migration adds via `op.execute("CREATE INDEX …")` is skipped, and the
   stamp then claims it was applied, so nothing ever backfills it. Measured 2026-09-24, 37 data points without one
