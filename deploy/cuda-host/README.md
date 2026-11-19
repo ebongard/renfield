@@ -9,6 +9,7 @@ container definition are in [`docs/GPU_TOPOLOGY.md`](../../docs/GPU_TOPOLOGY.md)
 | `llama-server.service` | systemd unit that runs the `llama-server` container (llama.cpp, image by digest) |
 | `llm-ab.sh` | A/B of the installed image against a candidate, on port 8082, while the unit is stopped |
 | `llm-check.py` | the check `llm-ab.sh` runs: plain chat, one tool call, decode speed (3 runs) |
+| `llm-longctx.sh` | `llama-bench` prefill + decode at 0–128k context, two `full-cuda` images (unit stopped) |
 
 ## Why a systemd unit
 
