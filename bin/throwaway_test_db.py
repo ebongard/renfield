@@ -411,9 +411,10 @@ def signals_noted():
             signal.signal(signum, handler)
 
 
-#: Set for pytest when every xdist worker has a database of its own; the harness
-#: (tests/backend/conftest.py) refuses a worker without it rather than letting
-#: two workers share one database.
+#: Set for pytest to the BASE name when every xdist worker has a database of
+#: its own (`<base>_gw<k>`); the harness (tests/backend/conftest.py) builds each
+#: worker's URL from it, and refuses a worker -- or a run that does not
+#: distribute after all -- that would end up elsewhere.
 PER_WORKER_ENV = "RENFIELD_TEST_DB_PER_WORKER"
 MAX_WORKERS = 16
 
@@ -481,7 +482,7 @@ def run(name: str, pytest_args: list[str], workers: int = 0) -> int:
     # pointed at a database that does not exist -- an error, not a shared one.
     env = {**os.environ, "RENFIELD_TEST_PG_URL": pytest_url(application_url, name)}
     if workers:
-        env[PER_WORKER_ENV] = "1"
+        env[PER_WORKER_ENV] = name
         pytest_args = ["-n", str(workers), *pytest_args]
     else:
         env.pop(PER_WORKER_ENV, None)

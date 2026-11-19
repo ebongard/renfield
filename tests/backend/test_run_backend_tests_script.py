@@ -651,7 +651,7 @@ class Conn:
         elif sql.startswith("DROP DATABASE"):
             log(f"admin drop {name} pytest_alive={pytest_alive()}")
             mode = os.environ.get("STUB_DROP", "")
-            if mode == "fail":
+            if mode == "fail" or name == os.environ.get("STUB_DROP_FAIL_NAME"):
                 raise RuntimeError("connection lost")
             if mode == "hang":
                 await asyncio.sleep(3600)
@@ -1527,8 +1527,8 @@ def test_workers_get_a_database_each_pytest_gets_n_and_all_are_dropped(script):
         "admin create renfield_test_a1_gw0",
         "admin create renfield_test_a1_gw1",
         "admin create renfield_test_a1_gw2",
-        "per-worker=1",
-        # The URL names the base; each worker's harness swaps its id in.
+        "per-worker=renfield_test_a1",
+        # The URL names the base; each worker's harness builds its own from it.
         "pytest db=renfield_test_a1 scheme=postgresql+asyncpg stdin=[] "
         "args=-n 3 -o asyncio_mode=auto -p no:cacheprovider -q",
         "admin drop renfield_test_a1_gw0 pytest_alive=no",
@@ -1619,3 +1619,30 @@ def test_a_given_token_is_checked_before_it_goes_into_sql(admin):
     with pytest.raises(admin.Refused):
         asyncio.run(admin.create(conn, "renfield_test_a", "x'; DROP DATABASE renfield; --"))
     assert conn.statements == []
+
+
+def test_one_worker_database_that_cannot_be_dropped_fails_a_green_run_the_rest_still_go(script):
+    run, _, log = script
+    proc = run("a1", RENFIELD_TEST_WORKERS="3", STUB_DROP_FAIL_NAME="renfield_test_a1_gw1")
+    assert proc.returncode == 1, proc.stderr
+    calls = _calls(log)
+    assert "admin dropped renfield_test_a1_gw0" in calls
+    assert "admin dropped renfield_test_a1_gw2" in calls
+    assert "admin dropped renfield_test_a1_gw1" not in calls
+    assert "renfield_test_a1_gw1 was NOT dropped" in proc.stderr
+    assert "dropped renfield_test_a1_gw0 .. " not in proc.stderr
+
+
+def test_drop_all_reports_exactly_the_databases_left_behind(admin):
+    class _Failing(_Conn):
+        async def execute(self, sql):
+            if sql.startswith("DROP") and "_gw1" in sql:
+                raise RuntimeError("connection lost")
+            await super().execute(sql)
+
+    conn = _Failing()
+    names = ["renfield_test_a_gw0", "renfield_test_a_gw1", "renfield_test_a_gw2"]
+    token = "0" * 32
+    conn.existing = {n: admin.MARK + token for n in names}
+    assert asyncio.run(admin._drop_all(conn, names, token)) == ["renfield_test_a_gw1"]
+    assert conn.existing == {"renfield_test_a_gw1": admin.MARK + token}

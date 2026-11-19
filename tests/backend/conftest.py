@@ -191,15 +191,19 @@ def _point_this_xdist_worker_at_its_own_database() -> None:
     tables between tests -- two workers on one database would pull the tables
     out from under each other (the run lock below would stop the second one,
     with a misleading message). `bin/throwaway_test_db.py --workers N` creates
-    `<base>_gw0 .. <base>_gw<N-1>` and says so with RENFIELD_TEST_DB_PER_WORKER;
-    the worker swaps its id into the URL HERE, at import, before any test or
-    module reads RENFIELD_TEST_PG_URL (two dozen files read it directly).
+    `<base>_gw0 .. <base>_gw<N-1>` and names `<base>` in
+    RENFIELD_TEST_DB_PER_WORKER; the worker sets its URL HERE, at import,
+    before any test or module reads RENFIELD_TEST_PG_URL (two dozen files read
+    it directly). The URL is BUILT from that base, never derived from the
+    current URL: this module is imported a second time as
+    `tests.backend.conftest`, and a suffix may itself end in `_gw1`.
     A worker without that promise stops instead of sharing a database.
     """
     worker = _os.environ.get("PYTEST_XDIST_WORKER")
     if not worker:
         return
-    if _os.environ.get("RENFIELD_TEST_DB_PER_WORKER") != "1":
+    base_name = _os.environ.get("RENFIELD_TEST_DB_PER_WORKER", "")
+    if not _TEST_DB_NAME_RE.fullmatch(base_name) or base_name == "renfield_test":
         pytest.exit(
             "pytest-xdist needs a database per worker: run through "
             "bin/run-backend-tests.sh with RENFIELD_TEST_DB_SUFFIX and "
@@ -210,18 +214,12 @@ def _point_this_xdist_worker_at_its_own_database() -> None:
         pytest.exit(f"unexpected xdist worker id {worker!r}", returncode=1)
     from sqlalchemy.engine import make_url
 
-    base = make_url(_os.environ["RENFIELD_TEST_PG_URL"])
-    # Idempotent: this module is imported a second time as
-    # `tests.backend.conftest` (test_conftest_table_cleanup.py), and a second
-    # swap would name `<base>_gw0_gw0`.
-    if (base.database or "").endswith(f"_{worker}"):
-        return
-    _os.environ["RENFIELD_TEST_PG_URL"] = base.set(
-        database=f"{base.database}_{worker}"
+    url = make_url(_os.environ["RENFIELD_TEST_PG_URL"])
+    _os.environ["RENFIELD_TEST_PG_URL"] = url.set(
+        database=f"{base_name}_{worker}"
     ).render_as_string(hide_password=False)
 
 
-_point_this_xdist_worker_at_its_own_database()
 
 
 def _pg_url_or_skip() -> str:
@@ -515,6 +513,9 @@ def _db_name_only(url: str | None) -> str:
 # mis-derived URL then stops the run instead of emptying a real database.
 _TEST_DB_NAME_RE = _re.compile(r"renfield_test(?:\d+|_(?![a-z0-9_]*(?:prod|live))[a-z0-9_]+)?")
 
+# Here, not at the definition above: it checks the base name with this rule.
+_point_this_xdist_worker_at_its_own_database()
+
 
 def _refuse_the_application_database(dsn: str) -> None:
     """Never run the suite against anything but a dedicated test database."""
@@ -742,7 +743,31 @@ def pytest_collection_modifyitems(config, items):
         )
 
 
+def _refuse_a_single_process_run_with_a_per_worker_promise(config) -> None:
+    """RENFIELD_TEST_DB_PER_WORKER means: N workers, each on `<base>_gw<k>`.
+    A run that ends up in ONE process anyway (`-n 0` or `-p no:xdist` among
+    the arguments) would test in `<base>` itself, which this run never created
+    -- and a concurrent run without workers may have created it under that
+    very name. Only an xdist controller (it runs no tests) or a worker may
+    carry the promise."""
+    if not _os.environ.get("RENFIELD_TEST_DB_PER_WORKER"):
+        return
+    if _os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    distributing = bool(getattr(config.option, "numprocesses", None)) and (
+        getattr(config.option, "dist", "no") != "no"
+    )
+    if not distributing:
+        pytest.exit(
+            "RENFIELD_TEST_WORKERS is set, but this run does not distribute "
+            "(-n 0 or -p no:xdist among the arguments?). It would test in a "
+            "database this run did not create -- refused.",
+            returncode=1,
+        )
+
+
 def pytest_configure(config):
+    _refuse_a_single_process_run_with_a_per_worker_promise(config)
     config.addinivalue_line(
         "markers",
         "postgres: Tests requiring real PostgreSQL + pgvector (skipped on sqlite test harness)",
