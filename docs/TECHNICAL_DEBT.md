@@ -751,6 +751,30 @@ allein, `--durations=0`):
 - **`fsync = off` (Schritt 2) entfällt:** seit dem `DELETE` wartet der Lauf kaum noch auf die
   Platte. Der verbleibende Hebel ist, dass er seriell auf einem von 12 Kernen läuft —
   `pytest-xdist` mit einer Datenbank je Worker (#1577, Schritt 3).
+- **xdist umgesetzt** (gemessen 2026-11-19, dieselbe Box, derselbe Stand, volle Suite,
+  11.764 grün, 34 übersprungen, 0 rot in jeder Variante):
+
+  | Worker | Laufzeit | freier Speicher am Tiefpunkt |
+  |---|---|---|
+  | seriell | 14:53 | – |
+  | 3 | 6:32 | 200 MB |
+  | 4 | **6:12** | 255 MB |
+  | 6 | 6:02 | 145 MB |
+
+  `RENFIELD_TEST_DB_SUFFIX=<name> RENFIELD_TEST_WORKERS=4`: `throwaway_test_db.py` legt
+  `renfield_test_<name>_gw0..3` unter EINEM Lauf-Token an und löscht alle; jeder Worker setzt
+  beim Import von `conftest.py` seine Kennung in `RENFIELD_TEST_PG_URL` ein (zwei Dutzend
+  Dateien lesen die Variable direkt). Ein Worker ohne diese Zusage bricht ab, statt eine
+  Datenbank zu teilen. Die Aufräumzähler gehen über `workeroutput` an den Hauptprozess.
+  Der größte Speicherverbraucher ist nicht pytest, sondern das Embedding-Modell im Ollama der
+  Box (2,5 GB, geladen sobald ein Test echte Embeddings holt); 8 GB Swap fangen die Spitze ab,
+  kein OOM. Mehr als 4 Worker lohnen nicht.
+  Was xdist zutage brachte: zufällig erzeugte Parameter-IDs (`test_push_notifications.py`,
+  Worker sammeln dann verschiedene Tests ein), innere pytest-Läufe, die die xdist-Variablen
+  erbten, und zwei Asserts auf `os.environ`, deren Fehlerausgabe `DATABASE_URL` samt Passwort
+  druckt — bisher nur durch die Kürzung der Ausgabe verdeckt.
+- **Offen:** `requirements-test.txt` pinnt `pytest==7.4.4`/`pytest-asyncio==0.23.3`, der
+  Container hat 8.4.2/1.3.0 — die Suite ist nur gegen den Container belegt.
 
 Die Migrationstests arbeiten in eigenen Wegwerf-Schemata neben `public` und finden `vector`
 über `search_path = <schema>, public`; der Neuaufbau berührt sie nicht.
