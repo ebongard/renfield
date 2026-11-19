@@ -38,7 +38,7 @@ from models.database import (
 from services.atom_owner import AtomOwnerResolverMixin
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 # ---------------------------------------------------------------------------
 # Memory Poisoning Defense — pattern lists for extraction gating
@@ -616,11 +616,11 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                 if await self._should_subsume_fact(
                     subject, user_id, captured_kg_subjects
                 ):
-                    logger.debug(f"📥 Subsuming fact to KG (skip flat memory): subject={subject!r}")
+                    logger.debug(f"📥 Subsuming fact to KG (skip flat memory): subject={logged_content(subject)}")
                     continue
                 logger.debug(
                     f"🛟 Subsume gate: keeping fact flat — no KG relation captured "
-                    f"this turn for subject={subject!r}"
+                    f"this turn for subject={logged_content(subject)}"
                 )
 
             # Clamp importance to valid range
@@ -706,7 +706,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             await self.db.rollback()
             logger.warning(
                 f"Memory KG bridge failed for memory #{getattr(memory, 'id', '?')} "
-                f"subject={subject!r}: {error_text_without_content(e)}"
+                f"subject={logged_content(subject)}: {error_text_without_content(e)}"
             )
 
     async def _resolve_subject_entity_id(
@@ -786,7 +786,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             return row[1] or row[0]
         except Exception as e:
             logger.warning(
-                f"Subsume subject resolution failed for subject={subject!r}: {error_text_without_content(e)}"
+                f"Subsume subject resolution failed for subject={logged_content(subject)}: {error_text_without_content(e)}"
             )
             return None
 
@@ -936,7 +936,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             return rel.first() is not None
         except Exception as e:
             logger.warning(
-                f"Subsume KG-representability probe failed for subject={subject!r}: {error_text_without_content(e)}"
+                f"Subsume KG-representability probe failed for subject={logged_content(subject)}: {error_text_without_content(e)}"
             )
             return False
 
@@ -1603,7 +1603,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                     ):
                         logger.debug(
                             f"📥 v2: subsuming fact to KG (skip flat memory): "
-                            f"subject={op.subject!r}"
+                            f"subject={logged_content(op.subject)}"
                         )
                         continue
                     memory = await self._apply_add_v2(

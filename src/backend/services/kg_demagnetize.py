@@ -45,7 +45,7 @@ from services.knowledge_graph_service import (
     KnowledgeGraphService,
     is_generic_person_description,
 )
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 logger = logging.getLogger("kg_demagnetize")
 
@@ -119,7 +119,8 @@ async def run(db: AsyncSession, user_id: int | None = None) -> DemagnetizeReport
                 or not is_generic_person_description(e.description)):
             rep.skipped += 1
             logger.info("skip entity #%d %r: changed under backfill (canonical_id=%s active=%s desc=%r)",
-                        e.id, e.name, e.canonical_id, e.is_active, e.description)
+                        e.id, logged_content(e.name), e.canonical_id, e.is_active,
+                        logged_content(e.description))
             continue
         try:
             # Re-embed from the bare name only (no description) so the row sits at

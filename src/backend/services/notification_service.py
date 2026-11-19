@@ -29,7 +29,7 @@ from models.database import (
 )
 from services.push_service import schedule_push
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 
 class NotificationService:
@@ -560,7 +560,7 @@ class NotificationService:
         # 1. Hash-based dedup (fast first-pass)
         dedup_key = self._compute_dedup_key(event_type, title, message, room, target_user_id)
         if await self._is_duplicate(dedup_key):
-            logger.info(f"🔇 Notification suppressed (duplicate): {title}")
+            logger.info(f"🔇 Notification suppressed (duplicate): {logged_content(title)}")
             raise ValueError("Duplicate notification suppressed")
 
         # 2. Generate embedding (reused for semantic dedup + suppression)
@@ -629,7 +629,7 @@ class NotificationService:
         await self.db.commit()
         await self.db.refresh(notification)
 
-        logger.info(f"📨 Notification #{notification.id} created: {title} (urgency={urgency})")
+        logger.info(f"📨 Notification #{notification.id} created: {logged_content(title)} (urgency={urgency})")
 
         # Resolve target user's room via hook — domain-specific consumers
         # (e.g. ha_glue's BLE presence service) can respond with the user's

@@ -58,6 +58,31 @@ MAX_LEN = 200
 _CONTENT_STARTS = re.compile(r"\[SQL:|(?<![A-Za-z])(?:DETAIL|HINT|CONTEXT):")
 
 
+#: How much of a content value a line shows when LOG_CONTENT is on.
+CONTENT_PREVIEW = 100
+
+
+def logged_content(value: object, limit: int = CONTENT_PREVIEW) -> str:
+    """What a log line may say about USER CONTENT -- a chat message, a
+    transcription, a title, a query, an entity name (#1565).
+
+    By default its length only (`<87 chars>`): the pod log is read by whoever
+    operates the cluster, and a household's messages and names do not belong
+    there. With `LOG_CONTENT=true` (a per-instance debugging switch, off by
+    default) the text itself, cut to `limit` characters and quoted.
+    `tests/backend/test_log_content_structure.py` holds every log call to it.
+    """
+    if value is None:
+        return "<none>"
+    text = value if isinstance(value, str) else str(value)
+    from utils.config import settings
+
+    if not getattr(settings, "log_content", False):
+        return f"<{len(text)} chars>"
+    shown = text if len(text) <= limit else text[:limit] + "…"
+    return repr(shown)
+
+
 def error_text_without_content(e: BaseException) -> str:
     """The primary message: up to the first `DETAIL:` / `HINT:` / `CONTEXT:`
     line or the `[SQL: ...]` tail, truncated."""
@@ -127,6 +152,55 @@ def install_log_sink(level: str) -> None:
 
     logger.remove()
     logger.add(sys.stderr, level=level, backtrace=True, diagnose=False)
+    _route_stdlib_logging_into_loguru()
+
+
+class _StdlibToLoguru(logging.Handler):
+    """Hands a stdlib `logging` record to loguru, i.e. to the one sink above.
+
+    19 backend modules (and every library) log through stdlib `logging`. With
+    no handler on the root logger, their WARNING lines went to stderr through
+    `logging.lastResort` -- unformatted, and past the sink whose options this
+    module exists for (#1565). The record's message is rendered by stdlib
+    (`getMessage`), so a `{` in it is never read as a loguru placeholder.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        from loguru import logger
+
+        try:
+            level: str | int = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        try:
+            message = record.getMessage()
+        except Exception:
+            self.handleError(record)
+            return
+        # Attribute the line to the stdlib caller, not to this handler: walk up
+        # past this frame and every frame of the `logging` package (loguru's
+        # documented recipe).
+        import inspect
+
+        frame, depth = inspect.currentframe(), 0
+        while frame is not None and (depth == 0 or frame.f_code.co_filename == logging.__file__):
+            frame = frame.f_back
+            depth += 1
+        logger.opt(depth=depth, exception=record.exc_info).log(level, message)
+
+
+def _route_stdlib_logging_into_loguru() -> None:
+    """One `_StdlibToLoguru` on the root logger. Idempotent.
+
+    🛑 The root LEVEL is not touched: it stays WARNING, so exactly the lines
+    that reached stderr before still do, now through the sink -- no library
+    starts printing its INFO chatter (httpx logs every request at INFO).
+    Loggers with handlers of their own (uvicorn's) and `propagate=False`
+    never reach the root and are unchanged.
+    """
+    root = logging.getLogger()
+    if not any(isinstance(h, _StdlibToLoguru) for h in root.handlers):
+        root.addHandler(_StdlibToLoguru())
 
 
 # --- Credentials in logged URLs ----------------------------------------------

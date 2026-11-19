@@ -144,10 +144,13 @@ class KgConflationMonitor:
                     pass
                 continue
             for p in pairs:
+                # Ids, never the names: an entity name is user content, often a
+                # person's name (#1565). The review UI shows the names to whoever
+                # follows the ids.
                 logger.warning(
-                    "KG conflation tripwire (user %d): %s #%d %r ~ #%d %r tier=%d cosine=%.3f "
+                    "KG conflation tripwire (user %d): %s #%d ~ #%d tier=%d cosine=%.3f "
                     "(distinct names embed ≥ %.2f — possible forming magnet / mis-embedding)",
-                    uid, p.entity_type, p.id_a, p.name_a, p.id_b, p.name_b, p.tier,
+                    uid, p.entity_type, p.id_a, p.id_b, p.tier,
                     p.similarity, settings.kg_conflation_monitor_threshold,
                 )
             rep.pairs.extend(pairs)

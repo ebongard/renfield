@@ -56,6 +56,7 @@ from services.circle_sql import PeerScope, document_chunks_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
 from utils.llm_client import get_embed_client
+from utils.log_safety import logged_content
 from utils.metrics import observe_duration, record_rag_search
 from utils.prompt_safety import neutralize_delimiters
 
@@ -158,7 +159,7 @@ class RAGRetrieval:
         if query_embedding is None:
             results = await self._search_bm25(query, top_k, knowledge_base_id, user_id, peer)
             logger.info(
-                f"📚 RAG BM25-only Fallback: query='{query[:50]}', kb_id={knowledge_base_id}, "
+                f"📚 RAG BM25-only Fallback: query={logged_content(query)}, kb_id={knowledge_base_id}, "
                 f"found={len(results)}"
             )
         elif settings.rag_hybrid_enabled:
@@ -171,7 +172,7 @@ class RAGRetrieval:
             )
             results = self._reciprocal_rank_fusion(dense_results, bm25_results, top_k)
             logger.info(
-                f"📚 RAG Hybrid Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
+                f"📚 RAG Hybrid Search: query={logged_content(query)}, kb_id={knowledge_base_id}, "
                 f"dense={len(dense_results)}, bm25={len(bm25_results)}, fused={len(results)}"
             )
         else:
@@ -179,7 +180,7 @@ class RAGRetrieval:
                 query_embedding, top_k, knowledge_base_id, threshold, user_id, peer
             )
             logger.info(
-                f"📚 RAG Dense Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
+                f"📚 RAG Dense Search: query={logged_content(query)}, kb_id={knowledge_base_id}, "
                 f"threshold={threshold}, found={len(results)}"
             )
 

@@ -44,7 +44,7 @@ from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
 from utils.config import settings
-from utils.log_safety import error_text_without_content, frames_without_content
+from utils.log_safety import error_text_without_content, frames_without_content, logged_content
 
 router = APIRouter()
 
@@ -1335,7 +1335,7 @@ async def satellite_websocket(
 
                     if text and text.strip():
                         transcribed = True
-                        logger.info(f"📝 Transcription: '{text}'")
+                        logger.info(f"📝 Transcription: {logged_content(text)}")
                         await satellite_manager.send_transcription(session_id, text)
 
                 except Exception as e:

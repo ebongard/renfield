@@ -38,7 +38,7 @@ from services.turn_extraction import (
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
-from utils.log_safety import error_text_without_content, frames_without_content
+from utils.log_safety import error_text_without_content, frames_without_content, logged_content
 from utils.prompt_safety import neutralize_delimiters
 from utils.request_context import request_id as request_id_var
 from utils.voice_context import voice_originated
@@ -1043,7 +1043,7 @@ async def _stream_rag_response(
                 async with AsyncSessionLocal() as db_session:
                     rag_service = RAGService(db_session)
 
-                    logger.info(f"📚 RAG search: query='{content[:50]}...', kb_id={knowledge_base_id}, is_followup={is_followup}")
+                    logger.info(f"📚 RAG search: query={logged_content(content)}, kb_id={knowledge_base_id}, is_followup={is_followup}")
 
                     search_results = await rag_service.search(
                         query=content,
@@ -1463,7 +1463,7 @@ async def websocket_endpoint(
             )
 
             _log_user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
-            logger.info(f"📨 WebSocket message: {message_type} - '{content[:100]}' (RAG: {use_rag}, session: {msg_session_id}, user: {_log_user_id})")
+            logger.info(f"📨 WebSocket message: {message_type} - {logged_content(content)} (RAG: {use_rag}, session: {msg_session_id}, user: {_log_user_id})")
 
             # Prompt injection check
             injection_result = detect_injection(content)
@@ -1985,7 +1985,7 @@ async def websocket_endpoint(
                     lang=turn_lang,
                     role_hint=_role_hint,
                 )
-                logger.info(f"🎯 Router: '{content[:60]}...' → {role.name}")
+                logger.info(f"🎯 Router: {logged_content(content)} → {role.name}")
 
                 # Save active domain for continuity scoring on next message
                 if msg_session_id and role.name not in ("conversation", "general"):

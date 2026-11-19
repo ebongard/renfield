@@ -33,6 +33,7 @@ from loguru import logger
 
 from utils.config import settings
 from utils.llm_client import get_default_client
+from utils.log_safety import logged_content
 
 
 @dataclass
@@ -252,7 +253,7 @@ class SkillExtractor:
         try:
             obj = json.loads(text)
         except json.JSONDecodeError as e:
-            logger.warning(f"⚠️ Skill extractor JSON parse failed: {e}; got: {text[:120]}")
+            logger.warning(f"⚠️ Skill extractor JSON parse failed: {e}; got: {logged_content(text, 120)}")
             return None
 
         if obj is None or not isinstance(obj, dict):

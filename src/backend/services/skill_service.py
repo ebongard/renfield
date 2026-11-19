@@ -70,7 +70,7 @@ from services.atom_service import AtomService
 from services.circle_sql import PeerScope
 from utils.config import settings
 from utils.llm_client import get_embed_client
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 from utils.prompt_scrub import scrub_for_prompt
 
 
@@ -264,7 +264,7 @@ class SkillService:
         SkillService.invalidate_has_skills_cache()
         logger.info(
             f"🧠 Skill persisted (user={user_id}, tier={circle_tier}, "
-            f"source={source}): {title!r}"
+            f"source={source}): {logged_content(title)}"
         )
         return skill
 
@@ -341,7 +341,7 @@ class SkillService:
         self.db.add(skill)
         await self.db.commit()
         SkillService.invalidate_has_skills_cache()
-        logger.info(f"🌱 Seed skill loaded: {title!r}")
+        logger.info(f"🌱 Seed skill loaded: {logged_content(title)}")
         return skill
 
     # =============================================================== reads
@@ -664,7 +664,7 @@ class SkillService:
             demoted = True
             logger.warning(
                 f"🧠 Skill {skill.id} auto-demoted (success_rate "
-                f"{skill.success_count}/{total}): {skill.title!r}"
+                f"{skill.success_count}/{total}): {logged_content(skill.title)}"
             )
 
         await self.db.commit()

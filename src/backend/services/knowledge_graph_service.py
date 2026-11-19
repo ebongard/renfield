@@ -33,7 +33,7 @@ from services.kg_validity_sql import live_conditions
 from services.merge_guard import is_already_merged
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 # =============================================================================
 # Generic meta-descriptions (the magnet-hub root cause)
@@ -570,7 +570,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         # is covered too.
         is_person = "person" in seed_types
         if is_person and is_generic_person_description(description):
-            logger.debug("KG: dropping generic person description {!r} for '{}'", description, name)
+            logger.debug("KG: dropping generic person description {} for {}", logged_content(description), logged_content(name))
             description = None
 
         embedding = None
@@ -1180,8 +1180,8 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             )
             if not verdict.ok:
                 logger.info(
-                    f"KG: Rejected relation '{subject.name}' --{pred}--> "
-                    f"'{obj.name}' ({verdict.reason})"
+                    f"KG: Rejected relation {logged_content(subject.name)} --{pred}--> "
+                    f"{logged_content(obj.name)} ({verdict.reason})"
                 )
                 rejected_relations += 1
                 continue
@@ -1364,8 +1364,8 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             )
             if not verdict.ok:
                 logger.info(
-                    f"KG: Rejected document relation '{subject.name}' --{pred}--> "
-                    f"'{obj.name}' ({verdict.reason})"
+                    f"KG: Rejected document relation {logged_content(subject.name)} --{pred}--> "
+                    f"{logged_content(obj.name)} ({verdict.reason})"
                 )
                 rejected_relations += 1
                 continue

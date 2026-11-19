@@ -85,7 +85,7 @@ from services.mcp_streaming import (
 )
 from services.pairing_service import _canonical_bytes
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 # Timeouts (seconds) — responder-side TTL is 60s (F3a), so we cap here.
 POLL_INTERVAL_SECONDS = 0.5
@@ -358,7 +358,7 @@ class FederationQueryAsker:
         if r.status_code != 200:
             logger.warning(
                 f"Federation initiate rejected by {endpoint}: "
-                f"HTTP {r.status_code} {r.text[:200]}"
+                f"HTTP {r.status_code} {logged_content(r.text, 200)}"
             )
             return None
 

@@ -17,7 +17,7 @@ from loguru import logger
 
 from ha_glue.utils.config import ha_glue_settings
 from utils.config import settings
-from utils.log_safety import error_text_without_content, frames_without_content
+from utils.log_safety import error_text_without_content, frames_without_content, logged_content
 
 
 class MediaType(str, Enum):
@@ -216,7 +216,7 @@ class MediaFollowService:
         # Suspend: stop playback, mark session
         logger.info(
             f"🎵 User {user_id} left {room_name} — suspending "
-            f"'{session.title or session.station_name or session.album_name}'"
+            f"{logged_content(session.title or session.station_name or session.album_name)}"
         )
         await self._stop_playback(session)
         session.state = SessionState.SUSPENDED
@@ -283,7 +283,7 @@ class MediaFollowService:
         # Resume in new room
         logger.info(
             f"🎵 User {user_id} entered {room_name} — resuming "
-            f"'{session.title or session.station_name or session.album_name}'"
+            f"{logged_content(session.title or session.station_name or session.album_name)}"
         )
 
         if ha_glue_settings.media_follow_resume_delay > 0:
