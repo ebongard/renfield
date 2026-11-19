@@ -200,20 +200,39 @@ async def test_a_key_that_already_has_the_rule_is_left_alone(schema_conn):
     the model: nothing to rebuild."""
     conn, schema = schema_conn
     await _pre_migration_tables(conn, skills_rule=" ON DELETE SET NULL")
-    oid_before = (await conn.execute(text(
-        "SELECT c.oid FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid"
-        " JOIN pg_namespace n ON n.oid = t.relnamespace"
-        " WHERE c.contype = 'f' AND t.relname = 'procedural_skills' AND n.nspname = :s"
-    ), {"s": schema})).scalar()
+    skills_before = (await _oids(conn, schema))["procedural_skills"]
     await _run(conn, "upgrade")
+    after_first = await _oids(conn, schema)
+    assert after_first["procedural_skills"] == skills_before, "a key with the right rule was rebuilt"
     await _run(conn, "upgrade")
-    oid_after = (await conn.execute(text(
-        "SELECT c.oid FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid"
-        " JOIN pg_namespace n ON n.oid = t.relnamespace"
-        " WHERE c.contype = 'f' AND t.relname = 'procedural_skills' AND n.nspname = :s"
-    ), {"s": schema})).scalar()
-    assert oid_after == oid_before, "a key with the right rule was rebuilt"
+    assert await _oids(conn, schema) == after_first, "a second upgrade rebuilt a key"
     assert set(_kinds(await _rules(conn, schema)).values()) == {"n"}
+
+
+async def _oids(conn, schema) -> dict[str, int]:
+    rows = (await conn.execute(text(
+        "SELECT t.relname, c.oid FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid"
+        " JOIN pg_namespace n ON n.oid = t.relnamespace"
+        " WHERE c.contype = 'f' AND n.nspname = :s"
+    ), {"s": schema})).all()
+    return {r[0]: r[1] for r in rows}
+
+
+async def test_a_duplicate_key_on_a_column_is_refused_before_anything_changes(schema_conn):
+    """Fixing one of two keys would leave the other blocking the delete."""
+    conn, schema = schema_conn
+    await _pre_migration_tables(conn)
+    await conn.exec_driver_sql(
+        "ALTER TABLE notification_suppressions ADD CONSTRAINT dup_source_fk"
+        " FOREIGN KEY (source_notification_id) REFERENCES notifications(id)"
+    )
+    await conn.commit()
+    with pytest.raises(RuntimeError, match="2 foreign keys notification_suppressions"):
+        await _run(conn, "upgrade")
+    await conn.rollback()
+    # The reminders key came first and was rebuilt inside the same
+    # transaction -- the refusal rolled that back as well.
+    assert (await _rules(conn, schema))["reminders"][1] == "a"
 
 
 async def test_without_the_keys_the_upgrade_refuses_and_changes_nothing(schema_conn):

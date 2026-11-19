@@ -60,8 +60,10 @@ def _key(table: str, column: str, ref: str) -> tuple[str, str] | None:
     """(constraint name, confdeltype) of the single-column foreign key from
     ``table.column`` onto ``ref`` in THIS schema, or ``None`` without one.
     Qualified with ``current_schema()``: the unqualified DDL below follows the
-    search path, and the lookup has to see the same table."""
-    row = op.get_bind().execute(sa.text(
+    search path, and the lookup has to see the same table. Two keys on the same
+    column (``create_all`` and a migration both added one) are refused: fixing
+    one would leave the other blocking the delete, and report success."""
+    rows = op.get_bind().execute(sa.text(
         "SELECT c.conname, c.confdeltype::text FROM pg_constraint c"
         " JOIN pg_class t ON t.oid = c.conrelid"
         " JOIN pg_namespace n ON n.oid = t.relnamespace"
@@ -70,8 +72,13 @@ def _key(table: str, column: str, ref: str) -> tuple[str, str] | None:
         " WHERE c.contype = 'f' AND array_length(c.conkey, 1) = 1"
         "   AND n.nspname = current_schema() AND t.relname = :t"
         "   AND a.attname = :c AND r.relname = :r"
-    ), {"t": table, "c": column, "r": ref}).first()
-    return None if row is None else (row[0], row[1])
+    ), {"t": table, "c": column, "r": ref}).all()
+    if len(rows) > 1:
+        raise RuntimeError(
+            f"{revision}: {len(rows)} foreign keys {table}.{column} -> {ref} "
+            f"({', '.join(r[0] for r in rows)}); drop the duplicate first"
+        )
+    return (rows[0][0], rows[0][1]) if rows else None
 
 
 def _set_rule(table: str, column: str, ref: str, rule: str) -> None:
