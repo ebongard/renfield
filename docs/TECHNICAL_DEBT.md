@@ -734,12 +734,23 @@ allein, `--durations=0`):
   nichts, sonst wäre `conversations` ↔ `messages` ein Zyklus. Bei einem echten Zyklus bleibt
   `TRUNCATE` als Ausweg. Der Lauf druckt, wie oft er nötig war; ein Strukturtest verlangt
   eine Löschreihenfolge über das ganze Schema (`test_conftest_table_cleanup.py`).
-- **Was noch Zeit kostet:**
-  - ~9 min echte Ollama-Embeddings auf der CPU, allein `test_notes.py` 408 s;
-  - ~4 min Paperless-Uploadtests, die ein echtes 30-s-Abfrage-Timeout absitzen;
-  - der Rest sind ~10.600 Tests unter 0,1 s.
+- **Nachgemessen 2026-11-19** (jeder ausgehende httpx-Aufruf je Test aufgezeichnet, dieselbe Box):
+  der Lauf brauchte nur noch **17:52**; die echten Embeddings gehen an das Ollama der Build-Box
+  selbst und kosten noch ~16 s (55 Aufrufe, `test_notes.py` 4 s statt 408 s) — eine
+  Embedding-Attrappe lohnt sich nicht mehr. Ins echte Netz gingen dagegen:
+  - **ein echtes Paperless** (`PAPERLESS_API_URL`/`_TOKEN` aus der Umgebung des Dev-Containers
+    geerbt): sechs Uploadtests fragten es nach einer erfundenen Task-ID, bis die 30-s-Frist
+    ablief (~185 s), die Folder-Ingest-Tests durchsuchten seine Dokumente;
+  - **huggingface.co**: 58 Metadaten-Abfragen des Docling-Tokenizers.
   
-  Danach erst `pytest-xdist` (#1577, Schritte 2–4).
+  Behoben: `tests/backend/conftest.py` entfernt beide Paperless-Variablen aus der Umgebung,
+  bevor `settings` gebaut wird (das Token kommt im Dev-Stack zusätzlich aus
+  `/run/secrets/paperless_api_token` und bleibt in `settings` — ohne URL ruft es niemand auf), und setzt `HF_HUB_OFFLINE=1` (der Tokenizer liegt im Cache); ein Test
+  (`test_harness_no_real_services.py`) hält das fest. Danach **14:53**, 11.728 grün,
+  34 übersprungen, 0 rot. Ein Test, der Paperless braucht, setzt seine eigene Attrappen-URL.
+- **`fsync = off` (Schritt 2) entfällt:** seit dem `DELETE` wartet der Lauf kaum noch auf die
+  Platte. Der verbleibende Hebel ist, dass er seriell auf einem von 12 Kernen läuft —
+  `pytest-xdist` mit einer Datenbank je Worker (#1577, Schritt 3).
 
 Die Migrationstests arbeiten in eigenen Wegwerf-Schemata neben `public` und finden `vector`
 über `search_path = <schema>, public`; der Neuaufbau berührt sie nicht.
