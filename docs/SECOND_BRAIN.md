@@ -101,7 +101,7 @@ läuft: Die Quellen sind die Antwort — werden sie im Budget nicht fertig, ende
 mit einem Grund, der Schritt und Frist nennt (`RetrievalDeadlineExceeded`). Die Graph-Erweiterung danach ist
 eine Anreicherung — sie bekommt, was die Quellen vom Budget übrig lassen; reicht das nicht, wird sie
 abgebrochen, und die Antwort entsteht aus dem NICHT erweiterten Ergebnis (WARNING `UNEXPANDED`, in der
-Protokollzeile der Code `graph_expansion_skipped`). Eine Quelle, die ihre Frist ausschöpft, kostet die übrigen
+Protokollzeile der Code `graph_expansion_skipped`). Nur die EIGENE Frist zählt als „Budget aufgebraucht“: Ein Abbruch von außen (Herunterfahren, abgebrochene Anfrage) beendet den Abruf — auch wenn er eintrifft, während die Erweiterung sich nach ihrer Frist noch abwickelt (#1563, `_within_budget`). Eine Quelle, die ihre Frist ausschöpft, kostet die übrigen
 sieben also nicht mehr ihr Ergebnis. Dass die Quellenfrist ins Budget passt, prüft der Start
 (`docs/ENVIRONMENT_VARIABLES.md`).
 

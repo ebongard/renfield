@@ -299,6 +299,38 @@ class SourceReader:
         return await self._sessions.execute(statement, params, **kwargs)
 
 
+async def _within_budget(work, budget: float | None) -> tuple[list, bool]:
+    """`(result, False)`, or `([], True)` when `budget` ran out first.
+
+    `budget=None` is no deadline at all; `budget <= 0` does not start `work`
+    (the coroutine is closed unawaited).
+
+    🛑 Only OUR deadline is "the budget ran out". A TimeoutError raised inside
+    `work` (a driver, a pool) is a failure of its own and propagates as one; so
+    does a cancellation from outside -- also one that lands while `work` is
+    still unwinding from our deadline (#1563: shutdown, a cancelled federated
+    query). `asyncio.timeout` cancels the task once; a `cancelling()` count
+    above that one is somebody else's request, and swallowing it would let the
+    task run on into synthesis instead of stopping.
+    """
+    if budget is not None and budget <= 0:
+        work.close()
+        return [], True
+    task = asyncio.current_task()
+    before = task.cancelling() if task is not None else 0
+    async with asyncio.timeout(budget) as own_deadline:
+        try:
+            return await work, False
+        except asyncio.CancelledError:
+            if not own_deadline.expired():
+                raise
+            if task is not None and task.cancelling() > before + 1:
+                raise
+    # `timeout` turns the cancellation it caused into a TimeoutError on the
+    # way out -- unless it was caught above, which is the only way here.
+    return [], True
+
+
 class PolymorphicAtomStore:
     """v1 AtomStore implementation. Fans out to the Lane-A retrieval modules."""
 
@@ -608,29 +640,16 @@ class PolymorphicAtomStore:
             # What the fan-out left of the budget. Nothing left counts as
             # run out: expansion is not started at all.
             budget = None if deadline is None else deadline - (time.perf_counter() - _t0)
-            extra: list[AtomMatch] = []
-            out_of_budget = budget is not None and budget <= 0
-            if not out_of_budget:
-                # `timeout(None)` is no deadline at all.
-                async with asyncio.timeout(budget) as own_deadline:
-                    try:
-                        extra = await expand_fused(
-                            list(merged), asker_id, self.db,
-                            max_pivots=settings.graph_expansion_max_pivots,
-                            max_hops=settings.graph_expansion_max_hops,
-                            max_expanded=settings.graph_expansion_max_expanded,
-                            peer=peer,
-                        )
-                    except asyncio.CancelledError:
-                        # 🛑 Only OUR deadline is "the budget ran out". A
-                        # TimeoutError raised inside expansion (a driver, a
-                        # pool) is a failure of its own and propagates as
-                        # one; so does a cancellation from outside.
-                        if not own_deadline.expired():
-                            raise
-                        out_of_budget = True
-                # `timeout` turns the cancellation it caused into a
-                # TimeoutError on the way out -- unless it was caught above.
+            extra, out_of_budget = await _within_budget(
+                expand_fused(
+                    list(merged), asker_id, self.db,
+                    max_pivots=settings.graph_expansion_max_pivots,
+                    max_hops=settings.graph_expansion_max_hops,
+                    max_expanded=settings.graph_expansion_max_expanded,
+                    peer=peer,
+                ),
+                budget,
+            )
             if out_of_budget:
                 self.expansion_skipped = True
                 extra = []
