@@ -79,7 +79,7 @@ Siehe [SPEAKER_RECOGNITION.md](SPEAKER_RECOGNITION.md) für Details.
 
 Siehe [SATELLITE_CAMERA.md](SATELLITE_CAMERA.md) für Details.
 
-### Füllsatz bei langsamen Sprach-Turns (`SATELLITE_FILLER_ENABLED`, opt-in/dark, #1576)
+### Füllsatz bei langsamen Sprach-Turns (`SATELLITE_FILLER_ENABLED`, opt-in; im Haushalt an seit 2026-11-20, #1576)
 - **Kein Schweigen bei langsamen Aktionen**: Dauern Aktion (Paperless, Home Assistant, Suche) und das Formulieren der Antwort länger als `SATELLITE_FILLER_AFTER_SECONDS` (1,5 s), sagt der Satellit „Moment, ich schaue nach.“ — fester Text im Code, höchstens einmal je Turn, nie bei reinem Gespräch
 - **Immer am Satelliten selbst**, auch wenn die Antwort an einen Raumlautsprecher geht
 - **Nur Satelliten ab 1.4.22** (Fähigkeit `tts_queue`: Clips laufen nacheinander) und nur Sprachen mit eigener Piper-Stimme
