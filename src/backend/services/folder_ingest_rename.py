@@ -31,6 +31,7 @@ from loguru import logger
 
 from models.database import FOLDER_INGEST_SOURCE
 from utils.config import settings
+from utils.log_safety import logged_content
 
 # Characters illegal in SMB/Windows filenames, plus the path separators. Replaced
 # with a single space (later collapsed). Control chars are stripped separately.
@@ -105,12 +106,12 @@ async def rename_processed_to_title(
             {"original_name": filename, "new_base": new_base},
         )
         logger.info(
-            f"folder-ingest: requested processed rename {filename!r} → {new_base!r}"
+            f"folder-ingest: requested processed rename {logged_content(filename)} → {logged_content(new_base)}"
         )
         return True
     except Exception as exc:
         logger.warning(
-            f"folder-ingest: processed rename failed for {filename!r} "
+            f"folder-ingest: processed rename failed for {logged_content(filename)} "
             f"(best-effort, ingest unaffected): {exc}"
         )
         return False

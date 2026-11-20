@@ -28,6 +28,7 @@ from services.folder_ingest import (
     resolve_target_kb,
 )
 from utils.config import settings
+from utils.log_safety import logged_content
 
 
 def _fail(message: str) -> dict:
@@ -118,7 +119,7 @@ async def ingest_file(parameters: dict, *, mcp_manager, user_id: int | None = No
             file_to_paperless=bool(settings.folder_ingest_to_paperless),
         )
 
-    logger.info(f"internal.ingest_file: {filename} → {result.status.value} (doc {result.document_id})")
+    logger.info(f"internal.ingest_file: {logged_content(filename)} → {result.status.value} (doc {result.document_id})")
     human = {
         IngestStatus.INGESTED: f"Ingested {filename} (document {result.document_id}); it is being indexed.",
         IngestStatus.DUPLICATE: f"{filename} is already in the knowledge base — nothing to do.",

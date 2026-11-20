@@ -40,7 +40,7 @@ from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
 from services.task_queue import document_worker_is_alive as _worker_is_alive
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 
 async def _augment_with_progress(
@@ -403,7 +403,7 @@ async def upload_document(
     # Read the file contents and compute the SHA256 hash
     content = await file.read()
     file_hash = hashlib.sha256(content).hexdigest()
-    logger.info(f"📄 File hash computed: {file_hash[:16]}... ({file.filename})")
+    logger.info(f"📄 File hash computed: {file_hash[:16]}... ({logged_content(file.filename)})")
 
     # Duplicate check: is there already a document with this hash in the same knowledge base?
     existing_doc = await rag.db.execute(
@@ -415,7 +415,7 @@ async def upload_document(
     existing = existing_doc.scalar_one_or_none()
 
     if existing:
-        logger.warning(f"⚠️ Duplicate detected: '{file.filename}' is identical to '{existing.filename}' (ID: {existing.id})")
+        logger.warning(f"⚠️ Duplicate detected: {logged_content(file.filename)} is identical to {logged_content(existing.filename)} (ID: {existing.id})")
         raise HTTPException(
             status_code=409,
             detail={

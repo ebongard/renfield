@@ -1703,7 +1703,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                             f"(session {session_id}) — notice prepended"
                         )
 
-                    logger.info(f"💬 Response: '{response_text[:100]}...'")
+                    logger.info(f"💬 Response: {logged_content(response_text)}")
 
                     # The ollama client's pydantic Message model silently drops unknown
                     # keys, so keeping ``metadata`` on the in-memory dict is safe — it

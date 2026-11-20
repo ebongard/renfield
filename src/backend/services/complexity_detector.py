@@ -11,7 +11,7 @@ import re
 
 from loguru import logger
 
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 
 class ComplexityDetector:
@@ -122,7 +122,7 @@ class ComplexityDetector:
                 if override is not None:
                     logger.info(
                         f"📝 Complexity override from feedback: "
-                        f"{'complex' if override else 'simple'} for '{message[:60]}...'"
+                        f"{'complex' if override else 'simple'} for {logged_content(message, 60)}"
                     )
                     return override
         except Exception as e:

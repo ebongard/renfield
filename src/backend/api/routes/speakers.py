@@ -20,6 +20,7 @@ from services.auth_service import require_permission
 from services.database import get_db
 from services.speaker_service import SPEECHBRAIN_ERROR, get_speaker_service
 from utils.config import settings
+from utils.log_safety import logged_content
 
 router = APIRouter()
 
@@ -637,7 +638,7 @@ async def enroll_speaker(
         )
 
     # Extract embedding
-    logger.info(f"📥 Enrolling voice sample for {speaker.name}: {audio.filename}")
+    logger.info(f"📥 Enrolling voice sample for {speaker.name}: {logged_content(audio.filename)}")
     audio_bytes = await audio.read()
 
     # 🛑 `to_thread`: the call is a plain `def` (temp file, librosa,
@@ -710,7 +711,7 @@ async def identify_speaker(
         )
 
     # Extract embedding from query audio
-    logger.info(f"🔍 Identifying speaker from: {audio.filename}")
+    logger.info(f"🔍 Identifying speaker from: {logged_content(audio.filename)}")
     audio_bytes = await audio.read()
 
     # 🛑 `to_thread`: the call is a plain `def` (temp file, librosa,

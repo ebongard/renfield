@@ -35,7 +35,7 @@ from utils.llm_client import (
     log_llm_unreachable,
     use_openai_for_tier,
 )
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 from utils.metrics import observe_duration, record_llm_call
 from utils.prompt_safety import neutralize_delimiters
 from utils.token_counter import token_counter
@@ -1513,7 +1513,7 @@ class AgentService:
                     input_signature, type(selected).__name__,
                     _response_fingerprint(response_text), len(tool_names),
                 )
-                logger.debug("Tool pre-selection unusable response text: {!r}", response_text[:100])
+                logger.debug("Tool pre-selection unusable response text: {}", logged_content(response_text))
                 return None
 
             # Re-add any structural prerequisites the LLM pruned (e.g. it picked
@@ -1586,8 +1586,8 @@ class AgentService:
             # a changing result came from a changed input or from the model --
             # see `preselect_input_signature`.
             logger.info(
-                "Tool pre-selection: {}/{} tools selected for: '{}' (in={}) -> {}",
-                len(filtered), len(tool_names), message[:60],
+                "Tool pre-selection: {}/{} tools selected for: {} (in={}) -> {}",
+                len(filtered), len(tool_names), logged_content(message, 60),
                 input_signature, sorted(filtered),
             )
             # 🛑 At DEBUG, one digest of ITS line per tool, in list order.
@@ -2446,7 +2446,7 @@ class AgentService:
                     f"🤖 Agent step {step_num} LLM response: "
                     f"{_response_fingerprint(response_text)} keys={_response_keys(response_text)}"
                 )
-                logger.debug(f"🤖 Agent step {step_num} LLM response text: {response_text[:500]}")
+                logger.debug(f"🤖 Agent step {step_num} LLM response text: {logged_content(response_text, 500)}")
             except TimeoutError:
                 await agent_circuit_breaker.record_failure()
                 logger.warning(f"⏰ Agent step {step_num} timed out after {self.step_timeout}s")
@@ -2548,7 +2548,7 @@ class AgentService:
                         f"🔄 Agent step {step_num} retry: "
                         f"{_response_fingerprint(response_text)} keys={_response_keys(response_text)}"
                     )
-                    logger.debug(f"🔄 Agent step {step_num} retry text: {response_text[:200]}")
+                    logger.debug(f"🔄 Agent step {step_num} retry text: {logged_content(response_text, 200)}")
                 except Exception as e:
                     logger.warning(f"🔄 Agent step {step_num} retry failed: {e}")
 

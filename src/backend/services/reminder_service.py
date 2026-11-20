@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import REMINDER_CANCELLED, REMINDER_FIRED, REMINDER_PENDING, Reminder
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 
 def naive_utc_to_local(dt_naive_utc: datetime) -> datetime:
@@ -187,7 +187,7 @@ class ReminderService:
         await self.db.commit()
         await self.db.refresh(reminder)
 
-        logger.info(f"⏰ Reminder #{reminder.id} erstellt: '{message}' trigger={trigger_at}")
+        logger.info(f"⏰ Reminder #{reminder.id} erstellt: {logged_content(message)} trigger={trigger_at}")
         return reminder
 
     async def list_pending(
