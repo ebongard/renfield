@@ -124,6 +124,8 @@ async def _run_alembic_upgrade_head() -> None:
     backend_root = Path(__file__).resolve().parent.parent
     cfg = Config(str(backend_root / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend_root / "alembic"))
+    # The app owns logging; `alembic/env.py` must not `fileConfig` over it (#1565).
+    cfg.attributes["configure_logger"] = False
     # Alembic runs synchronously; in a thread of its own so the event loop is
     # not blocked.
     await asyncio.to_thread(command.upgrade, cfg, "head")

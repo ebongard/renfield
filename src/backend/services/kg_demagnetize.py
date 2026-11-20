@@ -118,7 +118,7 @@ async def run(db: AsyncSession, user_id: int | None = None) -> DemagnetizeReport
         if (e.canonical_id is not None or not e.is_active
                 or not is_generic_person_description(e.description)):
             rep.skipped += 1
-            logger.info("skip entity #%d %r: changed under backfill (canonical_id=%s active=%s desc=%r)",
+            logger.info("skip entity #%d %s: changed under backfill (canonical_id=%s active=%s desc=%s)",
                         e.id, logged_content(e.name), e.canonical_id, e.is_active,
                         logged_content(e.description))
             continue

@@ -114,3 +114,17 @@ class TestLoggedContent:
         from utils.config import Settings
 
         assert Settings.model_fields["log_content"].default is False
+
+
+def test_an_in_process_alembic_run_leaves_the_apps_logging_alone():
+    """#1565 review: on a fresh install the app runs `alembic upgrade` in its own
+    process; `env.py`'s `fileConfig` would replace the root handlers (the bridge)
+    and disable every existing logger. The app passes `configure_logger=False`
+    and `env.py` honours it -- both ends, read off the source."""
+    import pathlib
+
+    backend = pathlib.Path(log_safety.__file__).resolve().parents[1]
+    env = (backend / "alembic" / "env.py").read_text(encoding="utf-8")
+    db = (backend / "services" / "database.py").read_text(encoding="utf-8")
+    assert 'config.attributes.get("configure_logger", True)' in env
+    assert 'cfg.attributes["configure_logger"] = False' in db
