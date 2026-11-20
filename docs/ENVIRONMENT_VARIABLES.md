@@ -1546,6 +1546,17 @@ SATELLITE_UPDATE_TIMEOUT=900
 # sonst — auch wenn die Prüfung scheitert — wird ohne Bild geantwortet.
 # Haushalt: an (k8s/configmap.yaml).
 SATELLITE_VISION_QUERY_GATE_ENABLED=false
+# Füllsatz bei einem langsamen Sprach-Turn (#1576): dauern Aktion (Paperless,
+# Home Assistant, Suche) und das Formulieren der Antwort länger als
+# SATELLITE_FILLER_AFTER_SECONDS, sagt der Satellit einen festen Satz
+# („Moment, ich schaue nach.“) — höchstens einmal je Turn, nie bei reinem
+# Gespräch ohne Aktion. Immer am Satelliten selbst, nie über einen
+# Raumlautsprecher. Nur an Satelliten ab 1.4.22 (Fähigkeit `tts_queue`: sie
+# spielen Clips nacheinander; ältere verwerfen einen zweiten Clip, das wäre die
+# Antwort) und nur in einer Sprache mit eigener Stimme in PIPER_VOICES.
+SATELLITE_FILLER_ENABLED=false
+# Schwelle in Sekunden (0.3–10).
+SATELLITE_FILLER_AFTER_SECONDS=1.5
 # Sicherungsnetz für ein HÄNGENDES Gerät — greift nur im Zustand `listening`
 # und nur, wenn gar kein `audio_end` eintrifft. Seit 2026-01 eingelesen und nie
 # gelesen; mit #1209 wirkt er erstmals.

@@ -108,6 +108,8 @@ class Satellite:
         self._cue_generation: int = 0
         self._listening_start: Optional[float] = None  # When listening state began
         self._processing_start: Optional[float] = None  # Track when processing started
+        # Serialises TTS playback: clips queue instead of the second being dropped (#1576)
+        self._tts_lock: Optional[asyncio.Lock] = None
         self._processing_timeout: float = 60.0  # Max time to wait for server response (vision models need more time)
         self._reconnecting: bool = False  # Prevent duplicate reconnection attempts
         self._wakeword_pending: bool = False  # Prevent duplicate wakeword processing
@@ -1170,8 +1172,22 @@ class Satellite:
         self._schedule_async(self._play_tts_and_reset(audio_bytes, is_final))
 
     async def _play_tts_and_reset(self, audio_bytes: bytes, is_final: bool):
-        """Play TTS audio asynchronously and reset session when done"""
-        await self.audio_playback_async.play_wav(audio_bytes)
+        """Play TTS audio and reset the session after the FINAL clip.
+
+        Clips play one after the other, in the order they arrived (#1576). The
+        player refuses a clip while another one plays, so before 1.4.22 a
+        second clip was dropped -- and the second one is the answer when the
+        backend first sends a short filler ("Moment, ich schaue nach") with
+        `is_final=False`. The lock is FIFO, and the coroutines are scheduled
+        in arrival order. The device advertises this as the `tts_queue`
+        capability; the backend sends a filler only to a device that does.
+        """
+        if self._tts_lock is None:
+            # Created on the loop that runs this coroutine; no await between
+            # the check and the assignment, so two clips share one lock.
+            self._tts_lock = asyncio.Lock()
+        async with self._tts_lock:
+            await self.audio_playback_async.play_wav(audio_bytes)
         if is_final:
             await self._reset_session("tts_complete")
 

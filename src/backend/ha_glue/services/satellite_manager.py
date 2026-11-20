@@ -95,6 +95,9 @@ class SatelliteCapabilities:
     has_camera: bool = False
     has_display: bool = False
     has_enviro: bool = False
+    #: Plays TTS clips one after the other instead of dropping a second one
+    #: (satellite 1.4.22, #1576). Gates the filler phrase.
+    tts_queue: bool = False
 
 
 #: The satellite's level for a chunk below one LSB: `20*log10(max(rms, 1)/32768)`
@@ -302,6 +305,7 @@ class SatelliteManager:
                 has_camera=device_bool(capabilities.get("has_camera"), False),
                 has_display=device_bool(capabilities.get("has_display"), False),
                 has_enviro=device_bool(capabilities.get("has_enviro"), False),
+                tts_queue=device_bool(capabilities.get("tts_queue"), False),
             )
 
             # Register satellite
