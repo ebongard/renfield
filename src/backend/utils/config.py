@@ -453,6 +453,18 @@ class Settings(BaseSettings):
     search, and the input signature proved reproducibility -- but WHAT was in
     the prompt could not be read anywhere, and every reconstruction (6, then 10
     of 33 tools) chose correctly and therefore proved nothing."""
+    agent_preselect_empty_means_none: bool = False
+    """An empty preselect answer (`[]`) means "this task needs no tool" (#1599).
+
+    Off (default): `[]` is treated like an unusable answer and the agent gets
+    ALL tools -- the old behaviour, byte-identical. On: the agent gets none,
+    except what a user correction pins. Only a cleanly parsed EMPTY LIST takes
+    this path; malformed JSON, a timeout or only unknown names still fall back
+    to all tools.
+
+    Measured before building (agent_trajectories, 2026-10-21..11-20): of 35
+    turns that ran with all tools after the preselect gave nothing usable, 34
+    called no tool at all."""
     orchestrator_synthesis_timeout: float = Field(default=30.0, ge=5.0, le=300.0)
     """Timeout for orchestrator's synthesis call (combine sub-agent results into one answer)."""
     orchestrator_deterministic_merge: bool = True
