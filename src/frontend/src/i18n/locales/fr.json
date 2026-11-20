@@ -2318,7 +2318,31 @@
     "basisMappedHelp": "Répondu au nom de la personne liée — avec l'intégralité de son propre périmètre, et non seulement ce qui est partagé avec l'instance appairée.",
     "basisPeerTier": "en tant qu'instance tierce",
     "basisPeerTierHelp": "Répondu sans lien de personne — uniquement avec ce que l'instance appairée peut voir à son niveau.",
-    "basisUnknownHelp": "Base d'identité inconnue. Ce qui a été consigné est affiché tel quel\u00a0; cette vue n'affirme rien quant au périmètre qui s'appliquait."
+    "basisUnknownHelp": "Base d'identité inconnue. Ce qui a été consigné est affiché tel quel\u00a0; cette vue n'affirme rien quant au périmètre qui s'appliquait.",
+    "revocations": {
+      "title": "Appairages et liens terminés",
+      "intro": "Qui a mis fin à un appairage ou à un lien personnel qui vous concerne. Les entrées sont conservées 2 ans.",
+      "introAdmin": "En tant qu'admin, vous voyez toutes les entrées de cette instance. Les entrées sont conservées 2 ans.",
+      "empty": "Aucun appairage ni lien terminé.",
+      "loadFailed": "Impossible de charger les appairages terminés.",
+      "linkRevoked": "Lien personnel terminé",
+      "pairingRevoked": "Appairage terminé",
+      "subject": "Concerne",
+      "actor": "Terminé par",
+      "owner": "Appairage de",
+      "instance": "Instance",
+      "unknownInstance": "sans nom vérifié",
+      "deletedAccount": "compte supprimé",
+      "you": "vous",
+      "asAdmin": "en tant qu'admin",
+      "causeLabel": "Motif",
+      "cause": {
+        "pairing_revoked": "terminé avec l'appairage",
+        "pairing_revived": "supprimé lors du nouvel appairage"
+      },
+      "linksRemoved_one": "{{count}} lien supprimé",
+      "linksRemoved_other": "{{count}} liens supprimés"
+    }
   },
   "wissensbasis": {
     "page": {

@@ -14,10 +14,17 @@ import {
   ShieldCheck,
   ShieldAlert,
   CircleSlash,
+  Unlink,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
-import { useFederationAuditQuery, type AuditStatus } from '../api/resources/federation';
+import {
+  useFederationAuditQuery,
+  useFederationRevocationsQuery,
+  type AuditStatus,
+  type RevocationEntry,
+} from '../api/resources/federation';
+import { useAuth } from '../context/AuthContext';
 import { formatDateTime as formatUtcDateTime, toLocalDate } from '../utils/datetime';
 import { formatPeerLabel } from '../utils/peerLabel';
 
@@ -107,6 +114,104 @@ function formatRelativeDuration(
   if (deltaMs < 1000) return t('federationAudit.durationSubSecond');
   if (deltaMs < 60000) return t('federationAudit.durationSeconds', { n: Math.round(deltaMs / 1000) });
   return t('federationAudit.durationMinutes', { n: Math.round(deltaMs / 60000) });
+}
+
+/**
+ * Ended pairings and person links (#1558): who ended what, on whose
+ * authority. Names come resolved from the server; `null` means the account
+ * is gone. Of the far side only its VERIFIED instance name as it stood then
+ * -- never the far person's self-chosen name, never today's name.
+ */
+export function RevocationList({ entries }: { entries: RevocationEntry[] }) {
+  const { t, i18n } = useTranslation();
+  const person = (name: string | null, isYou: boolean) => {
+    const label = name ?? t('federationAudit.revocations.deletedAccount');
+    return isYou ? `${label} (${t('federationAudit.revocations.you')})` : label;
+  };
+  if (entries.length === 0) {
+    return (
+      <p className="text-sm text-gray-500 dark:text-gray-400">
+        {t('federationAudit.revocations.empty')}
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-2">
+      {entries.map((e) => (
+        <li key={e.id} className="card p-3 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Unlink className="w-4 h-4 text-gray-400 dark:text-gray-500" aria-hidden="true" />
+            <span className="font-medium text-gray-900 dark:text-white">
+              {e.action === 'pairing_revoked'
+                ? t('federationAudit.revocations.pairingRevoked')
+                : e.action === 'link_revoked'
+                  ? t('federationAudit.revocations.linkRevoked')
+                  : e.action}
+            </span>
+            <span className="text-xs text-gray-500 dark:text-gray-400 inline-flex items-center gap-1">
+              <Clock className="w-3 h-3" aria-hidden="true" />
+              {formatDateTime(e.at, i18n.language)}
+            </span>
+          </div>
+          <dl className="text-sm grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-gray-600 dark:text-gray-300">
+            <dt className="text-gray-500 dark:text-gray-400">{t('federationAudit.revocations.instance')}</dt>
+            <dd>
+              {e.peer_instance_name ?? (
+                <span className="italic text-gray-400 dark:text-gray-500">
+                  {t('federationAudit.revocations.unknownInstance')}
+                </span>
+              )}
+            </dd>
+            <dt className="text-gray-500 dark:text-gray-400">{t('federationAudit.revocations.subject')}</dt>
+            <dd>{person(e.subject_name, e.subject_is_you)}</dd>
+            <dt className="text-gray-500 dark:text-gray-400">{t('federationAudit.revocations.actor')}</dt>
+            <dd>
+              {person(e.actor_name, e.actor_is_you)}
+              {e.basis === 'admin' && (
+                <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200">
+                  {t('federationAudit.revocations.asAdmin')}
+                </span>
+              )}
+            </dd>
+            {e.cause && (
+              <>
+                <dt className="text-gray-500 dark:text-gray-400">{t('federationAudit.revocations.causeLabel')}</dt>
+                <dd>{t(`federationAudit.revocations.cause.${e.cause}`, { defaultValue: e.cause })}</dd>
+              </>
+            )}
+          </dl>
+          {e.links_removed != null && e.links_removed > 0 && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              {t('federationAudit.revocations.linksRemoved', { count: e.links_removed })}
+            </p>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function RevocationSection() {
+  const { t } = useTranslation();
+  const { isAdmin } = useAuth();
+  const query = useFederationRevocationsQuery();
+  return (
+    <section className="space-y-3" aria-labelledby="revocations-heading">
+      <h2 id="revocations-heading" className="text-lg font-semibold text-gray-900 dark:text-white">
+        {t('federationAudit.revocations.title')}
+      </h2>
+      <p className="text-sm text-gray-500 dark:text-gray-400">
+        {isAdmin() ? t('federationAudit.revocations.introAdmin') : t('federationAudit.revocations.intro')}
+      </p>
+      {query.errorMessage ? (
+        <Alert variant="error">{query.errorMessage}</Alert>
+      ) : query.isLoading ? (
+        <p className="text-sm text-gray-500 dark:text-gray-400">{t('common.loading')}</p>
+      ) : (
+        <RevocationList entries={query.data ?? []} />
+      )}
+    </section>
+  );
 }
 
 export default function FederationAuditPage() {
@@ -327,6 +432,9 @@ export default function FederationAuditPage() {
           })}
         </ul>
       )}
+
+      {/* Not filtered by peer: a revocation record names no far person. */}
+      {!peerFilter && <RevocationSection />}
     </div>
   );
 }

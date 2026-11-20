@@ -2995,6 +2995,15 @@ renfields eigene `/ws/*`. Der Voice-Server prüft im Modus `registry` über
 auch dort zu verlangen ist ein eigener Schritt im Voice-Server-Code und gatet
 das Umlegen hier nicht.
 
+### Föderation: Aufbewahrung der Widerrufs-Einträge
+
+```bash
+# Days a federation revocation record is kept (#1558)
+FEDERATION_REVOCATION_RETENTION_DAYS=730
+```
+
+**Default:** `730` (2 Jahre), erlaubt 30–3650. Ein Widerrufs-Eintrag (`federation_query_log`, `direction='revoke'`: wer eine Kopplung oder Personen-Verknüpfung beendet hat, nur Kennungen) wird danach von der Audit-Bereinigung gelöscht. Anfrage-Zeilen behalten ihre eigenen 90 Tage. Siehe `docs/FEDERATION_PAIRING.md` (§3b).
+
 ### Föderation: Kopplungen für alle Konten sichtbar
 
 ```bash
