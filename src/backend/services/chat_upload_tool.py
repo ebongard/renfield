@@ -33,7 +33,7 @@ from pathlib import Path
 from loguru import logger
 
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 # Cold-start window for the LLM-metadata confirm flow: the first N archives
 # require an explicit confirm; after that the system trusts itself and archives
@@ -239,7 +239,7 @@ async def forward_attachment_to_paperless(
                     logger.info(
                         "forward_attachment_to_paperless: no usable attachment_id "
                         "({!r}); session fallback → upload {} ({})",
-                        attachment_id_raw, upload.id, upload.filename,
+                        attachment_id_raw, upload.id, logged_content(upload.filename),
                     )
 
         if not upload:
@@ -288,7 +288,7 @@ async def forward_attachment_to_paperless(
                 skip_metadata = True
                 logger.debug(
                     "Auto-skipping metadata extraction for {} (size={})",
-                    upload.filename, file_size,
+                    logged_content(upload.filename), file_size,
                 )
 
         # Pass-through params that override extraction output (agent

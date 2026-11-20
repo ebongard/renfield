@@ -47,7 +47,7 @@ from services.folder_ingest import (
     target_kb_exists,
 )
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 router = APIRouter()
 
@@ -165,7 +165,7 @@ async def ingest_pushed_document(
         buf.extend(chunk)
         if len(buf) > max_bytes:
             logger.warning(
-                f"folder-ingest: {meta.filename!r} exceeds "
+                f"folder-ingest: {logged_content(meta.filename)} exceeds "
                 f"{settings.max_file_size_mb} MB ceiling (stream abort)"
             )
             return FolderIngestResponse(status=IngestStatus.FAILED.value, detail="file_too_large")
@@ -208,7 +208,7 @@ async def ingest_pushed_document(
             source=FOLDER_INGEST_SOURCE,  # provenance for the Simba review flow
         )
     except Exception as exc:
-        logger.error(f"folder-ingest: unexpected error processing {meta.filename!r}: {error_text_without_content(exc)}")
+        logger.error(f"folder-ingest: unexpected error processing {logged_content(meta.filename)}: {error_text_without_content(exc)}")
         raise HTTPException(
             status_code=503,
             detail={"message": "Transient ingest error", "reason": "internal_error"},

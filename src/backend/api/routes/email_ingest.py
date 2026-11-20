@@ -43,7 +43,7 @@ from services.email_ingest import (
 )
 from services.folder_ingest import IngestStatus
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 router = APIRouter()
 
@@ -150,7 +150,7 @@ async def ingest_pushed_email(
         buf.extend(chunk)
         if len(buf) > max_bytes:
             logger.warning(
-                f"email-ingest: {filename!r} exceeds {settings.max_file_size_mb} MB "
+                f"email-ingest: {logged_content(filename)} exceeds {settings.max_file_size_mb} MB "
                 f"ceiling (stream abort)"
             )
             return EmailIngestResponse(status=IngestStatus.FAILED.value, detail="file_too_large")
@@ -173,7 +173,7 @@ async def ingest_pushed_email(
             file_to_paperless=_should_file_paperless(),
         )
     except Exception as exc:
-        logger.error(f"email-ingest: unexpected error processing {filename!r}: {error_text_without_content(exc)}")
+        logger.error(f"email-ingest: unexpected error processing {logged_content(filename)}: {error_text_without_content(exc)}")
         raise HTTPException(
             status_code=503,
             detail={"message": "Transient ingest error", "reason": "internal_error"},

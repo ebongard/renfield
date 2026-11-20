@@ -130,7 +130,10 @@ async def test_the_log_line_still_carries_count_and_message(log_lines, staged_cl
     assert "(in=" in line, (
         f"the input fingerprint is missing from the line:\n{line}")
     assert f"{len(CHOSEN)}/{len(ALL_TOOLS)}" in line, f"the count is missing:\n{line}"
-    assert "scanne nach xidra" in line, f"the occasion is missing:\n{line}"
+    # The occasion is named by its length only (#1565): the message is user
+    # content and appears only with LOG_CONTENT on.
+    assert "for: <17 chars>" in line, f"the occasion is missing:\n{line}"
+    assert "scanne nach xidra" not in line, f"user content in the line:\n{line}"
     assert "{}" not in line, (
         f"an argument was not substituted — the line is blind:\n{line}")
 

@@ -12,6 +12,12 @@ cannot see content under any other name -- it is a ratchet against the known
 shapes, with a negative control that it still fires. Known blind spot: an
 entity's `.name` (`subject.name`, `e.name`) -- `name` is far too common to
 list; the KG lines that logged one were converted by hand.
+
+2026-11-20 (smoke test after the rollout): the first list knew `text` but not
+`message` or `response_text`, so ~35 lines kept logging chat messages, router
+decisions quoting the message, raw LLM answers and document file names. The
+list below is the measured set; a name that is content only somewhere is
+handled by `_NOT_CONTENT` with its reason, not by leaving the name out.
 """
 
 from __future__ import annotations
@@ -30,11 +36,27 @@ CONTENT_FIELDS = frozenset({
     "name_a", "name_b", "entity_name", "title", "query", "query_text", "content",
     "body", "text", "transcript", "transcription", "summary", "subject",
     "description", "message_text", "user_message",
+    # 2026-11-20: the chat message, the model's answer, prompts, file names.
+    "message", "response_text", "response", "full_response", "raw_response",
+    "prompt", "filename", "user_input", "utterance", "answer", "question",
 })
 _LEVELS = frozenset({"trace", "debug", "info", "success", "warning", "error", "exception", "critical"})
 _LOGGERS = frozenset({"logger", "log", "_log", "_logger"})
 #: Wrappers under which a content field is fine: its length, or the gate.
-_SAFE_WRAPPERS = frozenset({"len", "logged_content"})
+_SAFE_WRAPPERS = frozenset({
+    "len", "logged_content", "bool", "type",
+    # agent_service: structure and a hash of a model response, never its text (#1381).
+    "_response_fingerprint", "_response_keys", "_describe_unparsable",
+})
+#: (file, source line) where a content-named field holds no user content.
+#: Keyed by the line's text, so an edit of the line re-opens the question.
+_NOT_CONTENT = {
+    ("ha_glue/api/websocket/satellite_handler.py",
+     'logger.info(f"📥 Update progress from {satellite_id}: {stage} ({progress}%) - {message}")'):
+        "the OTA progress text the satellite's updater reports",
+    ("services/mcp_client.py", 'logger.warning(f"Invalid MCP tool schema: {e.message}")'):
+        "a jsonschema SchemaError describes the tool's schema, not the call's arguments",
+}
 #: Directories that are not this backend's code.
 _SKIP_PARTS = frozenset({"__pycache__", "alembic", "twin_adapter", "satellite", "wakeword-models"})
 
@@ -102,9 +124,15 @@ def _backend_files():
 def test_no_log_call_in_the_backend_formats_user_content():
     found = {}
     for path in _backend_files():
-        hits = offenders_in(path.read_text(encoding="utf-8"))
+        rel = str(path.relative_to(_BACKEND))
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        hits = [
+            (line, field) for line, field in offenders_in(source)
+            if (rel, lines[line - 1].strip()) not in _NOT_CONTENT
+        ]
         if hits:
-            found[str(path.relative_to(_BACKEND))] = hits
+            found[rel] = hits
     assert not found, (
         "user content in a log line -- wrap it in `logged_content(...)` "
         "(utils.log_safety; prints its length unless LOG_CONTENT is on) or log its "
@@ -118,6 +146,12 @@ def test_no_log_call_in_the_backend_formats_user_content():
     'logger.warning("pair %r ~ %r", p.name_a, p.name_b)',
     'logger.info("created: %s", notification.title)',
     'logger.debug("KG: {!r}", description)',
+    # 2026-11-20
+    """logger.info(f"Router classified '{message[:60]}...' as '{role_name}'")""",
+    'logger.info(f"Router LLM raw response: {response_text[:300]}")',
+    'logger.info("pre-selection for: {}", message[:60])',
+    'logger.warning(f"folder-ingest: rejected extension for {meta.filename!r}")',
+    'logger.debug(f"Raw LLM response: {response[:300] if response else 0}")',
 ])
 def test_the_check_fires_on_the_shapes_it_was_built_from(line):
     """Negative control: each of these was in the backend on 2026-11-19."""
@@ -131,6 +165,16 @@ def test_the_check_fires_on_the_shapes_it_was_built_from(line):
     'logger.info("tool %s", tool.name)',
     'logger.info("score=%s", summary["scores"]["faithfulness"])',
     'print(text)',
+    'logger.info(f"has_response={bool(full_response)}")',
+    'logger.warning(f"not a string: {type(prompt)}")',
+    'logger.info("unparsable: {}", _describe_unparsable(response_text))',
 ])
 def test_what_it_lets_through(line):
     assert offenders_in(line) == []
+
+
+def test_every_exemption_still_names_a_line_in_the_backend():
+    """An exemption whose line is gone would silently cover a new one."""
+    for (rel, line), _reason in _NOT_CONTENT.items():
+        source = (_BACKEND / rel).read_text(encoding="utf-8")
+        assert line in [x.strip() for x in source.splitlines()], (rel, line)

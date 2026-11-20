@@ -78,7 +78,7 @@ from services.pdf_split_errors import (
     SplitTransientError,
 )
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 # Re-export (canonical tuple lives in models.database, import-light for the
 # worker's flag-independent guard).
@@ -462,7 +462,7 @@ async def execute_split(
     # new damage -- a torn archive commit would be one.
     await _purge_parent_facts(db, parent.id)
     logger.info(
-        f"pdf-split: doc {parent.id} ({parent.filename!r}) split into "
+        f"pdf-split: doc {parent.id} ({logged_content(parent.filename)}) split into "
         f"{len(pieces)} documents: {[c for c in child_ids if c is not None]}"
     )
     return [c for c in child_ids if c is not None]

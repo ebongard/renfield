@@ -114,11 +114,16 @@ class TestToolPreSelection:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_unusable_response_is_logged_without_its_text(self):
+    @pytest.mark.parametrize("log_content", [False, True])
+    async def test_unusable_response_is_logged_without_its_text(self, log_content, monkeypatch):
         """A free answer instead of a list carries user content: the WARNING
-        names its type and fingerprint, the text goes to DEBUG only (#1381)."""
+        names its type and fingerprint (#1381); the text appears at DEBUG
+        only with LOG_CONTENT on (#1565)."""
         from loguru import logger as loguru_logger
 
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "log_content", log_content)
         agent = _make_agent(10)
         client = _make_mock_client('"Kontonummer 4711 geheim"')
         lines: list[tuple[str, str]] = []
@@ -138,7 +143,7 @@ class TestToolPreSelection:
         assert len(warning) == 1
         assert "str len=" in warning[0]
         assert not any("Kontonummer" in m for lvl, m in lines if lvl != "DEBUG")
-        assert any("Kontonummer" in m for lvl, m in lines if lvl == "DEBUG")
+        assert any("Kontonummer" in m for lvl, m in lines if lvl == "DEBUG") is log_content
 
     @pytest.mark.unit
     @pytest.mark.asyncio

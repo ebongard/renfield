@@ -51,6 +51,7 @@ from utils.llm_client import (
     get_classification_chat_kwargs,
     get_dedicated_client,
 )
+from utils.log_safety import logged_content
 from utils.metrics import record_router_fallback
 
 if TYPE_CHECKING:
@@ -463,7 +464,7 @@ class AgentRouter:
             sub_intent = self._infer_sub_intent(
                 message, role.sub_intent_definitions or {}, lang,
             ) if role.sub_intent_definitions else None
-            logger.info(f"Router role-hint: '{message[:60]}' -> '{role_hint}'")
+            logger.info(f"Router role-hint: {logged_content(message, 60)} -> '{role_hint}'")
             return replace(role, sub_intent=sub_intent, route_layer="role_hint")
 
         # Layer 1: Entity ID routing — highest confidence, instant
@@ -476,7 +477,7 @@ class AgentRouter:
                     message, role.sub_intent_definitions or {}, lang,
                 ) if role.sub_intent_definitions else None
                 logger.info(
-                    f"Router entity-id: '{message[:60]}' -> "
+                    f"Router entity-id: {logged_content(message, 60)} -> "
                     f"'{domain}"
                     f"{'/' + sub_intent if sub_intent else ''}' "
                     f"(entities={ids})"
@@ -572,7 +573,7 @@ class AgentRouter:
                         message, role.sub_intent_definitions or {}, lang,
                     ) if role.sub_intent_definitions else None
                     logger.info(
-                        f"Router continuity: '{message[:60]}' -> "
+                        f"Router continuity: {logged_content(message, 60)} -> "
                         f"'{active_domain}"
                         f"{'/' + sub_intent if sub_intent else ''}' "
                         f"(score={score:.2f}: {', '.join(signals)})"
@@ -583,7 +584,7 @@ class AgentRouter:
                     )
                 elif signals:
                     logger.debug(
-                        f"Router continuity below threshold: '{message[:60]}' "
+                        f"Router continuity below threshold: {logged_content(message, 60)} "
                         f"score={score:.2f} < 0.60: {', '.join(signals)}"
                     )
 
@@ -623,7 +624,7 @@ class AgentRouter:
                     role = self.roles[sem_role]
                     si_msg = f"/{sem_sub_intent}" if sem_sub_intent else ""
                     logger.info(
-                        f"Router semantic fast-path: '{message[:60]}' -> "
+                        f"Router semantic fast-path: {logged_content(message, 60)} -> "
                         f"'{sem_role}{si_msg}' (sim={sem_sim:.3f})"
                     )
                     # Only propagate sub_intent when the parent role
@@ -707,7 +708,7 @@ class AgentRouter:
             )
             # Option B: Failsafe for empty content with thinking
             response_text = extract_response_content(raw_response)
-            logger.info(f"Router LLM raw response: {response_text[:300]}")
+            logger.info(f"Router LLM raw response: {logged_content(response_text, 300)}")
 
             # Parse JSON response
             role_name, sub_intent = self._parse_classification(response_text)
@@ -728,7 +729,7 @@ class AgentRouter:
                     )
                 result = replace(role, sub_intent=valid_sub, route_layer="llm")
                 logger.info(
-                    f"Router classified '{message[:60]}...' as '{role_name}'"
+                    f"Router classified {logged_content(message, 60)} as '{role_name}'"
                     + (f" (sub_intent={valid_sub})" if valid_sub else "")
                 )
                 return result

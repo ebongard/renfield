@@ -65,7 +65,7 @@ from services.rag_service import DuplicateDocumentError, RAGService
 from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 # Cross-repo push-contract version (DX-7). Sent in the request + response
 # header; the MCP treats an unknown response status as `retry` and logs a skew
@@ -233,17 +233,17 @@ async def ingest_document(
     # 1. Reject bad extension / empty / oversize up front (before touching
     # disk/DB).
     if not _ext_ok(meta.filename):
-        logger.warning(f"folder-ingest: rejected extension for {meta.filename!r}")
+        logger.warning(f"folder-ingest: rejected extension for {logged_content(meta.filename)}")
         return IngestResult(IngestStatus.FAILED, detail="extension_not_allowed")
     if not file_bytes:
         # A 0-byte push (scanner artifact / truncated-to-empty transfer) would
         # otherwise create an empty Document that pollutes retrieval. Terminal.
-        logger.warning(f"folder-ingest: empty file rejected for {meta.filename!r}")
+        logger.warning(f"folder-ingest: empty file rejected for {logged_content(meta.filename)}")
         return IngestResult(IngestStatus.FAILED, detail="empty_file")
     max_bytes = settings.max_file_size_mb * 1024 * 1024
     if len(file_bytes) > max_bytes:
         logger.warning(
-            f"folder-ingest: {meta.filename!r} exceeds "
+            f"folder-ingest: {logged_content(meta.filename)} exceeds "
             f"{settings.max_file_size_mb} MB ceiling"
         )
         return IngestResult(IngestStatus.FAILED, detail="file_too_large")
@@ -253,7 +253,7 @@ async def ingest_document(
         # The MCP's pre-push hash disagrees with the bytes we received —
         # a truncated/corrupted transfer. Retryable; the MCP re-pushes.
         logger.warning(
-            f"folder-ingest: sha256 mismatch for {meta.filename!r} "
+            f"folder-ingest: sha256 mismatch for {logged_content(meta.filename)} "
             f"(meta={meta.sha256[:16]}... actual={file_hash[:16]}...)"
         )
         return IngestResult(IngestStatus.RETRY, detail="sha256_mismatch")
@@ -296,7 +296,7 @@ async def ingest_document(
         # Disk full / permission denied writing the recovery copy. Transient —
         # the MCP leaves the file in the inbox and re-pushes rather than losing
         # it to failed/.
-        logger.error(f"folder-ingest: persist failed for {meta.filename!r}: {error_text_without_content(exc)}")
+        logger.error(f"folder-ingest: persist failed for {logged_content(meta.filename)}: {error_text_without_content(exc)}")
         return IngestResult(IngestStatus.RETRY, detail="persist_error")
 
     if decision is _Decision.REINGEST:
@@ -350,7 +350,7 @@ async def ingest_document(
             )
         except Exception as exc:
             _cleanup(file_path)
-            logger.error(f"folder-ingest: create failed for {meta.filename!r}: {error_text_without_content(exc)}")
+            logger.error(f"folder-ingest: create failed for {logged_content(meta.filename)}: {error_text_without_content(exc)}")
             return IngestResult(IngestStatus.FAILED, detail="create_error")
 
     # 4. Mark for async Paperless filing (Design Z), BEFORE enqueue. We do NOT run

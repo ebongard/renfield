@@ -59,7 +59,7 @@ async def speech_to_text(
             language = None
 
         effective_language = language or settings.default_language
-        logger.info(f"🎤 STT request received: {audio.filename}, Content-Type: {audio.content_type}, Language: {effective_language}")
+        logger.info(f"🎤 STT request received: {logged_content(audio.filename)}, Content-Type: {audio.content_type}, Language: {effective_language}")
 
         # Read the audio bytes
         audio_bytes = await audio.read()

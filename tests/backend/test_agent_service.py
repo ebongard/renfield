@@ -3162,7 +3162,8 @@ class TestAgentLoopAnswerWithoutAction:
 
     @pytest.mark.unit
     async def test_a_valid_answer_and_the_retry_leave_no_text_at_info(self):
-        """The per-step and the retry line: fingerprint at INFO, text at DEBUG."""
+        """The per-step and the retry line: fingerprint at INFO; the text at
+        DEBUG only with LOG_CONTENT on (#1565), else its length."""
         ollama = self._ollama([
             "",
             '{"action": "final_answer", "answer": "Kontonummer 4711 geheim", "reason": "ok"}',
@@ -3178,8 +3179,21 @@ class TestAgentLoopAnswerWithoutAction:
             '{"action": "final_answer", "answer": "Kontonummer 4711 geheim", "reason": "ok"}',
         ])
         debug = await self._run_capturing(AgentService(self._registry(), max_steps=5), ollama, "DEBUG")
+        assert any("retry text: <" in w and "chars>" in w for w in debug)
+        assert not any("Kontonummer" in w for w in debug), "LOG_CONTENT is off"
+
+        from unittest.mock import patch as _patch
+
+        from utils.config import settings
+
+        with _patch.object(settings, "log_content", True):
+            ollama = self._ollama([
+                "",
+                '{"action": "final_answer", "answer": "Kontonummer 4711 geheim", "reason": "ok"}',
+            ])
+            debug = await self._run_capturing(AgentService(self._registry(), max_steps=5), ollama, "DEBUG")
         assert any("retry text:" in w and "Kontonummer" in w for w in debug), (
-            "the raw text must stay available for a DEBUG run"
+            "with LOG_CONTENT on the raw text is available for a DEBUG run"
         )
 
     @pytest.mark.unit

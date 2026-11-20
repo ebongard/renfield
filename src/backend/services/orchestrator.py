@@ -394,7 +394,7 @@ class QueryOrchestrator:
             # array — see _parse_plan). None ⇒ unparseable ⇒ single-role.
             sub_queries = _parse_plan(response_text)
             if sub_queries is None:
-                logger.info(f"Orchestrator: no JSON plan in response, single-role. Raw: {response_text[:200]}")
+                logger.info(f"Orchestrator: no JSON plan in response, single-role. Raw: {logged_content(response_text, 200)}")
                 return None
             if not isinstance(sub_queries, list) or len(sub_queries) < 2:
                 return None

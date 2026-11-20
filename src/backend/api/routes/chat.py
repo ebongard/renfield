@@ -20,7 +20,7 @@ from services.database import get_db
 from services.input_guard import detect_injection
 from services.ollama_service import OllamaService
 from utils.config import settings
-from utils.log_safety import error_text_without_content, frames_without_content
+from utils.log_safety import error_text_without_content, frames_without_content, logged_content
 
 router = APIRouter()
 
@@ -121,7 +121,7 @@ async def send_message(
 ):
     """Send a message and receive an answer."""
     try:
-        logger.info(f"📨 New message: '{chat_request.message[:100]}'")
+        logger.info(f"📨 New message: {logged_content(chat_request.message)}")
 
         # Prompt injection check
         injection_result = detect_injection(chat_request.message)
@@ -240,7 +240,7 @@ async def send_message(
         if settings.agent_enabled:
             from services.complexity_detector import ComplexityDetector
             if await ComplexityDetector.needs_agent_with_feedback(chat_request.message):
-                logger.info(f"🤖 Agent loop (REST) enabled for: '{chat_request.message[:80]}...'")
+                logger.info(f"🤖 Agent loop (REST) enabled for: {logged_content(chat_request.message, 80)}")
 
                 from services.action_executor import ActionExecutor
                 from services.agent_service import AgentService
@@ -405,7 +405,7 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
 
         await db.commit()
 
-        logger.info(f"✅ Response generated: '{response_text[:100]}'")
+        logger.info(f"✅ Response generated: {logged_content(response_text)}")
 
         return ChatResponse(
             message=response_text,

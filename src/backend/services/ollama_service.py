@@ -28,7 +28,7 @@ from utils.llm_client import (
     is_llm_unreachable,
     log_llm_unreachable,
 )
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 _VALID_PERSONALITY_STYLES = {"freundlich", "direkt", "formell", "casual"}
 
@@ -711,7 +711,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 response = extract_response_content(response_data)
 
             # Robust JSON extraction
-            logger.debug(f"Raw LLM response ({len(response) if response else 0} chars): {response[:300] if response else '(empty)'}")
+            logger.debug(f"Raw LLM response: {logged_content(response, 300)}")
 
             # Strip markdown code blocks
             response = response.strip()
@@ -778,7 +778,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     intent_data = raw_data
             except json.JSONDecodeError as e:
                 logger.warning(f"⚠️ JSON Parse Error: {e}")
-                logger.warning(f"Attempted to parse: {response[:200]}")
+                logger.warning(f"Attempted to parse: {logged_content(response, 200)}")
                 intent_data = None
 
                 # Retry once on truncated JSON (starts with { but incomplete)
@@ -863,7 +863,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.error(f"❌ Intent extraction error: {e}")
             import traceback
             logger.debug(f"Traceback: {traceback.format_exc()}")
-            logger.debug(f"Response was: {response if 'response' in locals() else 'no response'}")
+            logger.debug(f"Response was: {logged_content(response) if 'response' in locals() else 'no response'}")
             return {
                 "intent": "general.conversation",
                 "parameters": {},

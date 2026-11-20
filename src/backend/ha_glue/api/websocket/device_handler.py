@@ -297,7 +297,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                 if device.capabilities.has_display:
                     await device_manager.send_stream_chunk(session_id, chunk)
 
-        logger.info(f"💬 Response: '{response_text[:100]}...'")
+        logger.info(f"💬 Response: {logged_content(response_text)}")
 
         # Send final response text (for display devices)
         if device.capabilities.has_display:

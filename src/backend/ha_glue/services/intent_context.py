@@ -38,7 +38,7 @@ from typing import Any
 
 from loguru import logger
 
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 # German device keyword → HA domain mapping. Pre-computed once at module
 # load so `_filter_entities_by_message` runs in O(words × domains) instead
@@ -239,7 +239,7 @@ async def ha_validate_classified_intent(
 
     logger.info(
         f"⚠️  ha_glue intent_context: {intent_data.get('intent')} overridden to "
-        f"general.conversation (no HA keywords in '{message[:50]}')"
+        f"general.conversation (no HA keywords in {logged_content(message, 50)})"
     )
     return {
         "intent": "general.conversation",
