@@ -2330,7 +2330,7 @@
       "subject": "Concerne",
       "actor": "Terminé par",
       "owner": "Appairage de",
-      "instance": "Instance",
+      "instance": "Instance appairée",
       "unknownInstance": "sans nom vérifié",
       "deletedAccount": "compte supprimé",
       "you": "vous",
@@ -2341,6 +2341,7 @@
         "pairing_revived": "supprimé lors du nouvel appairage"
       },
       "linksRemoved_one": "{{count}} lien supprimé",
+      "linksRemoved_many": "{{count}} de liens supprimés",
       "linksRemoved_other": "{{count}} liens supprimés"
     }
   },
