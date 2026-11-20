@@ -1501,7 +1501,23 @@ class AgentService:
 
             # Parse JSON array from response
             selected = json.loads(response_text)
-            if not isinstance(selected, list) or not selected:
+            # 🛑 An EMPTY list is an answer, not a failure: the task needs no
+            # tool (#1599). Behind its switch it offers none -- and still runs
+            # through the correction pinning below, because a user correction
+            # is the way out of a wrong `[]`. Only a parsed list that is empty
+            # counts; everything else stays on the fallback to ALL tools.
+            no_tool_needed = (
+                settings.agent_preselect_empty_means_none
+                and isinstance(selected, list) and not selected
+            )
+            if no_tool_needed:
+                logger.info(
+                    # The MODEL's verdict; a correction may still pin tools
+                    # below, and says so in its own line.
+                    "Tool pre-selection: the task needs no tool (in={}) "
+                    "— the model chose none of {}", input_signature, len(tool_names),
+                )
+            elif not isinstance(selected, list) or not selected:
                 # 🛑 The most common case is an EMPTY list (the task needs no
                 # tool), and empty is falsy -- hence the same branch. `in=`
                 # belongs here too: this path falls back to ALL tools, and
@@ -1565,6 +1581,12 @@ class AgentService:
                     f" {sorted(newly_added)}" if newly_added else "",
                     input_signature,
                 )
+
+            if no_tool_needed:
+                # `{}` and NOT `None`: `None` means "no preselect, use all".
+                # Every consumer tells the two apart with `is not None` /
+                # `isinstance(..., dict)`, never by truthiness.
+                return filtered
 
             if not filtered:
                 logger.warning(
@@ -2337,7 +2359,8 @@ class AgentService:
                 message, agent_client, agent_model, lang,
                 corrected_intent=corrected_intent,
             )
-            if self._preselected_tools:
+            # `is not None`: an empty selection (#1599) is 0 tools, not all.
+            if self._preselected_tools is not None:
                 total_tools = len(self._preselected_tools)
 
         # Step 0: Thinking

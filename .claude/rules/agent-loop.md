@@ -134,6 +134,9 @@ kommt ABGESCHNITTEN zurueck — unparsbar wie vorher. Ohne diesen Schluessel ver
 🛑 **Die Quote aendert sich nicht** (90/95 beidseits). Wer hier Genauigkeit erwartet, misst das Falsche;
 die Grammatikfrage sitzt im `tool_preselect_prompt`, und jede Aenderung daran geht durch
 `bin/measure-preselect.py` — vier Review-Runden am Hinweistext ohne Messung kosteten acht Messrunden.
+🛑 **`{}` heißt KEIN Werkzeug, `None` heißt ALLE** (#1599, `AGENT_PRESELECT_EMPTY_MEANS_NONE`). Beide sind
+falsy — `_preselected_tools` nie per Wahrheitswert lesen, nur `is not None` / `isinstance(…, dict)`; ein AST-Test
+hält die Klasse. Eine leere Liste läuft weiter durch die Korrektur-Festnagelung: sie ist der Ausweg aus einem falschen `[]`.
 
 ## Ein angestossener Vorgang ist kein Fehlschlag
 Der Geraete-Hinweis („eine wiederholte Bitte an einem GERAET ist eine NEUE Bitte") loeste sich SELBST aus: nach

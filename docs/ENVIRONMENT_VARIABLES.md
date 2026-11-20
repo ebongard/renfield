@@ -381,6 +381,16 @@ AGENT_PRESELECT_PROMPT_DUMP=false
 # zurueck, ohne sie zwei von drei nicht.
 AGENT_PRESELECT_TYPED=false
 
+# Leere Vorauswahl = kein Werkzeug (#1599, dunkel). Antwortet die Vorauswahl
+# mit `[]` (die Aufgabe braucht kein Werkzeug — Rechnen, Smalltalk), bekommt
+# der Agent mit `true` KEINE Werkzeuge statt aller; eine Nutzerkorrektur
+# nagelt ihre Werkzeuge trotzdem fest. Nur eine sauber gelesene LEERE LISTE
+# nimmt diesen Weg — kaputtes JSON, Zeitueberschreitung oder nur unbekannte
+# Namen fallen weiter auf alle Werkzeuge zurueck. Gemessen vor dem Bau
+# (agent_trajectories, 21.10.–20.11.2026): 34 von 35 Zuegen mit allen
+# Werkzeugen nach unbrauchbarer Vorauswahl riefen gar keins.
+AGENT_PRESELECT_EMPTY_MEANS_NONE=false
+
 # Konversations-Kontext im Agent Loop (Anzahl Nachrichten)
 AGENT_CONV_CONTEXT_MESSAGES=12
 
