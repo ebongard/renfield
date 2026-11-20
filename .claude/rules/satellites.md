@@ -81,6 +81,9 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
   (`silero_vad_version` / `silero_vad_sha256` in `provisioning/group_vars/satellites.yml`);
   before bumping run `tests/satellite/test_silero_vad_streaming.py` with `SILERO_VAD_MODEL` + `SILERO_VAD_SPEECH_WAV`.
 - An inference error must fall back to RMS, never be judged: neutral 0.5 reads as SPEECH at threshold 0.5.
+- **A second `tts_audio` while one plays was DROPPED before 1.4.22** (the player refuses it). The slow-turn filler
+  (#1576, `SATELLITE_FILLER_ENABLED`) therefore goes only to a device advertising `tts_queue`, with `is_final=False`,
+  never routed, and only in a language with its own Piper voice. Fixed text in code (`satellite_filler.py`), never a prompt.
 - `RATE_LIMITED` means ONE dropped frame, not a failed session — it must not reset a running turn (#1284).
 - `wakeword.vad_gated` is off by default; turning it on makes the VAD a precondition for the wake word.
 - **A camera satellite photographs the room on EVERY wake word**, so an image on `audio_end` says nothing about the
