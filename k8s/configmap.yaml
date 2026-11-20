@@ -449,6 +449,9 @@ data:
   # gesetzt wurde und damit nirgends nachlesbar war.
   AGENT_PRESELECT_PROMPT_DUMP: "false"
   AGENT_PRESELECT_TYPED: "true"
+  # Leere Vorauswahl `[]` = kein Werkzeug statt aller (#1599). Seit 2026-11-20
+  # an; beobachten: „needs no tool"-Zeilen und Korrekturen danach.
+  AGENT_PRESELECT_EMPTY_MEANS_NONE: "true"
   MCP_ENABLED: "true"
   # MCP self-detection (Phase 1): surface MCP failures renfield already detects
   # (Plane-A get_status() degrade/down + Plane-B ingest-MCP OPERATOR-NOTIFY pushes)
