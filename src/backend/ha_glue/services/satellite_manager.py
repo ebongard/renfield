@@ -95,6 +95,9 @@ class SatelliteCapabilities:
     has_camera: bool = False
     has_display: bool = False
     has_enviro: bool = False
+    #: Plays TTS clips one after the other instead of dropping a second one
+    #: (satellite 1.4.22, #1576). Gates the filler phrase.
+    tts_queue: bool = False
 
 
 #: The satellite's level for a chunk below one LSB: `20*log10(max(rms, 1)/32768)`
@@ -302,6 +305,7 @@ class SatelliteManager:
                 has_camera=device_bool(capabilities.get("has_camera"), False),
                 has_display=device_bool(capabilities.get("has_display"), False),
                 has_enviro=device_bool(capabilities.get("has_enviro"), False),
+                tts_queue=device_bool(capabilities.get("tts_queue"), False),
             )
 
             # Register satellite
@@ -764,7 +768,10 @@ class SatelliteManager:
         Args:
             session_id: Target session
             audio_bytes: WAV audio data
-            is_final: Whether this is the final audio chunk
+            is_final: Whether this is the final audio chunk. A non-final clip
+                (the slow-turn filler, #1576) leaves the state at PROCESSING:
+                SPEAKING would silence the stop word and the device's
+                processing timeout while the answer is still being worked on.
         """
         if session_id not in self.sessions:
             return
@@ -774,8 +781,8 @@ class SatelliteManager:
         if session.satellite_id in self.satellites:
             sat = self.satellites[session.satellite_id]
 
-            # Update state to speaking
-            if sat.state != SatelliteState.SPEAKING:
+            # Update state to speaking -- for the answer, not for a filler
+            if is_final and sat.state != SatelliteState.SPEAKING:
                 await self.set_session_state(session_id, SatelliteState.SPEAKING)
 
             try:

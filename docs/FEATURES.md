@@ -79,6 +79,12 @@ Siehe [SPEAKER_RECOGNITION.md](SPEAKER_RECOGNITION.md) für Details.
 
 Siehe [SATELLITE_CAMERA.md](SATELLITE_CAMERA.md) für Details.
 
+### Füllsatz bei langsamen Sprach-Turns (`SATELLITE_FILLER_ENABLED`, opt-in/dark, #1576)
+- **Kein Schweigen bei langsamen Aktionen**: Dauern Aktion (Paperless, Home Assistant, Suche) und das Formulieren der Antwort länger als `SATELLITE_FILLER_AFTER_SECONDS` (1,5 s), sagt der Satellit „Moment, ich schaue nach.“ — fester Text im Code, höchstens einmal je Turn, nie bei reinem Gespräch
+- **Immer am Satelliten selbst**, auch wenn die Antwort an einen Raumlautsprecher geht
+- **Nur Satelliten ab 1.4.22** (Fähigkeit `tts_queue`: Clips laufen nacheinander) und nur Sprachen mit eigener Piper-Stimme
+- Aktivieren: Backend ausrollen → Flotte per OTA auf 1.4.22 → Schalter an
+
 ### Satelliten-Enrollment (Security Review H1, `SATELLITE_ENROLLMENT_ENABLED`, opt-in/dark)
 - **Per-Satellite-Identität**: ein Satellit weist sich mit einem eigenen 256-bit-PSK (server-seitig nur als bcrypt-Hash in `satellites`, Migration `pc20260624`) im register-Frame aus, statt eine `satellite_id` nur zu **behaupten**. Schließt die H1-Wurzel: bislang konnte ein beliebiges LAN-Gerät als `sat-wohnzimmer` registrieren, den echten Satelliten verdrängen und den IRK-Push (Standort-Tracking-Schlüssel) abgreifen.
 - **Effektiv-Modus**: aus (Default, Legacy, byte-identisch) → PERMISSIVE (Soak: vorgelegter PSK wird geprüft, falsch/unbekannt/widerrufen abgelehnt, kein PSK erlaubt-aber-geloggt; IRKs nur an verifizierte Sats) → ENFORCING (kein gültiger PSK → abgelehnt). Der Übergang ist ein **Auto-Flip mit persistenter Verriegelung** (`SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED`): kippt erst, wenn JEDE eingeschriebene Zeile sich einmal authentifiziert hat, und öffnet die Flotte nie wieder von selbst.

@@ -211,6 +211,15 @@ class HaGlueSettings(BaseSettings):
     # used, otherwise the turn is answered without it (also when the check fails).
     satellite_vision_query_gate_enabled: bool = False
 
+    # === Satellite filler on a slow turn (#1576) ===
+    # When the action + the phrasing of its answer run longer than
+    # `satellite_filler_after_seconds`, the satellite says a fixed phrase
+    # ("Moment, ich schaue nach."). Only to satellites >= 1.4.22 (they queue
+    # TTS clips; an older one would DROP the answer behind the filler) and only
+    # in a language with its own Piper voice. Dark by default.
+    satellite_filler_enabled: bool = False
+    satellite_filler_after_seconds: float = Field(default=1.5, ge=0.3, le=10.0)
+
     # === Rooms ===
     rooms_auto_create_from_satellite: bool = True  # Auto-create rooms when satellites register
 

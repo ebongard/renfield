@@ -1038,6 +1038,10 @@ async def satellite_websocket(
                     )
                     return
 
+                # The filler phrase into the TTS cache before the first slow turn (#1576).
+                from ha_glue.services.satellite_filler import warm_in_background
+                warm_in_background(satellite_manager.satellites.get(satellite_id), language)
+
                 # Persist room assignment to database
                 room_id = None
                 if success and ha_glue_settings.rooms_auto_create_from_satellite:
@@ -1241,6 +1245,14 @@ async def satellite_websocket(
                 # Get satellite's configured language + room context
                 satellite_language = satellite_info.language if satellite_info else settings.default_language
                 satellite_room_id = satellite_info.room_id if satellite_info else None
+                # A spoken filler on a slow action (#1576); None = none on this turn.
+                from ha_glue.services.satellite_filler import (
+                    SatelliteFiller,
+                    filler_wanted,
+                    nothing_exclusive,
+                )
+                _filler_phrase = filler_wanted(satellite_info, satellite_language)
+                _satellite_filler: SatelliteFiller | None = None
                 logger.info(f"🌐 Using language: {satellite_language}")
 
                 # Transcribe with Whisper (with speaker recognition)
@@ -1575,6 +1587,24 @@ async def satellite_websocket(
                             intent = intent_candidate
                             break
 
+                        # The filler's window opens with the first action and
+                        # closes once the answer text is ready (#1576).
+                        if _filler_phrase and _satellite_filler is None:
+                            from services.piper_service import get_piper_service
+
+                            async def _render_filler(phrase=_filler_phrase, lang=satellite_language):
+                                return await get_piper_service().synthesize_to_bytes(phrase, language=lang)
+
+                            async def _send_filler(audio, sid=session_id):
+                                await satellite_manager.send_tts_audio(sid, audio, is_final=False)
+
+                            _satellite_filler = SatelliteFiller(
+                                after_seconds=ha_glue_settings.satellite_filler_after_seconds,
+                                render=_render_filler,
+                                send=_send_filler,
+                            )
+                            _satellite_filler.start()
+
                         # The satellite's conversation session lets session-scoped
                         # tools reach it later — a scan started by voice reports its
                         # outcome into this conversation.
@@ -1590,9 +1620,10 @@ async def satellite_websocket(
                             intent = intent_candidate
                             action_result = candidate_result
                             logger.info(f"⚡ Action result: {candidate_result.get('success')}")
-                            await satellite_manager.send_action_result(
-                                session_id, intent, candidate_result.get("success", False)
-                            )
+                            async with (_satellite_filler.exclusive() if _satellite_filler else nothing_exclusive()):
+                                await satellite_manager.send_action_result(
+                                    session_id, intent, candidate_result.get("success", False)
+                                )
                             break
 
                         # A REFUSAL is not an empty result: trying the next intent
@@ -1603,7 +1634,8 @@ async def satellite_websocket(
                             intent = intent_candidate
                             action_result = candidate_result
                             logger.info(f"🔒 Intent {intent_name} denied (permission)")
-                            await satellite_manager.send_action_result(session_id, intent, False)
+                            async with (_satellite_filler.exclusive() if _satellite_filler else nothing_exclusive()):
+                                await satellite_manager.send_action_result(session_id, intent, False)
                             break
 
                         logger.info(f"⏭️ Intent {intent_name} empty, trying the next one...")
@@ -1650,6 +1682,13 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                         # Normal conversation (with history for follow-up questions)
                         async for chunk in ollama.chat_stream(text, history=satellite_conversation_history):
                             response_text += chunk
+
+                    # The answer text is ready: the filler window closes. A
+                    # filler already playing stays; the answer queues behind it.
+                    if _satellite_filler is not None:
+                        await _satellite_filler.stop()
+                        if _satellite_filler.sent:
+                            logger.info(f"⏳ Filler phrase played before the answer (session {session_id})")
 
                     # Put the truncation notice FIRST, because it frames the
                     # answer -- afterwards it would come too late. That also
@@ -1793,6 +1832,11 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                 except Exception as e:
                     logger.error(f"❌ Processing failed: {type(e).__name__}: {error_text_without_content(e)}")
                     logger.error(f"at {frames_without_content(e)}")
+                finally:
+                    # A turn that failed or was cancelled before its answer must
+                    # not leave the timer running (idempotent after the stop above).
+                    if _satellite_filler is not None:
+                        await _satellite_filler.stop()
 
                 # End session
                 await satellite_manager.end_session(session_id, reason="completed")

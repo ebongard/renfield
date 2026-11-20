@@ -470,6 +470,9 @@ class WebSocketClient:
                 "speaker": True,
                 "led_count": 3,
                 "button": True,
+                # TTS clips queue on this device (1.4.22, #1576): the backend
+                # may send a filler before the answer without losing it.
+                "tts_queue": True,
                 **self._capabilities,
             },
             "protocol_version": self._protocol_version
