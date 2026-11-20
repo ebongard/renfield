@@ -175,8 +175,12 @@ config.set_main_option(
     settings.database_url.replace("postgresql://", "postgresql+asyncpg://")
 )
 
-# Interpret the config file for Python logging
-if config.config_file_name is not None:
+# Interpret the config file for Python logging -- only when alembic is its own
+# process (CLI, migration job). In-process (`services/database.py` on a fresh
+# install) the app owns logging: `fileConfig` would replace the root handlers,
+# dropping the bridge into the one loguru sink, and disable every logger that
+# already exists (#1565).
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 
 # Model's MetaData object(s) for 'autogenerate' support.

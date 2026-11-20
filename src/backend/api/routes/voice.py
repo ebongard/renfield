@@ -19,7 +19,7 @@ from services.auth_service import get_current_user, oauth2_scheme
 from services.database import AsyncSessionLocal, get_db
 from services.piper_service import get_piper_service
 from utils.config import settings
-from utils.log_safety import error_text_without_content, frames_without_content
+from utils.log_safety import error_text_without_content, frames_without_content, logged_content
 
 router = APIRouter()
 
@@ -124,7 +124,7 @@ async def speech_to_text(
             logger.error("❌ Transcription produced empty text")
             raise HTTPException(status_code=400, detail="Transkription fehlgeschlagen")
 
-        logger.info(f"✅ Transcription succeeded: '{text[:100]}'")
+        logger.info(f"✅ Transcription succeeded: {logged_content(text)}")
 
         return {
             "text": text,

@@ -24,7 +24,7 @@ from utils.llm_client import (
     get_classification_chat_kwargs,
     use_openai_for_tier,
 )
-from utils.log_safety import error_text_without_content, frames_without_content
+from utils.log_safety import error_text_without_content, frames_without_content, logged_content
 
 # Strip "_Quelle: ..._" / "_Source: ..._" lines that synthesizer LLMs
 # sometimes write alongside the actual answer. Transports/plugins that
@@ -578,7 +578,7 @@ class QueryOrchestrator:
             logger.warning(f"Orchestrator: skipping invalid role '{role_name}'")
             return _failed_sub_result(role_name, query)
 
-        logger.info(f"Orchestrator: launching sub-agent [{role_name}]: {query[:60]}")
+        logger.info(f"Orchestrator: launching sub-agent [{role_name}]: {logged_content(query)}")
 
         try:
             try:

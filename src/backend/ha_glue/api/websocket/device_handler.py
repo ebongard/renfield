@@ -25,7 +25,7 @@ from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
 from utils.config import settings
-from utils.log_safety import error_text_without_content, frames_without_content
+from utils.log_safety import error_text_without_content, frames_without_content, logged_content
 
 router = APIRouter()
 
@@ -206,7 +206,7 @@ async def _process_device_session(
             return
 
         stt_outcome = "text"
-        logger.info(f"📝 Transcription: '{text}'")
+        logger.info(f"📝 Transcription: {logged_content(text)}")
         await device_manager.send_transcription(session_id, text, speaker_name, speaker_alias)
 
         # Process the transcribed text
@@ -605,7 +605,7 @@ async def device_websocket(
                 if not session_id:
                     continue
 
-                logger.info(f"📝 Text input from {device_id}: '{content[:50]}...'")
+                logger.info(f"📝 Text input from {device_id}: {logged_content(content)}")
 
                 # Process text directly (no STT needed)
                 await _process_text_input(app, device_manager, session_id, content)

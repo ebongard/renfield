@@ -37,7 +37,7 @@ from loguru import logger
 from auth.provider_contract import ProviderResult
 from auth.providers.base import make_result
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 _LDAP_ESCAPE_RE = re.compile(r"([\\*\(\)\x00/])")
 
@@ -236,8 +236,8 @@ class LDAPProvider:
             member_of = [member_of]
 
         logger.info(
-            f"LDAP auth: {username!r} authenticated as {display_name!r} "
-            f"(subject={subject})"
+            f"LDAP auth: {username!r} authenticated as {logged_content(display_name)} "
+            f"(subject={logged_content(subject)})"
         )
         return make_result(
             provider_id=self.provider_id,

@@ -313,6 +313,13 @@ ausgerollt.
 LOG_LEVEL=INFO
 ```
 
+```bash
+# User content in log lines (#1565)
+LOG_CONTENT=false
+```
+
+**Default:** `false`. Aus: Eine Logzeile nennt bei Nutzerinhalten (Chat-Nachrichten, Transkriptionen, Titel, Anfragen, Entitätsnamen) nur die Länge (`<87 chars>`, `utils/log_safety.logged_content`). An: den Text, auf 100 Zeichen gekürzt. Ein gezielter Debug-Schalter je Instanz, nie ein Dauerzustand: das Pod-Log liest, wer den Cluster betreibt.
+
 **Default:** `INFO`
 
 **Levels:**

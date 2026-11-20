@@ -1535,6 +1535,11 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
+    # User content (chat messages, transcriptions, titles, queries, entity
+    # names) in log lines. Off: a line names ids and lengths (`<87 chars>`),
+    # via `utils.log_safety.logged_content`. On: the text, cut short -- a
+    # deliberate debugging switch, per instance, never a default (#1565).
+    log_content: bool = False
 
     # Security
     secret_key: SecretStr = "changeme-in-production-use-strong-random-key"

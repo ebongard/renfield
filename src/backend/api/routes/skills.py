@@ -49,7 +49,7 @@ from services.database import get_db
 from services.skill_curator_service import SkillCuratorService
 from services.skill_service import SkillService
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 router = APIRouter()
 
@@ -443,7 +443,7 @@ async def approve_skill(
     SkillService.invalidate_has_skills_cache()
     logger.info(
         f"🧠 Skill #{skill.id} approved by admin={admin_id} "
-        f"({skill.title!r})"
+        f"(title {logged_content(skill.title)})"
     )
     return _to_response(skill, is_owner=(skill.user_id == admin_id))
 
@@ -475,7 +475,7 @@ async def reject_skill(
     SkillService.invalidate_has_skills_cache()
     logger.info(
         f"🧠 Skill #{skill.id} rejected by admin={admin_id} "
-        f"({skill.title!r})"
+        f"(title {logged_content(skill.title)})"
     )
     return _to_response(skill, is_owner=(skill.user_id == admin_id))
 

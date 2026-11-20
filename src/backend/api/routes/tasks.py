@@ -13,7 +13,7 @@ from models.database import Task, User
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 router = APIRouter()
 
@@ -49,7 +49,7 @@ async def create_task(
         await db.commit()
         await db.refresh(new_task)
 
-        logger.info(f"✅ Task created: {new_task.id} - {new_task.title}")
+        logger.info(f"✅ Task created: {new_task.id} - {logged_content(new_task.title)}")
 
         return {
             "id": new_task.id,

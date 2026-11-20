@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import EMBEDDING_DIMENSION, IntentCorrection
 from utils.config import settings
 from utils.llm_client import get_embed_client
+from utils.log_safety import logged_content
 
 
 class IntentFeedbackService:
@@ -116,7 +117,7 @@ class IntentFeedbackService:
         logger.info(
             f"📝 Correction saved: {feedback_type} "
             f"'{original_value}' → '{corrected_value}' "
-            f"for message: '{message_text[:60]}...'"
+            f"for message: {logged_content(message_text)}"
         )
         return correction
 

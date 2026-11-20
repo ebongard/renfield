@@ -68,6 +68,7 @@ from models.database import (
 )
 from services.skill_service import SkillService
 from utils.config import settings
+from utils.log_safety import logged_content
 
 
 @dataclass
@@ -366,7 +367,7 @@ class SkillCuratorService:
 
         logger.info(
             f"🧹 Curator merge: skill #{loser.id} -> #{winner.id} "
-            f"(combined {len(combined)} triggers; loser {loser.title!r})"
+            f"(combined {len(combined)} triggers; loser {logged_content(loser.title)})"
         )
 
     @classmethod

@@ -113,3 +113,19 @@ class TestConflationMonitor:
             r = (await pg_db_session.execute(
                 select(KGEntity).where(KGEntity.id == ent.id))).scalar_one()
             assert r.is_active and list(r.embedding) == _vec(seed)
+
+    async def test_the_tripwire_log_names_ids_never_entity_names(self, pg_db_session, caplog):
+        """#1565: an entity name is user content, often a person's name."""
+        import logging
+
+        owner = await _make_user(pg_db_session, "cm_log")
+        a = await _entity(pg_db_session, owner, "Zebrafink Sonderling", etype="organization", emb=_vec(17))
+        b = await _entity(pg_db_session, owner, "Quastenflosser Eigen", etype="organization", emb=_vec(17))
+        with caplog.at_level(logging.WARNING, logger="kg_conflation_monitor"):
+            rep = await KgConflationMonitor(pg_db_session).scan_all(user_id=owner.id)
+        assert len(rep.pairs) == 1
+        tripwire = [r.getMessage() for r in caplog.records if "tripwire (user" in r.getMessage()]
+        assert len(tripwire) == 1, caplog.text
+        assert f"#{min(a.id, b.id)}" in tripwire[0] and f"#{max(a.id, b.id)}" in tripwire[0]
+        for word in ("Zebrafink", "Sonderling", "Quastenflosser", "Eigen"):
+            assert word not in caplog.text
