@@ -410,19 +410,35 @@ transaction as the revocation itself:
 | `initiated_at` | when |
 | `query_text` | JSON of ids: `action`, `actor_user_id`, `owner_user_id`, `subject_user_id` (the pairing's owner, or the account the link belonged to), `peer_id`, `as_admin`; a link row adds `link_id`, a pairing row `links_removed` |
 
-Ids only: the display-name snapshots stay empty, since those are text the far
-side chose. The rows are not queries — the audit view (`GET /audit`) leaves
-them out, and the 90-day retention does not prune them. There is no view for
-them yet; they are read in the database.
+Ids only: the display-name snapshot stays empty, since that is text the far
+side chose. Since 2026-11-20 the instance-name snapshot holds the far
+instance's VERIFIED name (`remote_instance_name`) as it stood at the
+revocation; older rows have none. The rows are not queries — the query view
+(`GET /audit`) leaves them out.
+
+**The revocation view (#1558).** `GET /api/federation/audit/revocations`,
+shown as its own section on `/brain/audit`: a record is visible to its
+SUBJECT (whose link or pairing ended), to its ACTOR (who ended it) and to
+every `admin` holder — nobody else (filtered in SQL on the ids in the JSON,
+behind a `CASE` so the `::jsonb` cast never touches a query row). The ids are
+resolved to names server-side; the response carries no id of another account,
+and of the far side only the snapshotted verified instance name — not the far
+person's name, not the key. A deleted account reads as "gelöschtes Konto".
+Fail-closed with auth on (401 without a session; the user id comes from the
+session). The query trail keeps its rule: no admin escape hatch there.
+
+**Retention.** Query rows go after 90 days, revocation records after
+`FEDERATION_REVOCATION_RETENTION_DAYS` (default 730 = 2 years), both in
+`prune_old_audit_rows`. Long enough to answer "who ended this", not forever.
 
 - **One row per link.** A pairing revoke removes links of accounts other than
   the one revoking, so each removed link gets its own `link_revoked` row with
   `cause` `pairing_revoked` (or `pairing_revived`, when a revoked pairing is
   paired again); the pairing row carries the count.
 - **`user_id` is NULL on these rows.** The column references `users.id`
-  without a delete rule and the rows are never pruned: filed under an account
-  — the affected or the acting one — a single revocation would make that
-  account undeletable for good. The accounts are named in the JSON.
+  without a delete rule and the rows are kept for two years: filed under an
+  account — the affected or the acting one — a single revocation would make
+  that account undeletable for that long. The accounts are named in the JSON.
 - 🛑 **Migrate before the rollout:** revision `pc20261114_fed_log_user_null`
   drops the NOT NULL on `federation_query_log.user_id` and puts a CHECK in
   its place (`direction = 'revoke' OR user_id IS NOT NULL`): a query row

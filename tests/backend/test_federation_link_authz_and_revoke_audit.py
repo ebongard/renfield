@@ -440,14 +440,16 @@ class TestALinkEndsWithItsPairingAndItsAccount:
 
 def _assert_ids_only(row: FederationQueryLog) -> dict:
     """The record carries ids, a key and fixed words -- nothing the far side
-    chose. Returns the decoded detail."""
+    chose. Returns the decoded detail. (The instance-name snapshot is the
+    VERIFIED name since #1558; the `world` pairing has none, so it is None
+    here -- `TestTheRevocationView` covers a pairing that has one.)"""
     assert row.peer_display_name_snapshot == ""
     assert row.peer_instance_name_snapshot is None
     assert row.answer_excerpt is None
     assert row.error_message is None
     assert FAR_NAME not in row.query_text
     # Never filed under an account: the foreign key has no delete rule and the
-    # row is never pruned, so it would pin that account for good.
+    # row is kept for two years, so it would pin that account that long.
     assert row.user_id is None
     detail = json.loads(row.query_text)
     for key, value in detail.items():
@@ -870,3 +872,164 @@ class TestLinksOfAPairingRevokedEarlier:
         assert row.final_status == LINK_REVOKED
         detail = _assert_ids_only(row)
         assert (detail["link_id"], detail["cause"]) == (link_id, PAIRING_REVOKED)
+
+
+# ---------------------------------------------------------------------------
+# 4. The revocation view and its retention (#1558)
+# ---------------------------------------------------------------------------
+
+REVOCATIONS = "/api/federation/audit/revocations"
+
+
+class TestTheRevocationView:
+    """Who sees which record, through the real routes that write them."""
+
+    async def _admin_removes_owners_link(self, async_client, db_session, world, as_user):
+        link = await _link(db_session, world["pairing"], world["owner"])
+        as_user(world["admin"])
+        assert (await async_client.delete(f"{USER_LINKS}/{link.id}")).status_code == 200
+
+    async def test_the_subject_and_the_actor_see_it_with_names(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        await _named(db_session, world)
+        await self._admin_removes_owners_link(async_client, db_session, world, as_user)
+
+        as_user(world["owner"])  # the subject
+        (entry,) = (await async_client.get(REVOCATIONS)).json()["entries"]
+        assert entry["action"] == LINK_REVOKED and entry["basis"] == BASIS_ADMIN
+        assert entry["subject_is_you"] is True and entry["actor_is_you"] is False
+        assert entry["subject_name"] == "Owner Person"
+        assert entry["actor_name"] == "Admin Person"
+        assert entry["owner_name"] == "Owner Person"
+
+        as_user(world["admin"])  # the actor
+        (entry,) = (await async_client.get(REVOCATIONS)).json()["entries"]
+        assert entry["actor_is_you"] is True and entry["subject_is_you"] is False
+
+    async def test_an_uninvolved_account_sees_none(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        await self._admin_removes_owners_link(async_client, db_session, world, as_user)
+        as_user(world["member"])
+        assert (await async_client.get(REVOCATIONS)).json()["entries"] == []
+
+    async def test_an_admin_sees_records_it_had_no_part_in(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        link = await _link(db_session, world["pairing"], world["member"])
+        as_user(world["member"])
+        assert (await async_client.delete(f"{LINKS}/{link.id}")).status_code in (200, 204)
+
+        as_user(world["owner"])  # neither subject nor actor
+        assert (await async_client.get(REVOCATIONS)).json()["entries"] == []
+        as_user(world["admin"])
+        (entry,) = (await async_client.get(REVOCATIONS)).json()["entries"]
+        assert entry["basis"] == BASIS_SELF
+        assert entry["subject_is_you"] is False and entry["actor_is_you"] is False
+
+    async def test_no_id_of_another_account_and_nothing_the_far_side_chose(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        world["pairing"].remote_instance_name = "verified-instance"
+        await db_session.commit()
+        await self._admin_removes_owners_link(async_client, db_session, world, as_user)
+
+        as_user(world["owner"])
+        resp = await async_client.get(REVOCATIONS)
+        (entry,) = resp.json()["entries"]
+        assert entry["peer_instance_name"] == "verified-instance"
+        assert FAR_NAME not in resp.text
+        assert world["pairing"].remote_pubkey not in resp.text
+        assert not {k for k in entry if k.endswith("_id")}
+
+    async def test_a_deleted_account_has_no_name(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        await self._admin_removes_owners_link(async_client, db_session, world, as_user)
+        (row,) = await _revocations(db_session)
+        detail = json.loads(row.query_text)
+        detail["actor_user_id"] = 987654  # an account that no longer exists
+        row.query_text = json.dumps(detail)
+        await db_session.commit()
+
+        as_user(world["owner"])
+        (entry,) = (await async_client.get(REVOCATIONS)).json()["entries"]
+        assert entry["actor_name"] is None
+
+    async def test_query_rows_and_revocation_records_do_not_mix(
+        self, async_client: AsyncClient, db_session, world, as_user, purged,
+    ):
+        now = datetime.now(UTC).replace(tzinfo=None)
+        db_session.add(FederationQueryLog(
+            direction="asked", final_status="success", query_text="not json at all",
+            user_id=world["owner"].id, peer_user_id=world["pairing"].id,
+            peer_pubkey_snapshot=world["pairing"].remote_pubkey,
+            peer_display_name_snapshot="x", initiated_at=now, finalized_at=now,
+            verified_signature=False,
+        ))
+        await db_session.commit()
+        await self._admin_removes_owners_link(async_client, db_session, world, as_user)
+
+        for who in ("owner", "admin"):
+            as_user(world[who])
+            resp = await async_client.get(REVOCATIONS)
+            assert resp.status_code == 200, resp.text
+            assert [e["action"] for e in resp.json()["entries"]] == [LINK_REVOKED]
+        as_user(world["owner"])
+        assert [e["direction"] for e in (await async_client.get(AUDIT)).json()["entries"]] == ["asked"]
+
+    async def test_without_a_session_it_is_refused(
+        self, async_client: AsyncClient, app_with_test_db, monkeypatch,
+    ):
+        from fastapi import HTTPException
+
+        monkeypatch.setattr(settings, "auth_enabled", True)
+
+        def _no_session():
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        app_with_test_db.dependency_overrides[get_current_user] = _no_session
+        app_with_test_db.dependency_overrides.pop(get_user_or_default, None)
+        assert (await async_client.get(REVOCATIONS)).status_code == 401
+
+
+async def _named(db, world) -> None:
+    world["owner"].first_name, world["owner"].last_name = "Owner", "Person"
+    world["admin"].first_name, world["admin"].last_name = "Admin", "Person"
+    await db.commit()
+
+
+class TestRevocationRetention:
+    async def _rows(self, db, world, *, age_days: int) -> None:
+        at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=age_days)
+        db.add(FederationQueryLog(
+            direction=REVOCATION_DIRECTION, final_status=PAIRING_REVOKED,
+            identity_basis=BASIS_OWNER, query_text="{}", user_id=None,
+            peer_user_id=world["pairing"].id,
+            peer_pubkey_snapshot=world["pairing"].remote_pubkey,
+            peer_display_name_snapshot="", initiated_at=at, finalized_at=at,
+            verified_signature=False,
+        ))
+        await db.commit()
+
+    async def test_a_record_older_than_two_years_goes_a_younger_one_stays(
+        self, db_session, world, own_session_to_test_db,
+    ):
+        assert settings.federation_revocation_retention_days == 730
+        await self._rows(db_session, world, age_days=731)
+        await self._rows(db_session, world, age_days=729)
+        assert await prune_old_audit_rows() == 1
+        ages = (await db_session.execute(
+            select(FederationQueryLog.initiated_at)
+            .where(FederationQueryLog.direction == REVOCATION_DIRECTION)
+        )).scalars().all()
+        assert len(ages) == 1
+        assert datetime.now(UTC).replace(tzinfo=None) - ages[0] < timedelta(days=730)
+
+    async def test_the_period_is_a_setting(
+        self, db_session, world, own_session_to_test_db, monkeypatch,
+    ):
+        monkeypatch.setattr(settings, "federation_revocation_retention_days", 30)
+        await self._rows(db_session, world, age_days=31)
+        assert await prune_old_audit_rows() == 1

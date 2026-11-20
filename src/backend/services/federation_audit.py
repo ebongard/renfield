@@ -17,9 +17,10 @@ Truncation:
     idempotent per `request_id`).
 
 Retention:
-    `prune_old_audit_rows()` deletes rows older than
-    `FEDERATION_AUDIT_RETENTION_DAYS` (default 90). Called from the
-    lifecycle hourly loop.
+    `prune_old_audit_rows()` deletes query rows older than
+    `FEDERATION_AUDIT_RETENTION_DAYS` (90) and revocation records older
+    than `FEDERATION_REVOCATION_RETENTION_DAYS` (default 730, #1558).
+    Called from the scheduled-task engine.
 """
 from __future__ import annotations
 
@@ -29,10 +30,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import delete, select, update
+from sqlalchemy import case, cast, delete, or_, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import FederationQueryLog, PeerUser
+from models.database import FederationQueryLog, PeerUser, User
 from services.database import AsyncSessionLocal
 from utils.log_safety import error_text_without_content
 
@@ -343,6 +345,10 @@ def record_revocation(
     Ids only. `query_text` is JSON built here from integers and a boolean; the
     display-name snapshot stays empty, because that name is text the far side
     chose. The public key is the pairing's identifier, a validated hex string.
+    The instance-name snapshot is the far instance's VERIFIED name
+    (`remote_instance_name`, written only from a signed attachment), as it
+    stood at the revocation -- the one thing of the far side the revocation
+    view shows (#1558). NULL when none was verified.
     """
     subject = subject_user_id if subject_user_id is not None else peer.circle_owner_id
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -367,7 +373,7 @@ def record_revocation(
         peer_user_id=peer.id,
         peer_pubkey_snapshot=peer.remote_pubkey,
         peer_display_name_snapshot="",
-        peer_instance_name_snapshot=None,
+        peer_instance_name_snapshot=peer.remote_instance_name or None,
         query_text=json.dumps(detail, sort_keys=True, separators=(",", ":")),
         initiated_at=now,
         finalized_at=now,
@@ -380,19 +386,32 @@ def record_revocation(
 
 async def prune_old_audit_rows(
     retention_days: int = FEDERATION_AUDIT_RETENTION_DAYS,
+    revocation_retention_days: int | None = None,
 ) -> int:
     """
-    Delete audit rows older than `retention_days`. Returns the number
-    of rows removed. Called from the lifecycle hourly cleanup loop.
+    Delete audit rows past their retention. Returns the number of rows
+    removed. Called from the scheduled-task engine.
 
     Pivots on `initiated_at` rather than `finalized_at` so rows that
     never finalized (cancelled queries, bugs) are also eventually
     pruned.
 
-    Only QUERY rows are pruned. A revocation record carries no content and is
-    rare; it is the trail of who ended a pairing or a link, and it stays.
+    Two periods, one per kind of row:
+    * QUERY rows (`asked`/`answered`) after `retention_days` (90): they
+      carry the question and an excerpt of the answer.
+    * REVOCATION records after `revocation_retention_days` (default
+      `FEDERATION_REVOCATION_RETENTION_DAYS`, 730; #1558). They carry no
+      content and are rare -- the trail of who ended a pairing or a link,
+      kept long enough to answer that question, not forever.
+    No other direction exists; one added later is pruned by neither.
     """
-    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=retention_days)
+    if revocation_retention_days is None:
+        from utils.config import settings
+
+        revocation_retention_days = settings.federation_revocation_retention_days
+    now = datetime.now(UTC).replace(tzinfo=None)
+    cutoff = now - timedelta(days=retention_days)
+    revocation_cutoff = now - timedelta(days=revocation_retention_days)
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -401,12 +420,20 @@ async def prune_old_audit_rows(
                     FederationQueryLog.direction.in_(QUERY_DIRECTIONS),
                 )
             )
+            revoked = await session.execute(
+                delete(FederationQueryLog).where(
+                    FederationQueryLog.initiated_at < revocation_cutoff,
+                    FederationQueryLog.direction == REVOCATION_DIRECTION,
+                )
+            )
             await session.commit()
-            deleted = result.rowcount or 0
+            deleted = (result.rowcount or 0) + (revoked.rowcount or 0)
             if deleted > 0:
                 logger.info(
-                    f"Federation audit retention: pruned {deleted} row(s) "
-                    f"older than {retention_days} days"
+                    f"Federation audit retention: pruned {result.rowcount or 0} query "
+                    f"row(s) older than {retention_days} days and "
+                    f"{revoked.rowcount or 0} revocation record(s) older than "
+                    f"{revocation_retention_days} days"
                 )
             return deleted
     except Exception as e:
@@ -449,3 +476,100 @@ async def list_audit_for_user(
             )
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+
+# --- Revocation records, for the people they concern (#1558) -----------------
+
+
+def _person_name(user: User | None) -> str | None:
+    """How a local account is named in the view; `None` = the account is gone."""
+    if user is None:
+        return None
+    full = " ".join(p.strip() for p in (user.first_name, user.last_name) if p and p.strip())
+    return full or user.username
+
+
+async def list_revocations_for_user(
+    *,
+    user_id: int,
+    is_admin: bool,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """The revocation records `user_id` may see, newest first.
+
+    A record concerns two accounts: the SUBJECT (whose link was removed, or
+    the owner of a revoked pairing) and the ACTOR (who removed it). Both see
+    it; an `admin` holder sees every record. Nobody else sees any -- the
+    filter is in the SQL, on the ids `record_revocation` wrote, not on a
+    list read back in full.
+
+    🛑 Revocation records ONLY (`direction = 'revoke'`), never a query row:
+    `list_audit_for_user` is the mirror image and shows queries only. The
+    two must not mix -- a revocation shown as a question would be a false
+    statement, and a query shown here would hand its question to an admin,
+    which the query trail never does.
+
+    Ids are resolved to names HERE, server-side; the response carries no id
+    of another account. Of the far side only the verified instance name
+    snapshotted at the revocation -- not the far person's self-chosen name,
+    not the key, not today's name for an old record.
+    """
+    # 🛑 Behind a CASE: Postgres does not promise to test `direction` before
+    # the cast, and a query row's text is no JSON -- a bare cast could fail
+    # the whole statement on any query row in the table.
+    detail = case(
+        (FederationQueryLog.direction == REVOCATION_DIRECTION,
+         cast(FederationQueryLog.query_text, JSONB)),
+        else_=None,
+    )
+    me = str(user_id)
+    stmt = (
+        select(FederationQueryLog)
+        .where(FederationQueryLog.direction == REVOCATION_DIRECTION)
+        .order_by(FederationQueryLog.initiated_at.desc(), FederationQueryLog.id.desc())
+        .limit(min(max(limit, 1), 500))
+        .offset(max(offset, 0))
+    )
+    if not is_admin:
+        stmt = stmt.where(or_(
+            detail["subject_user_id"].astext == me,
+            detail["actor_user_id"].astext == me,
+        ))
+    async with AsyncSessionLocal() as session:
+        rows = list((await session.execute(stmt)).scalars().all())
+        details = [json.loads(r.query_text) for r in rows]
+        ids = {
+            d[k] for d in details
+            for k in ("subject_user_id", "actor_user_id", "owner_user_id")
+            if isinstance(d.get(k), int)
+        }
+        users = {}
+        if ids:
+            users = {
+                u.id: u for u in (await session.execute(
+                    select(User).where(User.id.in_(ids))
+                )).scalars().all()
+            }
+
+    def _name(d: dict[str, Any], key: str) -> str | None:
+        uid = d.get(key)
+        return _person_name(users.get(uid)) if isinstance(uid, int) else None
+
+    return [
+        {
+            "id": row.id,
+            "at": row.initiated_at.isoformat() if row.initiated_at else "",
+            "action": row.final_status,
+            "cause": d.get("cause"),
+            "basis": row.identity_basis,
+            "links_removed": d.get("links_removed"),
+            "subject_name": _name(d, "subject_user_id"),
+            "actor_name": _name(d, "actor_user_id"),
+            "owner_name": _name(d, "owner_user_id"),
+            "subject_is_you": d.get("subject_user_id") == user_id,
+            "actor_is_you": d.get("actor_user_id") == user_id,
+            "peer_instance_name": row.peer_instance_name_snapshot,
+        }
+        for row, d in zip(rows, details, strict=True)
+    ]

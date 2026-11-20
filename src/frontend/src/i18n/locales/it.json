@@ -1896,7 +1896,31 @@
     "basisMappedHelp": "Risposta data come la persona collegata — con la sua piena portata, non solo con quanto è condiviso con l'istanza accoppiata.",
     "basisPeerTier": "come istanza esterna",
     "basisPeerTierHelp": "Risposta data senza un collegamento di persona — solo con quanto l'istanza accoppiata può vedere al suo livello.",
-    "basisUnknownHelp": "Base d'identità sconosciuta. Viene mostrato quanto è stato registrato; questa vista non afferma quale portata fosse in vigore."
+    "basisUnknownHelp": "Base d'identità sconosciuta. Viene mostrato quanto è stato registrato; questa vista non afferma quale portata fosse in vigore.",
+    "revocations": {
+      "title": "Abbinamenti e collegamenti terminati",
+      "intro": "Chi ha terminato un abbinamento o un collegamento personale che ti riguarda. Le voci sono conservate per 2 anni.",
+      "introAdmin": "Come admin vedi tutte le voci di questa istanza. Le voci sono conservate per 2 anni.",
+      "empty": "Nessun abbinamento o collegamento terminato.",
+      "loadFailed": "Impossibile caricare gli abbinamenti terminati.",
+      "linkRevoked": "Collegamento personale terminato",
+      "pairingRevoked": "Abbinamento terminato",
+      "subject": "Riguarda",
+      "actor": "Terminato da",
+      "owner": "Abbinamento di",
+      "instance": "Istanza",
+      "unknownInstance": "senza nome verificato",
+      "deletedAccount": "account eliminato",
+      "you": "tu",
+      "asAdmin": "come admin",
+      "causeLabel": "Motivo",
+      "cause": {
+        "pairing_revoked": "terminato con l'abbinamento",
+        "pairing_revived": "rimosso al nuovo abbinamento"
+      },
+      "linksRemoved_one": "{{count}} collegamento rimosso",
+      "linksRemoved_other": "{{count}} collegamenti rimossi"
+    }
   },
   "wissensbasis": {
     "page": {

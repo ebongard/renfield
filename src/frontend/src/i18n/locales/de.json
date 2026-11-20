@@ -2304,7 +2304,31 @@
     "basisMappedHelp": "Beantwortet als die verknüpfte Person — mit deren voller eigener Reichweite, nicht nur mit dem für die gekoppelte Instanz Freigegebenen.",
     "basisPeerTier": "als fremde Instanz",
     "basisPeerTierHelp": "Beantwortet ohne Personenverknüpfung — nur mit dem, was der gekoppelten Instanz auf ihrer Stufe freigegeben ist.",
-    "basisUnknownHelp": "Unbekannte Identitätsgrundlage. Angezeigt wird, was festgehalten wurde — welche Reichweite dabei galt, sagt diese Ansicht nicht."
+    "basisUnknownHelp": "Unbekannte Identitätsgrundlage. Angezeigt wird, was festgehalten wurde — welche Reichweite dabei galt, sagt diese Ansicht nicht.",
+    "revocations": {
+      "title": "Beendete Kopplungen und Verknüpfungen",
+      "intro": "Wer eine Kopplung oder eine Personen-Verknüpfung beendet hat, die dich betrifft. Einträge werden 2 Jahre aufbewahrt.",
+      "introAdmin": "Als Admin siehst du alle Einträge dieser Instanz. Einträge werden 2 Jahre aufbewahrt.",
+      "empty": "Keine beendeten Kopplungen oder Verknüpfungen.",
+      "loadFailed": "Beendete Kopplungen konnten nicht geladen werden.",
+      "linkRevoked": "Personen-Verknüpfung beendet",
+      "pairingRevoked": "Kopplung beendet",
+      "subject": "Betroffen",
+      "actor": "Beendet von",
+      "owner": "Kopplung von",
+      "instance": "Instanz",
+      "unknownInstance": "ohne verifizierten Namen",
+      "deletedAccount": "gelöschtes Konto",
+      "you": "du",
+      "asAdmin": "als Admin",
+      "causeLabel": "Anlass",
+      "cause": {
+        "pairing_revoked": "mit der Kopplung beendet",
+        "pairing_revived": "bei erneuter Kopplung entfernt"
+      },
+      "linksRemoved_one": "{{count}} Verknüpfung entfernt",
+      "linksRemoved_other": "{{count}} Verknüpfungen entfernt"
+    }
   },
   "wissensbasis": {
     "page": {

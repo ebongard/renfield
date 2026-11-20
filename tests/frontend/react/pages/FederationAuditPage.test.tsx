@@ -8,11 +8,18 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import type { AxiosResponse } from 'axios';
-import FederationAuditPage, { basisHelpKey, basisBadgeClass, formatDateTime } from '../../../../src/frontend/src/pages/FederationAuditPage';
+import FederationAuditPage, {
+  basisHelpKey,
+  basisBadgeClass,
+  formatDateTime,
+  RevocationList,
+} from '../../../../src/frontend/src/pages/FederationAuditPage';
 import { renderWithRouter } from '../test-utils';
 import i18n from '../../../../src/frontend/src/i18n';
 import apiClient from '../../../../src/frontend/src/utils/axios';
-import type { AuditEntry } from '../../../../src/frontend/src/api/resources/federation';
+import type { AuditEntry, RevocationEntry } from '../../../../src/frontend/src/api/resources/federation';
+import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
+import { adminAuthMock } from '../test-auth-mock';
 
 interface AuditResponseBody {
   entries: AuditEntry[];
@@ -20,6 +27,13 @@ interface AuditResponseBody {
   offset: number;
   peer_pubkey: string | null;
 }
+
+vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {
+  const actual = await vi.importActual<typeof import('../../../../src/frontend/src/context/AuthContext')>(
+    '../../../../src/frontend/src/context/AuthContext',
+  );
+  return { ...actual, useAuth: vi.fn<() => AuthContextValue>() };
+});
 
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   default: {
@@ -45,9 +59,9 @@ const DAD_PUBKEY = 'd'.repeat(64);
 // Helper: typed handle on the mocked apiClient.get
 const mockedGet = vi.mocked(apiClient.get);
 
-function mockAuditResponse(body: AuditResponseBody) {
-  const response: AxiosResponse<AuditResponseBody> = {
-    data: body,
+function ok<T>(data: T): AxiosResponse<T> {
+  return {
+    data,
     status: 200,
     statusText: 'OK',
     headers: {},
@@ -55,13 +69,39 @@ function mockAuditResponse(body: AuditResponseBody) {
     // through the AxiosResponse generic (no `as any`).
     config: { headers: {} as never },
   };
-  mockedGet.mockResolvedValueOnce(response);
+}
+
+// The page loads TWO lists (queries and, since #1558, revocation records);
+// the mock answers by URL so neither consumes the other's response.
+let auditResult: AuditResponseBody | Error = { entries: [], limit: 50, offset: 0, peer_pubkey: null };
+let revocations: RevocationEntry[] = [];
+
+function routeGets() {
+  mockedGet.mockImplementation(async (url: string) => {
+    if (url.includes('/audit/revocations')) {
+      return ok({ entries: revocations, limit: 50, offset: 0 });
+    }
+    if (auditResult instanceof Error) throw auditResult;
+    return ok(auditResult);
+  });
+}
+
+function mockAuditResponse(body: AuditResponseBody) {
+  auditResult = body;
+}
+
+function signedInAs(admin: boolean) {
+  vi.mocked(useAuth).mockReturnValue({ ...adminAuthMock, isAdmin: () => admin });
 }
 
 describe('FederationAuditPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedGet.mockReset();
+    auditResult = { entries: [], limit: 50, offset: 0, peer_pubkey: null };
+    revocations = [];
+    routeGets();
+    signedInAs(false);
   });
 
   it('renders empty state when no entries', async () => {
@@ -522,7 +562,7 @@ describe('FederationAuditPage', () => {
   });
 
   it('shows error alert on API failure', async () => {
-    mockedGet.mockRejectedValueOnce(new Error('500'));
+    auditResult = new Error('500');
 
     renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
 
@@ -540,6 +580,9 @@ describe('FederationAuditPage — naive UTC timestamps', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    revocations = [];
+    routeGets();
+    signedInAs(false);
     process.env.TZ = 'Europe/Berlin';
     await i18n.changeLanguage('de');
   });
@@ -588,5 +631,85 @@ describe('FederationAuditPage — naive UTC timestamps', () => {
       expect(screen.getByText(/17\.07\.26, 12:30/)).toBeInTheDocument();
     });
     expect(screen.queryByText(/10:30/)).not.toBeInTheDocument();
+  });
+});
+
+// #1558 — ended pairings and person links.
+function revocation(over: Partial<RevocationEntry> = {}): RevocationEntry {
+  return {
+    id: 1,
+    at: '2026-11-19T10:00:00',
+    action: 'link_revoked',
+    cause: null,
+    basis: 'admin',
+    links_removed: null,
+    subject_name: 'Anna Beispiel',
+    actor_name: 'Admin Person',
+    owner_name: 'Anna Beispiel',
+    subject_is_you: true,
+    actor_is_you: false,
+    peer_instance_name: 'zuhause-b',
+    ...over,
+  };
+}
+
+describe('FederationAuditPage — revocation records', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockedGet.mockReset();
+    auditResult = { entries: [], limit: 50, offset: 0, peer_pubkey: null };
+    revocations = [];
+    routeGets();
+    signedInAs(false);
+    await i18n.changeLanguage('de');
+  });
+
+  it('lists who ended a link, on whose authority, with the verified instance name', async () => {
+    revocations = [revocation()];
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+
+    expect(await screen.findByText('Personen-Verknüpfung beendet')).toBeInTheDocument();
+    expect(screen.getByText('Anna Beispiel (du)')).toBeInTheDocument();
+    expect(screen.getByText('Admin Person')).toBeInTheDocument();
+    expect(screen.getByText('als Admin')).toBeInTheDocument();
+    expect(screen.getByText('zuhause-b')).toBeInTheDocument();
+    expect(mockedGet).toHaveBeenCalledWith(expect.stringContaining('/api/federation/audit/revocations'));
+  });
+
+  it('says so when no instance name was verified, and when an account is gone', () => {
+    renderWithRouter(
+      <RevocationList entries={[revocation({ peer_instance_name: null, actor_name: null, basis: 'owner' })]} />,
+    );
+    expect(screen.getByText('ohne verifizierten Namen')).toBeInTheDocument();
+    expect(screen.getByText('gelöschtes Konto')).toBeInTheDocument();
+    expect(screen.queryByText('als Admin')).not.toBeInTheDocument();
+  });
+
+  it('names a pairing revocation, its cause and the links it took along', () => {
+    renderWithRouter(
+      <RevocationList
+        entries={[
+          revocation({ id: 2, action: 'pairing_revoked', links_removed: 3, basis: 'owner' }),
+          revocation({ id: 3, cause: 'pairing_revived', basis: 'owner' }),
+        ]}
+      />,
+    );
+    expect(screen.getByText('Kopplung beendet')).toBeInTheDocument();
+    expect(screen.getByText('3 Verknüpfungen entfernt')).toBeInTheDocument();
+    expect(screen.getByText('bei erneuter Kopplung entfernt')).toBeInTheDocument();
+  });
+
+  it('shows the empty state and the admin wording', async () => {
+    signedInAs(true);
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+    expect(await screen.findByText('Keine beendeten Kopplungen oder Verknüpfungen.')).toBeInTheDocument();
+    expect(screen.getByText(/Als Admin siehst du alle Einträge/)).toBeInTheDocument();
+  });
+
+  it('is not shown while the query list is filtered to one peer', async () => {
+    revocations = [revocation()];
+    renderWithRouter(<FederationAuditPage />, { route: `/brain/audit?peer=${MOM_PUBKEY}` });
+    await waitFor(() => expect(mockedGet).toHaveBeenCalled());
+    expect(screen.queryByText('Beendete Kopplungen und Verknüpfungen')).not.toBeInTheDocument();
   });
 });

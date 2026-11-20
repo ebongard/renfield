@@ -1386,6 +1386,10 @@ class Settings(BaseSettings):
     # of at most A→B→C→D chains; larger values widen the reach but
     # also the latency + trust surface.
     federation_max_depth: int = Field(default=3, ge=1, le=10)
+    # Days a federation REVOCATION record (a pairing or person link ended:
+    # who, whose, on what authority -- ids only, no content) is kept before
+    # the audit prune deletes it. Query rows keep their own 90 days (#1558).
+    federation_revocation_retention_days: int = Field(default=730, ge=30, le=3650)
 
     # Federation (F5b — rate limits).
     # Asker-side: max initiate calls per minute per paired peer. Throttles

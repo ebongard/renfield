@@ -2304,7 +2304,31 @@
     "basisMappedHelp": "Answered as the linked person — with their full own reach, not only what is shared with the paired instance.",
     "basisPeerTier": "as a foreign instance",
     "basisPeerTierHelp": "Answered without a person link — only with what the paired instance may see at its tier.",
-    "basisUnknownHelp": "Unknown identity basis. What was recorded is shown as is; this view makes no claim about the reach that applied."
+    "basisUnknownHelp": "Unknown identity basis. What was recorded is shown as is; this view makes no claim about the reach that applied.",
+    "revocations": {
+      "title": "Ended pairings and links",
+      "intro": "Who ended a pairing or a person link that concerns you. Records are kept for 2 years.",
+      "introAdmin": "As an admin you see every record of this instance. Records are kept for 2 years.",
+      "empty": "No ended pairings or links.",
+      "loadFailed": "Couldn't load ended pairings.",
+      "linkRevoked": "Person link ended",
+      "pairingRevoked": "Pairing ended",
+      "subject": "Concerns",
+      "actor": "Ended by",
+      "owner": "Pairing of",
+      "instance": "Instance",
+      "unknownInstance": "no verified name",
+      "deletedAccount": "deleted account",
+      "you": "you",
+      "asAdmin": "as admin",
+      "causeLabel": "Reason",
+      "cause": {
+        "pairing_revoked": "ended with the pairing",
+        "pairing_revived": "removed on re-pairing"
+      },
+      "linksRemoved_one": "{{count}} link removed",
+      "linksRemoved_other": "{{count}} links removed"
+    }
   },
   "wissensbasis": {
     "page": {

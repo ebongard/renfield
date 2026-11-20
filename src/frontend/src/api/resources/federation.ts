@@ -127,6 +127,33 @@ async function fetchAuditEntries(args: { peerPubkey: string | null; limit: numbe
   return response.data.entries ?? [];
 }
 
+/** An ended pairing or person link (#1558). Names only, never another
+ * account's id; of the far side only its verified instance name. */
+export interface RevocationEntry {
+  id: number;
+  at: string;
+  action: 'pairing_revoked' | 'link_revoked' | (string & {});
+  cause: 'pairing_revoked' | 'pairing_revived' | (string & {}) | null;
+  basis: 'owner' | 'self' | 'admin' | (string & {}) | null;
+  links_removed: number | null;
+  /** `null` = that account no longer exists. */
+  subject_name: string | null;
+  actor_name: string | null;
+  owner_name: string | null;
+  subject_is_you: boolean;
+  actor_is_you: boolean;
+  /** `null` = no verified name at the time (or a record from before 2026-11-20). */
+  peer_instance_name: string | null;
+}
+
+async function fetchRevocations(limit: number): Promise<RevocationEntry[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  const response = await apiClient.get<{ entries: RevocationEntry[] }>(
+    `/api/federation/audit/revocations?${params}`,
+  );
+  return response.data.entries ?? [];
+}
+
 async function deletePeerRequest(peerId: number): Promise<void> {
   await apiClient.delete(`/api/federation/peers/${peerId}`);
 }
@@ -153,6 +180,18 @@ export function useFederationAuditQuery(peerPubkey: string | null, limit = 50) {
   );
 }
 
+export function useFederationRevocationsQuery(limit = 50) {
+  return useApiQuery(
+    {
+      // Under the audit key: whatever refreshes the audit refreshes this too.
+      queryKey: [...keys.federation.audit(), 'revocations', { limit }] as const,
+      queryFn: () => fetchRevocations(limit),
+      staleTime: STALE.DEFAULT,
+    },
+    'federationAudit.revocations.loadFailed',
+  );
+}
+
 export function useDeleteFederationPeer() {
   const queryClient = useQueryClient();
   return useApiMutation(
@@ -160,6 +199,8 @@ export function useDeleteFederationPeer() {
       mutationFn: deletePeerRequest,
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: keys.federation.peers() });
+        // A revocation writes a record the audit page lists (#1558).
+        queryClient.invalidateQueries({ queryKey: keys.federation.audit() });
       },
     },
     'circles.peerRevokeFailed',
@@ -256,6 +297,7 @@ export function useDeleteIdentityLink() {
       mutationFn: deleteIdentityLinkRequest,
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: keys.federation.links() });
+        queryClient.invalidateQueries({ queryKey: keys.federation.audit() });
       },
     },
     'circles.linkRevokeFailed',

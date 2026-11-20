@@ -6,6 +6,10 @@ to the caller's own `user_id`. There is no admin escape hatch: even
 an admin cannot read another user's audit log, because the federation
 query trail is as sensitive as the conversation history itself.
 
+The one exception is `/audit/revocations` (#1558): a record that a
+pairing or person link ended carries no content, and an `admin` holder
+sees all of them -- an admin may have ended one on someone else's behalf.
+
 Retention is handled out-of-band by `services.federation_audit.prune_old_audit_rows`
 scheduled from `api.lifecycle`.
 
@@ -17,8 +21,14 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from models.database import User
+from models.permissions import Permission
 from services.auth_service import get_user_or_default
-from services.federation_audit import list_audit_for_user, outcome_code, outcome_sentence
+from services.federation_audit import (
+    list_audit_for_user,
+    list_revocations_for_user,
+    outcome_code,
+    outcome_sentence,
+)
 
 router = APIRouter()
 
@@ -137,4 +147,62 @@ async def list_federation_audit(
         limit=limit,
         offset=offset,
         peer_pubkey=peer_pubkey,
+    )
+
+
+class FederationRevocationEntry(BaseModel):
+    """One ended pairing or person link (#1558). Names, never ids of other
+    accounts; of the far side only its verified instance name."""
+
+    id: int
+    at: str
+    #: `pairing_revoked` | `link_revoked`
+    action: str
+    #: For a link: the larger act it was part of (`pairing_revoked`,
+    #: `pairing_revived`); `None` when the link itself was the target.
+    cause: str | None = None
+    #: On whose authority: `owner` (of the pairing), `self` (the link's
+    #: account), `admin` (an admin acting on someone else's row).
+    basis: str | None = None
+    links_removed: int | None = None
+    #: `None` = that account no longer exists.
+    subject_name: str | None = None
+    actor_name: str | None = None
+    owner_name: str | None = None
+    subject_is_you: bool
+    actor_is_you: bool
+    #: The far instance's verified name at the time; `None` when none was
+    #: verified or the record predates 2026-11-20.
+    peer_instance_name: str | None = None
+
+
+class FederationRevocationListResponse(BaseModel):
+    entries: list[FederationRevocationEntry] = Field(default_factory=list)
+    limit: int
+    offset: int
+
+
+@router.get("/audit/revocations", response_model=FederationRevocationListResponse)
+async def list_federation_revocations(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_user_or_default),
+):
+    """Revocation records the caller may see: those that concern them (as
+    the account whose link or pairing ended, or as the one who ended it),
+    and every record for an `admin` holder.
+
+    Fail-closed: with auth on, `get_user_or_default` answers 401 without a
+    valid session; the user id comes from that session, never a parameter.
+    """
+    entries = await list_revocations_for_user(
+        user_id=current_user.id,
+        is_admin=current_user.has_permission(Permission.ADMIN.value),
+        limit=limit,
+        offset=offset,
+    )
+    return FederationRevocationListResponse(
+        entries=[FederationRevocationEntry(**e) for e in entries],
+        limit=limit,
+        offset=offset,
     )
