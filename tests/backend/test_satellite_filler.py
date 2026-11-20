@@ -195,6 +195,32 @@ async def test_register_reads_the_tts_queue_capability() -> None:
 
 
 @pytest.mark.unit
+async def test_a_filler_clip_does_not_switch_the_satellite_to_speaking() -> None:
+    """SPEAKING on the device silences its stop word and processing timeout
+    (review of #1597); only the final clip may switch to it."""
+    from ha_glue.services.satellite_manager import SatelliteManager, SatelliteState
+
+    mgr = SatelliteManager()
+    ws = MagicMock()
+    ws.send_json = AsyncMock()
+    assert await mgr.register("sat-s", "Küche", ws, {"tts_queue": True})
+    sid = await mgr.start_session("sat-s", "hey_renfield", 0.9)
+    await mgr.set_session_state(sid, SatelliteState.PROCESSING)
+    ws.send_json.reset_mock()
+
+    await mgr.send_tts_audio(sid, b"filler", is_final=False)
+    frames = [c.args[0] for c in ws.send_json.await_args_list]
+    assert [f["type"] for f in frames] == ["tts_audio"]
+    assert mgr.satellites["sat-s"].state == SatelliteState.PROCESSING
+
+    ws.send_json.reset_mock()
+    await mgr.send_tts_audio(sid, b"answer", is_final=True)
+    frames = [c.args[0] for c in ws.send_json.await_args_list]
+    assert {"type": "state", "state": "speaking"}.items() <= frames[0].items()
+    assert frames[-1]["type"] == "tts_audio"
+
+
+@pytest.mark.unit
 async def test_warm_renders_the_phrase_into_the_cache(monkeypatch) -> None:
     piper = MagicMock()
     piper.synthesize_to_bytes = AsyncMock(return_value=b"wav")

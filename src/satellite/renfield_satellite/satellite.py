@@ -1165,8 +1165,12 @@ class Satellite:
     def _on_tts_audio(self, session_id: str, audio_bytes: bytes, is_final: bool):
         """Handle TTS audio from server"""
         print(f"Playing TTS audio ({len(audio_bytes)} bytes)")
-        self._set_state(SatelliteState.SPEAKING)
-        self._processing_start = None  # Clear processing timeout
+        if is_final:
+            self._set_state(SatelliteState.SPEAKING)
+            self._processing_start = None  # Clear processing timeout
+        # A non-final clip (the backend's filler while it still works, #1576)
+        # keeps PROCESSING: the stop word and the processing timeout stay armed,
+        # as they were before the filler existed.
 
         # Play audio asynchronously to avoid blocking the event loop
         self._schedule_async(self._play_tts_and_reset(audio_bytes, is_final))

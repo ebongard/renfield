@@ -768,7 +768,10 @@ class SatelliteManager:
         Args:
             session_id: Target session
             audio_bytes: WAV audio data
-            is_final: Whether this is the final audio chunk
+            is_final: Whether this is the final audio chunk. A non-final clip
+                (the slow-turn filler, #1576) leaves the state at PROCESSING:
+                SPEAKING would silence the stop word and the device's
+                processing timeout while the answer is still being worked on.
         """
         if session_id not in self.sessions:
             return
@@ -778,8 +781,8 @@ class SatelliteManager:
         if session.satellite_id in self.satellites:
             sat = self.satellites[session.satellite_id]
 
-            # Update state to speaking
-            if sat.state != SatelliteState.SPEAKING:
+            # Update state to speaking -- for the answer, not for a filler
+            if is_final and sat.state != SatelliteState.SPEAKING:
                 await self.set_session_state(session_id, SatelliteState.SPEAKING)
 
             try:

@@ -103,3 +103,37 @@ async def test_register_frame_advertises_tts_queue() -> None:
     with pytest.raises(RuntimeError):
         await client._register()
     assert sent[0]["capabilities"]["tts_queue"] is True
+
+
+def _state_satellite():
+    from renfield_satellite.satellite import SatelliteState
+
+    sat = object.__new__(Satellite)
+    sat._state = SatelliteState.PROCESSING
+    sat._processing_start = 123.0
+    states: list = []
+
+    def _set_state(state):
+        states.append(state)
+        sat._state = state
+
+    sat._set_state = _set_state
+    sat._schedule_async = lambda coro: coro.close()
+    return sat, states, SatelliteState
+
+
+def test_a_filler_clip_keeps_processing_so_stop_word_and_timeout_stay_armed() -> None:
+    """Review of #1597: SPEAKING silences the stop word and the 60 s timeout,
+    so a non-final clip must not switch to it."""
+    sat, states, SatelliteState = _state_satellite()
+    sat._on_tts_audio("s1", b"filler", False)
+    assert states == []
+    assert sat._state == SatelliteState.PROCESSING
+    assert sat._processing_start == 123.0
+
+
+def test_the_final_clip_switches_to_speaking_as_before() -> None:
+    sat, states, SatelliteState = _state_satellite()
+    sat._on_tts_audio("s1", b"answer", True)
+    assert states == [SatelliteState.SPEAKING]
+    assert sat._processing_start is None

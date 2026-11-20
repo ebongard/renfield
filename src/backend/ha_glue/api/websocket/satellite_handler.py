@@ -1832,11 +1832,11 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                 except Exception as e:
                     logger.error(f"❌ Processing failed: {type(e).__name__}: {error_text_without_content(e)}")
                     logger.error(f"at {frames_without_content(e)}")
-
-                # A turn that failed before its answer must not leave the timer
-                # running (idempotent after the regular stop above).
-                if _satellite_filler is not None:
-                    await _satellite_filler.stop()
+                finally:
+                    # A turn that failed or was cancelled before its answer must
+                    # not leave the timer running (idempotent after the stop above).
+                    if _satellite_filler is not None:
+                        await _satellite_filler.stop()
 
                 # End session
                 await satellite_manager.end_session(session_id, reason="completed")
