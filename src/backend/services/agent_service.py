@@ -1512,8 +1512,10 @@ class AgentService:
             )
             if no_tool_needed:
                 logger.info(
+                    # The MODEL's verdict; a correction may still pin tools
+                    # below, and says so in its own line.
                     "Tool pre-selection: the task needs no tool (in={}) "
-                    "— offering none of {}", input_signature, len(tool_names),
+                    "— the model chose none of {}", input_signature, len(tool_names),
                 )
             elif not isinstance(selected, list) or not selected:
                 # 🛑 The most common case is an EMPTY list (the task needs no
