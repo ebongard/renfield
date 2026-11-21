@@ -70,6 +70,11 @@ class PendingVoiceFactor:
     """
     user_id: int
     client_ip: str | None
+    #: The provider that authenticated the first factor (``ldap``, ``db``, …),
+    #: carried so the voice step can report the granted login like the password
+    #: path does (``post_login_granted``). None for a ticket issued before the
+    #: field existed — tickets live 180 s, so only across a deploy.
+    provider_id: str | None = None
 
 
 def _key(ticket: str) -> str:
@@ -80,7 +85,9 @@ def _ttl() -> int:
     return int(getattr(settings, "voice_second_factor_ttl_seconds", DEFAULT_TTL_SECONDS))
 
 
-async def issue_ticket(user_id: int, client_ip: str | None) -> str | None:
+async def issue_ticket(
+    user_id: int, client_ip: str | None, provider_id: str | None = None,
+) -> str | None:
     """Store a one-time ticket and return it. None when Redis does not play along.
 
     🛑 Fail-closed: without a ticket `/auth/login` issues no tokens and the user
@@ -88,7 +95,9 @@ async def issue_ticket(user_id: int, client_ip: str | None) -> str | None:
     to the second factor quietly falling away.
     """
     ticket = secrets.token_urlsafe(32)  # 256 Bit
-    payload = json.dumps({"user_id": int(user_id), "client_ip": client_ip})
+    payload = json.dumps(
+        {"user_id": int(user_id), "client_ip": client_ip, "provider_id": provider_id}
+    )
     try:
         stored = await get_redis().set(_key(ticket), payload, ex=_ttl(), nx=True)
     except Exception as e:
@@ -123,6 +132,7 @@ async def consume_ticket(ticket: str, client_ip: str | None) -> PendingVoiceFact
         pending = PendingVoiceFactor(
             user_id=int(d["user_id"]),
             client_ip=d.get("client_ip"),
+            provider_id=d.get("provider_id") if isinstance(d.get("provider_id"), str) else None,
         )
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
         logger.warning(f"voice 2fa: unusable payload discarded: {e}")

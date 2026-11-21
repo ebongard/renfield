@@ -110,6 +110,10 @@
     "alreadyHaveAccount": "Hai già un account?",
     "createAccount": "Crea account",
     "signInWithSso": "Accedi con SSO",
+    "signInWith": "Accedi con {{provider}}",
+    "ssoStartFailed": "Impossibile avviare l'accesso con {{provider}}. Riprova.",
+    "signInWithoutCompanyAccount": "Accedi senza account aziendale",
+    "passwordFormNote": "Con la password accedi solo a {{appName}}. Gli strumenti che richiedono l'account aziendale sono disponibili dopo l'accesso con {{provider}}.",
     "ssoOrDivider": "o",
     "oidcError": {
       "oidc_state_invalid": "Sessione di accesso scaduta. Riprova.",

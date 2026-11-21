@@ -160,6 +160,10 @@
     "alreadyHaveAccount": "Bereits ein Konto?",
     "createAccount": "Konto erstellen",
     "signInWithSso": "Mit SSO anmelden",
+    "signInWith": "Mit {{provider}} anmelden",
+    "ssoStartFailed": "Die Anmeldung über {{provider}} konnte nicht gestartet werden. Bitte erneut versuchen.",
+    "signInWithoutCompanyAccount": "Ohne Firmenkonto anmelden",
+    "passwordFormNote": "Mit Passwort meldest du dich nur bei {{appName}} an. Werkzeuge, die dein Firmenkonto brauchen, stehen erst nach der Anmeldung über {{provider}} zur Verfügung.",
     "ssoOrDivider": "oder",
     "oidcError": {
       "oidc_state_invalid": "Anmelde-Sitzung abgelaufen. Bitte erneut versuchen.",

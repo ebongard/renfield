@@ -51,6 +51,8 @@ const communityAuth: AuthValue = {
   isAuthenticated: true,
   authEnabled: true,
   allowRegistration: false,
+  ssoProviders: [],
+  passwordForm: 'visible',
   loading: false,
   login: vi.fn(),
   logout: vi.fn(),

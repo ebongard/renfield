@@ -74,6 +74,19 @@ class RedirectProvider:
     #: (``response_mode=form_post``) — the binding cookie must then be
     #: ``SameSite=None`` or the browser drops it.
     callback_is_form_post: bool = False
+    #: The button label on the login page ("Sign in with <display_name>").
+    #: Empty → the SPA falls back to the provider id. Not translated: it is a
+    #: proper name (an IdP or a company directory), like a brand.
+    display_name: str = ""
+
+    def logout_url(self, channel: str) -> str | None:
+        """Where the SPA sends the browser AFTER the renfield logout, to end the
+        session at the IdP as well (RP-initiated logout). None = the IdP keeps
+        its session (the default; Google/GitHub/Apple have no such endpoint for
+        third parties). The URL carries no token — the IdP asks the person to
+        confirm, which is the point: a shared machine is not silently left
+        signed in at the IdP, and nobody is logged out of it by surprise."""
+        return None
 
     async def authenticate(
         self, *, username: str, password: str, channel: str

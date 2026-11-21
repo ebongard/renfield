@@ -14,6 +14,8 @@ function buildAuth(overrides: Partial<AuthValue> = {}): AuthValue {
     loading: false,
     authEnabled: false,
     allowRegistration: false,
+    ssoProviders: [],
+    passwordForm: 'visible',
     isAuthenticated: false,
     features: {},
     isFeatureEnabled: () => true,

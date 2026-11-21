@@ -71,6 +71,8 @@ const defaultMockAuth: AuthValue = {
   isAuthenticated: true,
   authEnabled: true,
   allowRegistration: false,
+  ssoProviders: [],
+  passwordForm: 'visible',
   loading: false,
   features: { smart_home: true, cameras: true, satellites: true },
   isFeatureEnabled: (_feature: string) => true,

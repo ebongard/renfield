@@ -62,6 +62,20 @@ Single-use 60 s Redis code = a session *reference*, bound to an S256 `code_chall
 `GETDEL`; PKCE + state compared constant-time; the user is re-validated and the JWTs are **minted at EXCHANGE time** —
 no token ever in Redis or a URL. 404 when the flag is off. Redirects carry only `?code=&state=`.
 
+## `post_login_granted` (#341)
+Fires once per GRANTED login via `login_flow.notify_login_granted` — the only caller: password path before the
+tokens, voice step after both factors (the ticket carries the first factor's `provider_id`), SSO callback after the
+hand-off code is stored. Never on a refusal or a pending second factor. Notification only (`run_hooks`, never
+raises) — never make it a gate; identity stays in `post_authenticate`. A new grant site must call it too.
+
+## Login page provider list (`GET /api/auth/status`)
+`sso_providers` (id, `display_name` or the id, `logout_url`) = the providers `/sso/start` would accept (same gate:
+`SSO_HANDOFF_ENABLED` + `registry.redirect_provider`); a raising `logout_url` lists the provider with `logout_url: null` + WARNING.
+`password_form` = `LOGIN_PASSWORD_FORM` (`visible`|`collapsed`), forced `visible` while the list is empty — the form
+is never hidden when it is the only way in, and never removed. `RedirectProvider.logout_url(channel)` (default None)
+is the IdP end-session URL; the SPA goes there AFTER its own revoke only for a session that began at that provider
+(`renfield_login_provider` in localStorage, set by `AuthCallback`, cleared by a password login).
+
 ## OAuth redirect providers (`api/routes/auth_oauth.py`, #1344)
 `POST /api/auth/sso/start` (JSON XHR, answers `{authorize_url}`; never a forgeable top-level GET) → IdP → `GET|POST /api/auth/sso/callback/{provider}` → hand-off code above. The IdP
 `state` + PKCE verifier are made SERVER-side (`services/oauth_state_store`), single-use (`GETDEL`), TTL

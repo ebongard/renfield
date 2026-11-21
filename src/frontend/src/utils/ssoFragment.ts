@@ -1,4 +1,5 @@
 import { ACCESS_TOKEN_KEY } from './authTokens';
+import { clearLoginProvider } from './ssoLogin';
 
 /**
  * Legacy OIDC URL-fragment hand-off (security audit). The old implicit flow
@@ -57,5 +58,7 @@ export function consumeSsoFragmentHandoff(enabled: boolean): void {
     return;
   }
   localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+  // This session did not begin at a provider button: no IdP logout for it.
+  clearLoginProvider();
   clearFragment();
 }

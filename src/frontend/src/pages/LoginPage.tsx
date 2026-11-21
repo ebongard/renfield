@@ -12,12 +12,13 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate } from 'react-router';
-import { AlertCircle, Eye, EyeOff, Loader, LogIn } from 'lucide-react';
+import { AlertCircle, Building2, Eye, EyeOff, Loader, LogIn } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext';
 import { extractApiError } from '../utils/axios';
 import VoiceSecondFactorStep from '../components/auth/VoiceSecondFactorStep';
 import { SecondFactorRequired } from '../types/api';
+import { startSsoLogin } from '../utils/ssoLogin';
 
 // react-router's `useLocation().state` is typed as `unknown`. Narrow it
 // here so the redirect-after-login path is exercised through a real
@@ -36,6 +37,8 @@ export default function LoginPage() {
     isAuthenticated,
     authEnabled,
     allowRegistration,
+    ssoProviders,
+    passwordForm,
     loading: authLoading,
   } = useAuth();
 
@@ -48,6 +51,26 @@ export default function LoginPage() {
   // missing. While it is set, the second-factor screen is shown and NOT the
   // form: the login is not finished, there is no session.
   const [voiceTicket, setVoiceTicket] = useState<string | null>(null);
+  // Redirect providers ("Sign in with …"). While one is starting, all buttons
+  // are disabled: the browser is about to leave the page.
+  const [ssoStarting, setSsoStarting] = useState<string | null>(null);
+  // "collapsed" puts the password form behind a link (emergency access, #341
+  // D11). The person can always open it; it is never removed. The context
+  // already reports "visible" whenever there is no provider to sign in with.
+  const [passwordFormOpen, setPasswordFormOpen] = useState<boolean>(passwordForm !== 'collapsed');
+  useEffect(() => {
+    setPasswordFormOpen(passwordForm !== 'collapsed');
+  }, [passwordForm]);
+  // "Back" from the IdP can restore this page from the bfcache with the
+  // buttons still disabled; re-enable them.
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent): void => {
+      if (e.persisted) setSsoStarting(null);
+    };
+    window.addEventListener('pageshow', onShow);
+    return () => window.removeEventListener('pageshow', onShow);
+  }, []);
+  const firstProviderName = ssoProviders[0]?.display_name || ssoProviders[0]?.id || '';
 
   // Redirect path from location state, default to home.
   const fromState = (location.state as LocationStateWithFrom | null) ?? null;
@@ -70,6 +93,20 @@ export default function LoginPage() {
     const code = new URLSearchParams(location.search).get('error');
     return code && code.startsWith('oidc_') ? code : null;
   })();
+  // `/auth/callback` sends a failed redirect login back as ?error=sso.
+  const ssoCallbackFailed = new URLSearchParams(location.search).get('error') === 'sso';
+
+  const handleSsoStart = async (providerId: string, label: string): Promise<void> => {
+    setSsoStarting(providerId);
+    setError(null);
+    try {
+      await startSsoLogin(providerId);
+      // The browser is navigating to the IdP; keep the buttons disabled.
+    } catch {
+      setSsoStarting(null);
+      setError(t('auth.ssoStartFailed', { provider: label }));
+    }
+  };
 
   // Redirect if already authenticated or auth is disabled
   useEffect(() => {
@@ -196,6 +233,15 @@ export default function LoginPage() {
             </div>
           )}
 
+          {ssoCallbackFailed && !error && (
+            <div className="bg-amber-900/20 border border-amber-700 rounded-lg p-4 mb-6">
+              <div className="flex items-center space-x-3">
+                <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                <p className="text-amber-400">{t('auth.signInFailed')}</p>
+              </div>
+            </div>
+          )}
+
           {/* Error Alert */}
           {error && (
             <div className="bg-red-900/20 border border-red-700 rounded-lg p-4 mb-6">
@@ -223,6 +269,54 @@ export default function LoginPage() {
                 setError(null);
               }}
             />
+          ) : (
+          <>
+          {/* Redirect providers (#341): the company-account door. Same gate
+              as POST /api/auth/sso/start, so every button listed works. */}
+          {ssoProviders.length > 0 && (
+            <div className="space-y-3">
+              {ssoProviders.map((p) => {
+                const label = p.display_name || p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => void handleSsoStart(p.id, label)}
+                    disabled={ssoStarting !== null || loading}
+                    className="w-full btn bg-white text-gray-900 hover:bg-gray-100 py-3 flex items-center justify-center space-x-3 font-medium disabled:opacity-60"
+                  >
+                    {ssoStarting === p.id ? (
+                      <Loader className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Building2 className="w-5 h-5" aria-hidden="true" />
+                    )}
+                    <span>{t('auth.signInWith', { provider: label })}</span>
+                  </button>
+                );
+              })}
+              <div className="relative my-6" aria-hidden="true">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-700" />
+                </div>
+                <div className="relative flex justify-center text-xs">
+                  <span className="bg-gray-900 px-3 text-gray-500 uppercase tracking-wider">
+                    {t('auth.ssoOrDivider')}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!passwordFormOpen ? (
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setPasswordFormOpen(true)}
+                className="text-sm text-gray-400 hover:text-gray-200 underline underline-offset-4"
+              >
+                {t('auth.signInWithoutCompanyAccount')}
+              </button>
+            </div>
           ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Username */}
@@ -289,7 +383,17 @@ export default function LoginPage() {
                 </>
               )}
             </button>
+
+            {/* #341 D3: the password form signs in to this app only; tools
+                that need the company account work after the provider login. */}
+            {ssoProviders.length > 0 && (
+              <p className="text-xs text-gray-400 text-center">
+                {t('auth.passwordFormNote', { appName, provider: firstProviderName })}
+              </p>
+            )}
           </form>
+          )}
+          </>
           )}
 
           {/* OIDC SSO button — full-page navigation (not Link/navigate)

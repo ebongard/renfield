@@ -38,8 +38,9 @@ from utils.hooks import has_hook, run_hooks
 
 @dataclass(frozen=True)
 class LoginOutcome:
-    """What `/auth/login` needs to mint a token. ``provider_id`` is for audit
-    logging only (``legacy_hook`` for the backward-compat path)."""
+    """What `/auth/login` needs to mint a token. ``provider_id`` (``legacy_hook``
+    for the backward-compat path) goes into audit logs, the voice ticket and
+    ``post_login_granted`` — it never decides whether the login is granted."""
 
     user_id: int
     display_name: str
@@ -80,6 +81,23 @@ async def resolve_login(
 
     # --- Step 3: fire post_authenticate exactly once, before JWT mint ------
     return await resolve_provider_result(result)
+
+
+async def notify_login_granted(
+    *, user_id: int, provider_id: str | None, channel: str,
+) -> None:
+    """Fire ``post_login_granted`` — call ONLY where a login has been granted.
+
+    The single call helper for the three grant sites (password, voice second
+    factor, SSO callback), so the kwargs cannot drift between them. Never
+    raises: a consumer's failure must not undo a login that already passed.
+    """
+    await run_hooks(
+        "post_login_granted",
+        user_id=int(user_id),
+        provider_id=provider_id,
+        channel=channel,
+    )
 
 
 async def resolve_provider_result(result: ProviderResult) -> LoginOutcome | None:

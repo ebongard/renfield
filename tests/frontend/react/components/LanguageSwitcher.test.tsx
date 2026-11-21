@@ -376,6 +376,8 @@ describe('LanguageSwitcher', () => {
         loading: false,
         authEnabled: true,
         allowRegistration: false,
+        ssoProviders: [],
+        passwordForm: 'visible',
         isAuthenticated: true,
         features: {},
         isFeatureEnabled: () => true,

@@ -13,6 +13,13 @@ import {
 } from '../api/resources/push';
 import { mayHoldPushSubscription } from '../utils/webPush';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '../utils/authTokens';
+import { leavePage } from '../utils/leavePage';
+import {
+  clearLoginProvider,
+  takeIdpLogoutUrl,
+  type PasswordFormMode,
+  type SsoProvider,
+} from '../utils/ssoLogin';
 import type { User, LoginResponse } from '../types/api';
 // Value import, not `import type`: `SecondFactorRequired` is a class that is
 // thrown at runtime.
@@ -29,6 +36,10 @@ export interface AuthContextValue {
   loading: boolean;
   authEnabled: boolean;
   allowRegistration: boolean;
+  /** Usable redirect providers (login-page buttons); [] when SSO is off. */
+  ssoProviders: SsoProvider[];
+  /** Whether the password form is shown directly or behind a link. */
+  passwordForm: PasswordFormMode;
   isAuthenticated: boolean;
   features: Record<string, boolean>;
   isFeatureEnabled: (feature: string) => boolean;
@@ -54,6 +65,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [allowRegistration, setAllowRegistration] = useState(false);
+  const [ssoProviders, setSsoProviders] = useState<SsoProvider[]>([]);
+  const [passwordForm, setPasswordForm] = useState<PasswordFormMode>('visible');
+  // logout() is memoized; it reads the provider list through a ref.
+  const ssoProvidersRef = useRef<SsoProvider[]>([]);
   const [features, setFeatures] = useState<Record<string, boolean>>({});
   // HttpOnly-cookie session mode (JWT cookie migration), learned from
   // /api/auth/status. A ref (not state) so fetchUser/refresh — defined below and
@@ -136,6 +151,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch {
       clearTokens();
       setUser(null);
+      // The session is over; its provider marker must not steer the IdP logout
+      // of whoever signs in next on this browser.
+      clearLoginProvider();
       // Web Push (#79): a session that ends without a logout gives the
       // device's subscription back as well -- see `releasePushOnSessionEnd`.
       releasePushOnSessionEnd();
@@ -185,6 +203,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Login
   const login = useCallback(async (username: string, password: string): Promise<LoginResponse> => {
+    // A password login does not begin at an IdP: no IdP logout for it later.
+    clearLoginProvider();
     const formData = new URLSearchParams();
     formData.append('username', username);
     formData.append('password', password);
@@ -233,6 +253,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // .finally() so it runs only after the request has been dispatched.
     const accessToken = getAccessToken();
     const refreshToken = getRefreshToken();
+    // A session that began at an IdP with an end-session endpoint ends there
+    // too, AFTER renfield's own revoke (navigating away earlier would abort it).
+    // The IdP asks the person to confirm; no token travels in that URL.
+    const idpLogoutUrl = takeIdpLogoutUrl(ssoProvidersRef.current);
     setUser(null);
     const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
     const revokeSession = () => {
@@ -247,6 +271,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         })
         .finally(() => {
           clearTokens();
+          if (idpLogoutUrl) leavePage(idpLogoutUrl);
         });
     };
     // Web Push (#79): a browser that holds a subscription gives it back BEFORE
@@ -311,6 +336,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const response = await apiClient.get('/api/auth/status');
         setAuthEnabled(response.data.auth_enabled);
         setAllowRegistration(response.data.allow_registration);
+        const providers: SsoProvider[] = Array.isArray(response.data.sso_providers)
+          ? response.data.sso_providers
+          : [];
+        ssoProvidersRef.current = providers;
+        setSsoProviders(providers);
+        setPasswordForm(
+          response.data.password_form === 'collapsed' && providers.length > 0
+            ? 'collapsed'
+            : 'visible',
+        );
         setFeatures(response.data.features || {});
         cookieAuthRef.current = !!response.data.auth_cookie_enabled;
 
@@ -387,6 +422,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     loading,
     authEnabled,
     allowRegistration,
+    ssoProviders,
+    passwordForm,
     isAuthenticated: !!user,
     features,
     isFeatureEnabled,

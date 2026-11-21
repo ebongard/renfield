@@ -63,6 +63,7 @@ Hooks are called automatically at defined insertion points.
 | `presence_leave_room` | User left room |
 | `presence_first_arrived` | First user detected |
 | `presence_last_left` | Last occupant left |
+| `post_login_granted` | A login was granted (password, voice, SSO) — notification only |
 
 ## See Also
 

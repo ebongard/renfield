@@ -103,3 +103,20 @@ async def _on_enter(user_id, user_name, room_id, room_name, confidence, **kw):
 async def _on_last_left(room_id, room_name, **kw):
     await turn_off_lights(room_id)
 ```
+
+## Auth Events
+
+### `post_login_granted`
+- **kwargs:** `user_id` (int), `provider_id` (str | None — `ldap`, `db`, `legacy_hook`, or the redirect provider id), `channel` (str)
+- Fires **once per granted login**, after every check: password login before the tokens are minted; the voice
+  second factor after both factors passed (with the FIRST factor's provider); the redirect callback after the
+  hand-off code is stored (redeeming the code at `/sso/exchange` does not fire again). Never on a refusal, never
+  while a second factor is still pending.
+- A **notification, not a gate**: the return value is ignored and a raising handler does not undo the login.
+  Identity resolution stays in `post_authenticate`.
+
+```python
+async def _on_login(user_id, provider_id, channel, **kw):
+    if provider_id == "keycloak":
+        await refresh_user_tokens(user_id)
+```
