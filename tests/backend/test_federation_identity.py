@@ -183,6 +183,17 @@ class TestPersistenceBootGuard:
         enforce_persistent_identity()  # loaded-from-disk → must NOT raise
 
     @pytest.mark.unit
+    def test_reset_clears_the_pinned_path_too(self, tmp_path):
+        """A pin that outlived its test made the next test on the same
+        worker load a corrupt key file (2026-11-21)."""
+        from services.federation_identity import _resolve_key_path
+        pinned = tmp_path / "federation_identity_key"
+        init_federation_identity(pinned)
+        assert _resolve_key_path() == pinned
+        reset_federation_identity_for_tests()
+        assert _resolve_key_path() != pinned
+
+    @pytest.mark.unit
     def test_corrupt_persisted_key_surfaces_as_valueerror(self, tmp_path, monkeypatch):
         # The boot guard (require=true) hits a corrupt persisted key → ValueError.
         # lifecycle.py catches (RuntimeError, ValueError) → clean SystemExit(1),

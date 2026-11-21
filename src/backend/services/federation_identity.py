@@ -193,9 +193,12 @@ def reset_federation_identity_for_tests() -> None:
     """
     Test-only helper — clears the singleton so the next
     `init_federation_identity` call succeeds. Never call from
-    production code.
+    production code. Clears the pinned path too: a pin that outlives its
+    test makes the next one load that test's key file -- a corrupt-key test
+    failed unrelated tests on the same xdist worker that way (2026-11-21).
     """
-    global _instance, _loaded_from_disk
+    global _configured_path, _instance, _loaded_from_disk
+    _configured_path = None
     _instance = None
     _loaded_from_disk = None
 
