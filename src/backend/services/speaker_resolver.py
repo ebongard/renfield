@@ -27,7 +27,7 @@ from sqlalchemy.orm import selectinload
 from models.database import Speaker, SpeakerCandidate, SpeakerEmbedding
 from services.speaker_service import get_speaker_service
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 MAX_EMBEDDINGS_PER_SPEAKER = 10
 
@@ -283,7 +283,7 @@ async def resolve_speaker_from_embedding(
                 "speaker_confidence": confidence,
                 "is_new_speaker": False,
             }
-            logger.info(f"🎤 Speaker identified from wire-embedding: {identified.name} ({confidence:.2f})")
+            logger.info(f"🎤 Speaker identified from wire-embedding: {logged_content(identified.name)} ({confidence:.2f})")
 
             # Reinforce the profile only on a STRONG, long-enough match — a weak
             # (barely-over-threshold, possibly wrong) or too-short match appended
@@ -344,7 +344,7 @@ async def resolve_speaker_from_embedding(
             }
             logger.info(
                 f"🆕 New unknown speaker auto-enrolled from wire-embedding: "
-                f"{new_speaker.name} (ID: {new_speaker.id})"
+                f"{logged_content(new_speaker.name)} (ID: {new_speaker.id})"
             )
         elif too_short:
             logger.info(

@@ -26,7 +26,7 @@ from sqlalchemy import Float, and_, cast, func, or_, select
 
 from ha_glue.utils.config import ha_glue_settings
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +232,7 @@ class PaperlessAuditService:
                 "mcp.paperless.search_documents", params
             )
             if not result.get("success"):
-                logger.warning(f"Failed to fetch documents page {page}: {result.get('message')}")
+                logger.warning(f"Failed to fetch documents page {page}: {logged_content(result.get('message'))}")
                 break
 
             parsed = self._parse_mcp_result(result)
@@ -356,7 +356,7 @@ class PaperlessAuditService:
             "mcp.paperless.get_document", {"document_id": doc_id}
         )
         if not result.get("success"):
-            logger.warning(f"Failed to fetch doc {doc_id}: {result.get('message')}")
+            logger.warning(f"Failed to fetch doc {doc_id}: {logged_content(result.get('message'))}")
             return None
 
         doc = self._parse_mcp_result(result)
@@ -849,7 +849,7 @@ class PaperlessAuditService:
                     db_result.applied_at = datetime.now(UTC).replace(tzinfo=None)
                 else:
                     db_result.status = "failed"
-                    logger.error(f"MCP update failed for doc {result.paperless_doc_id}: {mcp_result.get('message')}")
+                    logger.error(f"MCP update failed for doc {result.paperless_doc_id}: {logged_content(mcp_result.get('message'))}")
                 await db.commit()
 
         return mcp_result.get("success", False)
@@ -1058,7 +1058,7 @@ class PaperlessAuditService:
         )
         if not upd.get("success"):
             logger.error(
-                f"re-OCR: content write-back failed for doc {doc_id}: {upd.get('message')}"
+                f"re-OCR: content write-back failed for doc {doc_id}: {logged_content(upd.get('message'))}"
             )
             return "failed"
 

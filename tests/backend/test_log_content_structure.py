@@ -9,9 +9,15 @@ debugging switch LOG_CONTENT is on.
 The check is by NAME: a variable or attribute called like a content field
 (`text`, `title`, `p.name_a`, ...) used as a value inside a logger call. It
 cannot see content under any other name -- it is a ratchet against the known
-shapes, with a negative control that it still fires. Known blind spot: an
-entity's `.name` (`subject.name`, `e.name`) -- `name` is far too common to
-list; the KG lines that logged one were converted by hand.
+shapes, with a negative control that it still fires.
+
+`.name` is too common to list as a field, and an entity's or a speaker's
+name is content (`subject.name`, `speaker.name`) while a room's or an MCP
+server's is not. So a `.name` in a log call counts as content unless its
+receiver is classified in `_NAME_IS_NOT_CONTENT`, per file -- the same
+receiver (`path`) is a repo file in one module and a user's document in
+another. An unclassified receiver fails, so a new one forces the decision
+instead of slipping through (2026-11-21; the measured set was 28 receivers).
 
 2026-11-20 (smoke test after the rollout): the first list knew `text` but not
 `message` or `response_text`, so ~35 lines kept logging chat messages, router
@@ -57,6 +63,36 @@ _NOT_CONTENT = {
     ("services/mcp_client.py", 'logger.warning(f"Invalid MCP tool schema: {e.message}")'):
         "a jsonschema SchemaError describes the tool's schema, not the call's arguments",
 }
+_CONFIG = "configuration the admin or the repo defines, no household content"
+#: (file, receiver) whose `.name` in a log line holds no user content.
+#: Any other `X.name` is content (an entity, a speaker, a document's file).
+_NAME_IS_NOT_CONTENT = {
+    ("services/mcp_client.py", "state.config"): "an MCP server's configured name",
+    ("services/mcp_client.py", "config"): "an MCP server's configured name",
+    ("services/mcp_client.py", "file"): "an MCP overlay config file of the deployment",
+    ("services/skill_seed_loader.py", "path"): "a seed skill file shipped in the image",
+    ("services/prompt_manager.py", "path"): "a prompt file shipped in the image",
+    ("ha_glue/services/room_service.py", "room"): "a room, " + _CONFIG,
+    ("ha_glue/api/routes/rooms.py", "room"): "a room, " + _CONFIG,
+    ("ha_glue/api/websocket/satellite_handler.py", "db_room"): "a room, " + _CONFIG,
+    ("api/routes/roles.py", "role"): "a role, " + _CONFIG,
+    ("api/websocket/chat_handler.py", "role"): "an agent role from agent_roles.yaml",
+    ("services/auth_service.py", "role"): "a role, " + _CONFIG,
+    ("services/auth_service.py", "existing"): "a system role",
+    ("api/lifecycle.py", "r"): "a default role",
+    ("api/routes/scheduled_tasks.py", "task"): "a scheduled task, " + _CONFIG,
+    ("services/scheduled_tasks/engine.py", "task"): "a scheduled task, " + _CONFIG,
+    ("services/agent_tools.py", "tool"): "a tool's registered name",
+    ("utils/circuit_breaker.py", "self"): "the breaker's name, set in code",
+    ("ha_glue/services/zeroconf_service.py", "self"): "the advertised service name",
+    ("services/whisper_service.py", "tmp"): "a temporary file the service created",
+    ("ha_glue/services/audio_output_service.py", "cache_file"): "a TTS cache file named by a hash",
+    ("api/routes/settings.py", "model_file"): "a wakeword model file",
+    ("services/auth_service.py", "role_config"): "a default role's definition",
+    ("services/notification_poller.py", "s"): "an MCP server's configured name",
+    ("services/notification_poller.py", "server"): "an MCP server's configured name",
+}
+
 #: Directories that are not this backend's code.
 _SKIP_PARTS = frozenset({"__pycache__", "alembic", "twin_adapter", "satellite", "wakeword-models"})
 
@@ -71,16 +107,40 @@ def _is_log_call(node: ast.AST) -> bool:
     )
 
 
-def _field_of(node: ast.AST) -> str | None:
+def _field_of(node: ast.AST, rel: str | None) -> str | None:
     if isinstance(node, ast.Name) and node.id in CONTENT_FIELDS:
         return node.id
     if isinstance(node, ast.Attribute) and node.attr in CONTENT_FIELDS:
         return node.attr
+    # The same field read by key: `c["text"]`, `result.get("message")`.
+    receiver, key = _key_read(node)
+    if key in CONTENT_FIELDS:
+        return f"{receiver}[{key!r}]"
+    if isinstance(node, ast.Attribute) and node.attr == "name":
+        receiver, key = ast.unparse(node.value), "name"
+    if key == "name" and (rel, receiver) not in _NAME_IS_NOT_CONTENT:
+        return f"{receiver}.name"
     return None
 
 
-def offenders_in(source: str) -> list[tuple[int, str]]:
-    """(line, field) for every content field used as a VALUE in a log call."""
+def _key_read(node: ast.AST) -> tuple[str, str | None]:
+    """(receiver, key) of `x["key"]` or `x.get("key", ...)`, else (``, None)."""
+    if (isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)):
+        return ast.unparse(node.value), node.slice.value
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get" and node.args
+            and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+        return ast.unparse(node.func.value), node.args[0].value
+    return "", None
+
+
+def offenders_in(source: str, rel: str | None = None) -> list[tuple[int, str]]:
+    """(line, field) for every content field used as a VALUE in a log call.
+
+    `rel` is the file's path under the backend; it decides which `.name`
+    receivers are classified as not content. Without it every `.name` counts.
+    """
     tree = ast.parse(source)
     found: list[tuple[int, str]] = []
     for call in (n for n in ast.walk(tree) if _is_log_call(n)):
@@ -89,7 +149,7 @@ def offenders_in(source: str) -> list[tuple[int, str]]:
             for child in ast.iter_child_nodes(parent):
                 parents[child] = parent
         for node in ast.walk(call):
-            field = _field_of(node)
+            field = _field_of(node, rel)
             if field is None or node is call.func:
                 continue
             parent = parents.get(node)
@@ -128,7 +188,7 @@ def test_no_log_call_in_the_backend_formats_user_content():
         source = path.read_text(encoding="utf-8")
         lines = source.splitlines()
         hits = [
-            (line, field) for line, field in offenders_in(source)
+            (line, field) for line, field in offenders_in(source, rel)
             if (rel, lines[line - 1].strip()) not in _NOT_CONTENT
         ]
         if hits:
@@ -162,7 +222,7 @@ def test_the_check_fires_on_the_shapes_it_was_built_from(line):
     'logger.info(f"Transcription: {logged_content(text)}")',
     'logger.info(f"{len(text)} chars")',
     'logger.info(f"credential minted: {body.client_id}")',
-    'logger.info("tool %s", tool.name)',
+    'logger.info("merged %s", logged_content(subject.name))',
     'logger.info("score=%s", summary["scores"]["faithfulness"])',
     'print(text)',
     'logger.info(f"has_response={bool(full_response)}")',
@@ -171,6 +231,48 @@ def test_the_check_fires_on_the_shapes_it_was_built_from(line):
 ])
 def test_what_it_lets_through(line):
     assert offenders_in(line) == []
+
+
+@pytest.mark.parametrize("line", [
+    # Each of these was in the backend on 2026-11-21.
+    'logger.info(f"merged {loser.name} into {winner.name}")',
+    """logger.info(f"Linked speaker '{speaker.name}' to user")""",
+    'logger.warning(f"pdftotext exit {rc} for {Path(file_path).name}")',
+    'logger.info("starting for %s", [s["name"] for s in servers])',
+])
+def test_an_unclassified_name_counts_as_content(line):
+    """Negative control: `.name` on a receiver nobody classified fires."""
+    assert offenders_in(line, "services/agent_tools.py")
+
+
+@pytest.mark.parametrize("line", [
+    # Each of these was in the backend on 2026-11-21.
+    """logger.info(f"Metadata extracted: {metadata.get('title', path.name)}")""",
+    """logger.info(f"succeeded: {candidate_result.get('message', '')[:80]}")""",
+    'logger.info(f"subject={parameters[\'subject\']}")',
+    'logger.info("poll: %s", notification.get("title", "?"))',
+])
+def test_a_content_field_read_by_key_fires(line):
+    assert offenders_in(line)
+
+
+def test_a_classified_receiver_passes_only_in_its_own_file():
+    line = 'logger.info("tool %s", tool.name)'
+    assert offenders_in(line, "services/agent_tools.py") == []
+    assert offenders_in(line, "services/rag_service.py") == [(1, "tool.name")]
+
+
+def test_every_name_classification_still_names_a_receiver_in_its_file():
+    """A stale (file, receiver) entry would silently cover a new line there."""
+    for rel, receiver in _NAME_IS_NOT_CONTENT:
+        tree = ast.parse((_BACKEND / rel).read_text(encoding="utf-8"))
+        receivers = {
+            ast.unparse(n.value) if isinstance(n, ast.Attribute) else _key_read(n)[0]
+            for call in ast.walk(tree) if _is_log_call(call)
+            for n in ast.walk(call)
+            if (isinstance(n, ast.Attribute) and n.attr == "name") or _key_read(n)[1] == "name"
+        }
+        assert receiver in receivers, (rel, receiver)
 
 
 def test_every_exemption_still_names_a_line_in_the_backend():

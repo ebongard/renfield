@@ -20,7 +20,7 @@ from ha_glue.integrations.homeassistant import HomeAssistantClient
 from ha_glue.services.device_manager import get_device_manager
 from models.database import RoomOutputDevice
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 
 class AudioOutputService:
@@ -202,7 +202,7 @@ class AudioOutputService:
                 logger.info(f"🔊 Playing TTS audio on DLNA renderer {renderer_name}")
                 return True
             else:
-                logger.warning(f"DLNA playback failed on {renderer_name}: {result.get('message', 'unknown')}")
+                logger.warning(f"DLNA playback failed on {renderer_name}: {logged_content(result.get('message', 'unknown'))}")
                 return False
 
         except Exception as e:

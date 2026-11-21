@@ -53,7 +53,7 @@ from models.database import (
 )
 from services.kg_reconciler_service import _resolve_lock_engine
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 # pg_advisory_lock namespace (int4); objid is the user_id. Distinct from the
 # notifier (0x4F42), digest (0x4F44), and KG reconciler (0x4B47).
@@ -128,7 +128,7 @@ class ObligationCalendarSync:
             logger.warning(f"calendar sync: {tool} raised: {e}")
             return None
         if not res or not res.get("success"):
-            logger.warning(f"calendar sync: {tool} failed: {res.get('message') if res else 'no result'}")
+            logger.warning(f"calendar sync: {tool} failed: {logged_content(res.get('message')) if res else 'no result'}")
             return None
         try:
             inner = json.loads(res.get("message") or "{}")

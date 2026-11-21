@@ -351,7 +351,7 @@ async def send_message(
                 intent = intent_candidate
                 action_result = candidate_result
                 intent_used = intent_candidate
-                logger.info(f"✅ Intent {intent_name} succeeded: {candidate_result.get('message', '')[:80]}")
+                logger.info(f"✅ Intent {intent_name} succeeded: {logged_content(candidate_result.get('message', ''))}")
                 break
 
             logger.info(f"⏭️ Intent {intent_name} returned no result, trying the next one...")

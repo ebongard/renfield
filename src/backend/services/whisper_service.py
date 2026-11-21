@@ -43,7 +43,7 @@ except ImportError:
     logger.warning("librosa/soundfile not available - audio preprocessing disabled. Install with: pip install librosa soundfile")
 
 from services.audio_preprocessor import AudioPreprocessor
-from utils.log_safety import error_text_without_content, frames_without_content
+from utils.log_safety import error_text_without_content, frames_without_content, logged_content
 
 
 # B.4.c thin-client helpers — used when delegating to voice-server.
@@ -502,7 +502,7 @@ class WhisperService:
                         "speaker_confidence": confidence,
                         "is_new_speaker": False
                     }
-                    logger.info(f"🎤 Speaker identified: {identified_speaker.name} ({confidence:.2f})")
+                    logger.info(f"🎤 Speaker identified: {logged_content(identified_speaker.name)} ({confidence:.2f})")
 
                     # Continuous learning: add embedding to known speaker
                     if settings.speaker_continuous_learning:
@@ -561,7 +561,7 @@ class WhisperService:
                         "speaker_confidence": 1.0,  # It's a new profile, 100% match to itself
                         "is_new_speaker": True
                     }
-                    logger.info(f"🆕 New unknown speaker created: {new_speaker.name} (ID: {new_speaker.id})")
+                    logger.info(f"🆕 New unknown speaker created: {logged_content(new_speaker.name)} (ID: {new_speaker.id})")
 
                 else:
                     logger.info("🎤 Speaker not recognized (auto-enroll disabled)")

@@ -19,6 +19,7 @@ import aiofiles
 from loguru import logger
 
 from utils.config import settings
+from utils.log_safety import logged_content
 
 
 @dataclass(frozen=True)
@@ -209,16 +210,16 @@ class DocumentProcessor:
                 capture_output=True, timeout=60, check=False,
             )
             if proc.returncode != 0:
-                logger.warning(f"pdftotext exit {proc.returncode} for {Path(file_path).name}")
+                logger.warning(f"pdftotext exit {proc.returncode} for {logged_content(Path(file_path).name)}")
                 return ""
             text = proc.stdout.decode("utf-8", errors="replace")
             cap = settings.rag_text_layer_max_chars
             if len(text) > cap:
-                logger.warning(f"text layer truncated to {cap} chars for {Path(file_path).name}")
+                logger.warning(f"text layer truncated to {cap} chars for {logged_content(Path(file_path).name)}")
                 text = text[:cap]
             return text
         except Exception as e:  # subprocess timeout / decode / OS error
-            logger.warning(f"text-layer extraction failed for {Path(file_path).name}: {e}")
+            logger.warning(f"text-layer extraction failed for {logged_content(Path(file_path).name)}: {e}")
             return ""
 
     @classmethod
@@ -298,7 +299,7 @@ class DocumentProcessor:
                     "error": f"file not found: {file_path}"
                 }
 
-            logger.info(f"Processing document: {path.name}")
+            logger.info(f"Processing document: {logged_content(path.name)}")
 
             # Decide whether force_full_page_ocr should be used
             use_ocr = force_ocr or settings.rag_force_ocr
@@ -314,7 +315,7 @@ class DocumentProcessor:
             loop = asyncio.get_event_loop()
 
             if use_ocr:
-                logger.info(f"OCR forced for: {path.name}")
+                logger.info(f"OCR forced for: {logged_content(path.name)}")
                 result = await loop.run_in_executor(
                     None, self._convert_document_ocr, file_path
                 )
@@ -342,7 +343,7 @@ class DocumentProcessor:
                 # Quick check: look at the first chunk's text for spacing
                 sample_text = doc.export_to_text() if hasattr(doc, 'export_to_text') else ""
                 if self._is_text_garbled(sample_text):
-                    logger.info(f"Re-converting with force_full_page_ocr: {path.name}")
+                    logger.info(f"Re-converting with force_full_page_ocr: {logged_content(path.name)}")
                     ocr_result = await loop.run_in_executor(
                         None, self._convert_document_ocr, file_path
                     )
@@ -353,7 +354,7 @@ class DocumentProcessor:
 
             # Extract the metadata
             metadata = self._extract_metadata(doc, file_path)
-            logger.info(f"Metadata extracted: {metadata.get('title', path.name)}")
+            logger.info(f"Metadata extracted: {logged_content(metadata.get('title', path.name))}")
 
             # Create the chunks
             chunk_result = await loop.run_in_executor(
@@ -402,7 +403,7 @@ class DocumentProcessor:
                 if use_ocr:
                     logger.error(
                         f"OCR-quality still bad after forced full-page OCR: "
-                        f"{path.name} (drop_rate={drop_rate:.0%}, "
+                        f"{logged_content(path.name)} (drop_rate={drop_rate:.0%}, "
                         f"dropped={dropped}/{total_emitted})"
                     )
                     return {
@@ -427,7 +428,7 @@ class DocumentProcessor:
                 if tl_usable:
                     logger.info(
                         f"Per-chunk quality trigger ({dropped}/{total_emitted} = "
-                        f"{drop_rate:.0%}) on {path.name}, but the embedded text layer "
+                        f"{drop_rate:.0%}) on {logged_content(path.name)}, but the embedded text layer "
                         f"is usable ({tl_reason}) — chunking from the text layer and "
                         f"skipping force-OCR (avoids dropping positioned tokens)"
                     )
@@ -445,7 +446,7 @@ class DocumentProcessor:
                     logger.info(
                         f"Per-chunk quality trigger ({dropped}/{total_emitted} = "
                         f"{drop_rate:.0%} > {settings.rag_chunk_quality_drop_threshold:.0%}) "
-                        f"— re-converting {path.name} with force_full_page_ocr"
+                        f"— re-converting {logged_content(path.name)} with force_full_page_ocr"
                     )
                     ocr_result = await loop.run_in_executor(
                         None, self._convert_document_ocr, file_path
@@ -457,7 +458,7 @@ class DocumentProcessor:
                         # not that our quality heuristic is too strict.
                         logger.error(
                             f"OCR retry conversion FAILED (None result) for "
-                            f"{path.name} — ingesting nothing, marking failed"
+                            f"{logged_content(path.name)} — ingesting nothing, marking failed"
                         )
                         return {
                             "metadata": metadata,
@@ -476,7 +477,7 @@ class DocumentProcessor:
                     drop_rate = (dropped / total_emitted) if total_emitted else 0.0
                     if drop_rate > settings.rag_chunk_quality_drop_threshold:
                         logger.error(
-                            f"OCR-quality still bad after retry: {path.name} "
+                            f"OCR-quality still bad after retry: {logged_content(path.name)} "
                             f"(drop_rate={drop_rate:.0%})"
                         )
                         return {
@@ -529,7 +530,7 @@ class DocumentProcessor:
                 if _vlm_chunks:
                     logger.info(
                         f"VLM re-OCR: replaced {len(chunks)} chunk(s) with "
-                        f"{len(_vlm_chunks)} for {path.name}"
+                        f"{len(_vlm_chunks)} for {logged_content(path.name)}"
                     )
                     chunks = _vlm_chunks
                     dropped = 0
@@ -543,7 +544,7 @@ class DocumentProcessor:
                     if docling_text else text_layer
                 )
             elif text_layer and not tl_usable:
-                logger.info(f"Text-layer union skipped for {path.name}: {tl_reason}")
+                logger.info(f"Text-layer union skipped for {logged_content(path.name)}: {tl_reason}")
 
             return {
                 "metadata": metadata,
@@ -695,7 +696,7 @@ class DocumentProcessor:
                 )
             if not ocr_bad and not coverage_bad:
                 logger.debug(
-                    f"VLM re-OCR not triggered for {Path(file_path).name}: "
+                    f"VLM re-OCR not triggered for {logged_content(Path(file_path).name)}: "
                     f"survivor score {old_score} ok and drop_rate "
                     + (f"{drop_rate:.0%}" if drop_rate is not None else "n/a")
                     + f" ≤ {settings.ocr_vlm_coverage_drop_threshold:.0%}"
@@ -790,7 +791,7 @@ class DocumentProcessor:
                 accept = coverage_accept
                 if not coverage_accept and much_more and readable and not overlap_ok:
                     logger.info(
-                        f"VLM re-OCR coverage REJECTED for {Path(file_path).name}: "
+                        f"VLM re-OCR coverage REJECTED for {logged_content(Path(file_path).name)}: "
                         f"survivor-token overlap {overlap:.0%} < "
                         f"{settings.ocr_vlm_coverage_min_overlap:.0%} — likely "
                         f"hallucination, keeping OCR text"
@@ -1084,7 +1085,7 @@ class DocumentProcessor:
                 and ext == "pdf"
                 and self._is_text_garbled(text)
             ):
-                logger.info(f"extract_text_only: re-converting with force_full_page_ocr: {path.name}")
+                logger.info(f"extract_text_only: re-converting with force_full_page_ocr: {logged_content(path.name)}")
                 ocr_result = await loop.run_in_executor(None, self._convert_document_ocr, file_path)
                 if ocr_result is not None and hasattr(ocr_result.document, 'export_to_text'):
                     text = ocr_result.document.export_to_text() or text

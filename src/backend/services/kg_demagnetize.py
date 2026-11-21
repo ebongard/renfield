@@ -131,9 +131,9 @@ async def run(db: AsyncSession, user_id: int | None = None) -> DemagnetizeReport
             await db.commit()
             rep.updated += 1
             rep.samples.append((e.id, e.name, old))
-            logger.info("de-magnetized entity #%d %r (dropped desc=%r)", e.id, e.name, old)
+            logger.info("de-magnetized entity #%d %r (dropped desc=%r)", e.id, logged_content(e.name), old)
         except Exception as exc:
             await db.rollback()
             rep.failed += 1
-            logger.warning("skip entity #%d %r: %s", e.id, e.name, error_text_without_content(exc))
+            logger.warning("skip entity #%d %r: %s", e.id, logged_content(e.name), error_text_without_content(exc))
     return rep

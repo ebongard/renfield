@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ha_glue.integrations.homeassistant import HomeAssistantClient
 from models.database import OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL, RoomDevice, RoomOutputDevice
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 # Provider preference when the SAME physical device is exposed by several
 # protocols (lower = preferred): dlna first (gapless album playback), then HA,
@@ -711,7 +711,7 @@ class OutputRoutingService:
 
             result = await mcp_manager.execute_tool("mcp.dlna.list_renderers", {})
             if not result.get("success"):
-                logger.debug(f"DLNA list_renderers failed: {result.get('message')}")
+                logger.debug(f"DLNA list_renderers failed: {logged_content(result.get('message'))}")
                 return []
 
             import json

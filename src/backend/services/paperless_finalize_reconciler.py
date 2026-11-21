@@ -33,6 +33,7 @@ from sqlalchemy import select
 from models.database import PaperlessPendingFinalize
 from services.redis_client import get_redis
 from utils.config import settings
+from utils.log_safety import logged_content
 
 # One re-finalize in flight per row (SET NX EX) so a slow re-run isn't re-picked
 # every tick and the live task + reconciler don't collide.
@@ -128,7 +129,7 @@ async def reconcile_pending_finalizes(mcp_manager: Any = None) -> None:
                 "paperless-finalize-reconciler: GIVING UP on finalize row {} "
                 "(task={}, upload={}, file={!r}) after {} attempts ({}) — deferred "
                 "metadata PATCH may be unapplied; check the Paperless document.",
-                row["id"], row["task_id"], row["chat_upload_id"], row["filename"],
+                row["id"], row["task_id"], row["chat_upload_id"], logged_content(row["filename"]),
                 row["attempts"], "aged out" if too_old else "max attempts",
             )
             continue

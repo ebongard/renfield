@@ -73,7 +73,7 @@ from services.document_processing_history import (
 from services.document_processor import DocumentProcessor
 from utils.config import settings
 from utils.llm_client import get_embed_client
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 if TYPE_CHECKING:  # pragma: no cover - imports only needed for type hints
     from services.progress import DocumentProgress
@@ -1311,7 +1311,7 @@ class RAGService(AtomOwnerResolverMixin):
                 for atom_id in {*moved_atom_ids, *stale_atom_ids}:
                     CircleResolver.invalidate_for_atom(atom_id)
             logger.info(
-                f"📦 {moved} document(s) moved to KB '{target_kb.name}' (ID={target_kb_id})"
+                f"📦 {moved} document(s) moved to KB '{logged_content(target_kb.name)}' (ID={target_kb_id})"
             )
 
         return moved

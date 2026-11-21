@@ -912,7 +912,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         try:
             new_emb = await self._get_embedding(emb_input)
         except Exception as e:  # best-effort — keep the old embedding on failure
-            logger.warning(f"KG merge: embedding recompute failed for {winner_preview.name!r}: {e}")
+            logger.warning(f"KG merge: embedding recompute failed for {logged_content(winner_preview.name)!r}: {e}")
 
         # Re-load both rows WITH locks; bail if a concurrent pass already merged.
         winner = (await self.db.execute(
@@ -1032,7 +1032,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         await self.db.commit()
         await self.db.refresh(winner)  # reload post-commit (expire_on_commit safety)
         logger.info(
-            f"🔗 KG merge: entity #{lid} {loser.name!r} -> #{wid} {winner.name!r} "
+            f"🔗 KG merge: entity #{lid} {logged_content(loser.name)!r} -> #{wid} {logged_content(winner.name)!r} "
             f"(tier={merged_tier}, {len(winner.surface_forms)} surface forms)"
         )
         return winner

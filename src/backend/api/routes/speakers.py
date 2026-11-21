@@ -238,7 +238,7 @@ async def create_speaker(
     await db.commit()
     await db.refresh(new_speaker)
 
-    logger.info(f"✅ Created speaker: {new_speaker.name} ({new_speaker.alias})")
+    logger.info(f"✅ Created speaker: {logged_content(new_speaker.name)} ({new_speaker.alias})")
 
     return SpeakerResponse(
         id=new_speaker.id,
@@ -638,7 +638,7 @@ async def enroll_speaker(
         )
 
     # Extract embedding
-    logger.info(f"📥 Enrolling voice sample for {speaker.name}: {logged_content(audio.filename)}")
+    logger.info(f"📥 Enrolling voice sample for {logged_content(speaker.name)}: {logged_content(audio.filename)}")
     audio_bytes = await audio.read()
 
     # 🛑 `to_thread`: the call is a plain `def` (temp file, librosa,
@@ -678,7 +678,7 @@ async def enroll_speaker(
     )
     embedding_count = count_result.scalar()
 
-    logger.info(f"✅ Voice sample enrolled for {speaker.name} (total: {embedding_count})")
+    logger.info(f"✅ Voice sample enrolled for {logged_content(speaker.name)} (total: {embedding_count})")
 
     return EnrollResponse(
         speaker_id=speaker_id,
@@ -839,7 +839,7 @@ async def verify_speaker(
     is_verified, confidence = service.verify_speaker(query_embedding, claimed_embeddings)
 
     logger.info(
-        f"🔐 Verification for {speaker.name}: "
+        f"🔐 Verification for {logged_content(speaker.name)}: "
         f"{'✅ VERIFIED' if is_verified else '❌ NOT VERIFIED'} "
         f"(confidence: {confidence:.2f})"
     )
