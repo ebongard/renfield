@@ -2819,6 +2819,11 @@ LDAP_RECEIVE_TIMEOUT=10
 # sich so NICHT anmelden. Die Redirect-URI ist .../api/auth/sso/callback/<provider>.
 # Lebensdauer eines begonnenen Anbieter-Logins (Zeit am Zustimmungs-Bildschirm):
 OAUTH_STATE_TTL_SECONDS=600
+# Login-Seite: Passwortformular direkt zeigen (visible) oder hinter dem Link
+# „Ohne Firmenkonto anmelden" (collapsed). Gilt nur, solange mindestens ein
+# Anbieter-Knopf angeboten wird; ohne Anbieter ist das Formular immer sichtbar.
+# Es wird nie entfernt (Notzugang).
+LOGIN_PASSWORD_FORM=visible
 OAUTH_GOOGLE_ENABLED=false
 OAUTH_GOOGLE_CLIENT_ID=
 OAUTH_GOOGLE_CLIENT_SECRET=
@@ -2864,6 +2869,7 @@ VITE_SSO_LEGACY_FRAGMENT=true
 - `DB_AUTH_ENABLED`: `true` (aus nur mit vollständigem LDAP + Identitäts-Konsument, sonst Boot-Abbruch) · `LDAP_CA_CERT_FILE`: leer (System-CA-Speicher)
 - `LDAP_AUTH_ENABLED`: `false` · `LDAP_AUTH_USER_FILTER`: `(uid={username})` · `LDAP_CONNECT_TIMEOUT`: `5` · `LDAP_RECEIVE_TIMEOUT`: `10`
 - `OAUTH_{GOOGLE,GITHUB,APPLE}_ENABLED`: `false` (all social providers disabled by default — enabling is a config-only change)
+- `LOGIN_PASSWORD_FORM`: `visible` (`collapsed` wirkt nur mit mindestens einem nutzbaren Anbieter)
 - `SSO_HANDOFF_ENABLED`: `false` (dark bis der Reva-Emitter auf `?code=` cutovert; Legacy-Fragment-Handler bleibt bis dahin)
 - `VITE_SSO_LEGACY_FRAGMENT`: `true` (Build-Flag; Legacy-`#access_token=`-Handler aktiv bis zum `?code=`-Cutover, dann auf `false` und entfernen)
 
