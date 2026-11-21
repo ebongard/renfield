@@ -164,7 +164,10 @@ class TestNoSecretsInRedis:
         and re-checks the user while doing so -- otherwise an account
         deactivated in the meantime would get through, and
         `must_change_password` would be stale."""
-        t = await store.issue_ticket(5, "10.0.0.1")
+        t = await store.issue_ticket(5, "10.0.0.1", "ldap")
         raw = json.loads(redis.data[store._key(t)])
-        assert set(raw) == {"user_id", "client_ip"}
+        # provider_id names the first-factor provider (``ldap``, ``db``) for
+        # ``post_login_granted`` — a provider name, not a credential.
+        assert set(raw) == {"user_id", "client_ip", "provider_id"}
+        assert raw["provider_id"] == "ldap"
         assert raw["user_id"] == 5

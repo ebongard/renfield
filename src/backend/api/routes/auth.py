@@ -11,6 +11,7 @@ import asyncio
 import hmac
 import secrets
 from datetime import UTC, datetime
+from typing import Literal
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
@@ -216,6 +217,15 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=8)
 
 
+class SsoProviderEntry(BaseModel):
+    """One usable redirect provider — a "Sign in with …" button on the login page."""
+    id: str
+    display_name: str
+    #: Where the SPA sends the browser after the renfield logout of a session
+    #: that began with this provider; None = no IdP logout.
+    logout_url: str | None = None
+
+
 class AuthStatusResponse(BaseModel):
     """Response model for authentication status."""
     auth_enabled: bool
@@ -227,6 +237,14 @@ class AuthStatusResponse(BaseModel):
     # decide whether "logged in?" is discovered via /me (cookie, not JS-readable)
     # vs the legacy localStorage-token gate. Off → byte-identical legacy behavior.
     auth_cookie_enabled: bool = False
+    # Redirect providers usable right now (SSO_HANDOFF_ENABLED, enabled, fully
+    # configured — the same gate as /sso/start). Empty when none is: the login
+    # page then shows only the password form.
+    sso_providers: list[SsoProviderEntry] = []
+    # "visible" | "collapsed" (LOGIN_PASSWORD_FORM). Always "visible" while
+    # sso_providers is empty — the form must never be hidden behind a link
+    # when it is the only way in.
+    password_form: Literal["visible", "collapsed"] = "visible"
 
 
 # =============================================================================
@@ -356,7 +374,7 @@ async def login(
     if await second_factor_applies(db, user):
         from services.voice_second_factor_store import issue_ticket
 
-        ticket = await issue_ticket(user.id, client_ip)
+        ticket = await issue_ticket(user.id, client_ip, outcome.provider_id)
         if ticket is None:
             # 🛑 Fail-closed. Without a ticket there is no second factor, and
             # without a second factor there is no login for this account. A
@@ -380,6 +398,14 @@ async def login(
             second_factor="voice",
             second_factor_ticket=ticket,
         )
+
+    # Every check has passed: identity, active account, no second factor
+    # pending. Tell the plugins BEFORE the tokens exist, in this request — a
+    # consumer may keep something the provider handed over during this login.
+    # Never raises; a consumer failure does not undo the login.
+    from auth.login_flow import notify_login_granted
+
+    await notify_login_granted(user_id=user.id, provider_id=outcome.provider_id, channel="web")
 
     # Create tokens. `sub` (= renfield user id) is the only consumed identity
     # claim; the cosmetic `username` claim now carries display_name (no
@@ -841,6 +867,41 @@ async def logout(
     return {"message": "Successfully logged out"}
 
 
+def _usable_sso_providers() -> list[SsoProviderEntry]:
+    """The login page's provider buttons. Same gate as ``POST /sso/start``
+    (``SSO_HANDOFF_ENABLED`` + ``registry.redirect_provider``), so a listed
+    button always leads somewhere. A provider whose metadata raises is left out
+    with a WARNING rather than taking the status endpoint (and with it the
+    login page) down."""
+    if not settings.sso_handoff_enabled:
+        return []
+    from auth.registry import get_registry
+
+    registry = get_registry()
+    entries: list[SsoProviderEntry] = []
+    for provider_id in registry.redirect_entries("web"):
+        provider = registry.redirect_provider(provider_id, "web")
+        if provider is None:
+            continue
+        # logout_url is optional metadata: a bug there must not take the login
+        # button away (/sso/start would still accept the provider) — no IdP
+        # logout for it instead, with a WARNING.
+        logout_url: str | None = None
+        try:
+            logout_url = provider.logout_url("web")
+        except Exception as e:
+            logger.warning(
+                f"auth status: logout_url of provider {provider_id!r} failed "
+                f"({type(e).__name__}) — listed without IdP logout"
+            )
+        entries.append(SsoProviderEntry(
+            id=provider_id,
+            display_name=getattr(provider, "display_name", "") or provider_id,
+            logout_url=logout_url,
+        ))
+    return entries
+
+
 @router.get("/status", response_model=AuthStatusResponse)
 async def get_auth_status(
     user: User | None = Depends(get_optional_user)
@@ -877,7 +938,14 @@ async def get_auth_status(
             voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
         )
 
+    sso_providers = _usable_sso_providers()
+    password_form = (
+        settings.login_password_form if sso_providers else "visible"
+    )
+
     return AuthStatusResponse(
+        sso_providers=sso_providers,
+        password_form=password_form,
         auth_enabled=settings.auth_enabled,
         allow_registration=settings.allow_registration,
         authenticated=user is not None,
@@ -1150,6 +1218,12 @@ async def voice_authenticate(
         # Both factors passed.
         user.last_login = datetime.now(UTC).replace(tzinfo=None)
         await db.commit()
+
+        from auth.login_flow import notify_login_granted
+
+        await notify_login_granted(
+            user_id=user.id, provider_id=pending.provider_id, channel="web",
+        )
 
         access_token = create_access_token(
             data={"sub": str(user.id), "username": user.username},

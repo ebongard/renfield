@@ -160,6 +160,10 @@
     "alreadyHaveAccount": "Already have an account?",
     "createAccount": "Create Account",
     "signInWithSso": "Sign in with SSO",
+    "signInWith": "Sign in with {{provider}}",
+    "ssoStartFailed": "Could not start the sign-in with {{provider}}. Please try again.",
+    "signInWithoutCompanyAccount": "Sign in without a company account",
+    "passwordFormNote": "A password signs you in to {{appName}} only. Tools that need your company account are available after signing in with {{provider}}.",
     "ssoOrDivider": "or",
     "oidcError": {
       "oidc_state_invalid": "Login session expired. Try again.",

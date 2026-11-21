@@ -160,6 +160,10 @@
     "alreadyHaveAccount": "Vous avez déjà un compte\u00a0?",
     "createAccount": "Créer un compte",
     "signInWithSso": "Se connecter avec SSO",
+    "signInWith": "Se connecter avec {{provider}}",
+    "ssoStartFailed": "Impossible de démarrer la connexion avec {{provider}}. Veuillez réessayer.",
+    "signInWithoutCompanyAccount": "Se connecter sans compte d'entreprise",
+    "passwordFormNote": "Le mot de passe vous connecte uniquement à {{appName}}. Les outils qui nécessitent votre compte d'entreprise sont disponibles après la connexion avec {{provider}}.",
     "ssoOrDivider": "ou",
     "oidcError": {
       "oidc_state_invalid": "La session de connexion a expiré. Réessayez.",

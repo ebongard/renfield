@@ -122,4 +122,31 @@ describe('AuthCallback (SSO one-time-code exchange)', () => {
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/login?error=sso', { replace: true }));
     expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull();
   });
+  it('marks the session as begun at the pending provider (#341)', async () => {
+    storePkce('a'.repeat(64), 'the-state');
+    sessionStorage.setItem('renfield_sso_pending_provider', 'keycloak');
+    searchParams = new URLSearchParams({ code: 'one-time', state: 'the-state' });
+    server.use(
+      http.post(`${BASE_URL}/api/auth/sso/exchange`, () =>
+        HttpResponse.json({ access_token: 'AT', refresh_token: 'RT', token_type: 'bearer', expires_in: 60 })),
+    );
+
+    renderWithProviders(<AuthCallback />);
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true }));
+    expect(localStorage.getItem('renfield_login_provider')).toBe('keycloak');
+    expect(sessionStorage.getItem('renfield_sso_pending_provider')).toBeNull();
+  });
+
+  it('a failed callback forgets the pending provider (#341)', async () => {
+    storePkce('a'.repeat(64), 'my-state');
+    sessionStorage.setItem('renfield_sso_pending_provider', 'keycloak');
+    searchParams = new URLSearchParams({ code: 'x', state: 'attacker-state' });
+
+    renderWithProviders(<AuthCallback />);
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/login?error=sso', { replace: true }));
+    expect(sessionStorage.getItem('renfield_sso_pending_provider')).toBeNull();
+    expect(localStorage.getItem('renfield_login_provider')).toBeNull();
+  });
 });

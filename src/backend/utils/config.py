@@ -1732,6 +1732,13 @@ class Settings(BaseSettings):
     # Lifetime of a pending redirect login (server-bound state + PKCE verifier
     # in Redis): the time a person has at the IdP's consent screen.
     oauth_state_ttl_seconds: int = 600
+    # How the login page shows the password form while at least one redirect
+    # provider is usable: "visible" (default, unchanged) or "collapsed" — the
+    # form sits behind a "sign in without a company account" link and the
+    # provider buttons are the main door. Runtime switch, read per request via
+    # GET /api/auth/status. Without a usable provider the form is ALWAYS
+    # visible, whatever this says: hiding the only door would lock everyone out.
+    login_password_form: Literal["visible", "collapsed"] = "visible"
     oauth_google_enabled: bool = False
     oauth_google_client_id: str = ""
     oauth_google_client_secret: SecretStr = ""

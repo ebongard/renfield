@@ -239,6 +239,17 @@ async def oauth_callback(
     await db.commit()
     logger.info(f"OAuth login: user={user.username} provider={provider.provider_id!r}")
 
+    # Granted: the hand-off code exists and every check has passed. Fired HERE,
+    # in the callback request, not at /sso/exchange — the provider's tokens
+    # from `exchange_code` belong to this request. A code that is never
+    # redeemed (60 s) leaves whatever a consumer kept: the same person has just
+    # authenticated successfully, so that is accepted.
+    from auth.login_flow import notify_login_granted
+
+    await notify_login_granted(
+        user_id=user.id, provider_id=provider.provider_id, channel=pending.channel,
+    )
+
     resp = RedirectResponse(
         f"{_SPA_CALLBACK}?{urlencode({'code': handoff, 'state': pending.spa_state})}",
         status_code=status.HTTP_303_SEE_OTHER,

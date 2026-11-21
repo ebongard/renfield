@@ -67,6 +67,8 @@ describe('LoginPage', () => {
       vi.mocked(useAuth).mockReturnValue({
         ...unauthenticatedAuthMock,
         allowRegistration: true,
+        ssoProviders: [],
+        passwordForm: 'visible',
       });
 
       renderWithProviders(<LoginPage />);

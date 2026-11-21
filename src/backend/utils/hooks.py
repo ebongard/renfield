@@ -88,6 +88,19 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # falls back to legacy behavior (JWT from the authenticated User row) —
     # see the post_authenticate contract docstring in provider_contract.py.
     "post_authenticate",
+    # Login GRANTED — fired once per login that ends in a session, AFTER every
+    # check has passed (identity resolved, account active, second factor done or
+    # not required), in the same request: the password path just before the
+    # tokens are minted, the voice second factor just before its tokens, the
+    # redirect (SSO) callback after the hand-off code is stored (not at
+    # /sso/exchange). Never on a refusal of any kind. Kwargs: `user_id: int`,
+    # `provider_id: str | None` (the provider that authenticated the first
+    # factor; None only for a voice ticket issued before this field existed),
+    # `channel: str`. Return values are ignored and a crashing handler does not
+    # affect the login (run_hooks swallows it) — this is a notification, not a
+    # gate. Use `post_authenticate` to decide, this to act on a decision that
+    # stands (e.g. keep a token the provider issued during the login).
+    "post_login_granted",
     # Intent classification fallback — fired by the LLM intent dispatcher
     # when JSON parsing fails and a domain-specific consumer (e.g. HA via
     # ha_glue) might still recognize the user's intent from raw keywords.

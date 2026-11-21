@@ -32,6 +32,8 @@ vi.mock('react-router', async () => {
 const defaultMock: AuthContextValue = {
   ...unauthenticatedAuthMock,
   allowRegistration: true,
+  ssoProviders: [],
+  passwordForm: 'visible',
 };
 
 const sampleUser: User = {
@@ -290,6 +292,8 @@ describe('RegisterPage', () => {
       vi.mocked(useAuth).mockReturnValue({
         ...defaultMock,
         allowRegistration: false,
+        ssoProviders: [],
+        passwordForm: 'visible',
       });
 
       renderWithProviders(<RegisterPage />);

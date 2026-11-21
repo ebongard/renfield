@@ -6,6 +6,7 @@ import { Loader, XCircle } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '../utils/authTokens';
 import { readPkce, clearPkce } from '../utils/pkce';
+import { clearPendingLoginProvider, promotePendingLoginProvider } from '../utils/ssoLogin';
 import { useAuth } from '../context/AuthContext';
 
 /**
@@ -32,6 +33,7 @@ export default function AuthCallback() {
 
     const fail = () => {
       clearPkce();
+      clearPendingLoginProvider();
       setFailed(true);
       navigate('/login?error=sso', { replace: true });
     };
@@ -75,6 +77,7 @@ export default function AuthCallback() {
         localStorage.setItem(ACCESS_TOKEN_KEY, access_token);
         if (refresh_token) localStorage.setItem(REFRESH_TOKEN_KEY, refresh_token);
         clearPkce();
+        promotePendingLoginProvider();
         await fetchUser();
         navigate(from, { replace: true });
       } catch {

@@ -891,7 +891,7 @@ class TestLoginWithholdsTokensForSecondFactor:
     def _stub_ticket(monkeypatch, *, ticket="TICKET"):
         from services import voice_second_factor_store as store
 
-        async def _issue(_uid, _ip):
+        async def _issue(_uid, _ip, _provider_id=None):
             return ticket
 
         monkeypatch.setattr(store, "issue_ticket", _issue)
@@ -972,7 +972,7 @@ class TestLoginWithholdsTokensForSecondFactor:
         user = await self._user(db_session, second_factor=True)
         monkeypatch.setattr(settings, "voice_auth_enabled", True)
 
-        async def _none(_uid, _ip):
+        async def _none(_uid, _ip, _provider_id=None):
             return None
 
         monkeypatch.setattr(store, "issue_ticket", _none)
