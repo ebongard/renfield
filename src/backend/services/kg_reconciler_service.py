@@ -61,6 +61,7 @@ from models.database import (
 from services.kg_name_signals import names_differ_only_in_digit_tokens
 from services.knowledge_graph_service import KnowledgeGraphService
 from utils.config import settings
+from utils.log_safety import logged_content
 
 # Fixed namespace key (classid) for the per-user reconciler advisory lock (#4).
 # pg_advisory_lock keys are int4; the objid is the user_id.
@@ -536,7 +537,7 @@ class KgReconcilerService:
                     n += 1
             except Exception as e:
                 logger.warning(
-                    f"KG reconciler: embed backfill failed for #{ent.id} {ent.name!r}: {e}"
+                    f"KG reconciler: embed backfill failed for #{ent.id} {logged_content(ent.name)!r}: {e}"
                 )
         if n:
             await self.db.commit()

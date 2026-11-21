@@ -104,7 +104,7 @@ async def speech_to_text(
             speaker_confidence = result.get("speaker_confidence", 0.0)
 
             if speaker_name:
-                logger.info(f"🎤 Speaker recognised: {speaker_name} (@{speaker_alias}) - confidence: {speaker_confidence:.2f}")
+                logger.info(f"🎤 Speaker recognised: {logged_content(speaker_name)} (@{speaker_alias}) - confidence: {speaker_confidence:.2f}")
             else:
                 logger.info("🎤 Speaker not recognised (unknown or below threshold)")
         else:
@@ -305,7 +305,7 @@ async def voice_chat(
             speaker_confidence = result.get("speaker_confidence", 0.0)
 
             if speaker_name:
-                logger.info(f"🎤 Voice chat from: {speaker_name} (@{speaker_alias})")
+                logger.info(f"🎤 Voice chat from: {logged_content(speaker_name)} (@{speaker_alias})")
         else:
             user_text = await whisper_service.transcribe_bytes(
                 audio_bytes,
@@ -398,7 +398,7 @@ async def _voice_chat_via_voice_server(
             logger.warning(f"⚠️ wire-embedding speaker resolve failed: {error_text_without_content(e)}")
 
     if speaker_info.get("speaker_name"):
-        logger.info(f"🎤 Voice-Chat (orchestrated): {speaker_info['speaker_name']}")
+        logger.info(f"🎤 Voice-Chat (orchestrated): {logged_content(speaker_info['speaker_name'])}")
 
     from main import app
     from services.ollama_service import OllamaService

@@ -331,7 +331,7 @@ class MediaFollowService:
             if not result.get("success"):
                 logger.warning(
                     f"🎵 Stop playback failed in {session.room_name}: "
-                    f"{result.get('message')}"
+                    f"{logged_content(result.get('message'))}"
                 )
         except Exception as e:
             logger.error(f"🎵 Error stopping playback in {session.room_name}: {error_text_without_content(e)}")
@@ -405,7 +405,7 @@ class MediaFollowService:
             else:
                 logger.warning(
                     f"🎵 Resume failed for user {session.user_id} in {new_room_name}: "
-                    f"{result.get('message', 'unknown error')}"
+                    f"{logged_content(result.get('message', 'unknown error'))}"
                 )
                 # The old-room session was already stopped before this resume
                 # attempt, so reflect the now-stopped state on the kiosk too.

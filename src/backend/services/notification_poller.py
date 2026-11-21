@@ -21,7 +21,7 @@ import json
 import logging
 
 from utils.config import settings
-from utils.log_safety import error_text_without_content, frames_without_content
+from utils.log_safety import error_text_without_content, frames_without_content, logged_content
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class NotificationPollerService:
             logger.warning(
                 "Poll tool call failed for '%s': %s",
                 server_name,
-                result.get("message", "unknown error"),
+                logged_content(result.get("message", "unknown error")),
             )
             return
 
@@ -197,7 +197,7 @@ class NotificationPollerService:
                 logger.info(
                     "Notification delivered from '%s': %s",
                     server_name,
-                    notification.get("title", "?"),
+                    logged_content(notification.get("title", "?")),
                 )
         except ValueError as e:
             # Dedup/suppression — expected, not an error

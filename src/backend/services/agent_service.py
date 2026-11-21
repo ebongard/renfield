@@ -3268,7 +3268,7 @@ def _recover_send_email(response_text: str, context: AgentContext) -> dict | Non
             "parameters": parameters,
             "reason": reason_match.group(1) if reason_match else "Recovered from truncated output",
         }
-        logger.info(f"🔧 Recovered truncated send_email call: to={parameters['to']}, subject={parameters['subject']}")
+        logger.info(f"🔧 Recovered truncated send_email call: to={logged_content(parameters['to'])}, subject={logged_content(parameters['subject'])}")
         return recovered
 
     except Exception as e:

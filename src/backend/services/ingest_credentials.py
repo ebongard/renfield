@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import TIER_PUBLIC, TIER_SELF, IngestCredential
 from utils.config import settings
+from utils.log_safety import logged_content
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -298,5 +299,5 @@ async def set_client_sphere(
     row.tier = _clamp_tier(tier) if tier is not None else None
     row.kb_name = kb_name or None
     await db.commit()
-    logger.info(f"ingest credential {cid} sphere set: owner={row.owner} tier={row.tier} kb={row.kb_name}")
+    logger.info(f"ingest credential {cid} sphere set: owner={row.owner} tier={row.tier} kb={logged_content(row.kb_name)}")
     return True

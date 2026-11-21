@@ -12,6 +12,7 @@ import numpy as np
 from loguru import logger
 
 from utils.config import settings
+from utils.log_safety import logged_content
 
 # Lazy imports for optional dependencies
 SPEECHBRAIN_AVAILABLE = False
@@ -265,7 +266,7 @@ class SpeakerService:
                 best_match_id = speaker_id
                 best_match_name = speaker_name
 
-        logger.debug(f"Best match: {best_match_name} with score {best_score:.3f}")
+        logger.debug(f"Best match: {logged_content(best_match_name)} with score {best_score:.3f}")
 
         if best_score >= self.similarity_threshold:
             return (best_match_id, best_match_name, best_score)

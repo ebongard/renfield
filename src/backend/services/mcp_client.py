@@ -54,7 +54,7 @@ except ImportError:
 # logs each line as ERROR with full traceback. Downgrade to DEBUG.
 import logging as _logging
 
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 
 class _MCPStdioNoiseFilter(_logging.Filter):
@@ -525,9 +525,9 @@ async def _geocode_location_arguments(arguments: dict, input_schema: dict) -> di
                         coerced["forecast_days"] = 3
 
                     logger.info(
-                        f"🌍 Geocoded '{location_value}' → "
+                        f"🌍 Geocoded {logged_content(location_value)} → "
                         f"lat={geo['latitude']}, lon={geo['longitude']} "
-                        f"({geo.get('name', '')}, {geo.get('country', '')})"
+                        f"({logged_content(geo.get('name', ''))}, {geo.get('country', '')})"
                     )
                     return coerced
                 else:
@@ -2934,7 +2934,7 @@ class MCPManager:
         if not await acquire_asker_token(peer.remote_pubkey):
             logger.warning(
                 f"Federation asker rate limit hit for peer "
-                f"{peer.remote_display_name} ({peer.remote_pubkey[:12]}…)"
+                f"{logged_content(peer.remote_display_name)} ({peer.remote_pubkey[:12]}…)"
             )
             yield {
                 "success": False,

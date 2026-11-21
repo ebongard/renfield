@@ -31,7 +31,7 @@ from models.database import (
     KGEntity,
 )
 from services.knowledge_graph_service import KnowledgeGraphService
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 logger = logging.getLogger("memory_bridge_backfill")
 
@@ -127,9 +127,9 @@ async def run_backfill(db: AsyncSession, user_id: int | None = None, limit: int 
             if ent.id > pre_max:
                 rep.created += 1
                 logger.info("created entity #%d %r (tier=%d) for memory #%d",
-                            ent.id, m.subject_name, m.circle_tier, m.id)
+                            ent.id, logged_content(m.subject_name), m.circle_tier, m.id)
         except Exception as e:
             await db.rollback()
             rep.failed += 1
-            logger.warning("skip memory #%d subject=%r: %s", m.id, m.subject_name, error_text_without_content(e))
+            logger.warning("skip memory #%d subject=%r: %s", m.id, logged_content(m.subject_name), error_text_without_content(e))
     return rep

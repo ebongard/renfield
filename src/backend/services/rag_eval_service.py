@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.rag_service import RAGService
 from utils.config import settings
 from utils.llm_client import get_default_client
+from utils.log_safety import logged_content
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class RAGEvalService:
         """
         results = []
         for i, tc in enumerate(test_cases):
-            logger.info(f"RAG Eval: case {i + 1}/{len(test_cases)}: {tc['query'][:50]}")
+            logger.info(f"RAG Eval: case {i + 1}/{len(test_cases)}: {logged_content(tc['query'])}")
             case_result = await self._evaluate_single(tc)
             results.append(case_result)
 

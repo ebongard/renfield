@@ -47,6 +47,7 @@ from services import ops_alert
 from services.folder_ingest_paperless import _parse_paperless_result
 from services.redis_client import get_redis
 from utils.config import settings
+from utils.log_safety import logged_content
 
 TOOL = "mcp.paperless.search_index_health"
 CURSOR_KEY = "paperless:index_health:page"
@@ -280,7 +281,7 @@ async def run_index_health_check(mcp_manager: Any) -> str:
         logger.warning(f"paperless-index-health: degraded page handled — {detail}")
 
     if verdict == "inconclusive":
-        logger.warning(f"paperless-index-health: inconclusive — {detail}: {res.get('message')}")
+        logger.warning(f"paperless-index-health: inconclusive — {detail}: {logged_content(res.get('message'))}")
 
     await _save_cursor(int(next_page) if next_page else 1)
     return detail

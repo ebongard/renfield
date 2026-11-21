@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import Speaker, SpeakerCandidate, SpeakerEmbedding, User
 from services.speaker_service import get_speaker_service
 from utils.config import settings
+from utils.log_safety import logged_content
 
 # Defense in depth behind the route gate: with speaker recognition off no
 # voiceprint (SpeakerEmbedding) is ever written, whoever calls these functions.
@@ -217,7 +218,7 @@ async def enroll_speaker_controlled(
 
     await db.commit()
     logger.info(
-        f"🎙️ Enrolled speaker '{name}' (id={speaker.id}, {accepted} samples, "
+        f"🎙️ Enrolled speaker '{logged_content(name)}' (id={speaker.id}, {accepted} samples, "
         f"cohesion {cohesion:.2f}, user_id={user_id})"
     )
     result = {
@@ -310,7 +311,7 @@ async def promote_candidates(
     )
     await db.commit()
     logger.info(
-        f"🎙️ Promoted {len(embeddings)} candidate(s) → enrolled speaker '{name}' "
+        f"🎙️ Promoted {len(embeddings)} candidate(s) → enrolled speaker '{logged_content(name)}' "
         f"(id={speaker.id}, cohesion {cohesion:.2f}, user_id={user_id})"
     )
     return {

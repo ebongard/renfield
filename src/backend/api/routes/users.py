@@ -41,6 +41,7 @@ from services.login_lockout import LockoutStoreUnavailable, login_lockout
 from services.voice_factor_preconditions import voice_factor_lock_id
 from utils.config import settings
 from utils.hooks import run_hooks
+from utils.log_safety import logged_content
 
 router = APIRouter()
 
@@ -817,7 +818,7 @@ async def link_speaker(
     await db.commit()
     await db.refresh(user, ["speaker"])
 
-    logger.info(f"Linked speaker '{speaker.name}' to user '{user.username}' by {current_user.username if current_user else 'system'}")
+    logger.info(f"Linked speaker '{logged_content(speaker.name)}' to user '{user.username}' by {current_user.username if current_user else 'system'}")
 
     return UserResponse(
         id=user.id,

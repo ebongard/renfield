@@ -73,7 +73,7 @@ from services.document_processing_history import (
 from services.document_processor import DocumentProcessor
 from utils.config import settings
 from utils.llm_client import get_embed_client
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 if TYPE_CHECKING:  # pragma: no cover - imports only needed for type hints
     from services.progress import DocumentProgress
@@ -788,7 +788,7 @@ class RAGService(AtomOwnerResolverMixin):
                     logger.warning(
                         f"🗑️ OCR-quality drop at ingest (parent-child): "
                         f"doc={doc_id} chunk_idx={c.get('chunk_index')} "
-                        f"preview={c['text'].strip().replace(chr(10), ' ')[:80]!r}"
+                        f"preview={logged_content(c['text'])}"
                     )
                 else:
                     group.append(c)
@@ -1126,7 +1126,7 @@ class RAGService(AtomOwnerResolverMixin):
         self.db.add(kb)
         await self.db.commit()
         await self.db.refresh(kb)
-        logger.info(f"Knowledge base created: ID={kb.id}, name={name}")
+        logger.info(f"Knowledge base created: ID={kb.id}, name={logged_content(name)}")
         return kb
 
     @staticmethod
@@ -1311,7 +1311,7 @@ class RAGService(AtomOwnerResolverMixin):
                 for atom_id in {*moved_atom_ids, *stale_atom_ids}:
                     CircleResolver.invalidate_for_atom(atom_id)
             logger.info(
-                f"📦 {moved} document(s) moved to KB '{target_kb.name}' (ID={target_kb_id})"
+                f"📦 {moved} document(s) moved to KB '{logged_content(target_kb.name)}' (ID={target_kb_id})"
             )
 
         return moved

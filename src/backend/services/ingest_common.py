@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KnowledgeBase, SystemSetting, User
+from utils.log_safety import logged_content
 
 # The unique index (name, owner_id) NULLS NOT DISTINCT that makes "one KB of a
 # name per owner" hold under concurrency (migration pc20261031_kb_name_per_owner).
@@ -82,7 +83,7 @@ async def get_or_create_owned_kb(
         if _violated_constraint(err) != KB_NAME_OWNER_INDEX:
             raise
         logger.info(
-            f"KB '{name}' (owner {owner_user_id}) was created concurrently; using that row"
+            f"KB '{logged_content(name)}' (owner {owner_user_id}) was created concurrently; using that row"
         )
         return (await db.execute(lookup)).scalar_one()
     await db.commit()
