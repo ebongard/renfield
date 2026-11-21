@@ -199,7 +199,7 @@ async def _resolve_wire_speaker(
         if speaker_info and speaker_info.get("speaker_id"):
             logger.info(
                 f"🎤 chat-WS speaker resolved: "
-                f"{speaker_info.get('speaker_name')} "
+                f"{logged_content(speaker_info.get('speaker_name'))} "
                 f"(id={speaker_info.get('speaker_id')}, "
                 f"conf={speaker_info.get('speaker_confidence', 0):.2f}, "
                 f"new={speaker_info.get('is_new_speaker')})"
@@ -1645,7 +1645,7 @@ async def websocket_endpoint(
                         user_id = voice_user_id
                         logger.info(
                             f"🎤 voice-driven identity: speaker "
-                            f"{speaker_info.get('speaker_name')} "
+                            f"{logged_content(speaker_info.get('speaker_name'))} "
                             f"(conf={speaker_info.get('speaker_confidence', 0):.2f}) "
                             f"→ user_id={user_id}"
                         )
@@ -1661,7 +1661,7 @@ async def websocket_endpoint(
                 # promotion; falls through to public-tier behavior.
                 logger.info(
                     f"🎤 voice match below identity threshold: "
-                    f"speaker {speaker_info.get('speaker_name')} "
+                    f"speaker {logged_content(speaker_info.get('speaker_name'))} "
                     f"(conf={speaker_info.get('speaker_confidence', 0):.2f} < "
                     f"{settings.voice_auth_min_confidence}) — "
                     f"identity not elevated"

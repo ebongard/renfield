@@ -716,7 +716,7 @@ class DocumentProcessor:
             # trigger context and the reason — filename and counts only, no content.
             if not page_count:
                 logger.info(
-                    f"VLM re-OCR SKIPPED for {name}: no page images rendered "
+                    f"VLM re-OCR SKIPPED for {logged_content(name)}: no page images rendered "
                     f"(page count unknown, {trigger_ctx}) — cannot re-transcribe, "
                     f"keeping OCR text"
                 )
@@ -724,7 +724,7 @@ class DocumentProcessor:
             max_pages = settings.ocr_vlm_fallback_max_pages
             if page_count > max_pages:
                 logger.warning(
-                    f"VLM re-OCR SKIPPED for {name}: {page_count} pages exceed "
+                    f"VLM re-OCR SKIPPED for {logged_content(name)}: {page_count} pages exceed "
                     f"OCR_VLM_FALLBACK_MAX_PAGES={max_pages} ({trigger_ctx}) — "
                     f"keeping the complete OCR text rather than a transcription "
                     f"that would drop pages {max_pages + 1}..{page_count}; raise "
@@ -739,7 +739,7 @@ class DocumentProcessor:
                 img = await loop.run_in_executor(None, self._render_page_b64, file_path, idx)
                 if img is None:
                     logger.info(
-                        f"VLM re-OCR SKIPPED for {name}: no page images rendered "
+                        f"VLM re-OCR SKIPPED for {logged_content(name)}: no page images rendered "
                         f"for page {idx + 1}/{page_count} ({trigger_ctx}) — "
                         f"keeping OCR text"
                     )
@@ -749,7 +749,7 @@ class DocumentProcessor:
                 if t is None:
                     # None = no answer (outage / breaker); "" = a blank page.
                     logger.warning(
-                        f"VLM re-OCR ABORTED for {name}: the vision call failed on "
+                        f"VLM re-OCR ABORTED for {logged_content(name)}: the vision call failed on "
                         f"page {idx + 1}/{page_count} — keeping OCR text rather "
                         f"than a transcription missing that page"
                     )
@@ -761,7 +761,7 @@ class DocumentProcessor:
             elapsed = time.monotonic() - started
             if not vlm_text:
                 logger.info(
-                    f"VLM re-OCR produced EMPTY text for {name} "
+                    f"VLM re-OCR produced EMPTY text for {logged_content(name)} "
                     f"({rendered} page(s) rendered, {trigger_ctx}) — keeping OCR text"
                 )
                 return None
@@ -799,7 +799,7 @@ class DocumentProcessor:
             if accept:
                 logger.info(
                     f"VLM re-OCR: using vision transcription for "
-                    f"{name} ({page_count} page(s), {len(pages)} with text, "
+                    f"{logged_content(name)} ({page_count} page(s), {len(pages)} with text, "
                     f"{elapsed:.1f}s, score {old_score}→{new_score}"
                     + (f", coverage-recovered {len(ocr_text or '')}→{len(vlm_text)} chars"
                        if coverage_accept else "")
@@ -807,7 +807,7 @@ class DocumentProcessor:
                 )
                 return transcription
             logger.info(
-                f"VLM re-OCR for {name} not better ({page_count} page(s), "
+                f"VLM re-OCR for {logged_content(name)} not better ({page_count} page(s), "
                 f"{elapsed:.1f}s) — keeping OCR text"
             )
             return None

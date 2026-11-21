@@ -41,7 +41,7 @@ from services.pairing_service import (
     PairingService,
 )
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 router = APIRouter()
 
@@ -703,7 +703,7 @@ async def revoke_peer(
     if discarded:
         logger.info(
             f"🔗 Purged {discarded} in-flight query_brain request(s) "
-            f"for revoked peer {peer.remote_display_name}"
+            f"for revoked peer {logged_content(peer.remote_display_name)}"
         )
 
     # Same helper as the two pairing routes — `mcp.peer_<id>.query_brain`
@@ -711,7 +711,7 @@ async def revoke_peer(
     await _resync_peer_registry(request, db, "revoke")
 
     logger.info(
-        f"🔗 Peer {peer.remote_display_name} (id={peer.id}) revoked by "
+        f"🔗 Peer {logged_content(peer.remote_display_name)} (id={peer.id}) revoked by "
         f"user {current_user.id}"
     )
     if peer.circle_owner_id != current_user.id:

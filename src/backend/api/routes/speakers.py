@@ -422,7 +422,7 @@ async def delete_speaker(
     )
     await db.commit()
 
-    logger.info(f"🗑️ Deleted speaker: {speaker_name}")
+    logger.info(f"🗑️ Deleted speaker: {logged_content(speaker_name)}")
 
     return {"message": f"Speaker '{speaker_name}' deleted"}
 
@@ -516,7 +516,7 @@ async def merge_speakers(
     source_user_unlinked = source_has_user and target_has_user
 
     logger.info(
-        f"🔗 Merged speaker '{source_name}' into '{target_name}': "
+        f"🔗 Merged speaker '{logged_content(source_name)}' into '{logged_content(target_name)}': "
         f"{source_embedding_count} embeddings moved, "
         f"{total_embedding_count} total embeddings"
         + (" (source user unlinked — was linked to a different account)"
@@ -752,7 +752,7 @@ async def identify_speaker(
         )
         speaker = speaker_result.scalar_one_or_none()
 
-        logger.info(f"✅ Identified: {speaker_name} (confidence: {confidence:.2f})")
+        logger.info(f"✅ Identified: {logged_content(speaker_name)} (confidence: {confidence:.2f})")
 
         return IdentifyResponse(
             speaker_id=speaker_id,

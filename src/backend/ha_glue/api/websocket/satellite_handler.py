@@ -1325,7 +1325,7 @@ async def satellite_websocket(
                             speaker_confidence = result.get("speaker_confidence", 0.0)
 
                             if speaker_name:
-                                logger.info(f"🎤 Satellite speaker recognised: {speaker_name} (@{speaker_alias}) - confidence: {speaker_confidence:.2f}")
+                                logger.info(f"🎤 Satellite speaker recognised: {logged_content(speaker_name)} (@{speaker_alias}) - confidence: {speaker_confidence:.2f}")
                             else:
                                 logger.info("🎤 Satellite speaker not recognised")
                     else:
@@ -1403,7 +1403,7 @@ async def satellite_websocket(
                                     spk.id, satellite_db_session_id, handoff_db
                                 )
                                 if handed_off:
-                                    logger.info(f"🔄 Conversation handoff for speaker {speaker_name} to {satellite_db_session_id}")
+                                    logger.info(f"🔄 Conversation handoff for speaker {logged_content(speaker_name)} to {satellite_db_session_id}")
                                     # Surface the "continued in {room}" chip in this room
                                     # (the speak-path usually wins the debounce on move-and-talk).
                                     _sat = satellite_manager.get_satellite(satellite_id)

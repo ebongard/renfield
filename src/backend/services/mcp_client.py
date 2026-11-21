@@ -2934,7 +2934,7 @@ class MCPManager:
         if not await acquire_asker_token(peer.remote_pubkey):
             logger.warning(
                 f"Federation asker rate limit hit for peer "
-                f"{peer.remote_display_name} ({peer.remote_pubkey[:12]}…)"
+                f"{logged_content(peer.remote_display_name)} ({peer.remote_pubkey[:12]}…)"
             )
             yield {
                 "success": False,

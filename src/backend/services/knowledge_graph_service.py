@@ -577,7 +577,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         try:
             embedding = await self._get_embedding(self._embed_input(name, description))
         except Exception as e:
-            logger.warning(f"KG: Could not generate embedding for entity '{name}': {e}")
+            logger.warning(f"KG: Could not generate embedding for entity '{logged_content(name)}': {e}")
 
         # use_embedding=False (the memory→KG bridge): SKIP the embedding-similarity
         # match. A bare given name ("Jutta") embeds close to other same-tier person
@@ -690,7 +690,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             )
             self.db.add(entity)
             await self.db.flush()
-        logger.debug(f"KG: New entity '{name}' ({entity_type}) id={entity.id} atom_id={atom_id}")
+        logger.debug(f"KG: New entity '{logged_content(name)}' ({entity_type}) id={entity.id} atom_id={atom_id}")
         return entity
 
     async def _find_similar_entity(
@@ -1131,7 +1131,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
                 continue
 
             if not self._is_valid_entity(name, etype):
-                logger.debug(f"KG: Rejected invalid entity: '{name}' ({etype})")
+                logger.debug(f"KG: Rejected invalid entity: '{logged_content(name)}' ({etype})")
                 rejected_count += 1
                 continue
 
@@ -1316,7 +1316,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
                 continue
 
             if not self._is_valid_entity(name, etype):
-                logger.debug(f"KG: Rejected invalid entity: '{name}' ({etype})")
+                logger.debug(f"KG: Rejected invalid entity: '{logged_content(name)}' ({etype})")
                 rejected_count += 1
                 continue
 

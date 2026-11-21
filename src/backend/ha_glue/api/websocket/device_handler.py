@@ -183,7 +183,7 @@ async def _process_device_session(
                 speaker_confidence = result.get("speaker_confidence", 0.0)
 
                 if speaker_name:
-                    logger.info(f"🎤 Speaker identified: {speaker_name} (@{speaker_alias}) - {speaker_confidence:.2f}")
+                    logger.info(f"🎤 Speaker identified: {logged_content(speaker_name)} (@{speaker_alias}) - {speaker_confidence:.2f}")
         else:
             async with AsyncSessionLocal() as db_session:
                 initial_prompt = await prompt_builder.build(

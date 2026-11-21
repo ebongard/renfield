@@ -788,7 +788,7 @@ class RAGService(AtomOwnerResolverMixin):
                     logger.warning(
                         f"🗑️ OCR-quality drop at ingest (parent-child): "
                         f"doc={doc_id} chunk_idx={c.get('chunk_index')} "
-                        f"preview={c['text'].strip().replace(chr(10), ' ')[:80]!r}"
+                        f"preview={logged_content(c['text'])}"
                     )
                 else:
                     group.append(c)
@@ -1126,7 +1126,7 @@ class RAGService(AtomOwnerResolverMixin):
         self.db.add(kb)
         await self.db.commit()
         await self.db.refresh(kb)
-        logger.info(f"Knowledge base created: ID={kb.id}, name={name}")
+        logger.info(f"Knowledge base created: ID={kb.id}, name={logged_content(name)}")
         return kb
 
     @staticmethod

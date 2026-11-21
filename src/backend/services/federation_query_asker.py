@@ -228,7 +228,7 @@ class FederationQueryAsker:
             if not matched:
                 logger.warning(
                     f"Federation cert-pin MISMATCH for peer "
-                    f"{peer.remote_display_name} ({endpoint}): "
+                    f"{logged_content(peer.remote_display_name)} ({endpoint}): "
                     f"expected={pinned[:16]}… actual={actual[:16] if actual else 'unreachable'}…"
                 )
                 yield _final_error(
@@ -245,7 +245,7 @@ class FederationQueryAsker:
         request_id = initiate_resp.request_id
         logger.debug(
             f"Federation query_brain: initiated {request_id} → "
-            f"{endpoint} (peer={peer.remote_display_name})"
+            f"{endpoint} (peer={logged_content(peer.remote_display_name)})"
         )
 
         # Poll loop — yield progress until terminal status.

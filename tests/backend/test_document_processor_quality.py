@@ -778,7 +778,7 @@ class TestVlmCoverageTrigger:
         assert mock_logger.info.called
         msg = " ".join(str(c.args[0]) for c in mock_logger.info.call_args_list)
         assert "no page images rendered" in msg
-        assert "garbled.pdf" in msg
+        assert "garbled.pdf" not in msg  # the file name is content (#1565): its length only
         assert "coverage_bad=True" in msg
 
     async def test_empty_vlm_text_logs_reason(self, processor, monkeypatch):
@@ -796,7 +796,7 @@ class TestVlmCoverageTrigger:
         assert mock_logger.info.called
         msg = " ".join(str(c.args[0]) for c in mock_logger.info.call_args_list)
         assert "EMPTY text" in msg
-        assert "garbled.pdf" in msg
+        assert "garbled.pdf" not in msg  # the file name is content (#1565): its length only
         assert "2 page(s)" in msg
 
 
@@ -934,7 +934,7 @@ class TestVlmFallbackPages:
         assert rendered == []
         assert processor._ollama_service.extract_calls == 0
         msg = " ".join(str(c.args[0]) for c in mock_logger.warning.call_args_list)
-        assert "long.pdf" in msg
+        assert "long.pdf" not in msg  # the file name is content (#1565): its length only
         assert "4 pages exceed OCR_VLM_FALLBACK_MAX_PAGES=3" in msg
 
     async def test_document_at_the_cap_is_read_completely(self, processor, monkeypatch):
