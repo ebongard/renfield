@@ -78,6 +78,7 @@ from utils.llm_client import (
     get_classification_chat_kwargs,
     get_default_client,
 )
+from utils.log_safety import error_text_without_content, logged_content
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1181,7 +1182,7 @@ def _parse_llm_json(raw: str) -> dict | None:
     try:
         parsed = json.loads(json_fragment)
     except json.JSONDecodeError as exc:
-        logger.debug("Could not parse LLM JSON: {} | raw={!r}", exc, raw[:200])
+        logger.debug("Could not parse LLM JSON: {} | raw={}", error_text_without_content(exc), logged_content(raw))
         return None
 
     if not isinstance(parsed, dict):

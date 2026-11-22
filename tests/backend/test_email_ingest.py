@@ -87,6 +87,23 @@ def test_resolve_skips_malformed_entry_before_valid(monkeypatch):
     assert resolve_mailbox_target("bad") is None  # the malformed one is skipped
 
 
+def test_a_skipped_entry_is_logged_without_its_contents(monkeypatch):
+    """The skip line names neither the owner nor the knowledge base (#1565): it
+    printed the whole entry with `!r`."""
+    from loguru import logger
+
+    _patch_mailboxes(monkeypatch, [{"id": "bad", "owner": "muster-owner", "tier": "abc", "kb": "Muster-KB"}])
+    lines: list[str] = []
+    sink = logger.add(lambda m: lines.append(str(m)), level="WARNING")
+    try:
+        assert resolve_mailbox_target("bad") is None
+    finally:
+        logger.remove(sink)
+    skipped = [x for x in lines if "malformed mailbox entry" in x]
+    assert len(skipped) == 1
+    assert "muster-owner" not in skipped[0] and "Muster-KB" not in skipped[0]
+
+
 def test_config_property_graceful_on_bad_json(monkeypatch):
     # A malformed EMAIL_INGEST_MAILBOXES_JSON must fall back to [] (never crash).
     monkeypatch.setattr(svc.settings, "email_ingest_mailboxes_json", "not json{")

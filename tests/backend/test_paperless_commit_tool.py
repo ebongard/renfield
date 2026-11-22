@@ -307,11 +307,15 @@ class TestApprovePath:
         mcp = MagicMock()
         mcp.execute_tool = AsyncMock(side_effect=responses)
 
-        with patch(
-            "services.database.AsyncSessionLocal",
-            _make_session_factory(pending=pending, upload=upload),
-        ):
+        from loguru import logger
+
+        lines: list[str] = []
+        sink = logger.add(lambda m: lines.append(str(m)), level="DEBUG")
+        try:
             with patch(
+                "services.database.AsyncSessionLocal",
+                _make_session_factory(pending=pending, upload=upload),
+            ), patch(
                 "services.paperless_metadata_extractor._invalidate_taxonomy_cache",
                 MagicMock(),
             ):
@@ -320,10 +324,15 @@ class TestApprovePath:
                      "user_response_text": "1: neu"},
                     mcp_manager=mcp, session_id="s", user_id=1,
                 )
+        finally:
+            logger.remove(sink)
 
         # Upload still happened; already_exists didn't abort the flow.
         assert result["success"] is True
         assert mcp.execute_tool.await_count == 2
+        # The reuse is logged -- without the correspondent's name (#1565).
+        reused = [x for x in lines if "already exists, reusing" in x]
+        assert len(reused) == 1 and "Stadtwerke" not in reused[0]
 
     @pytest.mark.asyncio
     @pytest.mark.unit

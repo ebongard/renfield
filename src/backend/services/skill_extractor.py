@@ -265,7 +265,7 @@ class SkillExtractor:
         tools = obj.get("tool_sequence") or []
 
         if not (title and body_md and isinstance(triggers, list) and isinstance(tools, list)):
-            logger.debug(f"🧠 Skill extractor: incomplete draft, skipping: {obj}")
+            logger.debug(f"🧠 Skill extractor: incomplete draft, skipping: {logged_content(obj)}")
             return None
 
         # Coerce strings; cap counts AND individual string lengths so a

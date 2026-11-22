@@ -14,7 +14,7 @@ shapes, with a negative control that it still fires.
 `.name` is too common to list as a field, and an entity's or a speaker's
 name is content (`subject.name`, `speaker.name`) while a room's or an MCP
 server's is not. So a `.name` in a log call counts as content unless its
-receiver is classified in `_NAME_IS_NOT_CONTENT`, per file -- the same
+receiver is classified in `_NOT_CONTENT_HERE`, per file -- the same
 receiver (`path`) is a repo file in one module and a user's document in
 another. An unclassified receiver fails, so a new one forces the decision
 instead of slipping through. The same holds for a bare `name` or `*_name`
@@ -22,6 +22,12 @@ local (`speaker_name`, a KG `name`), classified by the identifier per file,
 or everywhere for the configuration names in `_NAME_LIKE_NOT_CONTENT`
 (2026-11-21, after the review of #1606 found speaker and entity names
 logged under those).
+
+A WHOLE payload is content too: an identifier like `result`, `data`, `entry`
+or `value` formatted as a value prints all of it -- an MCP envelope with file
+name and target, a mailbox routing entry with its owner, a correspondent's name
+(2026-11-22, `_WHOLE_VALUE_NAMES`). A key or attribute read of it stays a
+route, a test of it (`if res`, `res is None`) prints a boolean.
 
 2026-11-20 (smoke test after the rollout): the first list knew `text` but not
 `message` or `response_text`, so ~35 lines kept logging chat messages, router
@@ -54,9 +60,15 @@ _LEVELS = frozenset({"trace", "debug", "info", "success", "warning", "error", "e
 _LOGGERS = frozenset({"logger", "log", "_log", "_logger"})
 #: Wrappers under which a content field is fine: its length, or the gate.
 _SAFE_WRAPPERS = frozenset({
-    "len", "logged_content", "bool", "type",
+    "len", "logged_content", "bool", "type", "isinstance",
     # agent_service: structure and a hash of a model response, never its text (#1381).
     "_response_fingerprint", "_response_keys", "_describe_unparsable",
+    # utils/log_safety: an exception's primary message / its stack, no content.
+    "error_text_without_content", "frames_without_content",
+    # scanner_jobs: a validated error code, never the event's free text.
+    "describe_failure_for_log",
+    # simba_ingest_review: an upload envelope's counts and HTTP statuses (#1609).
+    "_envelope_shape",
 })
 #: (file, source line) where a content-named field holds no user content.
 #: Keyed by the line's text, so an edit of the line re-opens the question.
@@ -66,8 +78,26 @@ _NOT_CONTENT = {
         "the OTA progress text the satellite's updater reports",
     ("services/mcp_client.py", 'logger.warning(f"Invalid MCP tool schema: {e.message}")'):
         "a jsonschema SchemaError describes the tool's schema, not the call's arguments",
+    # mcp_client parses its OWN settings here; the same `value` elsewhere in the
+    # file is a tool-call argument, so these are exempted by line, not by file.
+    ("services/mcp_client.py", 'logger.warning(f"{label}: ignoring boolean-like value {raw!r}")'):
+        "an MCP server's configured setting",
+    ("services/mcp_client.py", 'logger.warning(f"{label}: ignoring unparseable value {value!r}")'):
+        "an MCP server's configured setting",
+    ("services/mcp_client.py", 'f"health_probe: ignoring unparseable value {value!r}, using {default}"'):
+        "an MCP server's configured health probe",
 }
 _CONFIG = "configuration the admin or the repo defines, no household content"
+#: Identifiers that hold a WHOLE payload -- an MCP envelope, a parsed answer, a
+#: config entry, a field value -- formatted as a value, they print all of it
+#: (2026-11-22: an upload envelope with file name and target, a mailbox routing
+#: entry with its owner, a correspondent's name). Content unless classified per
+#: file in `_NOT_CONTENT_HERE`; reading a key or an attribute is still a route.
+_WHOLE_VALUE_NAMES = frozenset({
+    "result", "res", "raw", "mcp_result", "tool_result", "data", "inner",
+    "payload", "entry", "value", "resp", "response_data", "envelope", "parsed",
+    "record", "row", "item", "upd", "params", "args", "kwargs", "obj",
+})
 #: `*_name` identifiers that name configuration wherever they appear.
 _NAME_LIKE_NOT_CONTENT = frozenset({
     "tool_name", "intent_name", "role_name", "server_name", "action_name",
@@ -77,7 +107,7 @@ _NAME_LIKE_NOT_CONTENT = frozenset({
 })
 #: (file, receiver) whose `.name` in a log line holds no user content.
 #: Any other `X.name` is content (an entity, a speaker, a document's file).
-_NAME_IS_NOT_CONTENT = {
+_NOT_CONTENT_HERE = {
     ("services/mcp_client.py", "state.config"): "an MCP server's configured name",
     ("services/mcp_client.py", "config"): "an MCP server's configured name",
     ("services/mcp_client.py", "file"): "an MCP overlay config file of the deployment",
@@ -122,6 +152,13 @@ _NAME_IS_NOT_CONTENT = {
     ("services/task_queue.py", "group_name"): "a Redis consumer group, set in code",
     ("services/watchdog.py", "name"): "a watchdog target from its config",
     ("utils/config.py", "name"): "a setting's name",
+    # A whole-value identifier (`_WHOLE_VALUE_NAMES`), classified per file.
+    ("api/routes/scheduled_tasks.py", "data"): "the update's field names (`sorted(data)` of a dict)",
+    ("ha_glue/integrations/homeassistant.py", "data"): "a Home Assistant handshake or command-result frame",
+    ("services/daypart_service.py", "value"): "a configured daypart time",
+    ("services/prompt_manager.py", "data"): "the keys of a prompt file shipped in the image",
+    ("services/task_queue.py", "params"): "document id, flags and trigger; the worker reads the document by id",
+    ("services/watchdog.py", "entry"): "a watchdog target from its config",
 }
 
 #: Directories that are not this backend's code.
@@ -151,11 +188,13 @@ def _field_of(node: ast.AST, rel: str | None) -> str | None:
         receiver, key = ast.unparse(node.value), node.attr
     elif isinstance(node, ast.Name):
         receiver, key = "", node.id
+        if key in _WHOLE_VALUE_NAMES:
+            return None if (rel, key) in _NOT_CONTENT_HERE else key
     if key is None or not _is_name_like(key) or key in _NAME_LIKE_NOT_CONTENT:
         return None
     # `x.name` is classified by its receiver, a bare `name`/`*_name` by itself.
     classified = (rel, receiver) if key == "name" and receiver else (rel, key)
-    if classified in _NAME_IS_NOT_CONTENT:
+    if classified in _NOT_CONTENT_HERE:
         return None
     return f"{receiver}.{key}" if receiver else key
 
@@ -209,6 +248,12 @@ def offenders_in(source: str, rel: str | None = None) -> list[tuple[int, str]]:
             # a slice (`text[:100]`) is not.
             if (isinstance(parent, ast.Subscript) and parent.value is node
                     and isinstance(parent.slice, ast.Constant) and isinstance(parent.slice.value, str)):
+                continue
+            # A test, not a value: `x if res else y`, `res is None`, `k in parsed`,
+            # `not res` print a boolean, never the payload.
+            if (isinstance(parent, ast.Compare)
+                    or (isinstance(parent, ast.IfExp) and parent.test is node)
+                    or (isinstance(parent, ast.UnaryOp) and isinstance(parent.op, ast.Not))):
                 continue
             # `len(text)` / `logged_content(text)`, at any depth.
             safe, up = False, parent
@@ -314,17 +359,41 @@ def test_a_content_field_read_by_key_fires(line):
     assert offenders_in(line)
 
 
+@pytest.mark.parametrize("line", [
+    # Each of these was in the backend on 2026-11-22.
+    'logger.error(f"Email forward MCP result: {mcp_result}")',
+    'logger.warning(f"email-ingest: skipping malformed mailbox entry {entry!r}: {exc}")',
+    'logger.info("{} {!r} already exists, reusing", field, value)',
+    'logger.error(f"not landed; raw={result!r}")',
+    'logger.info(f"result: {res or {}}")',
+])
+def test_a_whole_payload_fires(line):
+    assert offenders_in(line, "services/agent_tools.py")
+
+
+@pytest.mark.parametrize("line", [
+    """logger.info(f"ok={result.get('success')}")""",
+    'logger.info(f"uebertragen={result[\'uebertragen\']}")',
+    """logger.info(f"state={'ok' if res else 'empty'}")""",
+    'logger.info(f"missing={res is None} has={k in parsed}")',
+    'logger.error(f"failed: {error_text_without_content(res)}")',
+    'logger.error(f"failed: {logged_content(result)}")',
+])
+def test_what_it_lets_through_of_a_whole_payload(line):
+    assert offenders_in(line, "services/agent_tools.py") == []
+
+
 def test_a_classified_receiver_passes_only_in_its_own_file():
     line = 'logger.info("tool %s", tool.name)'
     assert offenders_in(line, "services/agent_tools.py") == []
     assert offenders_in(line, "services/rag_service.py") == [(1, "tool.name")]
 
 
-@pytest.mark.parametrize("entry", sorted(_NAME_IS_NOT_CONTENT))
+@pytest.mark.parametrize("entry", sorted(_NOT_CONTENT_HERE))
 def test_every_name_classification_still_covers_a_log_line(entry, monkeypatch):
     """A stale entry would silently cover a new line in its file: without
     the entry, the file must report an offender -- the one it lets through."""
-    monkeypatch.delitem(_NAME_IS_NOT_CONTENT, entry)
+    monkeypatch.delitem(_NOT_CONTENT_HERE, entry)
     assert _offenders_in_file(entry[0]), entry
 
 

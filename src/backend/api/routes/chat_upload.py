@@ -35,7 +35,7 @@ from services.database import AsyncSessionLocal, get_db
 from services.document_processor import DocumentProcessor
 from services.ingest_common import get_or_create_owned_kb
 from utils.config import settings
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 from .chat_upload_schemas import (
     ChatUploadResponse,
@@ -812,7 +812,11 @@ async def forward_via_email(
         raise HTTPException(status_code=502, detail=f"Email forwarding failed: {error_text_without_content(e)}")
 
     if not mcp_result or not mcp_result.get("success"):
-        logger.error(f"Email forward MCP result: {mcp_result}")
+        envelope = mcp_result or {}
+        logger.error(
+            f"Email forward MCP result: success={envelope.get('success')!r} "
+            f"message={logged_content(envelope.get('message'))}"
+        )
         detail = "Email forwarding failed"
         if mcp_result and mcp_result.get("message"):
             detail = f"Email forwarding failed: {mcp_result['message']}"

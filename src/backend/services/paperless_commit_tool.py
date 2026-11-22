@@ -43,7 +43,7 @@ from typing import Any
 
 from loguru import logger
 
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 # Hold references to fire-and-forget background tasks (the async-commit
 # finalizer). asyncio.create_task keeps only a weak ref, so without this the
@@ -457,18 +457,20 @@ async def _commit_approved(
         try:
             result = await mcp_manager.execute_tool(create_tool, create_params)
         except Exception as exc:
-            logger.warning("Failed to create {} {!r}: {}", field, value, exc)
+            logger.warning(
+                "Failed to create {} {}: {}", field, logged_content(value), error_text_without_content(exc),
+            )
             continue
 
         if not result or not result.get("success"):
             inner = (result or {}).get("message") or "no detail"
             if "already_exists" in str(inner):
-                logger.info("{} {!r} already exists, reusing", field, value)
+                logger.info("{} {} already exists, reusing", field, logged_content(value))
                 resolved_fields.setdefault(field, []).append(value)
                 created_entries.setdefault(field, []).append(value)
             else:
                 logger.warning(
-                    "Create {} {!r} failed: {}", field, value, str(inner)[:120],
+                    "Create {} {} failed: {}", field, logged_content(value), logged_content(inner),
                 )
             continue
         resolved_fields.setdefault(field, []).append(value)

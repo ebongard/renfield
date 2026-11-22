@@ -779,7 +779,7 @@ def _resolve_blobs(params: any, blob_store: dict[str, str]) -> any:
     elif isinstance(params, list):
         return [_resolve_blobs(item, blob_store) for item in params]
     elif isinstance(params, str) and params.startswith("$blob:") and params in blob_store:
-        logger.debug(f"🗄️ Resolved blob reference {params}")
+        logger.debug(f"🗄️ Resolved blob reference {logged_content(params)}")
         return blob_store[params]
     return params
 
@@ -2689,7 +2689,7 @@ class AgentService:
                     parallel_confirm_data: dict | None = None
                     for act, res in zip(valid_actions, exec_results, strict=True):
                         if isinstance(res, Exception):
-                            logger.error(f"❌ Parallel tool '{act['action']}' failed: {res}")
+                            logger.error(f"❌ Parallel tool '{act['action']}' failed: {error_text_without_content(res)}")
                             res = {"success": False, "message": str(res), "action_taken": False}
 
                         from services.mcp_compact import compact_mcp_result as _compact
