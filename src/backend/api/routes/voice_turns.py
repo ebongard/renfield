@@ -35,6 +35,7 @@ class VoiceTurnStatsResponse(BaseModel):
     audio_seconds_p50: float | None
     audio_seconds_p90: float | None
     by_room: dict[str, int]
+    resumed_rate_by_source: dict[str, float]
     enabled: bool
     retention_days: int
 
