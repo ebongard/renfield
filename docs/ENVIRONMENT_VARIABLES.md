@@ -2109,6 +2109,27 @@ ROUTING_TRACES_RETENTION_DAYS=14
 
 ---
 
+### Sprachzug-Spuren (#1613)
+
+```bash
+# Je Sprachzug-Ende eine INHALTSFREIE Zeile in voice_turn_traces schreiben:
+# Quelle, Satelliten-ID, Raum, Endgrund (silence/timeout/button/canceled/unknown,
+# sonst "other"), Aufnahmelänge, VAD-Urteil des Geräts, "resumed". Kein Nutzer,
+# kein Text, kein Audio. Lesen: GET /api/admin/voice-turns/stats?days=14 (Admin).
+# Aus = kein Task, keine Zeile; die Route antwortet mit enabled=false.
+VOICE_TURN_TRACES_ENABLED=false
+
+# Aufbewahrung in Tagen (1–365). Der Aufräumlauf („Sprachzug-Spuren aufräumen",
+# täglich) löscht ältere Zeilen auch bei ausgeschaltetem Schalter.
+VOICE_TURN_TRACES_RETENTION_DAYS=30
+```
+
+`resumed` = auf demselben Gerät begann innerhalb von 10 s nach dem ENDE dieses Zuges ein neuer Zug (gemessen vom Ende bis zum Wake-Word des nächsten). Ein bewusst grober Abschneide-Indikator: eine schnelle Rückfrage zählt ebenfalls. Details: `docs/VOICE_PIPELINE_DESIGN.md` → „Turn-end trace".
+
+> **voice-server-seitig** (eigene Config `voice-server/voice_server/config.py`, NICHT diese Backend-`.env`): `MAX_UTTERANCE_SECONDS=600` ist die ferne Obergrenze einer `/ws/voice`-Äußerung (Browser). Bei Erreichen wird das Bisherige finalisiert und der Socket mit Grund `max_utterance_seconds (<N>s)` geschlossen; das Protokoll schreibt eine inhaltsfreie Zeile `reason=max_utterance`. Schutz gegen ein vergessenes offenes Mikrofon, KEINE Diktatgrenze — bis #1613 hart 60 s, was lange Diktate mitten im Satz abschnitt.
+
+---
+
 ### Vermerke gelöschter Konversationen (#1485, #1529)
 
 ```bash

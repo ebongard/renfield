@@ -890,3 +890,42 @@ for the wake word, so a broken VAD would then mute the device.
 such sessions on 2026-09-19 were each followed by the device dropping off the network and
 rebooting (the capture loop must not be starved — an I2S overflow can crash the kernel).
 Track a voice turn from the backend log and the voice-server log instead.
+
+## Turn-end trace (#1613, step 1)
+
+A turn ends on silence alone (satellite: Silero VAD + 1.2 s window, capped by
+`vad.max_recording_seconds`; browser: client RMS + the voice-server backstop). How often
+that cuts a speaker off, and why turns end, was invisible: the `turn_end_reason` in the
+satellite history lives in memory, and the cluster has no Prometheus, so a counter would
+reset on every deploy. Step 1 therefore persists a **content-free row per turn end** in
+`voice_turn_traces`, after the routing-trace pattern (`RoutingTrace`,
+`routing_trace_service`, `routing_trace_cleanup`, `ROUTING_TRACES_*`).
+
+- **Row:** `source` (`satellite`; `browser` reserved for step 1's second PR), `device_key`
+  (satellite id) and `room` (configuration, not a person), `reason` from `audio_end` clamped
+  to `silence | timeout | button | canceled | unknown` (else `other`), `audio_seconds`,
+  `vad_speech_seen`, `resumed`, `turn_score` (reserved for the Smart Turn shadow score).
+  No user id, no text, no audio.
+- **Write site:** `satellite_handler.py` at `audio_end`, right after
+  `set_turn_end_reason`: `schedule_voice_turn(...)` creates a fire-and-forget task (strong
+  reference kept in the service), its own DB session, never raises into the turn. Flag
+  `VOICE_TURN_TRACES_ENABLED` off = no task is created. The service lives in `services/`
+  (not `ha_glue/`) so the browser path can reuse it.
+- **Times:** `created_at` is the turn's END (stamped when `audio_end` is handled); the START
+  is `SatelliteSession.started_at` (wall clock at the wake word).
+- **`resumed`:** when a turn is recorded, the latest earlier trace of the same source and
+  device whose END lies within `RESUME_WINDOW_SECONDS` (10 s) before the new turn's START is
+  marked `resumed=true`. A deliberately noisy cut-off proxy — a quick follow-up question
+  counts too; the point is a baseline to compare against once the end-of-turn logic changes.
+- **Read:** `GET /api/admin/voice-turns/stats?days=14` (admin): total, counts by
+  source × reason, resumed count and rate, `audio_seconds` p50/p90 (`percentile_cont`), counts
+  per room, plus `enabled` and `retention_days`.
+- **Retention:** `VOICE_TURN_TRACES_RETENTION_DAYS` (30, 1–365), purged by the daily
+  built-in `voice_turn_trace_cleanup`, which also runs with the flag off.
+
+**voice-server utterance cap.** `/ws/voice` force-finalized every browser utterance at a
+hardcoded `MAX_UTTERANCE_S = 60`, which cut long dictation. It is now
+`MAX_UTTERANCE_SECONDS` (voice-server config, default 600 s): a far bound against a
+forgotten open microphone, not a dictation limit. At the cap the server still finalizes,
+closes with reason `max_utterance_seconds (<N>s)`, and logs a content-free
+`reason=max_utterance` line.
