@@ -901,8 +901,8 @@ reset on every deploy. Step 1 therefore persists a **content-free row per finish
 `voice_turn_traces`, after the routing-trace pattern (`RoutingTrace`,
 `routing_trace_service`, `routing_trace_cleanup`, `ROUTING_TRACES_*`).
 
-- **Row:** `source` (`satellite`; `browser` reserved for step 1's second PR), `device_key`
-  (satellite id) and `room` (configuration, not a person), `reason`, `audio_seconds`,
+- **Row:** `source` (`satellite` | `browser`, see below), `device_key`
+  (satellite id; browser: a per-page-load random key) and `room` (configuration, not a person), `reason`, `audio_seconds`,
   `vad_speech_seen`, `created_at`, `finished_at`, `resumed`, `turn_score` (reserved for the
   Smart Turn shadow score). No user id, no text, no audio.
 - **Reason:** the device's `audio_end` reason (`silence | timeout | button | canceled |
@@ -936,10 +936,50 @@ reset on every deploy. Step 1 therefore persists a **content-free row per finish
   tracked the answer's length and missed barge-ins). A deliberately noisy proxy: a quick
   follow-up question counts too; the point is a baseline for when the end-of-turn logic changes.
 - **Read:** `GET /api/admin/voice-turns/stats?days=14` (admin): total, counts by
-  source × reason, resumed count and rate, `audio_seconds` p50/p90 (`percentile_cont`), counts
+  source × reason, resumed count and rate (also `resumed_rate_by_source`, so a satellite rate
+  compares with a browser rate), `audio_seconds` p50/p90 (`percentile_cont`), counts
   per room, plus `enabled` and `retention_days`. The window is on `created_at`.
 - **Retention:** `VOICE_TURN_TRACES_RETENTION_DAYS` (30, 1–365), purged by the daily
   built-in `voice_turn_trace_cleanup`, which also runs with the flag off.
+
+**Browser path (step 1b).** The browser's voice turn reaches the backend as a chat-WS
+`text` message, so that message carries a content-free `voice_turn` object
+(`useVoiceStream.ts` → `ChatContext.tsx` → `chat_handler`), and the handler hands it to
+`schedule_browser_voice_turn` (fire and forget; flag off = returns before reading it, no
+task). It is the same `/ws` handler in the household and in xidra, so the trace works on
+both; the REST fallback (`/api/chat/send`) carries no `voice_turn` and records nothing.
+
+- **The object:** `end_reason`, `audio_duration_s`, `gap_since_answer_s`, `turn_key`.
+  - `end_reason`: the voice-server now says why it finalized in `final_transcript`
+    (`server_vad` = its VAD backstop, `max_utterance` = the cap, `client_flush` = the client's
+    `stt_flush`); the client refines `client_flush` by why IT stopped the recorder: `silence`
+    (its RMS VAD) or `button` (manual stop). An older voice-server without the field leaves
+    the client cause, else `unknown`.
+  - `gap_since_answer_s`: from the end of the previous answer's playback (the last played
+    chunk's `onended`) to this recording's mic start; `0` when the recording starts while the
+    answer still plays or is pending (a barge-in, also the promoted barge-in stream); `null`
+    with no previous voice answer in this page session.
+  - `turn_key`: `crypto.randomUUID()` once per mounted voice hook, i.e. per page load; in
+    memory only, never stored in the browser, never derived from the user.
+- **Clamping** (`browser_turn_fields`): the values are client-supplied METRICS, never identity.
+  The reason goes through `REASONS` (now also `server_vad`, `max_utterance`, `client_flush`),
+  else `other`; both numbers must be finite in [0, 3600] (a JSON boolean is not a number),
+  else NULL; the turn key must match `^[A-Za-z0-9-]{8,64}$`, else NULL. Extra fields are
+  ignored, `room` stays NULL, no user id is passed or derived. A `voice_turn` that is not an
+  object records nothing; the Pydantic field is typed `Any` on purpose, so garbage can never
+  fail the chat turn.
+- **Times:** the row is written when the message arrives, i.e. at the end of the recording:
+  `created_at` = `finished_at` = then. The server never learns when a browser answer finished
+  playing, so `finished_at` cannot drive the resume.
+- **`resumed` (the design choice):** the NEW turn carries the client-measured gap; a gap of at
+  most `RESUME_WINDOW_SECONDS` marks the latest earlier `browser` trace with the SAME turn key
+  as `resumed=true`. That is the satellite meaning exactly — the flag sits on the PREVIOUS
+  turn, "the speaker spoke again during its answer or within 10 s after it" — so
+  `resumed_rate_by_source` compares, and no column or migration is needed. The privacy
+  trade-off: the turn key links the turns of ONE page load and nothing else; a reload is a new
+  key, so a resume never crosses page loads and the key never names a person or a device. The
+  rejected alternative, a `resumed_prev` flag on the new row, would need a migration and a
+  second counting rule in `turn_stats`.
 
 **voice-server utterance cap.** `/ws/voice` force-finalized every browser utterance at a
 hardcoded `MAX_UTTERANCE_S = 60`, which cut long dictation. It is now
