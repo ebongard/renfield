@@ -5,6 +5,8 @@ version without a section here. Pushed digests live in `RELEASES.md`.
 
 ## [Unreleased]
 
+## [0.3.10] — 2026-11-22
+
 - **`?code=` is redacted in log lines, as in the backend.** The voice-server's
   copy of the secret query names lacked the OAuth `code` the backend added in
   #1594, and `test_same_secret_names_as_backend` failed.
