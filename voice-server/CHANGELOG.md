@@ -5,6 +5,8 @@ version without a section here. Pushed digests live in `RELEASES.md`.
 
 ## [Unreleased]
 
+## [0.3.11] — 2026-11-22
+
 - **`final_transcript` says why the utterance ended.** New field `end_reason`:
   `server_vad` (the server-VAD backstop), `max_utterance` (the
   `MAX_UTTERANCE_SECONDS` cap) or `client_flush` (the client's `stt_flush`; the
