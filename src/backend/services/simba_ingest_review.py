@@ -16,6 +16,7 @@ the real upload, or rejects it.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
@@ -271,6 +272,11 @@ def _owns(proposal: SimbaIngestProposal, user) -> bool:
     return proposal.user_id is None and _is_admin(user)
 
 
+#: The portal's limits for an upload context (category, type) -- injected, so the
+#: service never reaches for the app's MCP manager itself.
+LimitsLookup = Callable[[str | None, str | None], Awaitable[PortalLimits | None]]
+
+
 def upload_blocked(doc, limits: PortalLimits | None) -> TooLarge | None:
     """Why this document can never land in Simba, or None (#1609). The file on
     disk is measured, not the ``file_size`` column -- the bytes the upload reads.
@@ -285,7 +291,7 @@ def upload_blocked(doc, limits: PortalLimits | None) -> TooLarge | None:
 
 
 async def list_pending(
-    db, user, limits: Callable[[], Awaitable[PortalLimits | None]] | None = None,
+    db, user, limits: LimitsLookup | None = None,
 ) -> list[tuple[SimbaIngestProposal, str, int | None, int | None, TooLarge | None]]:
     """Owner-scoped pending proposals, each paired with a suggested Bezeichnung
     (from the document's title) and a suggested booking period (month, year) from
@@ -293,8 +299,10 @@ async def list_pending(
     defaults to the invoice month rather than the current one (#1167) — and the
     reason it can never land under the portal's limits (#1609), else None.
 
-    ``limits`` is awaited only when there is a proposal to judge: on an instance
-    without Simba the empty queue never asks the MCP."""
+    Each proposal is judged against its SUGGESTED upload context (the one the
+    form prefills); one without a suggestion is not judged -- the confirm is.
+    ``limits`` is asked only for proposals to judge, once per context: on an
+    instance without Simba the empty queue never asks the MCP."""
     q = (
         select(SimbaIngestProposal, Document)
         .join(Document, Document.id == SimbaIngestProposal.document_id, isouter=True)
@@ -302,11 +310,16 @@ async def list_pending(
         .order_by(SimbaIngestProposal.id.desc())
     )
     rows = [(p, doc) for (p, doc) in (await db.execute(q)).all() if _owns(p, user)]
-    portal = await limits() if (rows and limits is not None) else None
+    contexts = sorted({
+        (p.suggested_category, p.suggested_type) for (p, _doc) in rows
+        if p.suggested_category and p.suggested_type
+    }) if limits is not None else []
+    stated = dict(zip(contexts, await asyncio.gather(*(limits(c, t) for c, t in contexts)), strict=True))
     out: list[tuple[SimbaIngestProposal, str, int | None, int | None, TooLarge | None]] = []
     for (p, doc) in rows:
         desc = _upload_description(doc) if doc is not None else ""
         month, year = await _document_period(db, p.document_id, doc) if doc is not None else (None, None)
+        portal = stated.get((p.suggested_category, p.suggested_type))
         out.append((p, desc, month, year, upload_blocked(doc, portal)))
     return out
 
@@ -335,7 +348,7 @@ async def _classify_document(db, document_id: int) -> tuple[str | None, str | No
 
 
 async def create_proposal_for_document(
-    db, document_id: int, user, limits: PortalLimits | None = None,
+    db, document_id: int, user, limits: LimitsLookup | None = None,
 ) -> dict:
     """Create a PENDING Simba review proposal for an EXISTING knowledge-base
     document (the "send to Simba" action — complements the folder-ingest hook,
@@ -347,9 +360,10 @@ async def create_proposal_for_document(
     "suggested_description": str, "upload_blocked": TooLarge|None}. The
     suggested_* fields let the caller (the doc-page "send to Simba" overlay)
     prefill the confirm form without a second fetch. A document over the
-    portal's ``limits`` gets no NEW proposal -- it could never land, so it would
-    only clutter the queue: ``message="too_large"`` with the reason (#1609); an
-    existing pending one is returned with the reason, for the form to show.
+    portal's ``limits`` for its suggested upload context gets no NEW proposal --
+    it could never land there, so it would only clutter the queue:
+    ``message="too_large"`` with ``upload_blocked`` (#1609); an existing pending
+    one is returned with the finding, for the form to show.
     Idempotent on the pending state: a doc that already has a pending
     proposal returns it rather than creating a second (the partial-unique index
     also guards this). Owner/admin-gated.
@@ -389,8 +403,14 @@ async def create_proposal_for_document(
     # Booking period (Zeitraum) from the document's OWN date — so the review form
     # defaults to the invoice month, not the current month (#1167).
     pmonth, pyear = await _document_period(db, document_id, doc)
-    blocked = upload_blocked(doc, limits)
+
+    async def _blocked_for(category, type_) -> TooLarge | None:
+        if limits is None:
+            return None
+        return upload_blocked(doc, await limits(category, type_))
+
     if existing is not None:
+        blocked = await _blocked_for(existing.suggested_category, existing.suggested_type)
         return {
             "success": True, "message": "already_pending", "proposal_id": existing.id,
             "suggested_category": existing.suggested_category,
@@ -399,10 +419,10 @@ async def create_proposal_for_document(
             "suggested_month": pmonth, "suggested_year": pyear,
             "upload_blocked": blocked,
         }
-    if blocked:
-        return {"success": False, "message": "too_large", "reason": blocked.message(), "proposal_id": None}
-
     category, type_ = await _classify_document(db, document_id)
+    blocked = await _blocked_for(category, type_)
+    if blocked:
+        return {"success": False, "message": "too_large", "upload_blocked": blocked, "proposal_id": None}
     proposal = SimbaIngestProposal(
         document_id=document_id,
         user_id=owner_id,
@@ -537,10 +557,12 @@ async def confirm(
 
     # A file the portal can never accept is refused HERE, before the duplicate
     # check and the claim: a property of the file, answered as a validation
-    # error -- not a failed upload (#1609). Unknown limits skip the check.
-    blocked = upload_blocked(doc, await portal_limits(mcp_manager))
+    # error -- not a failed upload (#1609). Judged against the category the
+    # owner CHOSE: the portal states its limit per upload context. Unknown
+    # limits skip the check.
+    blocked = upload_blocked(doc, await portal_limits(mcp_manager, category, type_))
     if blocked:
-        return {"success": False, "message": "too_large", "reason": blocked.message()}
+        return {"success": False, "message": "too_large", "upload_blocked": blocked}
 
     # User-edited Bezeichnung wins when it survives sanitization; blank OR an
     # all-disallowed value falls back to the derived title (never sends nothing).

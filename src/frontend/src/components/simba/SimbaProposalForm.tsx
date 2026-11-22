@@ -5,9 +5,12 @@ import { Loader, Check, X, AlertTriangle } from 'lucide-react';
 import {
   useConfirmSimbaProposal,
   useRejectSimbaProposal,
+  uploadBlockedOf,
   type SimbaProposal,
+  type SimbaUploadBlocked,
 } from '../../api/resources/simbaIngest';
 import { extractApiError } from '../../utils/axios';
+import { tooLargeText } from './tooLargeText';
 
 /** Terminal outcome reported to the parent (overlay closes / queue flashes). */
 export interface SimbaResolution {
@@ -63,6 +66,8 @@ export default function SimbaProposalForm({
   // Styled two-step confirm (replaces window.confirm): the transfer is
   // irreversible, so the primary action first asks for an explicit yes.
   const [confirming, setConfirming] = useState(false);
+  // A confirm refused for size (#1609) — judged against the selection it was sent with.
+  const [refused, setRefused] = useState<SimbaUploadBlocked | null>(null);
 
   const monthName = (m: number) =>
     new Intl.DateTimeFormat(i18n.language, { month: 'long' }).format(new Date(2000, m - 1, 1));
@@ -74,13 +79,15 @@ export default function SimbaProposalForm({
       : baseYears;
   const typeOptions = category ? categories[category] ?? [] : [];
   const busy = confirm.isPending || reject.isPending;
-  // A file the portal can never accept (#1609): say why, offer no confirm.
-  const blocked = proposal.upload_blocked ?? null;
-  const mb = (n: number) =>
-    new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 1 }).format(n);
-  const blockedReason = blocked
-    ? t('simbaReview.tooLarge', { size: mb(blocked.size_mb), max: mb(blocked.max_mb) })
-    : null;
+  // A file the portal can never accept (#1609): say why, offer no confirm. The
+  // portal states its limit per Kategorie + Typ, so a finding holds only while
+  // the selection is the one it was judged for — another selection is judged
+  // by its confirm.
+  const blocked =
+    [refused, proposal.upload_blocked ?? null].find(
+      (b) => b != null && b.category === category && b.type === type,
+    ) ?? null;
+  const blockedReason = blocked ? tooLargeText(t, i18n.language, blocked) : null;
 
   const submit = (force: boolean) => {
     setError(null);
@@ -100,9 +107,16 @@ export default function SimbaProposalForm({
           }
           setError(data.message || t('simbaReview.uploadFailed'));
         },
-        // The backend's reason (a 422 says why the file can't go, a 502 what the
-        // portal answered), not axios's "Request failed with status code …".
-        onError: (e) => setError(extractApiError(e, t('simbaReview.uploadFailed'))),
+        // A 422 for size becomes the finding (alert, no confirm); any other error
+        // shows the backend's reason, not axios's "Request failed with status code …".
+        onError: (e) => {
+          const finding = uploadBlockedOf(e);
+          if (finding) {
+            setRefused(finding);
+            return;
+          }
+          setError(extractApiError(e, t('simbaReview.uploadFailed')));
+        },
       },
     );
   };
@@ -210,7 +224,7 @@ export default function SimbaProposalForm({
       {blockedReason && (
         <div
           role="alert"
-          className="mb-3 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-700/60 dark:bg-red-900/20 dark:text-red-200"
+          className="mb-3 flex items-start gap-2 rounded-lg border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700 dark:border-primary-700 dark:bg-primary-900/40 dark:text-primary-300"
         >
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
           <span>
@@ -271,7 +285,7 @@ export default function SimbaProposalForm({
       )}
 
       {error && (
-        <p className="mt-3 flex items-center gap-2 text-sm text-red-700 dark:text-red-300">
+        <p className="mt-3 flex items-center gap-2 text-sm text-primary-700 dark:text-primary-300">
           <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
           {error}
         </p>

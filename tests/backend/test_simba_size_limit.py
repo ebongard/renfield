@@ -16,12 +16,18 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import SIMBA_PROPOSAL_PENDING, Document, SimbaIngestProposal
+from services import simba_ingest_review as review
 from services import simba_portal_limits
 
 pytestmark = pytest.mark.backend
 
-#: A tiny portal limit so a test file of a few KB is "too large".
+#: A tiny portal limit so a test file of a few KB is "too large" -- for the
+#: suggested context; another context states a roomy one (the portal's limit
+#: is per Kategorie + Typ).
 _LIMIT_MB = 0.001  # 1048 bytes
+_ROOMY_MB = 50.0
+_C, _T = "Belege", "Ausgangsrechnung"
+_OTHER_C, _OTHER_T = "Lohn", "Lohnbeleg"
 _BIG = 4096
 _SMALL = 100
 
@@ -37,7 +43,8 @@ def _mcp(upload_result=None):
     """An MCP manager whose portal states `_LIMIT_MB`; records every call."""
     def _exec(name, args, **_kw):
         if name == "mcp.simba.check_connection":
-            return {"success": True, "message": json.dumps({"status": "ok", "maxDateigroesseMB": _LIMIT_MB})}
+            limit = _LIMIT_MB if (args.get("category"), args.get("type")) == (_C, _T) else _ROOMY_MB
+            return {"success": True, "message": json.dumps({"status": "ok", "maxDateigroesseMB": limit})}
         if name == "mcp.simba.list_transfers":
             return {"success": True, "message": json.dumps({"anzahl": 0, "zeilen": []})}
         return upload_result or {"success": True, "message": json.dumps({"uebertragen": 1, "fehlgeschlagen": 0})}
@@ -62,10 +69,10 @@ async def _doc_with_file(db, size: int, filename: str = "scan.pdf") -> tuple[Doc
     return doc, path
 
 
-async def _pending(db, doc) -> SimbaIngestProposal:
+async def _pending(db, doc, category: str | None = _C, type_: str | None = _T) -> SimbaIngestProposal:
     p = SimbaIngestProposal(
         document_id=doc.id, user_id=None, filename=doc.filename,
-        suggested_category="Belege", suggested_type="Ausgangsrechnung", status=SIMBA_PROPOSAL_PENDING,
+        suggested_category=category, suggested_type=type_, status=SIMBA_PROPOSAL_PENDING,
     )
     db.add(p)
     await db.commit()
@@ -101,7 +108,9 @@ class TestTheListNamesIt:
                 resp = await async_client.get("/api/simba-ingest")
             assert resp.status_code == 200
             rows = {r["id"]: r for r in resp.json()["proposals"]}
-            assert rows[pb.id]["upload_blocked"] == {"code": "too_large", "size_mb": 0.0, "max_mb": _LIMIT_MB}
+            assert rows[pb.id]["upload_blocked"] == {
+                "code": "too_large", "size_mb": 0.1, "max_mb": _LIMIT_MB, "category": _C, "type": _T,
+            }
             assert rows[ps.id]["upload_blocked"] is None
         finally:
             Path(big_path).unlink(missing_ok=True)
@@ -114,6 +123,21 @@ class TestTheListNamesIt:
             resp = await async_client.get("/api/simba-ingest")
         assert resp.status_code == 200 and resp.json()["proposals"] == []
         mgr.execute_tool.assert_not_awaited()
+
+    async def test_a_proposal_without_a_suggestion_is_judged_by_its_confirm(
+        self, async_client: AsyncClient, db_session: AsyncSession,
+    ):
+        """No category yet = no upload context to ask for; the portal is not asked."""
+        big, path = await _doc_with_file(db_session, _BIG)
+        try:
+            p = await _pending(db_session, big, category=None, type_=None)
+            with _App(_mcp()) as mgr:
+                resp = await async_client.get("/api/simba-ingest")
+            row = next(r for r in resp.json()["proposals"] if r["id"] == p.id)
+            assert row["upload_blocked"] is None
+            assert not _called(mgr, "mcp.simba.check_connection")
+        finally:
+            Path(path).unlink(missing_ok=True)
 
     async def test_unknown_limits_block_nothing(self, async_client: AsyncClient, db_session: AsyncSession):
         big, path = await _doc_with_file(db_session, _BIG)
@@ -139,12 +163,38 @@ class TestTheConfirmRefusesIt:
                     f"/api/simba-ingest/{p.id}/confirm", json={"category": "Belege", "type": "Ausgangsrechnung"},
                 )
             assert resp.status_code == 422
-            assert "Simba-Portal nimmt höchstens" in resp.json()["detail"]
+            detail = resp.json()["detail"]
+            # The same data the list carries -- the client renders it in the
+            # viewer's language; the German sentence is only the fallback.
+            assert detail["code"] == "too_large" and (detail["category"], detail["type"]) == (_C, _T)
+            assert detail["max_mb"] == _LIMIT_MB
+            assert "Simba-Portal nimmt höchstens" in detail["message"]
+            assert _called(mgr, "mcp.simba.check_connection")[0].args[1] == {"category": _C, "type": _T}
             # Refused before the duplicate check and before the claim.
             assert not _called(mgr, "mcp.simba.upload_documents")
             assert not _called(mgr, "mcp.simba.list_transfers")
             await db_session.refresh(p)
             assert p.status == SIMBA_PROPOSAL_PENDING
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    async def test_judged_against_the_chosen_category_not_the_suggested_one(
+        self, async_client: AsyncClient, db_session: AsyncSession,
+    ):
+        """Too large for the suggested context, fine for the one the owner
+        chose: the confirm uploads -- the chosen context's limit decides."""
+        doc, path = await _doc_with_file(db_session, _BIG)
+        try:
+            p = await _pending(db_session, doc)
+            with _App(_mcp()) as mgr:
+                resp = await async_client.post(
+                    f"/api/simba-ingest/{p.id}/confirm", json={"category": _OTHER_C, "type": _OTHER_T},
+                )
+            assert resp.status_code == 200 and resp.json()["success"] is True
+            assert [c.args[1] for c in _called(mgr, "mcp.simba.check_connection")] == [
+                {"category": _OTHER_C, "type": _OTHER_T},
+            ]
+            assert len(_called(mgr, "mcp.simba.upload_documents")) == 1
         finally:
             Path(path).unlink(missing_ok=True)
 
@@ -172,16 +222,37 @@ class TestTheSendOverlayNamesIt:
         from utils.config import settings as cfg
 
         monkeypatch.setattr(cfg, "folder_ingest_simba_enabled", True)
+        monkeypatch.setattr(review, "_classify_document", AsyncMock(return_value=(_C, _T)))
         doc, path = await _doc_with_file(db_session, _BIG)
         try:
             with _App(_mcp()):
                 resp = await async_client.post(f"/api/simba-ingest/from-document/{doc.id}")
             assert resp.status_code == 422
-            assert "Simba-Portal nimmt höchstens" in resp.json()["detail"]
+            detail = resp.json()["detail"]
+            assert detail["code"] == "too_large" and (detail["category"], detail["type"]) == (_C, _T)
             rows = (await db_session.execute(
                 select(SimbaIngestProposal).where(SimbaIngestProposal.document_id == doc.id)
             )).scalars().all()
             assert rows == []
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    async def test_an_unclassified_document_is_queued_and_judged_by_its_confirm(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch,
+    ):
+        """No suggested category = no context to ask the portal for: the
+        proposal is created, the owner picks a category, the confirm judges."""
+        from utils.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "folder_ingest_simba_enabled", True)
+        monkeypatch.setattr(review, "_classify_document", AsyncMock(return_value=(None, None)))
+        doc, path = await _doc_with_file(db_session, _BIG)
+        try:
+            with _App(_mcp()) as mgr:
+                resp = await async_client.post(f"/api/simba-ingest/from-document/{doc.id}")
+            assert resp.status_code == 200
+            assert resp.json()["proposal_id"] is not None and resp.json()["upload_blocked"] is None
+            assert not _called(mgr, "mcp.simba.check_connection")
         finally:
             Path(path).unlink(missing_ok=True)
 

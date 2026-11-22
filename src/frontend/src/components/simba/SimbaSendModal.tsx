@@ -7,9 +7,11 @@ import SimbaProposalForm, { type SimbaResolution } from './SimbaProposalForm';
 import {
   useSendDocumentToSimba,
   useSimbaCategoriesQuery,
+  uploadBlockedOf,
   type SimbaProposal,
 } from '../../api/resources/simbaIngest';
 import { extractApiError } from '../../utils/axios';
+import { tooLargeText } from './tooLargeText';
 
 interface Props {
   /** The document to send; `null` = closed. */
@@ -30,7 +32,7 @@ interface Props {
  * leaves the proposal queued on /brain/review (the durable fallback).
  */
 export default function SimbaSendModal({ documentId, filename, enabled, onClose }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const send = useSendDocumentToSimba();
   const categoriesQuery = useSimbaCategoriesQuery(enabled && documentId != null);
   const [proposal, setProposal] = useState<SimbaProposal | null>(null);
@@ -73,9 +75,16 @@ export default function SimbaSendModal({ documentId, filename, enabled, onClose 
         });
       },
       onError: (e) => {
-        // The backend's reason (e.g. the file is over the portal's limit, a 422),
-        // not axios's "Request failed with status code …".
-        if (!cancelled) setError(extractApiError(e, t('simbaReview.uploadFailed')));
+        if (cancelled) return;
+        // A file over the portal's limit gets no proposal (a 422 with the
+        // finding, #1609) — say why in the viewer's language. Any other error:
+        // the backend's reason, not axios's "Request failed with status code …".
+        const blocked = uploadBlockedOf(e);
+        setError(
+          blocked
+            ? `${t('simbaReview.blockedTitle')} ${tooLargeText(t, i18n.language, blocked)}`
+            : extractApiError(e, t('simbaReview.uploadFailed')),
+        );
       },
     });
     return () => {
@@ -100,7 +109,7 @@ export default function SimbaSendModal({ documentId, filename, enabled, onClose 
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{t('simbaSend.hint')}</p>
 
       {error ? (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-700/60 dark:bg-red-900/20 dark:text-red-200">
+        <div className="rounded-lg border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700 dark:border-primary-700 dark:bg-primary-900/40 dark:text-primary-300">
           <p className="flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
             <span>{error}</span>

@@ -19,10 +19,6 @@ from utils.config import settings
 
 router = APIRouter()
 
-#: How long the list waits for a cold fetch of the portal's limits (a portal
-#: login) before it answers without them; the fetch runs on and fills the cache.
-_LIMITS_WAIT_SECONDS = 5.0
-
 
 def _require_user(user) -> None:
     """401 an unauthenticated caller when auth is on (the review actions can
@@ -38,12 +34,19 @@ class SimbaUploadBlocked(BaseModel):
     code: str
     size_mb: float
     max_mb: float
+    #: The upload context it was judged against: the portal states its limit
+    #: per Kategorie + Typ, so the finding holds for this selection only.
+    category: str
+    type: str
 
 
 def _blocked_out(blocked) -> SimbaUploadBlocked | None:
     if blocked is None:
         return None
-    return SimbaUploadBlocked(code=blocked.code, size_mb=blocked.size_mb, max_mb=blocked.max_mb)
+    return SimbaUploadBlocked(
+        code=blocked.code, size_mb=blocked.size_mb, max_mb=blocked.max_mb,
+        category=blocked.category, type=blocked.type,
+    )
 
 
 class SimbaProposalOut(BaseModel):
@@ -109,13 +112,15 @@ async def send_document_to_simba(
     the actual irreversible upload still happens via the confirm step."""
     _require_user(user)
     _require_enabled()
-    limits = await portal_limits(getattr(request.app.state, "mcp_manager", None))
-    res = await review.create_proposal_for_document(db, document_id, user, limits=limits)
+    mgr = getattr(request.app.state, "mcp_manager", None)
+    res = await review.create_proposal_for_document(
+        db, document_id, user, limits=lambda c, t: portal_limits(mgr, c, t),
+    )
     if not res["success"]:
         if res["message"] == "not_found":
             raise HTTPException(status_code=404, detail="Document not found")
         if res["message"] == "too_large":
-            raise HTTPException(status_code=422, detail=res["reason"])
+            raise HTTPException(status_code=422, detail=res["upload_blocked"].as_detail())
         raise HTTPException(status_code=400, detail=res["message"])
     return SimbaActionResponse(
         success=True, message=res["message"], proposal_id=res.get("proposal_id"),
@@ -135,7 +140,7 @@ async def list_proposals(
     _require_user(user)
     mgr = getattr(request.app.state, "mcp_manager", None)
     rows = await review.list_pending(
-        db, user, limits=lambda: portal_limits(mgr, wait=_LIMITS_WAIT_SECONDS),
+        db, user, limits=lambda c, t: portal_limits(mgr, c, t),
     )
     return SimbaProposalsResponse(
         proposals=[
@@ -177,7 +182,7 @@ async def confirm_proposal(
             raise HTTPException(status_code=409, detail="Already resolved")
         if msg == "too_large":
             # A property of the file, refused before any upload (#1609).
-            raise HTTPException(status_code=422, detail=res["reason"])
+            raise HTTPException(status_code=422, detail=res["upload_blocked"].as_detail())
         if msg == "already_in_simba":
             # Not an error: an informative gate. The document appears to already
             # be in Simba — the UI warns and offers an explicit "force" re-confirm.

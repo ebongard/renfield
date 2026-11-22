@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { AxiosError } from 'axios';
 
 import { keys } from '../keys';
 import apiClient from '../../utils/axios';
@@ -8,6 +9,28 @@ export interface SimbaUploadBlocked {
   code: 'too_large';
   size_mb: number;
   max_mb: number;
+  /** The upload context it was judged against — the portal's limit is per
+   *  Kategorie + Typ, so the finding holds for this selection only. */
+  category: string;
+  type: string;
+}
+
+/** The finding inside a 422 from confirm / from-document (#1609), or null for
+ *  any other error. The body is the same data the list carries. */
+export function uploadBlockedOf(err: unknown): SimbaUploadBlocked | null {
+  const detail = (err as AxiosError<{ detail?: unknown }>)?.response?.data?.detail;
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return null;
+  const d = detail as Partial<Record<keyof SimbaUploadBlocked, unknown>>;
+  if (
+    d.code !== 'too_large' ||
+    typeof d.size_mb !== 'number' ||
+    typeof d.max_mb !== 'number' ||
+    typeof d.category !== 'string' ||
+    typeof d.type !== 'string'
+  ) {
+    return null;
+  }
+  return { code: 'too_large', size_mb: d.size_mb, max_mb: d.max_mb, category: d.category, type: d.type };
 }
 
 export interface SimbaProposal {
@@ -92,6 +115,11 @@ export function useConfirmSimbaProposal() {
       if (data?.success) {
         void queryClient.invalidateQueries({ queryKey: keys.knowledge.all });
       }
+    },
+    // A refused confirm (e.g. the file is over the portal's limit, #1609) is
+    // news about the queue too: the list re-reads its findings.
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: PROPOSALS_KEY });
     },
   });
 }
