@@ -56,7 +56,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PARTIAL_INTERVAL_S = 0.7
-MAX_UTTERANCE_S = 60
+# The utterance cap is `settings.max_utterance_seconds` (MAX_UTTERANCE_SECONDS,
+# default 600 s): a far bound against a forgotten open mic, not a dictation
+# limit (renfield #1613; was a hardcoded 60 s).
 # Suppress partial_transcript events below this confidence — protects
 # against faster-whisper hallucinations on near-silence when vad_filter
 # is off (the partials path). Empirically calibrated; the final pass
@@ -499,8 +501,14 @@ async def ws_voice(
                         await _finalize(websocket, state, stt, speaker)
                         state.speech_seen = False
                         state.last_speech_at = 0.0
-                    if _accumulated_seconds(state) >= MAX_UTTERANCE_S:
-                        logger.warning("voice session %s hit MAX_UTTERANCE_S, force-finalizing", user_id)
+                    cap_s = settings.max_utterance_seconds
+                    if _accumulated_seconds(state) >= cap_s:
+                        # Content-free: the reason and the bound, never audio or text.
+                        logger.warning(
+                            "voice session %s turn end: reason=max_utterance cap=%ss, force-finalizing",
+                            user_id,
+                            cap_s,
+                        )
                         await _finalize(websocket, state, stt, speaker)
                         # C.5: tell the browser to stop streaming. After
                         # the cap fires we don't accept more chunks for
@@ -509,7 +517,7 @@ async def ws_voice(
                         # continue.
                         await websocket.close(
                             code=status.WS_1011_INTERNAL_ERROR,
-                            reason=f"max_utterance_seconds ({MAX_UTTERANCE_S}s)",
+                            reason=f"max_utterance_seconds ({cap_s}s)",
                         )
                         return
                 except Exception as e:

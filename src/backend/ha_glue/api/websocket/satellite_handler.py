@@ -40,6 +40,7 @@ from services.turn_extraction import (
     spawn_memory_extraction,
     spawn_post_message_hooks,
 )
+from services.voice_turn_trace_service import schedule_voice_turn
 from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
@@ -1205,6 +1206,24 @@ async def satellite_websocket(
                 # transcription like a finished sentence -- 7 times in 7 days,
                 # without any notice.
                 satellite_manager.set_turn_end_reason(session_id, reason)
+                satellite_info = satellite_manager.get_satellite_by_session(session_id)
+
+                # A content-free trace of how the turn ended (#1613), fire and
+                # forget: it must neither delay nor break the turn. Flag off =
+                # no task is created.
+                try:
+                    _turn_session = satellite_manager.get_session(session_id)
+                    schedule_voice_turn(
+                        source="satellite",
+                        device_key=satellite_info.satellite_id if satellite_info else None,
+                        room=satellite_info.room if satellite_info else None,
+                        reason=reason,
+                        audio_seconds=satellite_manager.recorded_audio_seconds(session_id),
+                        vad_speech_seen=vad_speech_seen_from(data.get("vad_speech_seen")),
+                        started_at=_turn_session.started_at if _turn_session else None,
+                    )
+                except Exception as e:
+                    logger.warning(f"Voice turn trace not scheduled: {error_text_without_content(e)}")
 
                 # Update state to processing
                 await satellite_manager.set_session_state(session_id, SatelliteState.PROCESSING)
@@ -1214,7 +1233,6 @@ async def satellite_websocket(
                 # packets → forward the packet blob; else it's legacy PCM.
                 opus_blob = satellite_manager.get_opus_blob(session_id) if opus_mode else None
                 audio_bytes = None if opus_blob is not None else satellite_manager.get_audio_buffer(session_id)
-                satellite_info = satellite_manager.get_satellite_by_session(session_id)
 
                 # A turn that ends without text is CLASSIFIED, not just logged
                 # (#1386): a false wake and unintelligible speech need opposite

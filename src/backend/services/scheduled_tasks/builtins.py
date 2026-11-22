@@ -295,6 +295,17 @@ async def _routing_trace_cleanup_handler(app: FastAPI, params: dict) -> str | No
     return f"deleted={deleted}" if deleted else None
 
 
+async def _voice_turn_trace_cleanup_handler(app: FastAPI, params: dict) -> str | None:
+    # No flag gate, deliberately, as for the routing traces: switching
+    # VOICE_TURN_TRACES_ENABLED off must not stop the rows from expiring.
+    from services.database import AsyncSessionLocal
+    from services.voice_turn_trace_service import purge_expired
+
+    async with AsyncSessionLocal() as db_session:
+        deleted = await purge_expired(db_session)
+    return f"deleted={deleted}" if deleted else None
+
+
 async def _conversation_tombstone_cleanup_handler(app: FastAPI, params: dict) -> str | None:
     # 0 = keep forever: return before a session is opened, so no query runs.
     retention_days = settings.conversation_tombstone_retention_days
@@ -580,6 +591,7 @@ def register_builtin_handlers() -> None:
     register_handler("meeting_retention", _meeting_retention_handler)
     register_handler("trajectory_cleanup", _trajectory_cleanup_handler)
     register_handler("routing_trace_cleanup", _routing_trace_cleanup_handler)
+    register_handler("voice_turn_trace_cleanup", _voice_turn_trace_cleanup_handler)
     register_handler("conversation_tombstone_cleanup", _conversation_tombstone_cleanup_handler)
     register_handler("kg_conflation_monitor", _kg_conflation_monitor_handler)
     register_handler("paperless_reconciler", _paperless_reconciler_handler)
@@ -669,6 +681,7 @@ def builtin_task_seeds() -> list[TaskSeed]:
         TaskSeed(name="Meeting-Aufbewahrung", handler_key="meeting_retention", interval_seconds=86400, run_at_boot=True, enabled=True),
         TaskSeed(name="Trajektorien aufräumen", handler_key="trajectory_cleanup", interval_seconds=settings.trajectory_cleanup_interval, run_at_boot=True, enabled=True),
         TaskSeed(name="Routing-Spuren aufräumen", handler_key="routing_trace_cleanup", interval_seconds=86400, run_at_boot=True, enabled=True),
+        TaskSeed(name="Sprachzug-Spuren aufräumen", handler_key="voice_turn_trace_cleanup", interval_seconds=86400, run_at_boot=True, enabled=True),
         # #1529: self-gates on conversation_tombstone_retention_days (0 = keep
         # forever, the default). Not run_at_boot: nothing here is urgent, and a
         # restart must not be what triggers a delete.

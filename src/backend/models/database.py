@@ -2141,6 +2141,39 @@ class RoutingTrace(Base):
     )
 
 
+class VoiceTurnTrace(Base):
+    """One content-free record of how a voice turn ended (#1613).
+
+    Written by ``services.voice_turn_trace_service`` when
+    ``voice_turn_traces_enabled`` is on. Holds NO user, NO text and NO audio:
+    ``device_key`` and ``room`` are device configuration, not a person.
+    ``created_at`` is the turn's END (written at ``audio_end``). Purged after
+    ``voice_turn_traces_retention_days``.
+    """
+    __tablename__ = "voice_turn_traces"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    # satellite | browser (the browser path is reserved for a later change)
+    source = Column(String(16), nullable=False)
+    device_key = Column(String(64), nullable=True)
+    room = Column(String(64), nullable=True)
+    # The device's turn-end reason, clamped to a fixed vocabulary ("other").
+    reason = Column(String(32), nullable=False)
+    audio_seconds = Column(Float, nullable=True)
+    vad_speech_seen = Column(Boolean, nullable=True)
+    # A new turn on the same device started within the resume window after
+    # this one ended -- a (noisy) cut-off proxy.
+    resumed = Column(Boolean, nullable=False, default=False, server_default=sa_text("false"))
+    # Reserved for a later end-of-turn model score (Smart Turn, shadow only).
+    turn_score = Column(Float, nullable=True)
+
+    __table_args__ = (
+        Index("idx_voice_turn_traces_created", "created_at"),
+        Index("idx_voice_turn_traces_source_created", "source", "created_at"),
+    )
+
+
 class PushSubscription(Base):
     """One browser's Web Push subscription, bound to the user who created it (#79).
 

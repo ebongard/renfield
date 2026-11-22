@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -157,6 +157,12 @@ class Settings(BaseSettings):
     # spoken diary entry is never truncated (project rule: no voice max-recording
     # cap). 1800 s ≈ 57.6 MB of 16-bit mono PCM per request.
     opus_max_decoded_seconds: int = 1800
+
+    # Far bound on one /ws/voice utterance (renfield #1613). Not a dictation
+    # limit: it only protects against a forgotten open microphone. At the cap
+    # the server finalizes what it has, then closes the socket with a reason.
+    # Was a hardcoded 60 s, which cut long browser dictation mid-sentence.
+    max_utterance_seconds: int = Field(default=600, ge=1)
 
     @model_validator(mode="after")
     def _fail_closed_on_default_key(self) -> "Settings":
