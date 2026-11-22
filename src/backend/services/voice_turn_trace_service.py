@@ -21,19 +21,22 @@ Times, and what "resumed" means:
 - A turn has three times, all wall clock: its START (``started_at``; for a
   satellite ``SatelliteSession.started_at``, i.e. the wake word), the end of
   its RECORDING (``created_at``; stamped at ``audio_end``) and its FINISH
-  (``finished_at``; the session end, i.e. AFTER the answer was spoken). A turn
-  that never got an ``audio_end`` (expired while listening, a disconnect) has
-  ``created_at == finished_at``.
+  (``finished_at``): the later of the session end and the EXPECTED end of the
+  answer's playback (TTS send time + the WAV's duration). The session ends
+  right after the TTS is sent, and the satellite re-arms its wake word while
+  it still plays, so the session end alone would make a resume depend on the
+  answer's length. A turn without an ``audio_end`` (expired while listening, a
+  disconnect) has ``created_at == finished_at`` = the session end.
 - The trace is written at the session END, not at ``audio_end``: a satellite
   can only start its next session after the previous one ended
   (``start_session`` refuses while ``current_session_id`` is set, and the
   answer runs inline). Measured from ``audio_end``, a resume would depend on
   how fast the answer was -- it would measure LLM latency, not cut-offs.
-- When a turn is recorded, the latest earlier trace of the SAME source and
-  ``device_key`` whose ``finished_at`` lies within ``RESUME_WINDOW_SECONDS``
-  before the new turn's START is marked ``resumed=true``: the speaker woke the
-  device again right after the answer, which is what a turn cut off
-  mid-sentence looks like.
+- When a turn is recorded, the latest earlier trace P of the SAME source and
+  ``device_key`` with ``P.created_at < start <= P.finished_at +
+  RESUME_WINDOW_SECONDS`` is marked ``resumed=true``: the speaker woke the
+  device again while the answer was still playing (a barge-in) or within
+  10 s after it ended -- what a turn cut off mid-sentence looks like.
 
 This is a known NOISY proxy: a quick follow-up question also counts as
 resumed. That noise is the point of measuring -- the rate gives a baseline to
@@ -42,7 +45,9 @@ compare against once the end-of-turn decision changes.
 from __future__ import annotations
 
 import asyncio
+import io
 import time
+import wave
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
@@ -95,6 +100,16 @@ def session_end_reason(end_reason: object) -> str:
     return _SESSION_END_REASONS.get(end_reason, "unknown") if isinstance(end_reason, str) else "unknown"
 
 
+def wav_duration_seconds(data: bytes) -> float | None:
+    """Duration of a WAV body from its header, or None if it is not a readable WAV."""
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wav:
+            rate = wav.getframerate()
+            return wav.getnframes() / rate if rate > 0 else None
+    except Exception:
+        return None
+
+
 def _naive_utc_from_epoch(seconds: float) -> datetime:
     return datetime.fromtimestamp(seconds, UTC).replace(tzinfo=None)
 
@@ -113,8 +128,9 @@ async def record_voice_turn(
 ) -> None:
     """Persist one finished turn and mark the device's previous turn as resumed.
 
-    Times are wall-clock epoch seconds (``time.time()``). ``finished_at``
-    defaults to now, ``recording_ended_at`` to ``finished_at``.
+    Times are wall-clock epoch seconds (``time.time()``). ``finished_at`` (the
+    later of session end and expected playback end) defaults to now,
+    ``recording_ended_at`` to ``finished_at``.
 
     Re-asserts the flag so a caller that scheduled it never writes once the
     switch is off. Uses its own DB session. Best-effort: a failed write is
@@ -144,8 +160,11 @@ async def record_voice_turn(
                     .where(
                         VoiceTurnTrace.source == source,
                         VoiceTurnTrace.device_key == device,
+                        # Re-woken after this trace's recording ended and no
+                        # later than 10 s after its answer finished playing:
+                        # a barge-in during playback counts too.
+                        VoiceTurnTrace.created_at < start,
                         VoiceTurnTrace.finished_at >= start - timedelta(seconds=RESUME_WINDOW_SECONDS),
-                        VoiceTurnTrace.finished_at <= start,
                     )
                     .order_by(VoiceTurnTrace.finished_at.desc(), VoiceTurnTrace.id.desc())
                     .limit(1)

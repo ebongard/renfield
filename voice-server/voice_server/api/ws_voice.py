@@ -67,6 +67,14 @@ PARTIAL_INTERVAL_S = 0.7
 # instead of dropping its beginning. The word at a boundary may be split in the
 # preview; the FINAL transcription still covers the whole utterance.
 PARTIAL_WINDOW_S = 30
+# Right after a commit the new window holds only the last second or two of
+# audio, often starting mid-word, and Whisper is rarely confident on that. A
+# partial is the server-VAD's ONLY speech evidence, so such a window must not
+# read as silence: the commit itself refreshes `last_speech_at` (the partial
+# that justified it was confident), and the silence verdict waits until the
+# post-commit window holds at least this much audio. Applies only after the
+# first commit or slide, so a short utterance finalizes exactly as before.
+PARTIAL_MIN_WINDOW_S = 3
 # The utterance cap is `settings.max_utterance_seconds` (MAX_UTTERANCE_SECONDS,
 # default 600 s): a far bound against a forgotten open mic, not a dictation
 # limit (renfield #1613; was a hardcoded 60 s).
@@ -153,6 +161,14 @@ def _pcm_from(state: SessionState, start: int, total: int) -> np.ndarray:
     return np.concatenate(parts)
 
 
+def _partial_window_can_judge_silence(state: SessionState) -> bool:
+    """False while a post-commit window is shorter than PARTIAL_MIN_WINDOW_S."""
+    if state.partial_base_samples == 0:
+        return True
+    window = _accumulated_samples(state) - state.partial_base_samples
+    return window >= PARTIAL_MIN_WINDOW_S * 16000
+
+
 def _reset_partial_window(state: SessionState) -> None:
     state.partial_base_samples = 0
     state.partial_base_text = ""
@@ -222,9 +238,11 @@ async def _maybe_emit_partial(ws: WebSocket, state: SessionState, stt: STTServic
     window = int(PARTIAL_WINDOW_S * 16000)
     if total - state.partial_base_samples > window:
         if state.partial_tail_end > state.partial_base_samples:
-            # Commit the last confident partial as the fixed prefix.
+            # Commit the last confident partial as the fixed prefix. It is
+            # fresh speech evidence: the new window is too short to judge yet.
             state.partial_base_text = _join_text(state.partial_base_text, state.partial_tail_text)
             state.partial_base_samples = state.partial_tail_end
+            state.last_speech_at = now
         if total - state.partial_base_samples > window:
             # No confident partial covered the older audio (silence, noise):
             # nothing to keep, so the window slides -- by half, so speech that
@@ -564,6 +582,7 @@ async def ws_voice(
                         state.speech_seen
                         and elapsed >= SERVER_VAD_MIN_DURATION_S
                         and (now - state.last_speech_at) >= SERVER_VAD_SILENCE_S
+                        and _partial_window_can_judge_silence(state)
                     ):
                         logger.info(
                             "voice session %s auto-finalizing (server VAD)",

@@ -60,6 +60,8 @@ async def _route_satellite_tts_output(
 
     Similar to _route_tts_output but for the satellite WebSocket handler.
     """
+    # Whatever plays it, the turn lasts until the answer has been heard (#1613).
+    satellite_manager.note_answer_playback(session_id, tts_audio)
     # If satellite has no room_id, fallback to satellite itself
     if not satellite or not satellite.room_id:
         logger.debug("Satellite has no room_id, using satellite for output")

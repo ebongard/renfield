@@ -99,6 +99,34 @@ def test_a_session_without_audio_end_gets_the_backends_reason(end_reason, expect
     assert expected in REASONS
 
 
+def _wav(seconds: float, rate: int = 22050) -> bytes:
+    """Real WAV bytes (16-bit mono silence), as Piper returns them."""
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"\0\0" * int(seconds * rate))
+    return buf.getvalue()
+
+
+def test_the_wav_duration_comes_from_the_header():
+    from services.voice_turn_trace_service import wav_duration_seconds
+
+    assert wav_duration_seconds(_wav(12.0)) == pytest.approx(12.0)
+    assert wav_duration_seconds(_wav(2.5, rate=16000)) == pytest.approx(2.5)
+
+
+@pytest.mark.parametrize("body", [b"", b"not a wav at all", b"RIFF\x00\x00", b"ID3\x03mp3-ish"])
+def test_a_body_that_is_not_a_wav_has_no_duration(body):
+    from services.voice_turn_trace_service import wav_duration_seconds
+
+    assert wav_duration_seconds(body) is None
+
+
 # ------------------------------------------------------------------ record
 @pytest.mark.database
 class TestRecord:
@@ -197,15 +225,18 @@ class TestRecord:
 # ------------------------------------------------------------------ resume
 @pytest.mark.database
 class TestResume:
-    """The REAL ordering: a turn is recorded, then answered, then its session
-    ends; only then can the device start the next session."""
+    """The REAL ordering: a turn is recorded, then answered (the TTS is sent and
+    the session ends), then the answer PLAYS while the device already listens
+    for its wake word again. ``finished_at`` = the expected end of playback."""
 
     async def _two_turns(self, *, answer_seconds, rewake_after, second=None):
+        """``rewake_after`` is measured from the end of the answer's playback;
+        negative = a barge-in while it plays."""
         from services.voice_turn_trace_service import record_voice_turn
 
         t0 = time.time() - 300
-        first = dict(started_at=t0, recording_ended_at=t0 + 4)
-        first["finished_at"] = first["recording_ended_at"] + answer_seconds
+        sent_at = t0 + 10  # recording ends at t0+4, 6 s of STT + agent + TTS
+        first = dict(started_at=t0, recording_ended_at=t0 + 4, finished_at=sent_at + answer_seconds)
         await record_voice_turn(**_turn(**first))
         start2 = first["finished_at"] + rewake_after
         await record_voice_turn(**_turn(
@@ -214,13 +245,14 @@ class TestResume:
         ))
 
     @pytest.mark.parametrize(("answer", "rewake", "resumed"), [
-        (12, 2, True),    # answered for 12 s, re-wake 2 s after the session end
-        (12, 15, False),  # negative control: 15 s after the session end
-        (30, 2, True),    # answer latency must not matter
+        (12, 2, True),     # a 12 s answer, re-wake 2 s after playback ended
+        (3, 15, False),    # negative control: a 3 s answer, re-wake 15 s after
+        (12, -7, True),    # a barge-in 5 s into a 12 s answer
+        (30, 2, True),     # the answer's length must not matter
         (12, 9.5, True),
         (12, 10.5, False),
     ])
-    async def test_measured_from_the_session_end(
+    async def test_measured_from_the_end_of_playback(
         self, db_session, own_session_to_test_db, traces_on, answer, rewake, resumed,
     ):
         await self._two_turns(answer_seconds=answer, rewake_after=rewake)
@@ -580,6 +612,48 @@ class TestSessionEndWriteSite:
         await mgr.end_session("s1")  # already gone: no second trace
         await _drain(svc)
         assert [f["reason"] for f in recorded] == ["silence"]
+
+    async def _woken(self, mgr):
+        ws = _FakeSatelliteSocket([])
+        await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=ws, capabilities={})
+        await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
+        mgr.set_turn_end_reason("s1", "silence")
+        return ws
+
+    async def test_finished_at_is_the_end_of_the_answers_playback(self, satellite_env):
+        """The session ends right after the TTS is SENT; the device plays on."""
+        handler, mgr, _whisper, svc, recorded = satellite_env
+        await self._woken(mgr)
+        sent = time.time()
+        await handler._route_satellite_tts_output(mgr, None, "s1", _wav(12.0))
+        await mgr.end_session("s1")
+        await _drain(svc)
+        (fields,) = recorded
+        assert fields["finished_at"] == pytest.approx(sent + 12.0, abs=1.0)
+        assert fields["recording_ended_at"] < sent
+
+    async def test_an_unreadable_answer_falls_back_to_the_send_time(self, satellite_env):
+        handler, mgr, _whisper, svc, recorded = satellite_env
+        await self._woken(mgr)
+        await handler._route_satellite_tts_output(mgr, None, "s1", b"not a wav")
+        await mgr.end_session("s1")
+        ended = time.time()
+        await _drain(svc)
+        (fields,) = recorded
+        assert fields["finished_at"] <= ended, "no playback to wait for: the session end"
+
+    async def test_a_dropped_socket_is_recorded_as_disconnect(self, satellite_env):
+        """Woken, then the socket goes away: `unregister` ends the session."""
+        _handler, mgr, _whisper, svc, recorded = satellite_env
+        ws = _FakeSatelliteSocket([])
+        await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=ws, capabilities={})
+        await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
+        await mgr.unregister("sat-bad", websocket=ws)
+        await _drain(svc)
+        assert [f["reason"] for f in recorded] == ["disconnect"]
+        (end,) = [e["details"] for e in mgr._satellite_history["sat-bad"] if e["type"] == "session_end"]
+        assert end["reason"] == "disconnect"
+        assert end["success"] is False, "a dropped turn is not a completed one"
 
     async def test_flag_off_schedules_nothing(self, satellite_env, monkeypatch):
         handler, mgr, whisper, svc, recorded = satellite_env

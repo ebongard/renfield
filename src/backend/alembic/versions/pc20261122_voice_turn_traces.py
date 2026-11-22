@@ -37,7 +37,8 @@ def upgrade() -> None:
     op.create_table(
         TABLE,
         sa.Column("id", sa.Integer, primary_key=True),
-        # End of the recording (audio_end) and the session end after the answer.
+        # End of the recording (audio_end), and the later of the session end
+        # and the expected end of the answer's playback.
         sa.Column("created_at", sa.DateTime, nullable=False),
         sa.Column("finished_at", sa.DateTime, nullable=False),
         sa.Column("source", sa.String(16), nullable=False),

@@ -2148,7 +2148,8 @@ class VoiceTurnTrace(Base):
     ``voice_turn_traces_enabled`` is on. Holds NO user, NO text and NO audio:
     ``device_key`` and ``room`` are device configuration, not a person.
     ``created_at`` is the end of the RECORDING (``audio_end``), ``finished_at``
-    the session end after the answer; without an ``audio_end`` both are the
+    the later of the session end and the expected end of the answer's playback
+    (TTS send time + WAV duration); without an ``audio_end`` both are the
     session end. Purged after ``voice_turn_traces_retention_days``.
     """
     __tablename__ = "voice_turn_traces"
@@ -2164,8 +2165,9 @@ class VoiceTurnTrace(Base):
     reason = Column(String(32), nullable=False)
     audio_seconds = Column(Float, nullable=True)
     vad_speech_seen = Column(Boolean, nullable=True)
-    # The same device started its next session within the resume window
-    # after this one FINISHED -- a (noisy) cut-off proxy.
+    # The same device was woken again after this recording ended and at most
+    # 10 s after the answer finished playing (barge-ins included) -- a (noisy)
+    # cut-off proxy.
     resumed = Column(Boolean, nullable=False, default=False, server_default=sa_text("false"))
     # Reserved for a later end-of-turn model score (Smart Turn, shadow only).
     turn_score = Column(Float, nullable=True)

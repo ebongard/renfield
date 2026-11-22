@@ -210,6 +210,11 @@ class SatelliteSession:
     recording_ended_at: float | None = None
     recorded_seconds: float | None = None
     vad_speech_seen: bool | None = None
+    # When the answer's audio is expected to have finished PLAYING (send time
+    # + WAV duration). The session ends right after the send and the device
+    # re-arms its wake word while still playing, so the session end alone is
+    # not the end of the turn (#1613). None = no answer was sent.
+    answer_ends_at: float | None = None
     # Set once the `session_end` history record is written, so a retried end
     # (after an attempt that failed past that point) does not write a second.
     end_recorded: bool = False
@@ -382,7 +387,10 @@ class SatelliteManager:
 
             # End any active session
             if sat.current_session_id:
-                await self._end_session_internal(sat.current_session_id)
+                # A dropped socket mid-turn is not a completed turn: the
+                # history marks it unsuccessful and the trace says `disconnect`,
+                # as the heartbeat eviction already did.
+                await self._end_session_internal(sat.current_session_id, reason="disconnect")
 
             del self.satellites[satellite_id]
             # A run on record outlives the connection; `register` picks it up.
@@ -572,6 +580,22 @@ class SatelliteManager:
         if session:
             session.vad_speech_seen = value
 
+    def note_answer_playback(self, session_id: str, audio_bytes: bytes) -> None:
+        """Remember when the answer sent now will have finished playing.
+
+        Send time + the WAV duration; a body that is not a readable WAV counts
+        as zero length (the send time). For the turn trace (#1613). Never raises.
+        """
+        try:
+            session = self.sessions.get(session_id)
+            if session is None:
+                return
+            from services.voice_turn_trace_service import wav_duration_seconds
+
+            session.answer_ends_at = time.time() + (wav_duration_seconds(audio_bytes) or 0.0)
+        except Exception as e:
+            logger.debug(f"answer playback not noted: {error_text_without_content(e)}")
+
     def _schedule_turn_trace(self, session: SatelliteSession, end_reason: str) -> None:
         """Schedule the content-free turn trace at the session's END (#1613).
 
@@ -579,9 +603,10 @@ class SatelliteManager:
         `force_release`, both call this. Written here and not at `audio_end`:
         the next session on the device can only start after this one ended
         (`start_session` refuses while `current_session_id` is set, and the
-        answer runs inline), so a resume is measured from the session end --
-        never from the recording end, which would measure answer latency.
-        Never raises; flag off = no task.
+        answer runs inline). `finished_at` is the later of the session end and
+        the expected end of the answer's playback (`note_answer_playback`):
+        the session ends right after the TTS is SENT, while the device still
+        plays it. Never raises; flag off = no task.
         """
         if session.trace_scheduled:
             return
@@ -592,7 +617,8 @@ class SatelliteManager:
                 session_end_reason,
             )
 
-            finished_at = time.time()
+            now = time.time()
+            finished_at = max(now, session.answer_ends_at or 0.0)
             schedule_voice_turn(
                 source="satellite",
                 device_key=session.satellite_id,
@@ -601,7 +627,7 @@ class SatelliteManager:
                 audio_seconds=session.recorded_seconds,
                 vad_speech_seen=session.vad_speech_seen,
                 started_at=session.started_at,
-                recording_ended_at=session.recording_ended_at or finished_at,
+                recording_ended_at=session.recording_ended_at or now,
                 finished_at=finished_at,
             )
         except Exception as e:

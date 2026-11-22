@@ -44,10 +44,12 @@ class _FakeSTT:
     `partial_limit_s` refuses longer partial inputs -- a transcription that
     cannot keep up with a growing buffer."""
 
-    def __init__(self, partial_limit_s: float | None = None):
+    def __init__(self, partial_limit_s: float | None = None, unconfident_below_s: float = 0.0):
         self.partial_sizes: list[int] = []
         self.final_sizes: list[int] = []
         self.partial_limit_s = partial_limit_s
+        # Whisper on a window of a second or two that starts mid-word.
+        self.unconfident_below_s = unconfident_below_s
         self.last_language = "de"
 
     async def transcribe_stream(self, audio, language=None, *, partial=False):
@@ -56,6 +58,9 @@ class _FakeSTT:
             raise RuntimeError("too slow")
         heard = audio[audio > 0]
         speech = audio[-1] > 0
+        if partial and audio.size < self.unconfident_below_s * SR:
+            yield _Seg(text="", confidence=0.1)
+            return
         text = f"s{int(heard[0]) - 1}-{int(audio[-1]) - 1}" if speech else ""
         yield _Seg(text=text, confidence=0.9 if speech else 0.1)
 
@@ -239,3 +244,33 @@ async def test_the_backstop_still_fires_after_speech_stops(socket_env):
     await wsv.ws_voice(ws, token=None)
     assert len(finals) == 1 and 90 < finals[0] < 95
     assert stt.final_sizes == [int(finals[0] * SR)], "the final pass covers the whole utterance"
+
+
+async def test_a_short_window_after_a_commit_does_not_cut_the_dictation(socket_env):
+    """After each commit the window restarts at 0.7-2 s of audio, and Whisper is
+    unconfident on that. Without the commit's speech evidence and the minimum
+    window, the backstop cut the dictation right after the first commit
+    (~31 s; scratch negative control against the previous ws_voice.py)."""
+    finals = socket_env
+    stt = _FakeSTT(partial_limit_s=wsv.PARTIAL_WINDOW_S + 2, unconfident_below_s=3)
+    ws = _ClockWS(speech_s=90, silence_s=0, stt=stt)
+    await wsv.ws_voice(ws, token=None)
+    assert finals == []
+    assert ws.closed is None
+
+
+async def test_with_short_windows_the_backstop_still_fires_after_speech_stops(socket_env):
+    finals = socket_env
+    stt = _FakeSTT(partial_limit_s=wsv.PARTIAL_WINDOW_S + 2, unconfident_below_s=3)
+    ws = _ClockWS(speech_s=90, silence_s=8, stt=stt)
+    await wsv.ws_voice(ws, token=None)
+    assert len(finals) == 1 and 90 < finals[0] < 98
+
+
+def test_a_fresh_utterance_judges_silence_as_before():
+    """The minimum window applies only after a commit or slide."""
+    state = wsv.SessionState(user_id="u")
+    state.audio_pcm.append(np.zeros(SR, dtype=np.float32))
+    assert wsv._partial_window_can_judge_silence(state)
+    state.partial_base_samples = SR // 2
+    assert not wsv._partial_window_can_judge_silence(state)
