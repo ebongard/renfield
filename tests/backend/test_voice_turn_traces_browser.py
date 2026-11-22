@@ -65,7 +65,7 @@ class TestBrowserTurnFields:
     @pytest.mark.parametrize(("value", "expected"), [
         (0, 0.0), (3600, 3600.0), (12.5, 12.5),
         (-0.1, None), (3600.1, None), (math.nan, None), (math.inf, None),
-        (True, None), ("3", None), (None, None), ([1], None),
+        (True, None), ("3", None), (None, None), ([1], None), (10**400, None),
     ])
     def test_the_numbers_are_bounded(self, value, expected):
         fields = vts.browser_turn_fields(_vt(audio_duration_s=value, gap_since_answer_s=value))

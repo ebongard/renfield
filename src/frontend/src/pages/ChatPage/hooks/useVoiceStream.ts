@@ -494,6 +494,11 @@ export function useVoiceStream({
             turn_key: turnKeyRef.current ?? '',
           },
         };
+        // The gap belongs to the turn that just ended. A tail final for the
+        // same utterance (the client's stt_flush after a server-VAD end, over
+        // chunks that arrived in between) must not claim it and mark its own
+        // first half "resumed".
+        turnGapRef.current = null;
         setPartialText('');
         onFinal?.(result);
         break;

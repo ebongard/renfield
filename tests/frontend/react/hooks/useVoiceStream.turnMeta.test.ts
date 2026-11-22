@@ -459,4 +459,16 @@ describe('useVoiceStream — voiceTurn on the final transcript', () => {
     emitFinal(ws, { end_reason: 'client_flush' });
     expect(finals[0].voiceTurn.gap_since_answer_s).toBe(0);
   });
+
+  it('a tail final of the same utterance does not reuse the gap', async () => {
+    const finals: FinalTranscript[] = [];
+    const { result } = renderHook(() => useVoiceStream({ onFinal: (r) => finals.push(r) }));
+    const { ws } = await speakAndConnect(result); // tts_request pending -> gap 0
+    await startRecording(result);
+    emitFinal(ws, { end_reason: 'server_vad' });
+    emitFinal(ws, { end_reason: 'client_flush' }); // the stt_flush tail, no new mic start
+    expect(finals).toHaveLength(2);
+    expect(finals[0].voiceTurn.gap_since_answer_s).toBe(0);
+    expect(finals[1].voiceTurn.gap_since_answer_s).toBeNull();
+  });
 });

@@ -268,7 +268,10 @@ def _bounded_seconds(value: object) -> float | None:
     boolean is not a number here, nor NaN/inf."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    value = float(value)
+    try:
+        value = float(value)
+    except OverflowError:  # a JSON integer beyond float range, e.g. 10**400
+        return None
     if not math.isfinite(value) or not 0.0 <= value <= _BROWSER_SECONDS_MAX:
         return None
     return value
