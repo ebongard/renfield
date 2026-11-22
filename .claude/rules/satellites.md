@@ -49,9 +49,10 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
   `timeout` = the cap cut the utterance MID-SENTENCE, and only logging it made a truncated recording
   indistinguishable from a finished sentence (7 cases in 7 days). `truncation_notice()` prepends a DETERMINISTIC
   hint — never a prompt addition — and `turn_end_reason` rides in the `session_end` event.
-- **Never put a user, text or audio into `voice_turn_traces`** (#1613, `VOICE_TURN_TRACES_ENABLED`, dark): the
-  persisted turn-end reason is content-free by contract (test-enforced column list), scheduled fire-and-forget at
-  `audio_end` and never awaited by the turn. Long form: `docs/VOICE_PIPELINE_DESIGN.md` → Turn-end trace.
+- **Never put a user, text or audio into `voice_turn_traces`** (#1613, `VOICE_TURN_TRACES_ENABLED`, dark): content-free
+  by contract (test-enforced column list). Written at the SESSION END (`_end_session_internal`/`force_release`, once),
+  never at `audio_end` — the next session can only start after this one ended, so `resumed` from `audio_end` measured
+  answer latency. Long form: `docs/VOICE_PIPELINE_DESIGN.md` → Turn-end trace.
 - **Never derive a duration from a bounded container.** The turn clock is `_recorded_chunks`; until v1.4.9 the length of
   a buffer capped at 500 chunks (40.0 s) was used, so a limit above 40 s silently never fired.
 - Never commit wake-word models, device MACs/IRKs, enrollment tokens or ambient captures (`data/wakeword-ambient/`).

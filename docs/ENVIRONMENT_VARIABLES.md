@@ -2112,10 +2112,12 @@ ROUTING_TRACES_RETENTION_DAYS=14
 ### Sprachzug-Spuren (#1613)
 
 ```bash
-# Je Sprachzug-Ende eine INHALTSFREIE Zeile in voice_turn_traces schreiben:
-# Quelle, Satelliten-ID, Raum, Endgrund (silence/timeout/button/canceled/unknown,
-# sonst "other"), Aufnahmelänge, VAD-Urteil des Geräts, "resumed". Kein Nutzer,
-# kein Text, kein Audio. Lesen: GET /api/admin/voice-turns/stats?days=14 (Admin).
+# Je beendeter Satelliten-Sitzung eine INHALTSFREIE Zeile in voice_turn_traces
+# schreiben: Quelle, Satelliten-ID, Raum, Endgrund (silence/timeout/button/
+# canceled/unknown vom Gerät; ohne audio_end expired/disconnect/orphaned/unknown;
+# sonst "other"), Aufnahmelänge, VAD-Urteil des Geräts, Aufnahme-Ende,
+# Sitzungsende, "resumed". Kein Nutzer, kein Text, kein Audio.
+# Lesen: GET /api/admin/voice-turns/stats?days=14 (Admin).
 # Aus = kein Task, keine Zeile; die Route antwortet mit enabled=false.
 VOICE_TURN_TRACES_ENABLED=false
 
@@ -2124,9 +2126,9 @@ VOICE_TURN_TRACES_ENABLED=false
 VOICE_TURN_TRACES_RETENTION_DAYS=30
 ```
 
-`resumed` = auf demselben Gerät begann innerhalb von 10 s nach dem ENDE dieses Zuges ein neuer Zug (gemessen vom Ende bis zum Wake-Word des nächsten). Ein bewusst grober Abschneide-Indikator: eine schnelle Rückfrage zählt ebenfalls. Details: `docs/VOICE_PIPELINE_DESIGN.md` → „Turn-end trace".
+Geschrieben wird beim SITZUNGSENDE (nach der Antwort), nicht bei `audio_end`. `resumed` = dasselbe Gerät startete innerhalb von 10 s nach dem SITZUNGSENDE dieses Zuges (`finished_at`) die nächste Sitzung (Wake-Word). Vom Sitzungsende gemessen, weil ein Satellit vorher keine neue Sitzung beginnen kann — ab `audio_end` gemessen hätte der Wert die Antwortdauer abgebildet. Ein bewusst grober Abschneide-Indikator: eine schnelle Rückfrage zählt ebenfalls. Details: `docs/VOICE_PIPELINE_DESIGN.md` → „Turn-end trace".
 
-> **voice-server-seitig** (eigene Config `voice-server/voice_server/config.py`, NICHT diese Backend-`.env`): `MAX_UTTERANCE_SECONDS=600` ist die ferne Obergrenze einer `/ws/voice`-Äußerung (Browser). Bei Erreichen wird das Bisherige finalisiert und der Socket mit Grund `max_utterance_seconds (<N>s)` geschlossen; das Protokoll schreibt eine inhaltsfreie Zeile `reason=max_utterance`. Schutz gegen ein vergessenes offenes Mikrofon, KEINE Diktatgrenze — bis #1613 hart 60 s, was lange Diktate mitten im Satz abschnitt.
+> **voice-server-seitig** (eigene Config `voice-server/voice_server/config.py`, NICHT diese Backend-`.env`): `MAX_UTTERANCE_SECONDS=600` ist die ferne Obergrenze einer `/ws/voice`-Äußerung (Browser). Bei Erreichen wird das Bisherige finalisiert und der Socket mit Grund `max_utterance_seconds (<N>s)` geschlossen; das Protokoll schreibt eine inhaltsfreie Zeile `reason=max_utterance`. Schutz gegen ein vergessenes offenes Mikrofon, KEINE Diktatgrenze — bis #1613 hart 60 s, was lange Diktate mitten im Satz abschnitt. Zwischenergebnisse (`partial_transcript`) transkribieren dabei nur ein Fenster von 30 s (`PARTIAL_WINDOW_S`, Konstante) mit festem Textpräfix davor; die finale Transkription umfasst die ganze Äußerung.
 
 ---
 

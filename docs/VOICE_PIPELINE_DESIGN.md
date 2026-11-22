@@ -897,29 +897,41 @@ A turn ends on silence alone (satellite: Silero VAD + 1.2 s window, capped by
 `vad.max_recording_seconds`; browser: client RMS + the voice-server backstop). How often
 that cuts a speaker off, and why turns end, was invisible: the `turn_end_reason` in the
 satellite history lives in memory, and the cluster has no Prometheus, so a counter would
-reset on every deploy. Step 1 therefore persists a **content-free row per turn end** in
+reset on every deploy. Step 1 therefore persists a **content-free row per finished turn** in
 `voice_turn_traces`, after the routing-trace pattern (`RoutingTrace`,
 `routing_trace_service`, `routing_trace_cleanup`, `ROUTING_TRACES_*`).
 
 - **Row:** `source` (`satellite`; `browser` reserved for step 1's second PR), `device_key`
-  (satellite id) and `room` (configuration, not a person), `reason` from `audio_end` clamped
-  to `silence | timeout | button | canceled | unknown` (else `other`), `audio_seconds`,
-  `vad_speech_seen`, `resumed`, `turn_score` (reserved for the Smart Turn shadow score).
-  No user id, no text, no audio.
-- **Write site:** `satellite_handler.py` at `audio_end`, right after
-  `set_turn_end_reason`: `schedule_voice_turn(...)` creates a fire-and-forget task (strong
-  reference kept in the service), its own DB session, never raises into the turn. Flag
-  `VOICE_TURN_TRACES_ENABLED` off = no task is created. The service lives in `services/`
-  (not `ha_glue/`) so the browser path can reuse it.
-- **Times:** `created_at` is the turn's END (stamped when `audio_end` is handled); the START
-  is `SatelliteSession.started_at` (wall clock at the wake word).
+  (satellite id) and `room` (configuration, not a person), `reason`, `audio_seconds`,
+  `vad_speech_seen`, `created_at`, `finished_at`, `resumed`, `turn_score` (reserved for the
+  Smart Turn shadow score). No user id, no text, no audio.
+- **Reason:** the device's `audio_end` reason (`silence | timeout | button | canceled |
+  unknown`); for a session that ended WITHOUT an `audio_end`, the backend's: the cleanup
+  sweep's recording limit on a LISTENING session → `expired` (never the device's
+  `timeout`), `disconnect`, `orphaned`, anything else `unknown`. Outside the vocabulary →
+  `other`.
+- **Write site: the SESSION END**, not `audio_end`. Every satellite session ends in
+  `SatelliteManager._end_session_internal` (regular end, cleanup sweep, heartbeat
+  disconnect, unregister) or `force_release`; both call `_schedule_turn_trace`, once per
+  session (`trace_scheduled`). At `audio_end` the handler only records on the session the
+  reason, the end-of-recording time, the recorded seconds (the buffer may be gone by the
+  session end) and the device's VAD verdict. The write is fire and forget
+  (`schedule_voice_turn`, strong task reference, own DB session, never raises); flag
+  `VOICE_TURN_TRACES_ENABLED` off = no task. An `audio_end` for an unknown session records
+  nothing. The service lives in `services/` (not `ha_glue/`) so the browser path can reuse it.
+- **Times** (wall clock): START = `SatelliteSession.started_at` (the wake word);
+  `created_at` = end of the RECORDING (`audio_end`); `finished_at` = the session end, AFTER
+  the answer. Without an `audio_end` both are the session end.
 - **`resumed`:** when a turn is recorded, the latest earlier trace of the same source and
-  device whose END lies within `RESUME_WINDOW_SECONDS` (10 s) before the new turn's START is
-  marked `resumed=true`. A deliberately noisy cut-off proxy — a quick follow-up question
-  counts too; the point is a baseline to compare against once the end-of-turn logic changes.
+  device whose `finished_at` lies within `RESUME_WINDOW_SECONDS` (10 s) before the new
+  turn's START is marked `resumed=true`. Measured from the session end because a satellite
+  cannot start its next session before the previous one ended (`start_session` refuses
+  while `current_session_id` is set; the answer runs inline) — measured from `audio_end` it
+  would have tracked answer latency, not cut-offs. A deliberately noisy proxy: a quick
+  follow-up question counts too; the point is a baseline for when the end-of-turn logic changes.
 - **Read:** `GET /api/admin/voice-turns/stats?days=14` (admin): total, counts by
   source × reason, resumed count and rate, `audio_seconds` p50/p90 (`percentile_cont`), counts
-  per room, plus `enabled` and `retention_days`.
+  per room, plus `enabled` and `retention_days`. The window is on `created_at`.
 - **Retention:** `VOICE_TURN_TRACES_RETENTION_DAYS` (30, 1–365), purged by the daily
   built-in `voice_turn_trace_cleanup`, which also runs with the flag off.
 
@@ -929,3 +941,13 @@ hardcoded `MAX_UTTERANCE_S = 60`, which cut long dictation. It is now
 forgotten open microphone, not a dictation limit. At the cap the server still finalizes,
 closes with reason `max_utterance_seconds (<N>s)`, and logs a content-free
 `reason=max_utterance` line.
+
+**Partial window.** Partials run inline in the receive loop every ~0.7 s and used to
+transcribe the WHOLE buffer — quadratic over an utterance, ten times worse at 600 s, and the
+server-VAD backstop (`last_speech_at`) depends on them succeeding. They now cover at most
+`PARTIAL_WINDOW_S` (30 s) from a committed boundary. The client REPLACES its preview with
+each `partial_transcript` (`useVoiceStream.ts`), so once the audio since the boundary exceeds
+the window, the last confident partial's text becomes a fixed prefix and the boundary moves
+to where that partial ended; the preview keeps growing. Without a confident partial (silence)
+the window slides by half. A word at a boundary may be split in the preview only; the final
+transcription covers the whole utterance.
