@@ -204,9 +204,17 @@ class SatelliteSession:
     # logged and never read again -- an utterance truncated at
     # `max_recording_seconds` was indistinguishable from a finished sentence.
     turn_end_reason: str | None = None
+    # Captured at `audio_end` for the turn trace written at session END (#1613):
+    # the buffer may be gone by then. All None for a session that never got an
+    # `audio_end` (expired while listening, a disconnect).
+    recording_ended_at: float | None = None
+    recorded_seconds: float | None = None
+    vad_speech_seen: bool | None = None
     # Set once the `session_end` history record is written, so a retried end
     # (after an attempt that failed past that point) does not write a second.
     end_recorded: bool = False
+    # Set once the turn trace is scheduled; a retried end schedules no second.
+    trace_scheduled: bool = False
 
 
 class SatelliteManager:
@@ -553,6 +561,51 @@ class SatelliteManager:
         session = self.sessions.get(session_id)
         if session:
             session.turn_end_reason = reason
+            # The end of the RECORDING, and its length while the buffer still
+            # exists -- both for the turn trace at session end (#1613).
+            session.recording_ended_at = time.time()
+            session.recorded_seconds = self.recorded_audio_seconds(session_id)
+
+    def set_vad_speech_seen(self, session_id: str, value: bool | None) -> None:
+        """Keep the device's own VAD verdict from `audio_end` on the session."""
+        session = self.sessions.get(session_id)
+        if session:
+            session.vad_speech_seen = value
+
+    def _schedule_turn_trace(self, session: SatelliteSession, end_reason: str) -> None:
+        """Schedule the content-free turn trace at the session's END (#1613).
+
+        Every session end funnels through `_end_session_internal` or
+        `force_release`, both call this. Written here and not at `audio_end`:
+        the next session on the device can only start after this one ended
+        (`start_session` refuses while `current_session_id` is set, and the
+        answer runs inline), so a resume is measured from the session end --
+        never from the recording end, which would measure answer latency.
+        Never raises; flag off = no task.
+        """
+        if session.trace_scheduled:
+            return
+        session.trace_scheduled = True
+        try:
+            from services.voice_turn_trace_service import (
+                schedule_voice_turn,
+                session_end_reason,
+            )
+
+            finished_at = time.time()
+            schedule_voice_turn(
+                source="satellite",
+                device_key=session.satellite_id,
+                room=session.room,
+                reason=session.turn_end_reason or session_end_reason(end_reason),
+                audio_seconds=session.recorded_seconds,
+                vad_speech_seen=session.vad_speech_seen,
+                started_at=session.started_at,
+                recording_ended_at=session.recording_ended_at or finished_at,
+                finished_at=finished_at,
+            )
+        except Exception as e:
+            logger.warning(f"Voice turn trace not scheduled: {error_text_without_content(e)}")
 
     def has_session(self, session_id: str) -> bool:
         """Whether a session id is currently active (cheap membership test).
@@ -861,6 +914,7 @@ class SatelliteManager:
             })
             session.end_recorded = True
             self._update_stats(session.satellite_id, duration, success)
+        self._schedule_turn_trace(session, reason)
 
         # Remove session
         self.sessions.pop(session_id, None)
@@ -904,6 +958,7 @@ class SatelliteManager:
                 })
             except Exception:
                 pass  # The release itself must not fail on the history
+        self._schedule_turn_trace(session, reason)
         logger.warning(f"⚠️ Session force-released: {session_id} ({reason})")
 
     def update_heartbeat(self, satellite_id: str, metrics: dict[str, Any] | None = None, version: str | None = None):

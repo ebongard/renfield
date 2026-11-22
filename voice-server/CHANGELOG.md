@@ -14,6 +14,11 @@ version without a section here. Pushed digests live in `RELEASES.md`.
   forgotten open microphone, not a dictation limit. At the cap the server still
   finalizes, closes with reason `max_utterance_seconds (<N>s)`, and logs a
   content-free `reason=max_utterance` line. (renfield #1613)
+- **Partials transcribe a trailing 30 s window** (`PARTIAL_WINDOW_S`), not the
+  whole buffer: the work no longer grows with the utterance, and the server-VAD
+  backstop keeps getting confident partials on long dictation. The text before
+  the window stays as a fixed prefix, so the client's preview keeps growing;
+  the final transcription still covers everything. (renfield #1613)
 
 ## [0.3.9] — 2026-11-01
 

@@ -120,8 +120,8 @@ async def _add_trace(conn) -> None:
     # `resumed` left out: the server default must fill it.
     await conn.execute(
         text(
-            "INSERT INTO voice_turn_traces (created_at, source, device_key, room, reason)"
-            " VALUES (now(), 'satellite', 'sat-k', 'Küche', 'silence')"
+            "INSERT INTO voice_turn_traces (created_at, finished_at, source, device_key, room, reason)"
+            " VALUES (now(), now(), 'satellite', 'sat-k', 'Küche', 'silence')"
         )
     )
     await conn.commit()
@@ -138,11 +138,12 @@ async def test_round_trip(schema_conn):
 
     columns = await _columns(conn, schema)
     assert set(columns) == {
-        "id", "created_at", "source", "device_key", "room", "reason",
+        "id", "created_at", "finished_at", "source", "device_key", "room", "reason",
         "audio_seconds", "vad_speech_seen", "resumed", "turn_score",
     }
     assert columns["resumed"] == ("boolean", "NO")
     assert columns["device_key"][1] == "YES"
+    assert columns["finished_at"][1] == "NO"
 
     await _add_trace(conn)
     assert (await conn.execute(text("SELECT resumed FROM voice_turn_traces"))).scalar() is False

@@ -56,6 +56,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PARTIAL_INTERVAL_S = 0.7
+# Partials transcribe a TRAILING window of the utterance, never all of it
+# (renfield #1613). They run inline in the receive loop every ~0.7 s; over the
+# whole buffer that work grows with the utterance (quadratic in total), and the
+# 600 s cap would make it ten times worse than the old 60 s. The window starts
+# at a committed boundary: once the audio since that boundary exceeds the
+# window, the last confident partial's text is kept as a fixed prefix and the
+# boundary moves to where that partial ended. The client replaces its preview
+# with every `partial_transcript`, so the prefix keeps the preview growing
+# instead of dropping its beginning. The word at a boundary may be split in the
+# preview; the FINAL transcription still covers the whole utterance.
+PARTIAL_WINDOW_S = 30
 # The utterance cap is `settings.max_utterance_seconds` (MAX_UTTERANCE_SECONDS,
 # default 600 s): a far bound against a forgotten open mic, not a dictation
 # limit (renfield #1613; was a hardcoded 60 s).
@@ -107,11 +118,50 @@ class SessionState:
     # safety net for clients without analyser access.
     last_speech_at: float = 0.0
     speech_seen: bool = False
+    # Partial window (PARTIAL_WINDOW_S): partials cover audio from
+    # `partial_base_samples` on; `partial_base_text` is the preview text of
+    # the audio before it. `partial_tail_*` is the last CONFIDENT partial of
+    # the current window: its text and the sample index where its audio ended.
+    partial_base_samples: int = 0
+    partial_base_text: str = ""
+    partial_tail_text: str = ""
+    partial_tail_end: int = 0
+
+
+def _accumulated_samples(state: SessionState) -> int:
+    return sum(a.size for a in state.audio_pcm)
 
 
 def _accumulated_seconds(state: SessionState) -> float:
-    total = sum(a.size for a in state.audio_pcm)
-    return total / 16000.0
+    return _accumulated_samples(state) / 16000.0
+
+
+def _pcm_from(state: SessionState, start: int, total: int) -> np.ndarray:
+    """The buffered PCM from sample `start` to the end, copying only that part
+    (walks the chunk list from the back, so the cost is bounded by the slice)."""
+    parts: list[np.ndarray] = []
+    pos = total
+    for chunk in reversed(state.audio_pcm):
+        if pos <= start:
+            break
+        chunk_start = pos - chunk.size
+        parts.append(chunk[max(0, start - chunk_start):])
+        pos = chunk_start
+    if not parts:
+        return np.zeros(0, dtype=np.float32)
+    parts.reverse()
+    return np.concatenate(parts)
+
+
+def _reset_partial_window(state: SessionState) -> None:
+    state.partial_base_samples = 0
+    state.partial_base_text = ""
+    state.partial_tail_text = ""
+    state.partial_tail_end = 0
+
+
+def _join_text(*parts: str) -> str:
+    return " ".join(p.strip() for p in parts if p and p.strip())
 
 
 # Per-connection send serialization. TTS streams frames from a background
@@ -168,7 +218,22 @@ async def _maybe_emit_partial(ws: WebSocket, state: SessionState, stt: STTServic
         return
 
     state.last_partial_at = now
-    audio = np.concatenate(state.audio_pcm)
+    total = _accumulated_samples(state)
+    window = int(PARTIAL_WINDOW_S * 16000)
+    if total - state.partial_base_samples > window:
+        if state.partial_tail_end > state.partial_base_samples:
+            # Commit the last confident partial as the fixed prefix.
+            state.partial_base_text = _join_text(state.partial_base_text, state.partial_tail_text)
+            state.partial_base_samples = state.partial_tail_end
+        if total - state.partial_base_samples > window:
+            # No confident partial covered the older audio (silence, noise):
+            # nothing to keep, so the window slides -- by half, so speech that
+            # starts at its end gets a full context, not a one-second window
+            # committed on every step.
+            state.partial_base_samples = total - window // 2
+        state.partial_tail_text = ""
+        state.partial_tail_end = state.partial_base_samples
+    audio = _pcm_from(state, state.partial_base_samples, total)
     if audio.size < 16000 * 0.3:
         return
 
@@ -197,7 +262,11 @@ async def _maybe_emit_partial(ws: WebSocket, state: SessionState, stt: STTServic
         if last_conf < PARTIAL_CONFIDENCE_FLOOR:
             return
 
-        combined = " ".join(t.strip() for t in seg_texts if t.strip())
+        tail_text = _join_text(*seg_texts)
+        if tail_text:
+            state.partial_tail_text = tail_text
+            state.partial_tail_end = total
+        combined = _join_text(state.partial_base_text, tail_text)
         if combined and combined != state.last_partial_text:
             state.last_partial_text = combined
             await _send_json(ws, {
@@ -235,6 +304,7 @@ async def _finalize(
         logger.error("final STT failed: %s", e)
         await _send_error(ws, "stt_failed", str(e))
         state.audio_pcm.clear()
+        _reset_partial_window(state)
         return
 
     # Read the auto-detected language from the side-channel populated
@@ -269,6 +339,7 @@ async def _finalize(
     state.last_partial_at = 0.0
     state.last_speech_at = 0.0
     state.speech_seen = False
+    _reset_partial_window(state)
     # Inter-utterance protocol: close the decoder and DON'T auto-
     # restart. The next utterance starts when the client sends a
     # fresh session_start, which spawns a clean decoder. Chunks
@@ -551,6 +622,7 @@ async def ws_voice(
                     state.draining = False  # back to "live recording" state
                     state.audio_pcm.clear()
                     state.last_partial_text = ""
+                    _reset_partial_window(state)
                     state.last_partial_at = 0.0
                     state.last_speech_at = 0.0
                     state.speech_seen = False

@@ -3,7 +3,8 @@
 Backs ``GET /api/admin/voice-turns/stats``. Filled only while
 ``VOICE_TURN_TRACES_ENABLED`` is on; rows hold no user, no text and no audio
 (device id, room, turn-end reason, recording length, the device's VAD verdict,
-a resumed flag) and are purged after ``VOICE_TURN_TRACES_RETENTION_DAYS``.
+end-of-recording and session-end times, a resumed flag) and are purged after
+``VOICE_TURN_TRACES_RETENTION_DAYS``. Written at the satellite SESSION end.
 New table, no backfill.
 
 Revision ID: pc20261122_voice_turn_traces
@@ -36,7 +37,9 @@ def upgrade() -> None:
     op.create_table(
         TABLE,
         sa.Column("id", sa.Integer, primary_key=True),
+        # End of the recording (audio_end) and the session end after the answer.
         sa.Column("created_at", sa.DateTime, nullable=False),
+        sa.Column("finished_at", sa.DateTime, nullable=False),
         sa.Column("source", sa.String(16), nullable=False),
         sa.Column("device_key", sa.String(64), nullable=True),
         sa.Column("room", sa.String(64), nullable=True),

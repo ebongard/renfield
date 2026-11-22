@@ -18,15 +18,22 @@ the ``resumed`` flag.
 
 Times, and what "resumed" means:
 
-- A trace's ``created_at`` is the turn's END: it is stamped at ``audio_end``
-  (``schedule_voice_turn`` takes the time before the task runs).
-- A turn's START is the session start the caller passes (``started_at``, wall
-  clock seconds; for a satellite ``SatelliteSession.started_at``, i.e. the
-  wake word).
+- A turn has three times, all wall clock: its START (``started_at``; for a
+  satellite ``SatelliteSession.started_at``, i.e. the wake word), the end of
+  its RECORDING (``created_at``; stamped at ``audio_end``) and its FINISH
+  (``finished_at``; the session end, i.e. AFTER the answer was spoken). A turn
+  that never got an ``audio_end`` (expired while listening, a disconnect) has
+  ``created_at == finished_at``.
+- The trace is written at the session END, not at ``audio_end``: a satellite
+  can only start its next session after the previous one ended
+  (``start_session`` refuses while ``current_session_id`` is set, and the
+  answer runs inline). Measured from ``audio_end``, a resume would depend on
+  how fast the answer was -- it would measure LLM latency, not cut-offs.
 - When a turn is recorded, the latest earlier trace of the SAME source and
-  ``device_key`` whose END lies within ``RESUME_WINDOW_SECONDS`` before the new
-  turn's START is marked ``resumed=true``: the speaker came back right away,
-  which is what a turn cut off mid-sentence looks like.
+  ``device_key`` whose ``finished_at`` lies within ``RESUME_WINDOW_SECONDS``
+  before the new turn's START is marked ``resumed=true``: the speaker woke the
+  device again right after the answer, which is what a turn cut off
+  mid-sentence looks like.
 
 This is a known NOISY proxy: a quick follow-up question also counts as
 resumed. That noise is the point of measuring -- the rate gives a baseline to
@@ -35,6 +42,7 @@ compare against once the end-of-turn decision changes.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
@@ -49,11 +57,23 @@ from utils.log_safety import error_text_without_content
 #: END marks the previous turn as resumed.
 RESUME_WINDOW_SECONDS = 10
 
-#: The turn-end reasons a device reports in ``audio_end``. Anything else is
-#: stored as ``other``, so a device cannot fill the column with free text.
-#: The browser path (a later change) adds its own reasons here.
-REASONS = frozenset({"silence", "timeout", "button", "canceled", "unknown"})
+#: The turn-end reasons a device reports in ``audio_end``, plus the ones the
+#: backend knows for a session that ended WITHOUT an ``audio_end`` (see
+#: ``session_end_reason``). Anything else is stored as ``other``, so a device
+#: cannot fill the column with free text. The browser path (a later change)
+#: adds its own reasons here.
+REASONS = frozenset({
+    "silence", "timeout", "button", "canceled", "unknown",
+    "expired", "disconnect", "orphaned",
+})
 OTHER_REASON = "other"
+
+#: The backend's reason for ending a session WITHOUT an ``audio_end`` -> the
+#: trace reason. ``timeout`` there is the cleanup sweep's recording limit
+#: (``device_session_timeout``) on a session still LISTENING, so it is stored
+#: as ``expired`` -- never confused with the device's own ``timeout`` (its
+#: ``vad.max_recording_seconds`` cut the utterance).
+_SESSION_END_REASONS = {"timeout": "expired", "disconnect": "disconnect", "orphaned": "orphaned"}
 
 SOURCES = frozenset({"satellite", "browser"})
 
@@ -70,6 +90,11 @@ def clamp_reason(reason: object) -> str:
     return reason if isinstance(reason, str) and reason in REASONS else OTHER_REASON
 
 
+def session_end_reason(end_reason: object) -> str:
+    """The trace reason for a session that ended without an ``audio_end``."""
+    return _SESSION_END_REASONS.get(end_reason, "unknown") if isinstance(end_reason, str) else "unknown"
+
+
 def _naive_utc_from_epoch(seconds: float) -> datetime:
     return datetime.fromtimestamp(seconds, UTC).replace(tzinfo=None)
 
@@ -83,9 +108,13 @@ async def record_voice_turn(
     audio_seconds: float | None = None,
     vad_speech_seen: bool | None = None,
     started_at: float | None = None,
-    ended_at: datetime | None = None,
+    recording_ended_at: float | None = None,
+    finished_at: float | None = None,
 ) -> None:
-    """Persist one turn end and mark the device's previous turn as resumed.
+    """Persist one finished turn and mark the device's previous turn as resumed.
+
+    Times are wall-clock epoch seconds (``time.time()``). ``finished_at``
+    defaults to now, ``recording_ended_at`` to ``finished_at``.
 
     Re-asserts the flag so a caller that scheduled it never writes once the
     switch is off. Uses its own DB session. Best-effort: a failed write is
@@ -99,7 +128,12 @@ async def record_voice_turn(
     try:
         from services.database import AsyncSessionLocal
 
-        end = ended_at or datetime.now(UTC).replace(tzinfo=None)
+        finished = _naive_utc_from_epoch(finished_at) if finished_at is not None else (
+            datetime.now(UTC).replace(tzinfo=None)
+        )
+        recording_end = (
+            _naive_utc_from_epoch(recording_ended_at) if recording_ended_at is not None else finished
+        )
         device = device_key[:_NAME_MAX] if device_key else None
 
         async with AsyncSessionLocal() as db:
@@ -110,10 +144,10 @@ async def record_voice_turn(
                     .where(
                         VoiceTurnTrace.source == source,
                         VoiceTurnTrace.device_key == device,
-                        VoiceTurnTrace.created_at >= start - timedelta(seconds=RESUME_WINDOW_SECONDS),
-                        VoiceTurnTrace.created_at < end,
+                        VoiceTurnTrace.finished_at >= start - timedelta(seconds=RESUME_WINDOW_SECONDS),
+                        VoiceTurnTrace.finished_at <= start,
                     )
-                    .order_by(VoiceTurnTrace.created_at.desc(), VoiceTurnTrace.id.desc())
+                    .order_by(VoiceTurnTrace.finished_at.desc(), VoiceTurnTrace.id.desc())
                     .limit(1)
                 )).scalar()
                 if previous_id is not None:
@@ -123,7 +157,8 @@ async def record_voice_turn(
                         .values(resumed=True)
                     )
             db.add(VoiceTurnTrace(
-                created_at=end,
+                created_at=recording_end,
+                finished_at=finished,
                 source=source,
                 device_key=device,
                 room=room[:_NAME_MAX] if room else None,
@@ -147,14 +182,14 @@ def _log_task_failure(task: asyncio.Task) -> None:
 
 
 def schedule_voice_turn(**fields) -> asyncio.Task | None:
-    """Fire-and-forget ``record_voice_turn``; never delays or fails the turn.
+    """Fire-and-forget ``record_voice_turn``; never delays or fails the caller.
 
-    The END time is taken HERE, at ``audio_end``, not when the task runs.
-    Flag off = no task at all, so the voice path is unchanged.
+    ``finished_at`` is taken HERE, when the session ends, not when the task
+    runs. Flag off = no task at all, so the voice path is unchanged.
     """
     if not settings.voice_turn_traces_enabled:
         return None
-    fields.setdefault("ended_at", datetime.now(UTC).replace(tzinfo=None))
+    fields.setdefault("finished_at", time.time())
     task = asyncio.create_task(record_voice_turn(**fields))
     _background_tasks.add(task)
     task.add_done_callback(_log_task_failure)

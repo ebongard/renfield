@@ -1,11 +1,13 @@
-"""Voice turn traces (#1613): a content-free row per voice turn end, the resume
-proxy, the aggregates, the cleanup, the admin route and the satellite write site.
+"""Voice turn traces (#1613): a content-free row per finished voice turn, the
+resume proxy, the aggregates, the cleanup, the admin route and the write site
+(the satellite SESSION end, not ``audio_end``).
 
 Mirrors ``test_routing_traces.py``. Real Postgres (``percentile_cont``)."""
 from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -27,8 +29,8 @@ def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-def _epoch(naive_utc: datetime) -> float:
-    return naive_utc.replace(tzinfo=UTC).timestamp()
+def _naive(epoch: float) -> datetime:
+    return datetime.fromtimestamp(epoch, UTC).replace(tzinfo=None)
 
 
 async def _count(db) -> int:
@@ -38,16 +40,16 @@ async def _count(db) -> int:
 async def _rows(db) -> list[VoiceTurnTrace]:
     db.expire_all()
     return list((await db.execute(
-        select(VoiceTurnTrace).order_by(VoiceTurnTrace.created_at, VoiceTurnTrace.id)
+        select(VoiceTurnTrace).order_by(VoiceTurnTrace.finished_at, VoiceTurnTrace.id)
     )).scalars().all())
 
 
 async def _add(db, *, source="satellite", reason="silence", room="Küche", device_key="sat-k",
                audio_seconds=2.0, resumed=False, age_days=0.0):
+    at = _now() - timedelta(days=age_days)
     row = VoiceTurnTrace(
         source=source, reason=reason, room=room, device_key=device_key,
-        audio_seconds=audio_seconds, resumed=resumed,
-        created_at=_now() - timedelta(days=age_days),
+        audio_seconds=audio_seconds, resumed=resumed, created_at=at, finished_at=at,
     )
     db.add(row)
     await db.commit()
@@ -57,7 +59,8 @@ async def _add(db, *, source="satellite", reason="silence", room="Küche", devic
 def _turn(**overrides) -> dict:
     fields = dict(
         source="satellite", device_key="sat-k", room="Küche", reason="silence",
-        audio_seconds=3.5, vad_speech_seen=True, started_at=None, ended_at=None,
+        audio_seconds=3.5, vad_speech_seen=True,
+        started_at=None, recording_ended_at=None, finished_at=None,
     )
     fields.update(overrides)
     return fields
@@ -68,7 +71,7 @@ def test_the_row_carries_no_person_no_text_no_audio():
     """The content-free contract IS the column list: a user id, a transcript or
     an audio column added later must fail here first."""
     assert set(VoiceTurnTrace.__table__.c.keys()) == {
-        "id", "created_at", "source", "device_key", "room", "reason",
+        "id", "created_at", "finished_at", "source", "device_key", "room", "reason",
         "audio_seconds", "vad_speech_seen", "resumed", "turn_score",
     }
     assert not VoiceTurnTrace.__table__.foreign_keys
@@ -81,6 +84,19 @@ def test_the_indexes_are_declared_in_the_orm():
         "idx_voice_turn_traces_created": ["created_at"],
         "idx_voice_turn_traces_source_created": ["source", "created_at"],
     }
+
+
+@pytest.mark.parametrize(("end_reason", "expected"), [
+    ("timeout", "expired"), ("disconnect", "disconnect"), ("orphaned", "orphaned"),
+    ("completed", "unknown"), ("end_failed", "unknown"), (None, "unknown"),
+])
+def test_a_session_without_audio_end_gets_the_backends_reason(end_reason, expected):
+    """The sweep's `timeout` (recording limit on a LISTENING session) is stored
+    as `expired`, never as the device's own `timeout`."""
+    from services.voice_turn_trace_service import REASONS, session_end_reason
+
+    assert session_end_reason(end_reason) == expected
+    assert expected in REASONS
 
 
 # ------------------------------------------------------------------ record
@@ -101,8 +117,10 @@ class TestRecord:
     ):
         from services.voice_turn_trace_service import record_voice_turn
 
-        end = _now()
-        await record_voice_turn(**_turn(ended_at=end, started_at=_epoch(end) - 4))
+        start = time.time() - 20
+        await record_voice_turn(**_turn(
+            started_at=start, recording_ended_at=start + 4, finished_at=start + 16,
+        ))
         (row,) = await _rows(db_session)
         assert (row.source, row.device_key, row.room, row.reason) == (
             "satellite", "sat-k", "Küche", "silence",
@@ -111,7 +129,19 @@ class TestRecord:
         assert row.vad_speech_seen is True
         assert row.resumed is False
         assert row.turn_score is None
-        assert row.created_at == end, "created_at is the turn's END"
+        assert row.created_at == _naive(start + 4), "created_at is the end of the RECORDING"
+        assert row.finished_at == _naive(start + 16), "finished_at is the session end"
+
+    async def test_without_a_recording_end_both_times_are_the_finish(
+        self, db_session, own_session_to_test_db, traces_on,
+    ):
+        from services.voice_turn_trace_service import record_voice_turn
+
+        end = time.time()
+        await record_voice_turn(**_turn(reason="expired", audio_seconds=None, finished_at=end))
+        (row,) = await _rows(db_session)
+        assert row.created_at == row.finished_at == _naive(end)
+        assert row.audio_seconds is None
 
     @pytest.mark.parametrize("reported", ["mumble", "", None, 42, "SILENCE"])
     async def test_an_unknown_reason_is_stored_as_other(
@@ -123,7 +153,7 @@ class TestRecord:
         (row,) = await _rows(db_session)
         assert row.reason == "other"
 
-    @pytest.mark.parametrize("reported", ["silence", "timeout", "button", "canceled", "unknown"])
+    @pytest.mark.parametrize("reported", ["silence", "timeout", "button", "canceled", "unknown", "expired"])
     async def test_a_known_reason_is_kept(self, db_session, own_session_to_test_db, traces_on, reported):
         from services.voice_turn_trace_service import record_voice_turn
 
@@ -156,7 +186,7 @@ class TestRecord:
     ):
         from services import voice_turn_trace_service as svc
 
-        task = svc.schedule_voice_turn(**{k: v for k, v in _turn().items() if k != "ended_at"})
+        task = svc.schedule_voice_turn(**{k: v for k, v in _turn().items() if k != "finished_at"})
         assert task is not None
         assert task in svc._background_tasks, "an unreferenced task can be collected mid-flight"
         await task
@@ -167,37 +197,44 @@ class TestRecord:
 # ------------------------------------------------------------------ resume
 @pytest.mark.database
 class TestResume:
-    async def _two_turns(self, *, gap_seconds, first=None, second=None):
-        """A first turn ending at T, a second starting ``gap_seconds`` after T."""
+    """The REAL ordering: a turn is recorded, then answered, then its session
+    ends; only then can the device start the next session."""
+
+    async def _two_turns(self, *, answer_seconds, rewake_after, second=None):
         from services.voice_turn_trace_service import record_voice_turn
 
-        first_end = _now() - timedelta(seconds=60)
+        t0 = time.time() - 300
+        first = dict(started_at=t0, recording_ended_at=t0 + 4)
+        first["finished_at"] = first["recording_ended_at"] + answer_seconds
+        await record_voice_turn(**_turn(**first))
+        start2 = first["finished_at"] + rewake_after
         await record_voice_turn(**_turn(
-            ended_at=first_end, started_at=_epoch(first_end) - 5, **(first or {}),
-        ))
-        second_start = first_end + timedelta(seconds=gap_seconds)
-        await record_voice_turn(**_turn(
-            ended_at=second_start + timedelta(seconds=4), started_at=_epoch(second_start),
+            started_at=start2, recording_ended_at=start2 + 3, finished_at=start2 + 10,
             **(second or {}),
         ))
 
-    @pytest.mark.parametrize(("gap", "resumed"), [(0.5, True), (9.5, True), (10.5, False), (30, False)])
-    async def test_same_device_within_the_window(
-        self, db_session, own_session_to_test_db, traces_on, gap, resumed,
+    @pytest.mark.parametrize(("answer", "rewake", "resumed"), [
+        (12, 2, True),    # answered for 12 s, re-wake 2 s after the session end
+        (12, 15, False),  # negative control: 15 s after the session end
+        (30, 2, True),    # answer latency must not matter
+        (12, 9.5, True),
+        (12, 10.5, False),
+    ])
+    async def test_measured_from_the_session_end(
+        self, db_session, own_session_to_test_db, traces_on, answer, rewake, resumed,
     ):
-        """The window runs from the previous turn's END to the new turn's START.
-        10.5 s and 30 s are the negative control on the same harness."""
-        await self._two_turns(gap_seconds=gap)
+        await self._two_turns(answer_seconds=answer, rewake_after=rewake)
         first, second = await _rows(db_session)
         assert first.resumed is resumed
         assert second.resumed is False, "the newest turn is never resumed yet"
 
     async def test_another_device_does_not_resume(self, db_session, own_session_to_test_db, traces_on):
-        await self._two_turns(gap_seconds=2, second={"device_key": "sat-w", "room": "Wohnzimmer"})
+        await self._two_turns(answer_seconds=12, rewake_after=2,
+                              second={"device_key": "sat-w", "room": "Wohnzimmer"})
         assert [r.resumed for r in await _rows(db_session)] == [False, False]
 
     async def test_another_source_does_not_resume(self, db_session, own_session_to_test_db, traces_on):
-        await self._two_turns(gap_seconds=2, second={"source": "browser"})
+        await self._two_turns(answer_seconds=12, rewake_after=2, second={"source": "browser"})
         assert [r.resumed for r in await _rows(db_session)] == [False, False]
 
     async def test_without_a_start_time_nothing_is_resumed(
@@ -205,21 +242,21 @@ class TestResume:
     ):
         from services.voice_turn_trace_service import record_voice_turn
 
-        await self._two_turns(gap_seconds=30)
+        await self._two_turns(answer_seconds=12, rewake_after=30)
         await record_voice_turn(**_turn(started_at=None))
         assert [r.resumed for r in await _rows(db_session)] == [False, False, False]
 
     async def test_only_the_latest_previous_turn_is_marked(
         self, db_session, own_session_to_test_db, traces_on,
     ):
-        """Two earlier turns inside the window: only the one just before counts."""
+        """Two earlier turns finished inside the window: only the last counts."""
         from services.voice_turn_trace_service import record_voice_turn
 
-        base = _now() - timedelta(seconds=60)
-        await record_voice_turn(**_turn(ended_at=base))
-        await record_voice_turn(**_turn(ended_at=base + timedelta(seconds=3)))
-        start = base + timedelta(seconds=5)
-        await record_voice_turn(**_turn(ended_at=start + timedelta(seconds=2), started_at=_epoch(start)))
+        base = time.time() - 60
+        await record_voice_turn(**_turn(finished_at=base))
+        await record_voice_turn(**_turn(finished_at=base + 3))
+        start = base + 5
+        await record_voice_turn(**_turn(started_at=start, finished_at=start + 8))
         assert [r.resumed for r in await _rows(db_session)] == [False, True, False]
 
 
@@ -373,7 +410,7 @@ class TestRoute:
         assert resp.status_code == 422
 
 
-# -------------------------------------------------- the satellite write site
+# ------------------------------------------- the write site: the session end
 class _FakeSatelliteSocket:
     """Plays text frames into ``satellite_websocket``, then disconnects."""
 
@@ -445,16 +482,20 @@ def satellite_env(monkeypatch, traces_on):
     return handler, mgr, whisper, svc, recorded
 
 
-async def _run_turn(handler, mgr, *, frame_extra: dict | None = None):
-    frame = {"type": "audio_end", "session_id": "s1", "reason": "timeout", **(frame_extra or {})}
+async def _drain(svc) -> None:
+    await asyncio.gather(*list(svc._background_tasks), return_exceptions=True)
+
+
+async def _run_turn(handler, mgr, *, frame_extra: dict | None = None, session_id: str = "s1"):
+    """Register, wake (session s1), buffer 3.12 s, then play one `audio_end`."""
+    frame = {"type": "audio_end", "session_id": session_id, "reason": "timeout", **(frame_extra or {})}
     ws = _FakeSatelliteSocket([frame])
     await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=ws, capabilities={})
     await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
     started_at = mgr.sessions["s1"].started_at
     mgr.buffer_audio_bytes("s1", b"\0" * 99840, 1)  # 3.12 s of PCM
     await handler.satellite_websocket(ws, token=None)
-    ends = [e["details"] for e in mgr._satellite_history["sat-bad"] if e["type"] == "session_end"]
-    return started_at, ends, ws
+    return started_at, ws
 
 
 def _last_state(ws) -> dict:
@@ -463,15 +504,17 @@ def _last_state(ws) -> dict:
 
 
 @pytest.mark.unit
-class TestSatelliteWriteSite:
-    async def test_audio_end_schedules_exactly_one_trace(self, satellite_env):
+class TestSessionEndWriteSite:
+    async def test_a_turn_with_audio_end_writes_exactly_one_trace(self, satellite_env):
         handler, mgr, whisper, svc, recorded = satellite_env
-        started_at, ends, _ws = await _run_turn(handler, mgr, frame_extra={"vad_speech_seen": True})
-        await asyncio.gather(*list(svc._background_tasks))
+        before = time.time()
+        started_at, _ws = await _run_turn(handler, mgr, frame_extra={"vad_speech_seen": True})
+        await _drain(svc)
 
-        assert len(recorded) == 1
+        assert len(recorded) == 1, "one trace per turn: none at audio_end, one at the session end"
         fields = recorded[0]
-        assert fields.pop("ended_at") is not None
+        recording_end, finished = fields.pop("recording_ended_at"), fields.pop("finished_at")
+        assert before <= recording_end <= finished <= time.time()
         assert fields == {
             "source": "satellite",
             "device_key": "sat-bad",
@@ -481,15 +524,68 @@ class TestSatelliteWriteSite:
             "vad_speech_seen": True,
             "started_at": started_at,
         }
-        assert len(ends) == 1, "the turn still ran to its end"
         whisper.transcribe_bytes.assert_awaited()
+
+    async def test_the_trace_is_written_after_the_answer_not_at_audio_end(self, satellite_env):
+        """Negative control for the old write site: while the turn is still
+        being answered, nothing is scheduled yet."""
+        handler, mgr, whisper, svc, recorded = satellite_env
+        seen_during_stt: list[int] = []
+
+        async def _stt(*_a, **_k):
+            await _drain(svc)
+            seen_during_stt.append(len(recorded))
+            return ""
+
+        whisper.transcribe_bytes = _stt
+        await _run_turn(handler, mgr)
+        await _drain(svc)
+        assert seen_during_stt == [0]
+        assert len(recorded) == 1
+
+    async def test_a_stale_audio_end_writes_no_trace(self, satellite_env):
+        """An `audio_end` for a session id the backend does not know."""
+        handler, mgr, _whisper, svc, recorded = satellite_env
+        ws = _FakeSatelliteSocket([{"type": "audio_end", "session_id": "gibt-es-nicht", "reason": "silence"}])
+        await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=ws, capabilities={})
+        await handler.satellite_websocket(ws, token=None)
+        await _drain(svc)
+        assert recorded == []
+
+    async def test_an_expired_session_writes_one_expired_trace(self, satellite_env):
+        """Woken, never sent `audio_end`; the cleanup sweep ends it."""
+        _handler, mgr, _whisper, svc, recorded = satellite_env
+        ws = _FakeSatelliteSocket([])
+        await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=ws, capabilities={})
+        await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
+        mgr.sessions["s1"].started_at -= mgr.session_timeout + 1
+        await mgr.cleanup_stale()
+        await mgr.cleanup_stale()  # a second sweep writes no second trace
+        await _drain(svc)
+
+        assert "s1" not in mgr.sessions
+        (fields,) = recorded
+        assert fields["reason"] == "expired"
+        assert fields["audio_seconds"] is None
+        assert fields["vad_speech_seen"] is None
+        assert fields["recording_ended_at"] == fields["finished_at"]
+
+    async def test_a_force_released_session_writes_one_trace(self, satellite_env):
+        _handler, mgr, _whisper, svc, recorded = satellite_env
+        ws = _FakeSatelliteSocket([])
+        await mgr.register(satellite_id="sat-bad", room="Badezimmer", websocket=ws, capabilities={})
+        await mgr.start_session("sat-bad", "hey_renfield", 0.9, session_id="s1")
+        mgr.set_turn_end_reason("s1", "silence")
+        mgr.force_release("s1", reason="end_failed")
+        await mgr.end_session("s1")  # already gone: no second trace
+        await _drain(svc)
+        assert [f["reason"] for f in recorded] == ["silence"]
 
     async def test_flag_off_schedules_nothing(self, satellite_env, monkeypatch):
         handler, mgr, whisper, svc, recorded = satellite_env
         monkeypatch.setattr(settings, "voice_turn_traces_enabled", False)
-        _started, ends, _ws = await _run_turn(handler, mgr)
+        await _run_turn(handler, mgr)
         assert recorded == [] and not svc._background_tasks
-        assert len(ends) == 1
         whisper.transcribe_bytes.assert_awaited()
 
     async def test_a_raising_record_does_not_stop_the_turn(self, satellite_env, monkeypatch):
@@ -499,20 +595,20 @@ class TestSatelliteWriteSite:
             raise RuntimeError("trace store down")
 
         monkeypatch.setattr(svc, "record_voice_turn", _boom)
-        _started, ends, ws = await _run_turn(handler, mgr)
-        await asyncio.gather(*list(svc._background_tasks), return_exceptions=True)
-        assert len(ends) == 1
+        _started, ws = await _run_turn(handler, mgr)
+        await _drain(svc)
+        assert "s1" not in mgr.sessions
         whisper.transcribe_bytes.assert_awaited()
         assert _last_state(ws) == {"type": "state", "state": "idle"}
 
-    async def test_a_raising_scheduler_does_not_stop_the_turn(self, satellite_env, monkeypatch):
-        handler, mgr, whisper, _svc, _recorded = satellite_env
+    async def test_a_raising_scheduler_does_not_stop_the_session_end(self, satellite_env, monkeypatch):
+        handler, mgr, whisper, svc, _recorded = satellite_env
 
         def _boom(**_fields):
             raise RuntimeError("no loop")
 
-        monkeypatch.setattr(handler, "schedule_voice_turn", _boom)
-        _started, ends, ws = await _run_turn(handler, mgr)
-        assert len(ends) == 1
+        monkeypatch.setattr(svc, "schedule_voice_turn", _boom)
+        _started, ws = await _run_turn(handler, mgr)
+        assert "s1" not in mgr.sessions, "the session still ended"
         whisper.transcribe_bytes.assert_awaited()
         assert _last_state(ws) == {"type": "state", "state": "idle"}
