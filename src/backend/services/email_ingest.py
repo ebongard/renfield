@@ -88,7 +88,10 @@ def resolve_mailbox_target(mailbox_id: str) -> MailboxTarget | None:
                 kb_name=str(entry.get("kb") or "").strip() or "Eingang",
             )
         except (ValueError, TypeError, AttributeError) as exc:
-            logger.warning(f"email-ingest: skipping malformed mailbox entry {entry!r}: {exc}")
+            logger.warning(
+                f"email-ingest: skipping malformed mailbox entry id={entry.get('id')!r}: "
+                f"{error_text_without_content(exc)}"
+            )
             continue
     return None
 

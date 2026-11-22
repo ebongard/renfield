@@ -784,7 +784,8 @@ class QueryOrchestrator:
                 # handlers don't trip over a missing plugin_data/steps key.
                 logger.error(
                     f"Orchestrator: sub-agent [{sq.get('role','?')}] raised "
-                    f"unexpectedly (sink contract violated): {result!r}"
+                    f"unexpectedly (sink contract violated): {type(result).__name__}: "
+                    f"{error_text_without_content(result)}"
                 )
                 result = _failed_sub_result(
                     sq.get("role") if isinstance(sq, dict) else "?",

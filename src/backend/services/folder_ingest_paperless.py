@@ -39,7 +39,7 @@ from models.database import (
     Document,
 )
 from services.folder_ingest import _PAPERLESS_SETTLED, IngestMeta, PaperlessLeg
-from utils.log_safety import error_text_without_content
+from utils.log_safety import error_text_without_content, logged_content
 
 
 class PaperlessResolveError(Exception):
@@ -233,12 +233,12 @@ async def resolve_or_create_correspondent(
         return created.get("existing_name") or value  # MCP substring match → reuse
     if created.get("id"):
         logger.info(
-            f"folder-ingest paperless: auto-created correspondent {value!r} "
+            f"folder-ingest paperless: auto-created correspondent {logged_content(value)} "
             f"(id={created.get('id')})"
         )
         return created.get("name") or value
     logger.warning(
-        f"folder-ingest paperless: create_correspondent failed for {value!r}: "
+        f"folder-ingest paperless: create_correspondent failed for {logged_content(value)}: "
         f"{created.get('error')}"
     )
     if raise_on_error:
@@ -310,9 +310,11 @@ async def resolve_or_create_taxonomy(
     if created.get("error") == "already_exists":
         return created.get("existing_name") or value
     if created.get("id"):
-        logger.info(f"folder-ingest paperless: auto-created {kind} {value!r} (id={created.get('id')})")
+        logger.info(f"folder-ingest paperless: auto-created {kind} {logged_content(value)} (id={created.get('id')})")
         return created.get("name") or value
-    logger.warning(f"folder-ingest paperless: create {kind} failed for {value!r}: {created.get('error')}")
+    logger.warning(
+            f"folder-ingest paperless: create {kind} failed for {logged_content(value)}: {created.get('error')}"
+        )
     if raise_on_error:
         raise PaperlessResolveError(f"create {kind} failed: {created.get('error')}")
     return None

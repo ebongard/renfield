@@ -196,7 +196,11 @@ class AudioOutputService:
                     "tracks": json.dumps(tracks),
                 },
             )
-            logger.info(f"🔊 DLNA play_tracks result: {result}")
+            logger.info(
+                f"🔊 DLNA play_tracks result: success={result.get('success')!r} "
+                f"message={logged_content(result.get('message'))}"
+                if isinstance(result, dict) else f"🔊 DLNA play_tracks result: {type(result).__name__}"
+            )
 
             if result.get("success"):
                 logger.info(f"🔊 Playing TTS audio on DLNA renderer {renderer_name}")

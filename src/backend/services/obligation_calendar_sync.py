@@ -135,7 +135,7 @@ class ObligationCalendarSync:
         except (json.JSONDecodeError, TypeError):
             return None
         if not isinstance(inner, dict) or inner.get("error") or inner.get("success") is False:
-            logger.warning(f"calendar sync: {tool} inner error: {inner}")
+            logger.warning(f"calendar sync: {tool} inner error: {logged_content(inner)}")
             return None
         # create/update → {"success":true,"event":{...}}; delete → {"success":true,"message":...}
         return inner.get("event", inner)

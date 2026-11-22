@@ -381,7 +381,7 @@ def _coerce_arguments(arguments: dict, input_schema: dict) -> dict:
                     break
             if target_field:
                 logger.info(
-                    f"🔄 Coercing '{key}': \"{value}\" → {{\"{target_field}\": \"{value}\"}}"
+                    f"🔄 Coercing '{key}': {logged_content(value)} → {{\"{target_field}\": …}}"
                 )
                 coerced[key] = {target_field: value}
         elif "enum" in prop_schema:
@@ -402,11 +402,11 @@ def _coerce_arguments(arguments: dict, input_schema: dict) -> dict:
                     if default is not None:
                         matched = default
                         logger.info(
-                            f"🔄 Enum '{key}': \"{value}\" not in {enum_values}, using default \"{default}\""
+                            f"🔄 Enum '{key}': {logged_content(value)} not in {enum_values}, using default \"{default}\""
                         )
                 if matched:
                     logger.info(
-                        f"🔄 Coercing enum '{key}': \"{value}\" → \"{matched}\""
+                        f"🔄 Coercing enum '{key}': {logged_content(value)} → \"{matched}\""
                     )
                     coerced[key] = matched
         elif key == "location" and key not in properties:
