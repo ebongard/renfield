@@ -35,6 +35,7 @@ from services.turn_extraction import (
     spawn_memory_extraction,
     spawn_post_message_hooks,
 )
+from services.voice_turn_trace_service import schedule_browser_voice_turn
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
@@ -1450,6 +1451,12 @@ async def websocket_endpoint(
             # send one.
             if msg_request_id:
                 request_id_var.set(msg_request_id[:8])
+
+            # Turn-end trace (#1613): a browser voice turn carries content-free
+            # `voice_turn` metadata. Fire-and-forget -- never delays or fails the
+            # turn; flag off = returns at once, no task. No user id is passed.
+            if msg.voice_turn is not None:
+                schedule_browser_voice_turn(msg.voice_turn)
 
             # Phase B (B.4.a): a truthy embedding = came from the voice path
             # (voice-server /ws/voice → frontend → chat-WS); null/empty = text.

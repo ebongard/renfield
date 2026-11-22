@@ -319,6 +319,7 @@ class TestStats:
             },
             "resumed": 2,
             "resumed_rate": round(2 / 11, 4),
+            "resumed_rate_by_source": {"satellite": 0.2, "browser": 0.0},
             "audio_seconds_p50": pytest.approx(5.5),
             "audio_seconds_p90": pytest.approx(9.1),
             "by_room": {"Küche": 6, "Bad": 4},
@@ -332,6 +333,7 @@ class TestStats:
         assert stats["resumed_rate"] is None
         assert stats["audio_seconds_p50"] is None
         assert stats["by_source_reason"] == {} and stats["by_room"] == {}
+        assert stats["resumed_rate_by_source"] == {}
 
     async def test_purge_keeps_the_window(self, db_session, monkeypatch):
         from services.voice_turn_trace_service import purge_expired

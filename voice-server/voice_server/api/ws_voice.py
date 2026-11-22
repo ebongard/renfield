@@ -11,7 +11,9 @@ Client→Server (text JSON unless noted):
 Server→Client:
   - session_ready                                      after a successful session_start
   - partial_transcript { text, confidence }
-  - final_transcript { text, language, speaker_embedding[192], audio_duration_s }
+  - final_transcript { text, language, speaker_embedding[192], audio_duration_s,
+                       end_reason }                    end_reason: server_vad |
+                                                       max_utterance | client_flush
   - <binary WAV with 24-byte RFWA header>              one frame per TTS sentence
   - tts_done { request_id }                            synthesis finished normally
   - cancelled { request_id }                           client `cancel` honoured (barge-in)
@@ -296,13 +298,24 @@ async def _maybe_emit_partial(ws: WebSocket, state: SessionState, stt: STTServic
         logger.warning("partial STT failed: %s", e)
 
 
+#: Why the server finalized an utterance, sent as `final_transcript.end_reason`
+#: (renfield #1613). Content-free. The server only knows that the client asked
+#: (`client_flush`); the client knows why (its own silence VAD or a manual stop)
+#: and refines it. A client that ignores the field is unaffected.
+END_REASONS = frozenset({"server_vad", "max_utterance", "client_flush"})
+
+
 async def _finalize(
     ws: WebSocket,
     state: SessionState,
     stt: STTService,
     speaker: SpeakerService,
+    *,
+    end_reason: str,
 ) -> None:
     """Drain the decoder, run final STT + speaker embed, emit final_transcript."""
+    if end_reason not in END_REASONS:
+        raise ValueError(f"unknown end_reason: {end_reason}")
     if state.decoder is not None:
         tail = await state.decoder.flush()
         if tail.size:
@@ -343,6 +356,7 @@ async def _finalize(
         "text": final_text,
         "language": language,
         "audio_duration_s": duration_s,
+        "end_reason": end_reason,
     }
     if embedding is not None:
         payload["speaker_embedding"] = embedding
@@ -588,7 +602,7 @@ async def ws_voice(
                             "voice session %s auto-finalizing (server VAD)",
                             user_id,
                         )
-                        await _finalize(websocket, state, stt, speaker)
+                        await _finalize(websocket, state, stt, speaker, end_reason="server_vad")
                         state.speech_seen = False
                         state.last_speech_at = 0.0
                     cap_s = settings.max_utterance_seconds
@@ -599,7 +613,7 @@ async def ws_voice(
                             user_id,
                             cap_s,
                         )
-                        await _finalize(websocket, state, stt, speaker)
+                        await _finalize(websocket, state, stt, speaker, end_reason="max_utterance")
                         # C.5: tell the browser to stop streaming. After
                         # the cap fires we don't accept more chunks for
                         # this session — close cleanly with a reason
@@ -651,7 +665,7 @@ async def ws_voice(
                     await _send_error(websocket, "invalid_audio", str(e))
 
             elif mtype == "stt_flush":
-                await _finalize(websocket, state, stt, speaker)
+                await _finalize(websocket, state, stt, speaker, end_reason="client_flush")
 
             elif mtype == "tts_request":
                 await _spawn_tts(websocket, state, data, tts)

@@ -38,6 +38,19 @@ Times, and what "resumed" means:
   device again while the answer was still playing (a barge-in) or within
   10 s after it ended -- what a turn cut off mid-sentence looks like.
 
+The BROWSER path (``source="browser"``, ``schedule_browser_voice_turn``): the
+chat message a voice turn produces carries a content-free ``voice_turn`` object
+(end reason, recording length, the client-measured gap from the end of the
+previous answer's playback to this recording's start, and a random per-page-load
+``turn_key``). The row is written when that message arrives, i.e. at the end of
+the recording; ``room`` stays NULL and the turn key is the ``device_key``. The
+server does not know when a browser answer finished playing, so the resume
+decision uses the client's gap instead of ``finished_at``: a gap of at most
+``RESUME_WINDOW_SECONDS`` marks the latest earlier trace with the same turn key
+as resumed -- the same "previous turn was resumed" meaning as a satellite, so
+the two rates compare. A reload is a new key, so a resume never crosses page
+loads, and the key names a page, never a person.
+
 This is a known NOISY proxy: a quick follow-up question also counts as
 resumed. That noise is the point of measuring -- the rate gives a baseline to
 compare against once the end-of-turn decision changes.
@@ -46,6 +59,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import math
+import re
 import time
 import wave
 from datetime import UTC, datetime, timedelta
@@ -64,12 +79,14 @@ RESUME_WINDOW_SECONDS = 10
 
 #: The turn-end reasons a device reports in ``audio_end``, plus the ones the
 #: backend knows for a session that ended WITHOUT an ``audio_end`` (see
-#: ``session_end_reason``). Anything else is stored as ``other``, so a device
-#: cannot fill the column with free text. The browser path (a later change)
-#: adds its own reasons here.
+#: ``session_end_reason``), plus the browser's: the voice-server's
+#: ``server_vad`` / ``max_utterance`` / ``client_flush``, the last refined by
+#: the client to ``silence`` (its VAD) or ``button`` (a manual stop). Anything
+#: else is stored as ``other``, so a client cannot fill the column with free text.
 REASONS = frozenset({
     "silence", "timeout", "button", "canceled", "unknown",
     "expired", "disconnect", "orphaned",
+    "server_vad", "max_utterance", "client_flush",
 })
 OTHER_REASON = "other"
 
@@ -84,6 +101,11 @@ SOURCES = frozenset({"satellite", "browser"})
 
 # Mirrors the String(64) columns; a longer id/room name is cut, not refused.
 _NAME_MAX = 64
+
+#: Bound on every client-supplied number (seconds); outside it is stored as NULL.
+_BROWSER_SECONDS_MAX = 3600.0
+#: The browser's per-page-load turn key: a random id, nothing else accepted.
+_TURN_KEY_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 
 # Strong references to the scheduled writes: the event loop keeps only weak
 # ones, so an unreferenced task can be garbage-collected mid-flight.
@@ -125,8 +147,16 @@ async def record_voice_turn(
     started_at: float | None = None,
     recording_ended_at: float | None = None,
     finished_at: float | None = None,
+    resume_gap_s: float | None = None,
 ) -> None:
     """Persist one finished turn and mark the device's previous turn as resumed.
+
+    Two ways to find a resume. A satellite passes ``started_at``: the server
+    knows when its previous answer finished. The browser passes
+    ``resume_gap_s``, the client-measured gap from the end of the previous
+    answer's playback to this recording's start (0 = barge-in): at most
+    ``RESUME_WINDOW_SECONDS`` marks the latest earlier trace with the same
+    ``device_key`` (the per-page-load turn key) as resumed.
 
     Times are wall-clock epoch seconds (``time.time()``). ``finished_at`` (the
     later of session end and expected playback end) defaults to now,
@@ -153,7 +183,25 @@ async def record_voice_turn(
         device = device_key[:_NAME_MAX] if device_key else None
 
         async with AsyncSessionLocal() as db:
-            if device and started_at is not None:
+            if device and resume_gap_s is not None:
+                if resume_gap_s <= RESUME_WINDOW_SECONDS:
+                    previous_id = (await db.execute(
+                        select(VoiceTurnTrace.id)
+                        .where(
+                            VoiceTurnTrace.source == source,
+                            VoiceTurnTrace.device_key == device,
+                            VoiceTurnTrace.created_at < recording_end,
+                        )
+                        .order_by(VoiceTurnTrace.created_at.desc(), VoiceTurnTrace.id.desc())
+                        .limit(1)
+                    )).scalar()
+                    if previous_id is not None:
+                        await db.execute(
+                            update(VoiceTurnTrace)
+                            .where(VoiceTurnTrace.id == previous_id)
+                            .values(resumed=True)
+                        )
+            elif device and started_at is not None:
                 start = _naive_utc_from_epoch(started_at)
                 previous_id = (await db.execute(
                     select(VoiceTurnTrace.id)
@@ -215,6 +263,53 @@ def schedule_voice_turn(**fields) -> asyncio.Task | None:
     return task
 
 
+def _bounded_seconds(value: object) -> float | None:
+    """A client-supplied number of seconds in [0, 3600], else None. A JSON
+    boolean is not a number here, nor NaN/inf."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    if not math.isfinite(value) or not 0.0 <= value <= _BROWSER_SECONDS_MAX:
+        return None
+    return value
+
+
+def browser_turn_fields(raw: object) -> dict | None:
+    """The chat message's ``voice_turn`` object -> ``record_voice_turn`` fields.
+
+    Every value is a client-supplied METRIC, never identity: the reason is
+    clamped to ``REASONS``, the numbers bounded, the turn key accepted only as
+    a short random id. Extra fields are ignored. Not an object -> None (no
+    trace). ``room`` stays NULL; no user id is ever derived.
+    """
+    if not isinstance(raw, dict):
+        return None
+    key = raw.get("turn_key")
+    return {
+        "source": "browser",
+        "device_key": key if isinstance(key, str) and _TURN_KEY_RE.match(key) else None,
+        "room": None,
+        "reason": clamp_reason(raw.get("end_reason")),
+        "audio_seconds": _bounded_seconds(raw.get("audio_duration_s")),
+        "resume_gap_s": _bounded_seconds(raw.get("gap_since_answer_s")),
+    }
+
+
+def schedule_browser_voice_turn(raw: object) -> asyncio.Task | None:
+    """Fire-and-forget trace of a browser voice turn; never raises.
+
+    Flag off = returns before even looking at ``raw``: no task, no work.
+    """
+    if not settings.voice_turn_traces_enabled:
+        return None
+    try:
+        fields = browser_turn_fields(raw)
+        return schedule_voice_turn(**fields) if fields is not None else None
+    except Exception as e:
+        logger.warning(f"Browser voice turn trace not scheduled: {error_text_without_content(e)}")
+        return None
+
+
 async def turn_stats(db: AsyncSession, days: int) -> dict:
     """Aggregates over the last ``days`` days. Counts and percentiles only."""
     cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
@@ -231,9 +326,15 @@ async def turn_stats(db: AsyncSession, days: int) -> dict:
         by_source_reason.setdefault(source, {})[reason] = count
         total += count
 
-    resumed = (await db.execute(
-        select(func.count(VoiceTurnTrace.id)).where(in_window, VoiceTurnTrace.resumed.is_(True))
-    )).scalar() or 0
+    resumed_by_source = {
+        source: count for source, count in (await db.execute(
+            select(VoiceTurnTrace.source, func.count(VoiceTurnTrace.id))
+            .where(in_window, VoiceTurnTrace.resumed.is_(True))
+            .group_by(VoiceTurnTrace.source)
+        )).all()
+    }
+    resumed = sum(resumed_by_source.values())
+    totals_by_source = {source: sum(reasons.values()) for source, reasons in by_source_reason.items()}
 
     p50, p90 = (await db.execute(
         select(
@@ -257,6 +358,11 @@ async def turn_stats(db: AsyncSession, days: int) -> dict:
         "by_source_reason": by_source_reason,
         "resumed": resumed,
         "resumed_rate": round(resumed / total, 4) if total else None,
+        # Per source, so a satellite rate compares with a browser rate.
+        "resumed_rate_by_source": {
+            source: round(resumed_by_source.get(source, 0) / count, 4)
+            for source, count in totals_by_source.items()
+        },
         "audio_seconds_p50": float(p50) if p50 is not None else None,
         "audio_seconds_p90": float(p90) if p90 is not None else None,
         "by_room": by_room,

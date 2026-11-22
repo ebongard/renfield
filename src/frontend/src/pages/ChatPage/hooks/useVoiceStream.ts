@@ -103,11 +103,59 @@ const VAD = {
 
 type TtsOutcome = 'done' | 'cancelled' | 'error';
 
+// Content-free metadata of one voice turn, sent with the chat message it
+// produces so the backend can keep a turn-end trace (#1613). Never text,
+// audio or identity -- only why the turn ended, how long it was, and how soon
+// after the previous answer it started (the cut-off proxy).
+type VoiceTurnEndReason =
+  | 'server_vad' | 'max_utterance' | 'client_flush' | 'silence' | 'button' | 'unknown';
+
+interface VoiceTurnMetadata {
+  end_reason: VoiceTurnEndReason;
+  audio_duration_s: number;
+  // Seconds from the end of the previous voice answer's playback to the start
+  // of this recording; 0 = started while the answer still played (barge-in);
+  // null = no previous voice answer in this page session.
+  gap_since_answer_s: number | null;
+  // A random id for THIS mounted voice hook, i.e. this page load: lets the
+  // backend mark the previous turn of the same page as resumed. Kept in memory
+  // only (never stored, never derived from the user), new on every reload.
+  turn_key: string;
+}
+
+// Why the CLIENT stopped its recorder, which refines the server's `client_flush`.
+type ClientStopCause = 'silence' | 'button';
+
 interface FinalTranscript {
   text: string;
   language: string;
   speakerEmbedding: number[] | null;
   audioDurationS: number;
+  voiceTurn: VoiceTurnMetadata;
+}
+
+/** The turn's end reason: the server's, with `client_flush` refined by why the
+ *  client stopped. An older server sends no reason; the client cause then
+ *  stands alone. */
+export function voiceTurnEndReason(
+  serverReason: unknown,
+  stopCause: ClientStopCause | null,
+): VoiceTurnEndReason {
+  if (serverReason === 'server_vad' || serverReason === 'max_utterance') return serverReason;
+  if (serverReason === 'client_flush') return stopCause ?? 'client_flush';
+  return stopCause ?? 'unknown';
+}
+
+/** Seconds since the previous answer's playback ended; 0 while it still
+ *  plays; null without a previous answer. */
+export function gapSinceAnswerS(
+  now: number,
+  answerEndedAt: number | null,
+  answerStillPlaying: boolean,
+): number | null {
+  if (answerStillPlaying) return 0;
+  if (answerEndedAt === null) return null;
+  return Math.max(0, (now - answerEndedAt) / 1000);
 }
 
 interface UseVoiceStreamOptions {
@@ -258,6 +306,19 @@ export function useVoiceStream({
   // dependency — the listener must open exactly once per reply.
   const bargeInHandlerRef = useRef<() => void>(() => {});
 
+  // --- Turn-end trace (#1613) --------------------------------------
+  // When the last played answer chunk ended (Date.now()); null = no voice
+  // answer yet in this page session.
+  const lastAnswerEndedAtRef = useRef<number | null>(null);
+  // Set by the barge-in promotion: the next recording started while the
+  // answer was playing, whatever the playback state is by then.
+  const bargeInRecordingRef = useRef(false);
+  // Per recording: the gap to the previous answer, and why the client stopped.
+  const turnGapRef = useRef<number | null>(null);
+  const stopCauseRef = useRef<ClientStopCause | null>(null);
+  const turnKeyRef = useRef<string | null>(null);
+  if (turnKeyRef.current === null) turnKeyRef.current = generateRequestId();
+
   const [recording, setRecording] = useState(false);
   const [partialText, setPartialText] = useState<string>('');
   const [connected, setConnected] = useState(false);
@@ -351,6 +412,7 @@ export function useVoiceStream({
           await new Promise<void>((resolve) => {
             source.onended = () => {
               if (currentSourceRef.current === source) currentSourceRef.current = null;
+              lastAnswerEndedAtRef.current = Date.now();
               resolve();
             };
             source.start();
@@ -419,11 +481,18 @@ export function useVoiceStream({
         if (rec && rec.state !== 'inactive') {
           try { rec.stop(); } catch { /* ignore */ }
         }
+        const audioDurationS = typeof msg.audio_duration_s === 'number' ? msg.audio_duration_s : 0;
         const result: FinalTranscript = {
           text: (msg.text as string) ?? '',
           language: (msg.language as string) ?? 'de',
           speakerEmbedding: (msg.speaker_embedding as number[] | undefined) ?? null,
-          audioDurationS: (msg.audio_duration_s as number) ?? 0,
+          audioDurationS,
+          voiceTurn: {
+            end_reason: voiceTurnEndReason(msg.end_reason, stopCauseRef.current),
+            audio_duration_s: audioDurationS,
+            gap_since_answer_s: turnGapRef.current,
+            turn_key: turnKeyRef.current ?? '',
+          },
         };
         setPartialText('');
         onFinal?.(result);
@@ -593,6 +662,14 @@ export function useVoiceStream({
     ws: WebSocket,
   ): Promise<void> => {
     streamRef.current = stream;
+    // Turn-end trace (#1613): measured at the mic start of THIS recording.
+    turnGapRef.current = gapSinceAnswerS(
+      Date.now(),
+      lastAnswerEndedAtRef.current,
+      bargeInRecordingRef.current || !isPlaybackIdle() || currentSourceRef.current !== null,
+    );
+    bargeInRecordingRef.current = false;
+    stopCauseRef.current = null;
     // Surface whether the mic constraints actually applied — some Android/WebView
     // builds silently ignore `autoGainControl:false`, which lets AGC push the
     // noise floor back to speech level and revives the noise-as-speech bug on
@@ -660,6 +737,7 @@ export function useVoiceStream({
         ) {
           // Silence-auto-stop. recorder.onstop fires next, which
           // sends stt_flush and the server takes it from there.
+          stopCauseRef.current = 'silence';
           try { rec.stop(); } catch { /* ignore */ }
           vadFrameRef.current = null;
           return;
@@ -713,7 +791,7 @@ export function useVoiceStream({
 
     recorder.start(CHUNK_INTERVAL_MS);
     setRecording(true);
-  }, [ensureAudioContext, onRecordingStart, onRecordingStop]);
+  }, [ensureAudioContext, isPlaybackIdle, onRecordingStart, onRecordingStop]);
 
   const startRecording = useCallback(async (): Promise<void> => {
     if (recording) return;
@@ -754,6 +832,7 @@ export function useVoiceStream({
   const stopRecording = useCallback((): void => {
     const rec = recorderRef.current;
     if (rec && rec.state !== 'inactive') {
+      stopCauseRef.current = 'button';
       rec.stop();
     } else {
       setRecording(false);
@@ -869,6 +948,7 @@ export function useVoiceStream({
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'session_start', codec: VOICE_CODEC }));
       }
+      bargeInRecordingRef.current = true;
       await beginRecordingWithStream(stream, ws);
     })();
   }, [cancelAllPlayback, ensureSocket, beginRecordingWithStream, onError, recording]);
@@ -1026,4 +1106,4 @@ export function useVoiceStream({
   };
 }
 
-export type { FinalTranscript, TtsOutcome };
+export type { FinalTranscript, TtsOutcome, VoiceTurnEndReason, VoiceTurnMetadata };

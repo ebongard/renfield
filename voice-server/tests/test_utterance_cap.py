@@ -91,7 +91,7 @@ def finalized(monkeypatch):
     monkeypatch.setattr(wsv, "_maybe_emit_partial", _no_partial)
     calls: list[float] = []
 
-    async def _record_finalize(_ws, state, _stt, _speaker):
+    async def _record_finalize(_ws, state, _stt, _speaker, *, end_reason):
         calls.append(wsv._accumulated_seconds(state))
 
     monkeypatch.setattr(wsv, "_finalize", _record_finalize)

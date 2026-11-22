@@ -65,6 +65,7 @@ import {
 import { stripCites } from '../../../components/wissensbasis/citeMarkup';
 import { shouldRearmWakeWord } from './wakeWordRecovery';
 import { messagesAfterSessionReplaced } from './sessionReplaced';
+import { voiceEnvelopeFields, type VoiceMeta } from './voiceEnvelope';
 
 const SESSION_STORAGE_KEY = 'renfield_current_session';
 // How long sendMessageInternal waits for the WebSocket handshake before
@@ -611,7 +612,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Ref for sendMessageInternal (used by handleTranscription before
   // sendMessageInternal is declared below).
   const sendMessageInternalRef = useRef<
-    (text: string, fromVoice?: boolean, voiceMeta?: { speakerEmbedding?: number[] | null }, opts?: { correctedIntent?: string }) => Promise<void>
+    (text: string, fromVoice?: boolean, voiceMeta?: VoiceMeta, opts?: { correctedIntent?: string }) => Promise<void>
   >(
     async () => undefined,
   );
@@ -1426,6 +1427,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
     // skip it.
     void sendMessageInternalRef.current(result.text, true, {
       speakerEmbedding: result.speakerEmbedding,
+      // #1613: content-free turn-end metadata for the backend's turn trace.
+      voiceTurn: result.voiceTurn,
     });
   }, []);
 
@@ -1706,7 +1709,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const sendMessageInternal = useCallback(async (
     text: string,
     fromVoice = false,
-    voiceMeta?: { speakerEmbedding?: number[] | null },
+    voiceMeta?: VoiceMeta,
     opts?: { correctedIntent?: string; forkFromMessageId?: number; suppressAppend?: boolean },
   ): Promise<void> => {
     if (!text.trim()) return;
@@ -1810,11 +1813,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
       use_rag: useRag,
       knowledge_base_id: selectedKnowledgeBase,
       ...(completedIds.length > 0 && { attachment_ids: completedIds }),
-      // B.4.a: ECAPA speaker embedding from voice-server flows here.
-      // Backend chat handler resolves the Speaker DB row when present.
-      ...(voiceMeta?.speakerEmbedding && {
-        speaker_embedding: voiceMeta.speakerEmbedding,
-      }),
+      // B.4.a: ECAPA speaker embedding from voice-server flows here; the
+      // backend resolves the Speaker DB row when present. #1613: how this
+      // voice turn ended (content-free). Both absent for typed text.
+      ...voiceEnvelopeFields(voiceMeta),
       // Command-palette role override for this turn (soft hint; backend validates).
       ...(pendingRoleHint && { role_hint: pendingRoleHint }),
       // "Korrigieren & neu beantworten": the corrected intent is mapped to the
