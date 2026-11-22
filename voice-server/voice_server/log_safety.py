@@ -24,6 +24,9 @@ from urllib.parse import unquote_plus
 SECRET_QUERY_PARAMS = (
     "token", "access_token", "refresh_token", "id_token", "ws_token",
     "ticket", "api_key", "apikey", "key", "secret", "password", "auth",
+    # The OAuth authorization code (#1344), mirrored from the backend's list
+    # (#1594); test_same_secret_names_as_backend holds the two equal.
+    "code",
 )
 
 REDACTED = "[REDACTED]"
