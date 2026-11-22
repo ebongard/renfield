@@ -413,10 +413,20 @@ class TestRoute:
             "audio_seconds_p50": 60.0,
             "audio_seconds_p90": 60.0,
             "by_room": {"Küche": 1},
+            "resumed_rate_by_source": {"satellite": 1.0},
             "enabled": True,
             "retention_days": settings.voice_turn_traces_retention_days,
         }
         assert (await async_client.get(self.PATH)).json()["total"] == 2  # default 14 days
+
+    async def test_the_response_model_carries_every_stats_key(self, db_session):
+        # A key turn_stats builds but the response model lacks is dropped
+        # silently by FastAPI (resumed_rate_by_source shipped that way, #1622).
+        from api.routes.voice_turns import VoiceTurnStatsResponse
+        from services.voice_turn_trace_service import turn_stats
+        stats = await turn_stats(db_session, days=1)
+        missing = set(stats) - set(VoiceTurnStatsResponse.model_fields)
+        assert not missing, missing
 
     @pytest.mark.parametrize(("admin", "status"), [(False, 403), (None, 401)])
     async def test_non_admin_is_refused(
