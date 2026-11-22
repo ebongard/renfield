@@ -977,7 +977,11 @@ both; the REST fallback (`/api/chat/send`) carries no `voice_turn` and records n
   turn, "the speaker spoke again during its answer or within 10 s after it" — so
   `resumed_rate_by_source` compares, and no column or migration is needed. The privacy
   trade-off: the turn key links the turns of ONE page load and nothing else; a reload is a new
-  key, so a resume never crosses page loads and the key never names a person or a device. The
+  key, so a resume never crosses page loads and the key never names a person or a device.
+  The row is NOT unlinkable, though: its `created_at` is the moment the chat message arrived,
+  so joined against the message tables by timestamp it points to a conversation, and through
+  the key to that page load's other turns. This is why the table is admin-only and read as
+  aggregates, and why the retention is short; never add a join or a per-row view. The
   rejected alternative, a `resumed_prev` flag on the new row, would need a migration and a
   second counting rule in `turn_stats`.
 
