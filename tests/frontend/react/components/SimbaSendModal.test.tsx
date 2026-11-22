@@ -15,6 +15,7 @@ import userEvent from '@testing-library/user-event';
 import SimbaSendModal from '../../../../src/frontend/src/components/simba/SimbaSendModal';
 import { renderWithProviders } from '../test-utils';
 import apiClient from '../../../../src/frontend/src/utils/axios';
+import i18n from '../../../../src/frontend/src/i18n';
 
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   default: {
@@ -104,6 +105,131 @@ describe('SimbaSendModal', () => {
     expect(
       await screen.findByText(/wurde an die Steuerkanzlei übertragen/i),
     ).toBeInTheDocument();
+  });
+
+  it('names an oversized file and offers no confirm (#1609)', async () => {
+    mockedPost.mockResolvedValue({
+      data: {
+        success: true,
+        message: 'already_pending',
+        proposal_id: 42,
+        suggested_category: 'Belege',
+        suggested_type: 'Eingangsrechnung',
+        suggested_description: 'Rechnung Arkadon',
+        upload_blocked: {
+          code: 'too_large', size_mb: 16.2, max_mb: 15, category: 'Belege', type: 'Eingangsrechnung',
+        },
+      },
+    } as never);
+
+    renderModal();
+
+    // The finding is rendered from the data, in the viewer's language.
+    expect(await screen.findByRole('alert')).toHaveTextContent('16,2 MB');
+    expect(screen.getByRole('alert')).toHaveTextContent('15 MB');
+    // There is nothing to confirm: the file can never land.
+    expect(screen.queryByRole('button', { name: /Übertragen/i })).not.toBeInTheDocument();
+    expect(mockedPost).not.toHaveBeenCalledWith(
+      expect.stringContaining('/confirm'),
+      expect.anything(),
+    );
+  });
+
+  it('offers the confirm when the file fits (negative control)', async () => {
+    mockedPost.mockResolvedValue({
+      data: {
+        success: true,
+        message: 'created',
+        proposal_id: 42,
+        suggested_category: 'Belege',
+        suggested_type: 'Eingangsrechnung',
+        suggested_description: 'Rechnung Arkadon',
+        upload_blocked: null,
+      },
+    } as never);
+
+    renderModal();
+
+    expect(await screen.findByRole('button', { name: /Übertragen/i })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('renders a refused send in the viewer\'s language, not the German fallback (#1609)', async () => {
+    // from-document creates no proposal for an oversized file: a 422 with the finding.
+    mockedPost.mockRejectedValue({
+      response: {
+        status: 422,
+        data: {
+          detail: {
+            code: 'too_large', size_mb: 16.2, max_mb: 15, category: 'Belege', type: 'Eingangsrechnung',
+            message: 'GERMAN-FALLBACK-SENTENCE',
+          },
+        },
+      },
+    });
+    await i18n.changeLanguage('en');
+    try {
+      renderModal();
+      expect(await screen.findByText(/the Simba portal accepts at most 15 MB/)).toBeInTheDocument();
+      expect(screen.getByText(/16\.2 MB/)).toBeInTheDocument();
+      expect(screen.queryByText(/GERMAN-FALLBACK-SENTENCE/)).not.toBeInTheDocument();
+    } finally {
+      await i18n.changeLanguage('de');
+    }
+  });
+
+  it('turns a confirm refused for size into the finding and drops the confirm (#1609)', async () => {
+    // The list had no finding yet (e.g. the portal answered too slowly).
+    const user = userEvent.setup();
+    mockedPost.mockImplementation(async (url: string) => {
+      if (url === '/api/simba-ingest/from-document/5') {
+        return {
+          data: {
+            success: true, message: 'created', proposal_id: 42,
+            suggested_category: 'Belege', suggested_type: 'Eingangsrechnung',
+            suggested_description: 'Rechnung Arkadon', upload_blocked: null,
+          },
+        } as never;
+      }
+      throw {
+        response: {
+          status: 422,
+          data: {
+            detail: {
+              code: 'too_large', size_mb: 16.2, max_mb: 15, category: 'Belege', type: 'Eingangsrechnung',
+              message: 'GERMAN-FALLBACK-SENTENCE',
+            },
+          },
+        },
+      };
+    });
+
+    renderModal();
+    await user.click(await screen.findByRole('button', { name: /Übertragen/i }));
+    await user.click(screen.getByRole('button', { name: /Ja, übertragen/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('16,2 MB');
+    expect(screen.queryByRole('button', { name: /Übertragen/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps the confirm for a selection the finding was not judged for', async () => {
+    // The portal states its limit per Kategorie + Typ: a finding for another
+    // context says nothing about this one -- the confirm judges it.
+    mockedPost.mockResolvedValue({
+      data: {
+        success: true, message: 'already_pending', proposal_id: 42,
+        suggested_category: 'Belege', suggested_type: 'Eingangsrechnung',
+        suggested_description: 'Rechnung Arkadon',
+        upload_blocked: {
+          code: 'too_large', size_mb: 16.2, max_mb: 15, category: 'Belege', type: 'Ausgangsrechnung',
+        },
+      },
+    } as never);
+
+    renderModal();
+
+    expect(await screen.findByRole('button', { name: /Übertragen/i })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('does not upload when the create step fails', async () => {

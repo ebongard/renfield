@@ -16,9 +16,11 @@ the real upload, or rejects it.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,7 @@ from models.database import (
     SimbaIngestProposal,
 )
 from services.database import AsyncSessionLocal
+from services.simba_portal_limits import PortalLimits, TooLarge, portal_limits, too_large
 from utils.config import settings
 from utils.log_safety import error_text_without_content
 
@@ -269,27 +272,55 @@ def _owns(proposal: SimbaIngestProposal, user) -> bool:
     return proposal.user_id is None and _is_admin(user)
 
 
+#: The portal's limits for an upload context (category, type) -- injected, so the
+#: service never reaches for the app's MCP manager itself.
+LimitsLookup = Callable[[str | None, str | None], Awaitable[PortalLimits | None]]
+
+
+def upload_blocked(doc, limits: PortalLimits | None) -> TooLarge | None:
+    """Why this document can never land in Simba, or None (#1609). The file on
+    disk is measured, not the ``file_size`` column -- the bytes the upload reads.
+    A missing file is the confirm's own error, not this one."""
+    if doc is None or not doc.file_path:
+        return None
+    try:
+        size = Path(doc.file_path).stat().st_size
+    except OSError:
+        return None
+    return too_large(size, limits)
+
+
 async def list_pending(
-    db, user
-) -> list[tuple[SimbaIngestProposal, str, int | None, int | None]]:
+    db, user, limits: LimitsLookup | None = None,
+) -> list[tuple[SimbaIngestProposal, str, int | None, int | None, TooLarge | None]]:
     """Owner-scoped pending proposals, each paired with a suggested Bezeichnung
     (from the document's title) and a suggested booking period (month, year) from
     the document's date — both prefill the editable review fields, so the period
-    defaults to the invoice month rather than the current one (#1167)."""
+    defaults to the invoice month rather than the current one (#1167) — and the
+    reason it can never land under the portal's limits (#1609), else None.
+
+    Each proposal is judged against its SUGGESTED upload context (the one the
+    form prefills); one without a suggestion is not judged -- the confirm is.
+    ``limits`` is asked only for proposals to judge, once per context: on an
+    instance without Simba the empty queue never asks the MCP."""
     q = (
         select(SimbaIngestProposal, Document)
         .join(Document, Document.id == SimbaIngestProposal.document_id, isouter=True)
         .where(SimbaIngestProposal.status == SIMBA_PROPOSAL_PENDING)
         .order_by(SimbaIngestProposal.id.desc())
     )
-    rows = (await db.execute(q)).all()
-    out: list[tuple[SimbaIngestProposal, str, int | None, int | None]] = []
+    rows = [(p, doc) for (p, doc) in (await db.execute(q)).all() if _owns(p, user)]
+    contexts = sorted({
+        (p.suggested_category, p.suggested_type) for (p, _doc) in rows
+        if p.suggested_category and p.suggested_type
+    }) if limits is not None else []
+    stated = dict(zip(contexts, await asyncio.gather(*(limits(c, t) for c, t in contexts)), strict=True))
+    out: list[tuple[SimbaIngestProposal, str, int | None, int | None, TooLarge | None]] = []
     for (p, doc) in rows:
-        if not _owns(p, user):
-            continue
         desc = _upload_description(doc) if doc is not None else ""
         month, year = await _document_period(db, p.document_id, doc) if doc is not None else (None, None)
-        out.append((p, desc, month, year))
+        portal = stated.get((p.suggested_category, p.suggested_type))
+        out.append((p, desc, month, year, upload_blocked(doc, portal)))
     return out
 
 
@@ -316,7 +347,9 @@ async def _classify_document(db, document_id: int) -> tuple[str | None, str | No
         return None, None
 
 
-async def create_proposal_for_document(db, document_id: int, user) -> dict:
+async def create_proposal_for_document(
+    db, document_id: int, user, limits: LimitsLookup | None = None,
+) -> dict:
     """Create a PENDING Simba review proposal for an EXISTING knowledge-base
     document (the "send to Simba" action — complements the folder-ingest hook,
     which only fires on NEW documents; a doc already in the KB is deduped at
@@ -324,9 +357,14 @@ async def create_proposal_for_document(db, document_id: int, user) -> dict:
 
     Returns {"success": bool, "message": str, "proposal_id": int|None,
     "suggested_category": str|None, "suggested_type": str|None,
-    "suggested_description": str}. The suggested_* fields let the caller (the
-    doc-page "send to Simba" overlay) prefill the confirm form without a second
-    fetch. Idempotent on the pending state: a doc that already has a pending
+    "suggested_description": str, "upload_blocked": TooLarge|None}. The
+    suggested_* fields let the caller (the doc-page "send to Simba" overlay)
+    prefill the confirm form without a second fetch. A document over the
+    portal's ``limits`` for its suggested upload context gets no NEW proposal --
+    it could never land there, so it would only clutter the queue:
+    ``message="too_large"`` with ``upload_blocked`` (#1609); an existing pending
+    one is returned with the finding, for the form to show.
+    Idempotent on the pending state: a doc that already has a pending
     proposal returns it rather than creating a second (the partial-unique index
     also guards this). Owner/admin-gated.
     """
@@ -365,16 +403,26 @@ async def create_proposal_for_document(db, document_id: int, user) -> dict:
     # Booking period (Zeitraum) from the document's OWN date — so the review form
     # defaults to the invoice month, not the current month (#1167).
     pmonth, pyear = await _document_period(db, document_id, doc)
+
+    async def _blocked_for(category, type_) -> TooLarge | None:
+        if limits is None:
+            return None
+        return upload_blocked(doc, await limits(category, type_))
+
     if existing is not None:
+        blocked = await _blocked_for(existing.suggested_category, existing.suggested_type)
         return {
             "success": True, "message": "already_pending", "proposal_id": existing.id,
             "suggested_category": existing.suggested_category,
             "suggested_type": existing.suggested_type,
             "suggested_description": desc,
             "suggested_month": pmonth, "suggested_year": pyear,
+            "upload_blocked": blocked,
         }
-
     category, type_ = await _classify_document(db, document_id)
+    blocked = await _blocked_for(category, type_)
+    if blocked:
+        return {"success": False, "message": "too_large", "upload_blocked": blocked, "proposal_id": None}
     proposal = SimbaIngestProposal(
         document_id=document_id,
         user_id=owner_id,
@@ -405,6 +453,7 @@ async def create_proposal_for_document(db, document_id: int, user) -> dict:
             "suggested_type": again.suggested_type if again else type_,
             "suggested_description": desc,
             "suggested_month": pmonth, "suggested_year": pyear,
+            "upload_blocked": blocked,
         }
     logger.info(f"simba-ingest: review proposal for existing doc {document_id} (send-to-simba)")
     return {
@@ -412,6 +461,7 @@ async def create_proposal_for_document(db, document_id: int, user) -> dict:
         "suggested_category": category, "suggested_type": type_,
         "suggested_description": desc,
         "suggested_month": pmonth, "suggested_year": pyear,
+        "upload_blocked": None,
     }
 
 
@@ -505,6 +555,15 @@ async def confirm(
     if doc is None or not doc.file_path or not Path(doc.file_path).is_file():
         return {"success": False, "message": "document file no longer available"}
 
+    # A file the portal can never accept is refused HERE, before the duplicate
+    # check and the claim: a property of the file, answered as a validation
+    # error -- not a failed upload (#1609). Judged against the category the
+    # owner CHOSE: the portal states its limit per upload context. Unknown
+    # limits skip the check.
+    blocked = upload_blocked(doc, await portal_limits(mcp_manager, category, type_))
+    if blocked:
+        return {"success": False, "message": "too_large", "upload_blocked": blocked}
+
     # User-edited Bezeichnung wins when it survives sanitization; blank OR an
     # all-disallowed value falls back to the derived title (never sends nothing).
     upload_description = _sanitize_desc(description) or _upload_description(doc)
@@ -562,10 +621,11 @@ async def confirm(
         return {"success": False, "message": f"upload error: {e}"}
 
     if not _landed(result):
-        # Log the raw envelope so a "landed-but-misparsed" case is diagnosable
-        # (vs. a genuine 0-transfer) — the two are otherwise indistinguishable.
+        # The envelope's SHAPE keeps a "landed-but-misparsed" case diagnosable
+        # (vs. a genuine 0-transfer); its text would carry the file name, the
+        # target and the portal's error into the log (#1565).
         logger.error(
-            f"simba-ingest confirm: proposal {proposal_id} not landed; raw={result!r}"
+            f"simba-ingest confirm: proposal {proposal_id} not landed; {_envelope_shape(result)}"
         )
         await _revert_claim(db, proposal_id)
         return {"success": False, "message": _failure_reason(result)}
@@ -641,7 +701,7 @@ async def _find_in_simba(
     try:
         res = await mcp_manager.execute_tool("mcp.simba.list_transfers", args, truncate=False)
     except Exception as e:
-        logger.warning(f"simba-ingest: list_transfers check failed: {e}")
+        logger.warning(f"simba-ingest: list_transfers check failed: {error_text_without_content(e)}")
         return []
     rows = _inner(res).get("zeilen")
     return rows if isinstance(rows, list) else []
@@ -663,6 +723,26 @@ def _summarize_transfer(row: dict) -> str:
     name = _pick("beschreibung", "bezeichnung", "dateiname", "datei", "name")
     period = _pick("monat", "jahr", "zeitraum")
     return " · ".join(x for x in (name, period) if x) or "vorhandener Eintrag"
+
+
+def _envelope_shape(result) -> str:
+    """What a log line may say about an upload envelope: its counts, the HTTP
+    statuses and how many errors -- never a file name, target or error text."""
+    if not isinstance(result, dict):
+        return f"envelope={type(result).__name__}"
+    inner = _inner(result)
+    if not inner:
+        return f"success={result.get('success')!r} inner=unparsable"
+    results = inner.get("ergebnisse") if isinstance(inner.get("ergebnisse"), list) else []
+    errors = inner.get("fehler") if isinstance(inner.get("fehler"), list) else []
+    statuses = sorted(
+        {r.get("status") for r in results if isinstance(r, dict) and isinstance(r.get("status"), (int, str))},
+        key=str,
+    )
+    return (
+        f"keys={sorted(inner)} uebertragen={inner.get('uebertragen')!r} "
+        f"fehlgeschlagen={inner.get('fehlgeschlagen')!r} statuses={statuses} errors={len(errors)}"
+    )
 
 
 def _landed(result) -> bool:

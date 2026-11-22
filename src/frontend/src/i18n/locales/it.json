@@ -2419,7 +2419,9 @@
     "forceUpload": "Trasferisci comunque",
     "dupUnknown": "voce esistente",
     "confirmUploadInline": "Trasferire \"{{filename}}\" al commercialista (Simba) in via definitiva — {{category}} · {{type}} · {{period}}? Non può essere annullato.",
-    "confirmYes": "Sì, trasferisci"
+    "confirmYes": "Sì, trasferisci",
+    "blockedTitle": "Impossibile inviare:",
+    "tooLarge": "Il file pesa {{size}} MB, il portale Simba accetta al massimo {{max}} MB. Riducilo (ad es. con una risoluzione di scansione più bassa) o dividilo e invialo di nuovo."
   },
   "simbaSend": {
     "title": "Invia a Simba",
