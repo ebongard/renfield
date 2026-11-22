@@ -14,3 +14,4 @@ that enforceable.
 | v0.3.7 | 2026-07-22 | ad403347 | `your-registry.example/renfield/voice-server@sha256:25ecbb757143978bdc03b4bbd781fe87bf795d00107ae36e952e1ed2aa29341c` |
 | v0.3.8 (broken, never pin; see CHANGELOG 0.3.9) | 2026-11-01 | d7fdd242 | `your-registry.example/renfield/voice-server@sha256:3211adbfb39af10a7d6f45afd91e9f79bd463836a91d23663099c536e1e5c3eb` |
 | v0.3.9 | 2026-11-01 | ea65eecd | `your-registry.example/renfield/voice-server@sha256:dcc54dafffc7bd6ec25c2bdd624b8b1a84bc098c0774702d041ceb701b5b73e0` |
+| v0.3.10 | 2026-11-22 | edf11631 | `your-registry.example/renfield/voice-server@sha256:5c7bd11588d0c3b5525fd7cbaecd5c4ff8af21fd7839c66f0e022213d9d32a70` |
