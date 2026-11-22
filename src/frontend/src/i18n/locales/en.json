@@ -56,15 +56,17 @@
     "details": "Details",
     "viaSso": "Through your SSO login",
     "ssoTitle": "{{name}} via SSO",
-    "ssoDefaultHelp": "This connection comes from your login automatically. There is no token to paste and none to revoke.",
-    "ssoConnected": "Active. Reva uses your own permissions for as long as your login is valid. Sign out to end it.",
+    "ssoDefaultHelp": "This connection comes from your login automatically. There is no token to paste.",
+    "ssoConnected": "Active. Reva uses your own permissions for as long as your SSO sign-in is valid – also after you sign out of the chat. To end it, use \"End SSO connection\".",
     "ssoNotConnected": "Your login currently carries no valid token for this tool. Sign in again through the web interface and the connection comes back. Pasting a token is not possible here.",
     "check": {
       "rejected": "The stored token is rejected (expired or revoked). Replace it, or Reva cannot use this tool for you.",
       "rejectedSso": "Runs on your SSO login. The stored token is only a fallback and is rejected – replace or remove it.",
       "expiring": "The stored token expires on {{date}}. Replace it in time.",
       "unchecked": "The token could not be checked last time.",
-      "validUntil": "Token valid until {{date}}"
+      "validUntil": "Token valid until {{date}}",
+      "ssoExpiring": "Your SSO sign-in ends on {{date}}. Sign out and in again before then.",
+      "ssoValidUntil": "SSO sign-in valid until {{date}}"
     },
     "status": {
       "connected": "Connected",
@@ -75,7 +77,12 @@
       "load": "Could not load your connections.",
       "connect": "Could not save the connection.",
       "disconnect": "Could not disconnect."
-    }
+    },
+    "endSso": "End SSO connection",
+    "endSsoConfirm": "Yes, end it",
+    "ending": "Ending …",
+    "endSsoWarning": "This ends Reva’s access through your SSO sign-in for every tool that relies on it ({{names}}), in Microsoft Teams too. Reva revokes the sign-in at the identity provider. Until you sign in again, Reva cannot use these tools for you.",
+    "ssoEndedNotRevoked": "Reva no longer uses your SSO sign-in. The identity provider did not confirm the revocation, though; there the sign-in ends at its maximum lifetime at the latest."
   },
   "nav": {
     "chat": "Chat",

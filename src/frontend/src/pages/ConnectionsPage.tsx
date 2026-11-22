@@ -18,6 +18,7 @@ import {
   useDisconnect,
   isSsoProvider,
   credentialHealth,
+  ssoSessionHealth,
   expiryTime,
   type ConnectionProvider,
 } from '../api/resources/connections';
@@ -31,6 +32,14 @@ export default function ConnectionsPage() {
    *  SSO case matters most: a rejected fallback token next to a tool that keeps
    *  answering reads as a contradiction unless the page says why. */
   const tokenLine = (p: ConnectionProvider): { text: string; warn: boolean } | null => {
+    if (isSsoProvider(p)) {
+      // The login grant behind every SSO connection (reva#341): say when it
+      // ends, so a fresh login happens before tools silently stop answering.
+      if (!p.connected || !p.expires_at || expiryTime(p) === null) return null;
+      return ssoSessionHealth(p) === 'expiring'
+        ? { text: t('connections.check.ssoExpiring', { date: fmtDate(p.expires_at) }), warn: true }
+        : { text: t('connections.check.ssoValidUntil', { date: fmtDate(p.expires_at) }), warn: false };
+    }
     const health = credentialHealth(p);
     if (health === 'rejected') {
       return { text: t(p.sso_active ? 'connections.check.rejectedSso' : 'connections.check.rejected'), warn: true };
@@ -49,22 +58,29 @@ export default function ConnectionsPage() {
   const disconnect = useDisconnect();
 
   // modal state: the provider being connected/managed, and the paste field.
-  // `sso` is its own mode — those connections have no token to paste and no
-  // token to revoke, so both the paste form and the disconnect action would
-  // only lead to a server-side refusal.
+  // `sso` is its own mode — there is no token to paste. Ending an SSO
+  // connection ends the login grant behind ALL of them (and the user's Teams
+  // session at the same client), so it takes an explicit second step.
   const [active, setActive] = useState<ConnectionProvider | null>(null);
   const [mode, setMode] = useState<'connect' | 'manage' | 'sso'>('connect');
   const [secret, setSecret] = useState('');
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const [notRevoked, setNotRevoked] = useState(false);
 
   const open = (p: ConnectionProvider) => {
     setActive(p);
     setMode(isSsoProvider(p) ? 'sso' : p.connected ? 'manage' : 'connect');
     setSecret('');
+    setConfirmEnd(false);
+    setNotRevoked(false);
     connect.reset?.();
+    disconnect.reset?.();
   };
   const close = () => {
     setActive(null);
     setSecret('');
+    setConfirmEnd(false);
+    setNotRevoked(false);
   };
 
   const submit = async () => {
@@ -77,6 +93,24 @@ export default function ConnectionsPage() {
     await disconnect.mutateAsync(active.provider_key);
     close();
   };
+  const endSso = async () => {
+    if (!active) return;
+    const result = await disconnect.mutateAsync(active.provider_key);
+    // Reva has stopped using the grant either way; if the identity provider
+    // did not confirm the revocation, say so instead of closing silently.
+    if (result?.revoked === false && result?.disconnected) {
+      setConfirmEnd(false);
+      setNotRevoked(true);
+      return;
+    }
+    close();
+  };
+  // Every tool that runs on the sign-in: SSO connections, plus paste-token
+  // tools currently reached through it (`sso_active`, e.g. konfigure on OBO).
+  const ssoNames = (providers ?? [])
+    .filter((p) => (isSsoProvider(p) && p.connected) || p.sso_active)
+    .map((p) => p.display_name ?? p.provider_key)
+    .join(', ');
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -186,7 +220,9 @@ export default function ConnectionsPage() {
                 <p className="text-sm text-gray-600 dark:text-gray-300">
                   {active.help ?? t('connections.ssoDefaultHelp')}
                 </p>
-                {active.connected ? (
+                {notRevoked ? (
+                  <Alert variant="warning">{t('connections.ssoEndedNotRevoked')}</Alert>
+                ) : active.connected ? (
                   <Alert variant="success">{t('connections.ssoConnected')}</Alert>
                 ) : (
                   // The remedy is a fresh login, not a token hunt. Without
@@ -194,9 +230,35 @@ export default function ConnectionsPage() {
                   // button is a dead end.
                   <Alert variant="warning">{t('connections.ssoNotConnected')}</Alert>
                 )}
-                <div className="flex justify-end pt-1">
+                {(() => {
+                  const line = tokenLine(active);
+                  return line?.warn && !notRevoked ? <Alert variant="warning">{line.text}</Alert> : null;
+                })()}
+                {confirmEnd && (
+                  <Alert variant="warning">{t('connections.endSsoWarning', { names: ssoNames })}</Alert>
+                )}
+                {disconnect.errorMessage && <Alert variant="error">{disconnect.errorMessage}</Alert>}
+                <div className="flex justify-between gap-2 pt-1">
+                  {active.connected && !notRevoked ? (
+                    confirmEnd ? (
+                      <button
+                        type="button"
+                        className="btn-danger"
+                        disabled={disconnect.isPending}
+                        onClick={endSso}
+                      >
+                        {disconnect.isPending ? t('connections.ending') : t('connections.endSsoConfirm')}
+                      </button>
+                    ) : (
+                      <button type="button" className="btn-danger" onClick={() => setConfirmEnd(true)}>
+                        {t('connections.endSso')}
+                      </button>
+                    )
+                  ) : (
+                    <span />
+                  )}
                   <button type="button" className="btn-secondary" onClick={close}>
-                    {t('common.close')}
+                    {confirmEnd ? t('common.cancel') : t('common.close')}
                   </button>
                 </div>
               </>

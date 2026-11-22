@@ -19,6 +19,7 @@ import { server } from '../mocks/server';
 import ConnectionsPage from '../../../../src/frontend/src/pages/ConnectionsPage';
 import {
   credentialHealth,
+  ssoSessionHealth,
   EXPIRY_WARN_DAYS,
 } from '../../../../src/frontend/src/api/resources/connections';
 import { TEST_CONFIG } from '../config';
@@ -73,7 +74,7 @@ describe('ConnectionsPage — SSO providers', () => {
     expect(screen.queryByRole('button', { name: /verbindung speichern/i })).not.toBeInTheDocument();
   });
 
-  it('offers no Disconnect for a connected SSO provider', async () => {
+  it('offers no plain Disconnect and no token rotation for a connected SSO provider', async () => {
     serve([{ ...SSO_PROVIDER, connected: true }]);
     renderWithProviders(<ConnectionsPage />);
 
@@ -102,6 +103,115 @@ describe('ConnectionsPage — SSO providers', () => {
     renderWithProviders(<ConnectionsPage />);
 
     expect(await screen.findByText(/über deine SSO-Anmeldung/i)).toBeInTheDocument();
+  });
+});
+
+describe('ConnectionsPage — ending the SSO connection (reva#341)', () => {
+  // The production shape: konfigure is a paste-token provider that runs on the
+  // same sign-in (OBO) — `sso_active`, not `credential_type: 'sso'`.
+  const KONFIGURE_SSO = {
+    ...PASTE_PROVIDER,
+    provider_key: 'konfigure',
+    display_name: 'konfigure',
+    connected: false,
+    sso_active: true,
+  };
+
+  it('asks before ending, and names every tool that relies on the sign-in', async () => {
+    let deletes = 0;
+    serve([{ ...SSO_PROVIDER, connected: true }, KONFIGURE_SSO]);
+    server.use(
+      http.delete(`${BASE}/api/connections/release`, () => {
+        deletes += 1;
+        return HttpResponse.json({ disconnected: true, revoked: true, sso: true });
+      }),
+    );
+    renderWithProviders(<ConnectionsPage />);
+
+    await screen.findByText('Digital.ai Release');
+    fireEvent.click(screen.getAllByRole('button', { name: /details/i })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: /sso-verbindung beenden/i }));
+
+    expect(await screen.findByText(/Digital\.ai Release, konfigure/)).toBeInTheDocument();
+    expect(screen.getByText(/auch in Microsoft Teams/i)).toBeInTheDocument();
+    expect(deletes).toBe(0);
+
+    fireEvent.click(screen.getByRole('button', { name: /ja, beenden/i }));
+    await waitFor(() => expect(deletes).toBe(1));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('can be cancelled without calling the server', async () => {
+    let deletes = 0;
+    serve([{ ...SSO_PROVIDER, connected: true }]);
+    server.use(
+      http.delete(`${BASE}/api/connections/release`, () => {
+        deletes += 1;
+        return HttpResponse.json({ disconnected: true, revoked: true, sso: true });
+      }),
+    );
+    renderWithProviders(<ConnectionsPage />);
+
+    await screen.findByText('Digital.ai Release');
+    fireEvent.click(screen.getByRole('button', { name: /details/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /sso-verbindung beenden/i }));
+    fireEvent.click(screen.getByRole('button', { name: /abbrechen/i }));
+    expect(deletes).toBe(0);
+  });
+
+  it('says so when the identity provider did not confirm the revocation', async () => {
+    serve([{ ...SSO_PROVIDER, connected: true }]);
+    server.use(
+      http.delete(`${BASE}/api/connections/release`, () =>
+        HttpResponse.json({ disconnected: true, revoked: false, sso: true }),
+      ),
+    );
+    renderWithProviders(<ConnectionsPage />);
+
+    await screen.findByText('Digital.ai Release');
+    fireEvent.click(screen.getByRole('button', { name: /details/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /sso-verbindung beenden/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ja, beenden/i }));
+
+    expect(await screen.findByText(/Widerruf aber nicht bestätigt/i)).toBeInTheDocument();
+  });
+
+  it('offers nothing to end while the SSO connection is not established', async () => {
+    serve([SSO_PROVIDER]);
+    renderWithProviders(<ConnectionsPage />);
+
+    await screen.findByText('Digital.ai Release');
+    fireEvent.click(screen.getByRole('button', { name: /details/i }));
+    await screen.findByText(/neu an/i);
+    expect(screen.queryByRole('button', { name: /sso-verbindung beenden/i })).not.toBeInTheDocument();
+  });
+
+  it('shows when the sign-in ends, and warns inside the window', async () => {
+    const soon = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    const far = new Date(Date.now() + 80 * 86_400_000).toISOString();
+    serve([
+      { ...SSO_PROVIDER, connected: true, check_state: 'valid', expires_at: soon },
+      { ...SSO_PROVIDER, provider_key: 'release-2', display_name: 'Release 2', connected: true, check_state: 'valid', expires_at: far },
+    ]);
+    renderWithProviders(<ConnectionsPage />);
+
+    expect(await screen.findByText(/SSO-Anmeldung endet am/i)).toBeInTheDocument();
+    expect(screen.getByText(/SSO-Anmeldung gültig bis/i)).toBeInTheDocument();
+  });
+});
+
+describe('ssoSessionHealth', () => {
+  const NOW = new Date('2026-11-21T12:00:00Z');
+  const base = { ...SSO_PROVIDER, connected: true, check_state: 'valid' as const };
+  const at = (days: number) => new Date(NOW.getTime() + days * 86_400_000).toISOString();
+
+  it('warns within the window only, and only for a connected SSO row', () => {
+    expect(ssoSessionHealth({ ...base, expires_at: at(EXPIRY_WARN_DAYS) }, NOW)).toBe('expiring');
+    expect(ssoSessionHealth({ ...base, expires_at: at(EXPIRY_WARN_DAYS + 1) }, NOW)).toBeNull();
+    expect(ssoSessionHealth({ ...base, expires_at: at(-1) }, NOW)).toBeNull();
+    expect(ssoSessionHealth({ ...base, expires_at: null }, NOW)).toBeNull();
+    expect(ssoSessionHealth({ ...base, connected: false, expires_at: at(1) }, NOW)).toBeNull();
+    expect(ssoSessionHealth({ ...PASTE_PROVIDER, connected: true, expires_at: at(1) }, NOW)).toBeNull();
   });
 });
 
