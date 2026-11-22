@@ -102,6 +102,7 @@ def test_a_skipped_entry_is_logged_without_its_contents(monkeypatch):
     skipped = [x for x in lines if "malformed mailbox entry" in x]
     assert len(skipped) == 1
     assert "muster-owner" not in skipped[0] and "Muster-KB" not in skipped[0]
+    assert "'bad'" in skipped[0]  # the operator still sees WHICH entry (its configured id)
 
 
 def test_config_property_graceful_on_bad_json(monkeypatch):

@@ -46,7 +46,7 @@ from services.ingest_common import (
     verify_ingest_token,
 )
 from utils.config import settings
-from utils.log_safety import error_text_without_content, logged_content
+from utils.log_safety import error_text_without_content
 
 # Cross-repo push-contract version (mirrors FOLDER_INGEST_CONTRACT_VERSION).
 # Sent in the request + response header; bump on ANY request/response shape or
@@ -89,7 +89,7 @@ def resolve_mailbox_target(mailbox_id: str) -> MailboxTarget | None:
             )
         except (ValueError, TypeError, AttributeError) as exc:
             logger.warning(
-                f"email-ingest: skipping malformed mailbox entry {logged_content(entry)}: "
+                f"email-ingest: skipping malformed mailbox entry id={entry.get('id')!r}: "
                 f"{error_text_without_content(exc)}"
             )
             continue

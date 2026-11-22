@@ -779,7 +779,7 @@ def _resolve_blobs(params: any, blob_store: dict[str, str]) -> any:
     elif isinstance(params, list):
         return [_resolve_blobs(item, blob_store) for item in params]
     elif isinstance(params, str) and params.startswith("$blob:") and params in blob_store:
-        logger.debug(f"🗄️ Resolved blob reference {logged_content(params)}")
+        logger.debug(f"🗄️ Resolved blob reference {params}")
         return blob_store[params]
     return params
 

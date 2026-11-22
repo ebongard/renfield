@@ -63,8 +63,6 @@ _SAFE_WRAPPERS = frozenset({
     "len", "logged_content", "bool", "type", "isinstance",
     # agent_service: structure and a hash of a model response, never its text (#1381).
     "_response_fingerprint", "_response_keys", "_describe_unparsable",
-    # utils/log_safety: an exception's primary message / its stack, no content.
-    "error_text_without_content", "frames_without_content",
     # scanner_jobs: a validated error code, never the event's free text.
     "describe_failure_for_log",
     # simba_ingest_review: an upload envelope's counts and HTTP statuses (#1609).
@@ -78,6 +76,27 @@ _NOT_CONTENT = {
         "the OTA progress text the satellite's updater reports",
     ("services/mcp_client.py", 'logger.warning(f"Invalid MCP tool schema: {e.message}")'):
         "a jsonschema SchemaError describes the tool's schema, not the call's arguments",
+    # An exception, isinstance-checked on the line above, in a generally
+    # named variable: its helper prints the primary message only.
+    ("services/agent_service.py",
+     "logger.error(f\"❌ Parallel tool '{act['action']}' failed: {error_text_without_content(res)}\")"):
+        "an exception (isinstance(res, Exception) above)",
+    ("services/orchestrator.py", 'f"{error_text_without_content(result)}"'):
+        "an exception (isinstance(result, BaseException) above)",
+    ("services/polymorphic_atom_store.py",
+     'f"({type(value).__name__}): {error_text_without_content(value)}"'):
+        "an exception (isinstance(value, BaseException) above)",
+    # Home Assistant's WebSocket frames: the fixed auth handshake and the
+    # config/area-registry answers -- no service data (that `data` in
+    # call_service carries media titles, so the file is NOT classified).
+    ("ha_glue/integrations/homeassistant.py", 'logger.error(f"Unexpected HA WS message: {data}")'):
+        "a Home Assistant handshake frame",
+    ("ha_glue/integrations/homeassistant.py", 'logger.error(f"HA WS auth failed: {data}")'):
+        "a Home Assistant auth frame",
+    ("ha_glue/integrations/homeassistant.py", 'logger.error(f"HA WS command failed: {data}")'):
+        "a Home Assistant registry command's error frame",
+    ("services/agent_service.py", 'logger.debug(f"🗄️ Resolved blob reference {params}")'):
+        "a generated $blob: key (this branch holds the key string, not the data)",
     # mcp_client parses its OWN settings here; the same `value` elsewhere in the
     # file is a tool-call argument, so these are exempted by line, not by file.
     ("services/mcp_client.py", 'logger.warning(f"{label}: ignoring boolean-like value {raw!r}")'):
@@ -154,7 +173,6 @@ _NOT_CONTENT_HERE = {
     ("utils/config.py", "name"): "a setting's name",
     # A whole-value identifier (`_WHOLE_VALUE_NAMES`), classified per file.
     ("api/routes/scheduled_tasks.py", "data"): "the update's field names (`sorted(data)` of a dict)",
-    ("ha_glue/integrations/homeassistant.py", "data"): "a Home Assistant handshake or command-result frame",
     ("services/daypart_service.py", "value"): "a configured daypart time",
     ("services/prompt_manager.py", "data"): "the keys of a prompt file shipped in the image",
     ("services/task_queue.py", "params"): "document id, flags and trigger; the worker reads the document by id",
@@ -184,6 +202,13 @@ def _field_of(node: ast.AST, rel: str | None) -> str | None:
     receiver, key = _key_read(node)
     if key in CONTENT_FIELDS:
         return f"{receiver}[{key!r}]"
+    # A whole payload read by key or attribute is still all of it:
+    # `r.get("result")`, `resp.data`. An Enum's `.value` is its constant.
+    if key in _WHOLE_VALUE_NAMES and (rel, key) not in _NOT_CONTENT_HERE:
+        return f"{receiver}[{key!r}]"
+    if (isinstance(node, ast.Attribute) and node.attr in _WHOLE_VALUE_NAMES and node.attr != "value"
+            and (rel, node.attr) not in _NOT_CONTENT_HERE):
+        return f"{ast.unparse(node.value)}.{node.attr}"
     if isinstance(node, ast.Attribute):
         receiver, key = ast.unparse(node.value), node.attr
     elif isinstance(node, ast.Name):
@@ -366,6 +391,15 @@ def test_a_content_field_read_by_key_fires(line):
     'logger.info("{} {!r} already exists, reusing", field, value)',
     'logger.error(f"not landed; raw={result!r}")',
     'logger.info(f"result: {res or {}}")',
+    # The exception helpers print `str(x)` (cut at SQL, 200 chars): handed a
+    # payload instead of an exception they print the payload.
+    'logger.error(f"failed: {error_text_without_content(res)}")',
+    'logger.error(f"failed: {error_text_without_content(text)}")',
+    # A whole payload read by key or attribute is still all of it.
+    'logger.info(f"got {msg.payload}")',
+    'logger.info(f"got {resp.data}")',
+    """logger.info(f"got {r.get('result')}")""",
+    """logger.info(f"got {envelope['data']}")""",
 ])
 def test_a_whole_payload_fires(line):
     assert offenders_in(line, "services/agent_tools.py")
@@ -376,7 +410,10 @@ def test_a_whole_payload_fires(line):
     'logger.info(f"uebertragen={result[\'uebertragen\']}")',
     """logger.info(f"state={'ok' if res else 'empty'}")""",
     'logger.info(f"missing={res is None} has={k in parsed}")',
-    'logger.error(f"failed: {error_text_without_content(res)}")',
+    # An exception named as one passes through its helper.
+    'logger.error(f"failed: {error_text_without_content(exc)}")',
+    # An Enum's `.value` is the enum's own constant.
+    'logger.info(f"state={status.value}")',
     'logger.error(f"failed: {logged_content(result)}")',
 ])
 def test_what_it_lets_through_of_a_whole_payload(line):
