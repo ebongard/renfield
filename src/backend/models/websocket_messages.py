@@ -234,6 +234,12 @@ class WSChatMessage(BaseModel):
         description="Duration (s) of the utterance the speaker embedding came from",
         ge=0.0,
     )
+    # Turn-end trace (#1613): content-free metadata of the voice turn that
+    # produced this message (end reason, recording length, gap since the previous
+    # answer, a per-page-load turn key). Typed loosely ON PURPOSE: a malformed
+    # object must never fail the chat turn -- the trace service clamps or drops
+    # it. Absent for typed text; ignored unless VOICE_TURN_TRACES_ENABLED.
+    voice_turn: Any = Field(default=None, description="Content-free voice turn-end metadata")
 
 
 # =============================================================================

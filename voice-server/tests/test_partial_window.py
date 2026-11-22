@@ -136,7 +136,7 @@ async def test_the_final_transcription_gets_everything():
     stt, ws = _FakeSTT(), _SinkWS()
     state = wsv.SessionState(user_id="u")
     await _feed(state, stt, ws, 95)
-    await wsv._finalize(ws, state, stt, _Speaker())
+    await wsv._finalize(ws, state, stt, _Speaker(), end_reason="client_flush")
     assert stt.final_sizes == [95 * SR]
     # The next utterance starts with a fresh window.
     assert (state.partial_base_samples, state.partial_base_text) == (0, "")
@@ -214,9 +214,9 @@ def socket_env(monkeypatch):
     finals: list[float] = []
     real_finalize = wsv._finalize
 
-    async def _finalize(ws, state, stt, speaker):
+    async def _finalize(ws, state, stt, speaker, *, end_reason):
         finals.append(wsv._accumulated_seconds(state))
-        await real_finalize(ws, state, stt, speaker)
+        await real_finalize(ws, state, stt, speaker, end_reason=end_reason)
 
     monkeypatch.setattr(wsv, "_finalize", _finalize)
     wsv._active_sessions = 0

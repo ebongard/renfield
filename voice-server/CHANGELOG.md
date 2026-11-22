@@ -5,6 +5,12 @@ version without a section here. Pushed digests live in `RELEASES.md`.
 
 ## [Unreleased]
 
+- **`final_transcript` says why the utterance ended.** New field `end_reason`:
+  `server_vad` (the server-VAD backstop), `max_utterance` (the
+  `MAX_UTTERANCE_SECONDS` cap) or `client_flush` (the client's `stt_flush`; the
+  client knows whether that was its silence VAD or a manual stop). Content-free;
+  a client that ignores the field is unaffected. (renfield #1613)
+
 ## [0.3.10] — 2026-11-22
 
 - **`?code=` is redacted in log lines, as in the backend.** The voice-server's

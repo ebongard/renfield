@@ -2118,6 +2118,9 @@ ROUTING_TRACES_RETENTION_DAYS=14
 # abgerissener Socket)/orphaned/unknown;
 # sonst "other"), Aufnahmelänge, VAD-Urteil des Geräts, Aufnahme-Ende,
 # Sitzungsende, "resumed". Kein Nutzer, kein Text, kein Audio.
+# Browser (Quelle "browser"): je Sprachzug-Chat-Nachricht mit `voice_turn`
+# eine Zeile — Endgrund (server_vad/max_utterance/client_flush/silence/button),
+# Aufnahmelänge, zufälliger Schlüssel je Seitenaufruf; Raum NULL.
 # Lesen: GET /api/admin/voice-turns/stats?days=14 (Admin).
 # Aus = kein Task, keine Zeile; die Route antwortet mit enabled=false.
 VOICE_TURN_TRACES_ENABLED=false
@@ -2127,7 +2130,7 @@ VOICE_TURN_TRACES_ENABLED=false
 VOICE_TURN_TRACES_RETENTION_DAYS=30
 ```
 
-Geschrieben wird beim SITZUNGSENDE, nicht bei `audio_end`. `finished_at` = das spätere von Sitzungsende und erwartetem Ende der Antwort-Wiedergabe (Sendezeit + WAV-Dauer; kein lesbares WAV = Sendezeit), denn der Satellit lauscht schon wieder auf das Wake-Word, während er die Antwort noch abspielt. `resumed` = dasselbe Gerät wurde nach dem Aufnahme-Ende dieses Zuges und höchstens 10 s nach dem Ende seiner Antwort-Wiedergabe erneut geweckt — ein Unterbrechen während der Antwort zählt mit. Ab `audio_end` gemessen hätte der Wert die Antwortzeit abgebildet, ab dem Sitzungsende die Länge der Antwort. Ein bewusst grober Abschneide-Indikator: eine schnelle Rückfrage zählt ebenfalls. Details: `docs/VOICE_PIPELINE_DESIGN.md` → „Turn-end trace".
+Geschrieben wird beim SITZUNGSENDE, nicht bei `audio_end`. `finished_at` = das spätere von Sitzungsende und erwartetem Ende der Antwort-Wiedergabe (Sendezeit + WAV-Dauer; kein lesbares WAV = Sendezeit), denn der Satellit lauscht schon wieder auf das Wake-Word, während er die Antwort noch abspielt. `resumed` = dasselbe Gerät wurde nach dem Aufnahme-Ende dieses Zuges und höchstens 10 s nach dem Ende seiner Antwort-Wiedergabe erneut geweckt — ein Unterbrechen während der Antwort zählt mit. Ab `audio_end` gemessen hätte der Wert die Antwortzeit abgebildet, ab dem Sitzungsende die Länge der Antwort. Beim Browser entscheidet der im Browser gemessene Abstand vom Ende der vorigen Antwort-Wiedergabe bis zum Aufnahmestart (≤ 10 s; 0 = Unterbrechen), nur innerhalb desselben Seitenaufrufs. Ein bewusst grober Abschneide-Indikator: eine schnelle Rückfrage zählt ebenfalls. Details: `docs/VOICE_PIPELINE_DESIGN.md` → „Turn-end trace".
 
 > **voice-server-seitig** (eigene Config `voice-server/voice_server/config.py`, NICHT diese Backend-`.env`): `MAX_UTTERANCE_SECONDS=600` ist die ferne Obergrenze einer `/ws/voice`-Äußerung (Browser). Bei Erreichen wird das Bisherige finalisiert und der Socket mit Grund `max_utterance_seconds (<N>s)` geschlossen; das Protokoll schreibt eine inhaltsfreie Zeile `reason=max_utterance`. Schutz gegen ein vergessenes offenes Mikrofon, KEINE Diktatgrenze — bis #1613 hart 60 s, was lange Diktate mitten im Satz abschnitt. Zwischenergebnisse (`partial_transcript`) transkribieren dabei nur ein Fenster von 30 s (`PARTIAL_WINDOW_S`, Konstante) mit festem Textpräfix davor; nach einem solchen Schnitt wartet das Stille-Urteil des Server-VAD, bis das neue Fenster 3 s hält (`PARTIAL_MIN_WINDOW_S`). Die finale Transkription umfasst die ganze Äußerung.
 
