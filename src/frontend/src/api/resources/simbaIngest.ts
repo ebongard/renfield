@@ -3,6 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { keys } from '../keys';
 import apiClient from '../../utils/axios';
 
+/** A file the Simba portal can never accept — data; the UI renders the text. */
+export interface SimbaUploadBlocked {
+  code: 'too_large';
+  size_mb: number;
+  max_mb: number;
+}
+
 export interface SimbaProposal {
   id: number;
   document_id: number;
@@ -13,6 +20,9 @@ export interface SimbaProposal {
   /** Booking period (Zeitraum) from the document's date; null → form uses now. */
   suggested_month?: number | null;
   suggested_year?: number | null;
+  /** Why it can never land in Simba (over the portal's file size limit, #1609);
+   * the form shows it instead of the confirm. null = it fits, or unknown. */
+  upload_blocked?: SimbaUploadBlocked | null;
 }
 
 const PROPOSALS_KEY = ['simbaIngest', 'proposals'] as const;
@@ -95,6 +105,7 @@ export interface SendToSimbaResult {
   suggested_description: string;
   suggested_month?: number | null;
   suggested_year?: number | null;
+  upload_blocked?: SimbaUploadBlocked | null;
 }
 
 /** Create (or reuse) a pending Simba proposal for an EXISTING knowledge-base

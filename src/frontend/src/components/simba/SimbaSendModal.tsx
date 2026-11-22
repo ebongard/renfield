@@ -9,6 +9,7 @@ import {
   useSimbaCategoriesQuery,
   type SimbaProposal,
 } from '../../api/resources/simbaIngest';
+import { extractApiError } from '../../utils/axios';
 
 interface Props {
   /** The document to send; `null` = closed. */
@@ -68,10 +69,13 @@ export default function SimbaSendModal({ documentId, filename, enabled, onClose 
           suggested_description: data.suggested_description,
           suggested_month: data.suggested_month,
           suggested_year: data.suggested_year,
+          upload_blocked: data.upload_blocked,
         });
       },
       onError: (e) => {
-        if (!cancelled) setError((e as Error).message || t('simbaReview.uploadFailed'));
+        // The backend's reason (e.g. the file is over the portal's limit, a 422),
+        // not axios's "Request failed with status code …".
+        if (!cancelled) setError(extractApiError(e, t('simbaReview.uploadFailed')));
       },
     });
     return () => {

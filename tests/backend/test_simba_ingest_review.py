@@ -694,7 +694,7 @@ class TestSimbaIngestRoutes:
         req = MagicMock()
 
         with pytest.raises(HTTPException) as e1:
-            await routes.list_proposals(db=db_session, user=None)
+            await routes.list_proposals(request=req, db=db_session, user=None)
         assert e1.value.status_code == 401
         with pytest.raises(HTTPException) as e2:
             await routes.reject_proposal(proposal_id=1, db=db_session, user=None)

@@ -2737,7 +2737,9 @@
     "forceUpload": "Trotzdem übertragen",
     "dupUnknown": "vorhandener Eintrag",
     "confirmUploadInline": "„{{filename}}“ endgültig an die Steuerkanzlei (Simba) übertragen — {{category}} · {{type}} · {{period}}? Das kann nicht widerrufen werden.",
-    "confirmYes": "Ja, übertragen"
+    "confirmYes": "Ja, übertragen",
+    "blockedTitle": "Kann nicht übertragen werden:",
+    "tooLarge": "Die Datei ist {{size}} MB groß, das Simba-Portal nimmt höchstens {{max}} MB an. Bitte verkleinern (z. B. mit geringerer Scan-Auflösung) oder aufteilen und neu einreichen."
   },
   "simbaSend": {
     "title": "An Simba übertragen",

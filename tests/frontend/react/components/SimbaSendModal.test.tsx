@@ -106,6 +106,51 @@ describe('SimbaSendModal', () => {
     ).toBeInTheDocument();
   });
 
+  it('names an oversized file and offers no confirm (#1609)', async () => {
+    mockedPost.mockResolvedValue({
+      data: {
+        success: true,
+        message: 'already_pending',
+        proposal_id: 42,
+        suggested_category: 'Belege',
+        suggested_type: 'Eingangsrechnung',
+        suggested_description: 'Rechnung Arkadon',
+        upload_blocked: { code: 'too_large', size_mb: 16.2, max_mb: 15 },
+      },
+    } as never);
+
+    renderModal();
+
+    // The finding is rendered from the data, in the viewer's language.
+    expect(await screen.findByRole('alert')).toHaveTextContent('16,2 MB');
+    expect(screen.getByRole('alert')).toHaveTextContent('15 MB');
+    // There is nothing to confirm: the file can never land.
+    expect(screen.queryByRole('button', { name: /Übertragen/i })).not.toBeInTheDocument();
+    expect(mockedPost).not.toHaveBeenCalledWith(
+      expect.stringContaining('/confirm'),
+      expect.anything(),
+    );
+  });
+
+  it('offers the confirm when the file fits (negative control)', async () => {
+    mockedPost.mockResolvedValue({
+      data: {
+        success: true,
+        message: 'created',
+        proposal_id: 42,
+        suggested_category: 'Belege',
+        suggested_type: 'Eingangsrechnung',
+        suggested_description: 'Rechnung Arkadon',
+        upload_blocked: null,
+      },
+    } as never);
+
+    renderModal();
+
+    expect(await screen.findByRole('button', { name: /Übertragen/i })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('does not upload when the create step fails', async () => {
     mockedPost.mockResolvedValue({
       data: { success: false, message: 'not_found', proposal_id: null },

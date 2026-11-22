@@ -7,6 +7,7 @@ import {
   useRejectSimbaProposal,
   type SimbaProposal,
 } from '../../api/resources/simbaIngest';
+import { extractApiError } from '../../utils/axios';
 
 /** Terminal outcome reported to the parent (overlay closes / queue flashes). */
 export interface SimbaResolution {
@@ -73,6 +74,13 @@ export default function SimbaProposalForm({
       : baseYears;
   const typeOptions = category ? categories[category] ?? [] : [];
   const busy = confirm.isPending || reject.isPending;
+  // A file the portal can never accept (#1609): say why, offer no confirm.
+  const blocked = proposal.upload_blocked ?? null;
+  const mb = (n: number) =>
+    new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 1 }).format(n);
+  const blockedReason = blocked
+    ? t('simbaReview.tooLarge', { size: mb(blocked.size_mb), max: mb(blocked.max_mb) })
+    : null;
 
   const submit = (force: boolean) => {
     setError(null);
@@ -92,7 +100,9 @@ export default function SimbaProposalForm({
           }
           setError(data.message || t('simbaReview.uploadFailed'));
         },
-        onError: (e) => setError((e as Error).message || t('simbaReview.uploadFailed')),
+        // The backend's reason (a 422 says why the file can't go, a 502 what the
+        // portal answered), not axios's "Request failed with status code …".
+        onError: (e) => setError(extractApiError(e, t('simbaReview.uploadFailed'))),
       },
     );
   };
@@ -109,7 +119,7 @@ export default function SimbaProposalForm({
   const onReject = () =>
     reject.mutate(proposal.id, {
       onSuccess: () => onResolved?.({ uploaded: false, filename: proposal.filename, message: '' }),
-      onError: (e) => setError((e as Error).message || t('common.error')),
+      onError: (e) => setError(extractApiError(e, t('common.error'))),
     });
 
   const period = `${String(month).padStart(2, '0')}/${year}`;
@@ -197,8 +207,20 @@ export default function SimbaProposalForm({
         </label>
       </div>
 
+      {blockedReason && (
+        <div
+          role="alert"
+          className="mb-3 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-700/60 dark:bg-red-900/20 dark:text-red-200"
+        >
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
+          <span>
+            <span className="font-medium">{t('simbaReview.blockedTitle')}</span> {blockedReason}
+          </span>
+        </div>
+      )}
+
       {/* Irreversible-action confirm: a styled two-step, not window.confirm. */}
-      {confirming ? (
+      {confirming && !blockedReason ? (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-100">
           <p className="flex items-start gap-2 mb-3">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
@@ -224,14 +246,16 @@ export default function SimbaProposalForm({
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={startConfirm}
-            disabled={busy}
-            className="btn-primary min-h-[44px] flex items-center gap-2"
-          >
-            <Check className="w-4 h-4" aria-hidden="true" />
-            {t('simbaReview.confirm')}
-          </button>
+          {!blockedReason && (
+            <button
+              onClick={startConfirm}
+              disabled={busy}
+              className="btn-primary min-h-[44px] flex items-center gap-2"
+            >
+              <Check className="w-4 h-4" aria-hidden="true" />
+              {t('simbaReview.confirm')}
+            </button>
+          )}
           {showReject && (
             <button
               onClick={onReject}

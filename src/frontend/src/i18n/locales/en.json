@@ -2737,7 +2737,9 @@
     "forceUpload": "Transfer anyway",
     "dupUnknown": "existing entry",
     "confirmUploadInline": "Transfer \"{{filename}}\" to the tax accountant (Simba) for good — {{category}} · {{type}} · {{period}}? This cannot be undone.",
-    "confirmYes": "Yes, transfer"
+    "confirmYes": "Yes, transfer",
+    "blockedTitle": "Cannot be sent:",
+    "tooLarge": "The file is {{size}} MB; the Simba portal accepts at most {{max}} MB. Please make it smaller (e.g. a lower scan resolution) or split it, then submit it again."
   },
   "simbaSend": {
     "title": "Send to Simba",

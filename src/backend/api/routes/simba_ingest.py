@@ -14,9 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services import simba_ingest_review as review
 from services.auth_service import get_optional_user
 from services.database import get_db
+from services.simba_portal_limits import portal_limits
 from utils.config import settings
 
 router = APIRouter()
+
+#: How long the list waits for a cold fetch of the portal's limits (a portal
+#: login) before it answers without them; the fetch runs on and fills the cache.
+_LIMITS_WAIT_SECONDS = 5.0
 
 
 def _require_user(user) -> None:
@@ -24,6 +29,21 @@ def _require_user(user) -> None:
     trigger an irreversible upload — never reachable anonymously)."""
     if settings.auth_enabled and user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
+
+
+class SimbaUploadBlocked(BaseModel):
+    """A file the portal can never accept -- data for the UI to render in the
+    viewer's language, not a sentence."""
+
+    code: str
+    size_mb: float
+    max_mb: float
+
+
+def _blocked_out(blocked) -> SimbaUploadBlocked | None:
+    if blocked is None:
+        return None
+    return SimbaUploadBlocked(code=blocked.code, size_mb=blocked.size_mb, max_mb=blocked.max_mb)
 
 
 class SimbaProposalOut(BaseModel):
@@ -37,6 +57,9 @@ class SimbaProposalOut(BaseModel):
     # form defaults to the invoice month rather than the current one (#1167).
     suggested_month: int | None = None
     suggested_year: int | None = None
+    # Why it can never land (over the portal's file size limit, #1609); the
+    # form shows it instead of the confirm. None = it fits, or limits unknown.
+    upload_blocked: SimbaUploadBlocked | None = None
 
 
 class SimbaProposalsResponse(BaseModel):
@@ -66,6 +89,7 @@ class SimbaActionResponse(BaseModel):
     suggested_description: str = ""
     suggested_month: int | None = None
     suggested_year: int | None = None
+    upload_blocked: SimbaUploadBlocked | None = None
 
 
 def _require_enabled() -> None:
@@ -76,6 +100,7 @@ def _require_enabled() -> None:
 @router.post("/simba-ingest/from-document/{document_id}", response_model=SimbaActionResponse)
 async def send_document_to_simba(
     document_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_optional_user),
 ):
@@ -84,10 +109,13 @@ async def send_document_to_simba(
     the actual irreversible upload still happens via the confirm step."""
     _require_user(user)
     _require_enabled()
-    res = await review.create_proposal_for_document(db, document_id, user)
+    limits = await portal_limits(getattr(request.app.state, "mcp_manager", None))
+    res = await review.create_proposal_for_document(db, document_id, user, limits=limits)
     if not res["success"]:
         if res["message"] == "not_found":
             raise HTTPException(status_code=404, detail="Document not found")
+        if res["message"] == "too_large":
+            raise HTTPException(status_code=422, detail=res["reason"])
         raise HTTPException(status_code=400, detail=res["message"])
     return SimbaActionResponse(
         success=True, message=res["message"], proposal_id=res.get("proposal_id"),
@@ -96,15 +124,19 @@ async def send_document_to_simba(
         suggested_description=res.get("suggested_description", ""),
         suggested_month=res.get("suggested_month"),
         suggested_year=res.get("suggested_year"),
+        upload_blocked=_blocked_out(res.get("upload_blocked")),
     )
 
 
 @router.get("/simba-ingest", response_model=SimbaProposalsResponse)
 async def list_proposals(
-    db: AsyncSession = Depends(get_db), user=Depends(get_optional_user)
+    request: Request, db: AsyncSession = Depends(get_db), user=Depends(get_optional_user)
 ):
     _require_user(user)
-    rows = await review.list_pending(db, user)
+    mgr = getattr(request.app.state, "mcp_manager", None)
+    rows = await review.list_pending(
+        db, user, limits=lambda: portal_limits(mgr, wait=_LIMITS_WAIT_SECONDS),
+    )
     return SimbaProposalsResponse(
         proposals=[
             SimbaProposalOut(
@@ -116,8 +148,9 @@ async def list_proposals(
                 suggested_description=desc,
                 suggested_month=month,
                 suggested_year=year,
+                upload_blocked=_blocked_out(blocked),
             )
-            for (p, desc, month, year) in rows
+            for (p, desc, month, year, blocked) in rows
         ]
     )
 
@@ -142,6 +175,9 @@ async def confirm_proposal(
             raise HTTPException(status_code=404, detail="Proposal not found")
         if msg == "already_resolved":
             raise HTTPException(status_code=409, detail="Already resolved")
+        if msg == "too_large":
+            # A property of the file, refused before any upload (#1609).
+            raise HTTPException(status_code=422, detail=res["reason"])
         if msg == "already_in_simba":
             # Not an error: an informative gate. The document appears to already
             # be in Simba — the UI warns and offers an explicit "force" re-confirm.

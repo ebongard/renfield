@@ -2744,6 +2744,8 @@
     "undo": "Annuler"
   },
   "simbaReview": {
+    "blockedTitle": "Envoi impossible :",
+    "tooLarge": "Le fichier fait {{size}} Mo, le portail Simba accepte au maximum {{max}} Mo. Réduisez-le (p. ex. avec une résolution de numérisation plus faible) ou divisez-le, puis soumettez-le à nouveau.",
     "title": "Envoi vers Simba — vérification",
     "hint": "PDF importés depuis le dossier surveillé, à destination de l'expert-comptable. Vérifiez la catégorie et le type, puis confirmez — la transmission est irréversible.",
     "category": "Catégorie",
