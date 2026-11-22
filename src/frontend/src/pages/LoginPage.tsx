@@ -176,6 +176,50 @@ export default function LoginPage() {
     ? 'min-h-screen bg-gradient-to-b from-slate-900 via-[#0f1419] to-slate-950 flex items-center justify-center px-4 relative'
     : 'min-h-screen bg-[radial-gradient(ellipse_at_center,_rgba(0,255,208,0.08)_0%,_#0f1117_70%)] flex items-center justify-center px-4 relative';
 
+  const orDivider = (
+    <div className="relative my-6" aria-hidden="true">
+      <div className="absolute inset-0 flex items-center">
+        <div className="w-full border-t border-gray-700" />
+      </div>
+      <div className="relative flex justify-center text-xs">
+        <span className="bg-gray-900 px-3 text-gray-500 uppercase tracking-wider">
+          {t('auth.ssoOrDivider')}
+        </span>
+      </div>
+    </div>
+  );
+
+  // Where the redirect-provider buttons sit. With the form visible they go
+  // below it, in one group with the Microsoft button; while the form is
+  // collapsed (the provider is the way in) they lead. Keyed on the configured
+  // mode, not on the open state, so opening the form does not move them.
+  const ssoBelowForm = passwordForm !== 'collapsed';
+  const showSsoButtons = ssoProviders.length > 0 && !voiceTicket;
+
+  const ssoButtons = (
+    <div className="space-y-3">
+      {ssoProviders.map((p) => {
+        const label = p.display_name || p.id;
+        return (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => void handleSsoStart(p.id, label)}
+            disabled={ssoStarting !== null || loading}
+            className="w-full btn bg-white text-gray-900 hover:bg-gray-100 py-3 flex items-center justify-center space-x-3 font-medium disabled:opacity-60"
+          >
+            {ssoStarting === p.id ? (
+              <Loader className="w-5 h-5 animate-spin" />
+            ) : (
+              <Building2 className="w-5 h-5" aria-hidden="true" />
+            )}
+            <span>{t('auth.signInWith', { provider: label })}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className={bgClass}>
       {/* Noise overlay — community only; pro reads cleaner without it */}
@@ -272,39 +316,13 @@ export default function LoginPage() {
           ) : (
           <>
           {/* Redirect providers (#341): the company-account door. Same gate
-              as POST /api/auth/sso/start, so every button listed works. */}
-          {ssoProviders.length > 0 && (
-            <div className="space-y-3">
-              {ssoProviders.map((p) => {
-                const label = p.display_name || p.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => void handleSsoStart(p.id, label)}
-                    disabled={ssoStarting !== null || loading}
-                    className="w-full btn bg-white text-gray-900 hover:bg-gray-100 py-3 flex items-center justify-center space-x-3 font-medium disabled:opacity-60"
-                  >
-                    {ssoStarting === p.id ? (
-                      <Loader className="w-5 h-5 animate-spin" />
-                    ) : (
-                      <Building2 className="w-5 h-5" aria-hidden="true" />
-                    )}
-                    <span>{t('auth.signInWith', { provider: label })}</span>
-                  </button>
-                );
-              })}
-              <div className="relative my-6" aria-hidden="true">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-700" />
-                </div>
-                <div className="relative flex justify-center text-xs">
-                  <span className="bg-gray-900 px-3 text-gray-500 uppercase tracking-wider">
-                    {t('auth.ssoOrDivider')}
-                  </span>
-                </div>
-              </div>
-            </div>
+              as POST /api/auth/sso/start, so every button listed works.
+              Leading only while the form is collapsed; see ssoBelowForm. */}
+          {showSsoButtons && !ssoBelowForm && (
+            <>
+              {ssoButtons}
+              {orDivider}
+            </>
           )}
 
           {!passwordFormOpen ? (
@@ -402,18 +420,18 @@ export default function LoginPage() {
               The backend's `_redirect_login_error` brings the user back
               to /login?error=<code> on failure; the OIDC error banner
               above renders the localized copy. */}
+          {/* Below a visible form, the redirect providers and the Microsoft
+              button form one group under a single divider. */}
+          {showSsoButtons && ssoBelowForm && (
+            <>
+              {orDivider}
+              {ssoButtons}
+            </>
+          )}
+
           {oidcEnabled && (
             <>
-              <div className="relative my-6" aria-hidden="true">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-700" />
-                </div>
-                <div className="relative flex justify-center text-xs">
-                  <span className="bg-gray-900 px-3 text-gray-500 uppercase tracking-wider">
-                    {t('auth.ssoOrDivider')}
-                  </span>
-                </div>
-              </div>
+              {showSsoButtons && ssoBelowForm ? <div className="h-3" aria-hidden="true" /> : orDivider}
               <a
                 href="/auth/oidc/login"
                 className="w-full btn bg-white text-gray-900 hover:bg-gray-100 py-3 flex items-center justify-center space-x-3 font-medium"

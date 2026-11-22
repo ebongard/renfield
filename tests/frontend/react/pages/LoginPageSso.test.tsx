@@ -114,6 +114,34 @@ describe('LoginPage — redirect providers (#341)', () => {
     expect(screen.getByLabelText(/benutzername/i)).toBeInTheDocument();
   });
 
+  const follows = (a: Node, b: Node): boolean =>
+    Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  it('visible form: the provider button sits below the form, directly above Microsoft', () => {
+    vi.stubEnv('VITE_OIDC_ENABLED', 'true');
+    try {
+      withAuth({ ssoProviders: [keycloak] });
+      renderWithProviders(<LoginPage />);
+      const submit = screen.getByRole('button', { name: /^anmelden$/i });
+      const provider = screen.getByRole('button', { name: /mit firmenkonto anmelden/i });
+      const microsoft = screen.getByRole('link', { name: /mit sso anmelden/i });
+      expect(follows(submit, provider)).toBe(true);
+      expect(follows(provider, microsoft)).toBe(true);
+      // One "oder" divider for the whole group, not one per button.
+      expect(screen.getAllByText(/^oder$/i)).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('collapsed form: the provider button leads, the link follows it', () => {
+    withAuth({ ssoProviders: [keycloak], passwordForm: 'collapsed' });
+    renderWithProviders(<LoginPage />);
+    const provider = screen.getByRole('button', { name: /mit firmenkonto anmelden/i });
+    const link = screen.getByRole('button', { name: /ohne firmenkonto anmelden/i });
+    expect(follows(provider, link)).toBe(true);
+  });
+
   it('a failed callback (?error=sso) shows a notice', () => {
     search = '?error=sso';
     withAuth({ ssoProviders: [keycloak] });

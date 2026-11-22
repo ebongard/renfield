@@ -72,7 +72,8 @@ raises) — never make it a gate; identity stays in `post_authenticate`. A new g
 `sso_providers` (id, `display_name` or the id, `logout_url`) = the providers `/sso/start` would accept (same gate:
 `SSO_HANDOFF_ENABLED` + `registry.redirect_provider`); a raising `logout_url` lists the provider with `logout_url: null` + WARNING.
 `password_form` = `LOGIN_PASSWORD_FORM` (`visible`|`collapsed`), forced `visible` while the list is empty — the form
-is never hidden when it is the only way in, and never removed. `RedirectProvider.logout_url(channel)` (default None)
+is never hidden when it is the only way in, and never removed. Button order follows the configured mode, not the
+open state: `visible` → form, one "oder", provider buttons, Microsoft; `collapsed` → providers lead. `RedirectProvider.logout_url(channel)` (default None)
 is the IdP end-session URL; the SPA goes there AFTER its own revoke only for a session that began at that provider
 (`renfield_login_provider` in localStorage, set by `AuthCallback`, cleared by a password login).
 
