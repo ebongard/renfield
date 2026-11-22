@@ -908,7 +908,9 @@ reset on every deploy. Step 1 therefore persists a **content-free row per finish
 - **Reason:** the device's `audio_end` reason (`silence | timeout | button | canceled |
   unknown`); for a session that ended WITHOUT an `audio_end`, the backend's: the cleanup
   sweep's recording limit on a LISTENING session → `expired` (never the device's
-  `timeout`), `disconnect`, `orphaned`, anything else `unknown`. Outside the vocabulary →
+  `timeout`), a dropped socket (`unregister`) or heartbeat eviction → `disconnect`,
+  `orphaned`, anything else `unknown`. `unregister` passes `disconnect` since #1613, so such a
+  session's history entry is now `success: false` (before: `completed`, `success: true`). Outside the vocabulary →
   `other`.
 - **Write site: the SESSION END**, not `audio_end`. Every satellite session ends in
   `SatelliteManager._end_session_internal` (regular end, cleanup sweep, heartbeat
@@ -920,14 +922,18 @@ reset on every deploy. Step 1 therefore persists a **content-free row per finish
   `VOICE_TURN_TRACES_ENABLED` off = no task. An `audio_end` for an unknown session records
   nothing. The service lives in `services/` (not `ha_glue/`) so the browser path can reuse it.
 - **Times** (wall clock): START = `SatelliteSession.started_at` (the wake word);
-  `created_at` = end of the RECORDING (`audio_end`); `finished_at` = the session end, AFTER
-  the answer. Without an `audio_end` both are the session end.
-- **`resumed`:** when a turn is recorded, the latest earlier trace of the same source and
-  device whose `finished_at` lies within `RESUME_WINDOW_SECONDS` (10 s) before the new
-  turn's START is marked `resumed=true`. Measured from the session end because a satellite
-  cannot start its next session before the previous one ended (`start_session` refuses
-  while `current_session_id` is set; the answer runs inline) — measured from `audio_end` it
-  would have tracked answer latency, not cut-offs. A deliberately noisy proxy: a quick
+  `created_at` = end of the RECORDING (`audio_end`); `finished_at` = the later of the session
+  end and the EXPECTED END OF THE ANSWER'S PLAYBACK. The handler sends the TTS and ends the
+  session at once, and the satellite goes idle and re-arms its wake word while it still
+  plays, so `_route_satellite_tts_output` notes `send time + WAV duration` (read from the WAV
+  header; a body that is not a readable WAV counts as zero, i.e. the send time) on the
+  session via `note_answer_playback`, whatever device plays it. Without an `audio_end`
+  both times are the session end.
+- **`resumed`:** when a turn is recorded, the latest earlier trace P of the same source and
+  device with `P.created_at < start <= P.finished_at + RESUME_WINDOW_SECONDS` (10 s) is marked
+  `resumed=true`: woken again during the answer's playback (a barge-in) or within 10 s after
+  it. Not from `audio_end` (that tracked answer latency) and not from the session end (that
+  tracked the answer's length and missed barge-ins). A deliberately noisy proxy: a quick
   follow-up question counts too; the point is a baseline for when the end-of-turn logic changes.
 - **Read:** `GET /api/admin/voice-turns/stats?days=14` (admin): total, counts by
   source × reason, resumed count and rate, `audio_seconds` p50/p90 (`percentile_cont`), counts
@@ -950,4 +956,9 @@ each `partial_transcript` (`useVoiceStream.ts`), so once the audio since the bou
 the window, the last confident partial's text becomes a fixed prefix and the boundary moves
 to where that partial ended; the preview keeps growing. Without a confident partial (silence)
 the window slides by half. A word at a boundary may be split in the preview only; the final
-transcription covers the whole utterance.
+transcription covers the whole utterance. Right after a commit the window holds only a
+second or two, often mid-word, and Whisper is rarely confident on that — and a confident
+partial is the backstop's only speech evidence. So the commit refreshes `last_speech_at`
+(the partial that justified it was confident), and the silence verdict waits until a
+post-commit window holds `PARTIAL_MIN_WINDOW_S` (3 s). A fresh utterance (no commit yet) is
+judged exactly as before.
