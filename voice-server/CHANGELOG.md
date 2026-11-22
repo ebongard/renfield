@@ -5,6 +5,10 @@ version without a section here. Pushed digests live in `RELEASES.md`.
 
 ## [Unreleased]
 
+- **`?code=` is redacted in log lines, as in the backend.** The voice-server's
+  copy of the secret query names lacked the OAuth `code` the backend added in
+  #1594, and `test_same_secret_names_as_backend` failed.
+
 ## [0.3.9] — 2026-11-01
 
 - **The image holds the cu128 torch.** In 0.3.8, installing `pyannote.audio`
