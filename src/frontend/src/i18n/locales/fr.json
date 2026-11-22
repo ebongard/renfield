@@ -56,15 +56,17 @@
     "details": "Détails",
     "viaSso": "Via votre connexion SSO",
     "ssoTitle": "{{name}} via SSO",
-    "ssoDefaultHelp": "Cette connexion découle automatiquement de votre authentification. Il n'y a aucun jeton à coller ni à révoquer.",
-    "ssoConnected": "Active. Reva utilise vos propres droits tant que votre session est valide. Déconnectez-vous pour y mettre fin.",
+    "ssoDefaultHelp": "Cette connexion découle automatiquement de votre authentification. Il n'y a aucun jeton à coller.",
+    "ssoConnected": "Active. Reva utilise vos propres droits tant que votre connexion SSO est valide – même après votre déconnexion du chat. Pour y mettre fin, utilisez « Mettre fin à la connexion SSO ».",
     "ssoNotConnected": "Votre session ne contient actuellement aucun jeton valide pour cet outil. Reconnectez-vous via l'interface web et la connexion sera rétablie. Il n'est pas possible de coller un jeton ici.",
     "check": {
       "rejected": "Le jeton enregistré est refusé (expiré ou révoqué). Remplacez-le, sinon Reva ne peut pas utiliser cet outil pour vous.",
       "rejectedSso": "Fonctionne via votre connexion SSO. Le jeton enregistré ne sert que de secours et est refusé – remplacez-le ou supprimez-le.",
       "expiring": "Le jeton enregistré expire le {{date}}. Remplacez-le à temps.",
       "unchecked": "Le jeton n’a pas pu être vérifié la dernière fois.",
-      "validUntil": "Jeton valide jusqu’au {{date}}"
+      "validUntil": "Jeton valide jusqu’au {{date}}",
+      "ssoExpiring": "Votre connexion SSO prend fin le {{date}}. Déconnectez-vous et reconnectez-vous avant cette date.",
+      "ssoValidUntil": "Connexion SSO valide jusqu’au {{date}}"
     },
     "status": {
       "connected": "Connecté",
@@ -75,7 +77,12 @@
       "load": "Impossible de charger vos connexions.",
       "connect": "Impossible d'enregistrer la connexion.",
       "disconnect": "Impossible de déconnecter l'outil."
-    }
+    },
+    "endSso": "Mettre fin à la connexion SSO",
+    "endSsoConfirm": "Oui, y mettre fin",
+    "ending": "Fin en cours …",
+    "endSsoWarning": "Cela met fin à l’accès de Reva via votre connexion SSO pour tous les outils qui en dépendent ({{names}}), y compris dans Microsoft Teams. Reva révoque la connexion auprès du fournisseur d’identité. Tant que vous ne vous reconnectez pas, Reva ne peut pas utiliser ces outils pour vous.",
+    "ssoEndedNotRevoked": "Reva n’utilise plus votre connexion SSO. Le fournisseur d’identité n’a toutefois pas confirmé la révocation ; la connexion y prend fin au plus tard à sa durée maximale."
   },
   "nav": {
     "chat": "Chat",

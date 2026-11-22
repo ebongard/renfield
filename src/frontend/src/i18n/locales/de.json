@@ -56,15 +56,17 @@
     "details": "Details",
     "viaSso": "Über deine SSO-Anmeldung",
     "ssoTitle": "{{name}} über SSO",
-    "ssoDefaultHelp": "Diese Verbindung entsteht automatisch aus deiner Anmeldung. Es gibt kein Token zum Einfügen und keines zum Widerrufen.",
-    "ssoConnected": "Aktiv. Reva greift mit deinen eigenen Rechten zu, solange deine Anmeldung gültig ist. Zum Beenden melde dich ab.",
+    "ssoDefaultHelp": "Diese Verbindung entsteht automatisch aus deiner Anmeldung. Es gibt kein Token zum Einfügen.",
+    "ssoConnected": "Aktiv. Reva greift mit deinen eigenen Rechten zu, solange deine SSO-Anmeldung gültig ist – auch wenn du dich im Chat abmeldest. Zum Beenden nutze „SSO-Verbindung beenden“.",
     "ssoNotConnected": "Deine Anmeldung enthält derzeit kein gültiges Token für dieses Werkzeug. Melde dich über die Weboberfläche neu an — danach steht die Verbindung wieder. Ein Token einzufügen ist hier nicht möglich.",
     "check": {
       "rejected": "Der hinterlegte Token wird abgelehnt (abgelaufen oder widerrufen). Ersetze ihn, sonst kann Reva dieses Werkzeug nicht für dich nutzen.",
       "rejectedSso": "Läuft über deine SSO-Anmeldung. Der hinterlegte Token ist nur Ersatz und wird abgelehnt – ersetze oder entferne ihn.",
       "expiring": "Der hinterlegte Token läuft am {{date}} ab. Ersetze ihn rechtzeitig.",
       "unchecked": "Der Token konnte zuletzt nicht geprüft werden.",
-      "validUntil": "Token gültig bis {{date}}"
+      "validUntil": "Token gültig bis {{date}}",
+      "ssoExpiring": "Deine SSO-Anmeldung endet am {{date}}. Melde dich vorher ab und wieder an.",
+      "ssoValidUntil": "SSO-Anmeldung gültig bis {{date}}"
     },
     "status": {
       "connected": "Verbunden",
@@ -75,7 +77,12 @@
       "load": "Deine Verbindungen konnten nicht geladen werden.",
       "connect": "Die Verbindung konnte nicht gespeichert werden.",
       "disconnect": "Die Verbindung konnte nicht getrennt werden."
-    }
+    },
+    "endSso": "SSO-Verbindung beenden",
+    "endSsoConfirm": "Ja, beenden",
+    "ending": "Wird beendet …",
+    "endSsoWarning": "Das beendet Revas Zugriff über deine SSO-Anmeldung für alle Werkzeuge, die daran hängen ({{names}}), auch in Microsoft Teams. Reva widerruft die Anmeldung beim Identitätsanbieter. Bis du dich neu anmeldest, kann Reva diese Werkzeuge nicht für dich nutzen.",
+    "ssoEndedNotRevoked": "Reva nutzt deine SSO-Anmeldung nicht mehr. Der Identitätsanbieter hat den Widerruf aber nicht bestätigt; die Anmeldung läuft dort spätestens nach ihrer Höchstdauer ab."
   },
   "nav": {
     "chat": "Chat",

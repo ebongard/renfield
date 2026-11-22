@@ -10,8 +10,9 @@ import { useApiQuery, useApiMutation } from '../hooks';
 import { keys, STALE } from '../keys';
 
 /** Credential types the catalog can declare. `sso` has nothing to paste — its
- *  credential is minted from the user's own login, so connect/disconnect are
- *  refused server-side and the UI must not offer them. */
+ *  credential is minted from the user's own login, so connect is refused
+ *  server-side. Disconnecting one ends the login grant itself (revoked at the
+ *  identity provider), which ends EVERY sso connection at once (reva#341). */
 export const SSO_CREDENTIAL_TYPE = 'sso';
 
 export interface ConnectionProvider {
@@ -27,8 +28,9 @@ export interface ConnectionProvider {
    *  where `connected` is derived from. A provider name, never a secret. */
   sso_source?: string;
   connected: boolean;
-  /** Reva's latest verdict on the stored token (paste-token providers only):
-   *  'valid' | 'rejected' | 'error' | 'malformed'. Absent = never checked. */
+  /** Reva's latest verdict on the stored token: 'valid' | 'rejected' |
+   *  'error' | 'malformed'. Absent = never checked. For an `sso` provider it
+   *  describes the login grant, and `expires_at` is when that grant ends. */
   check_state?: CredentialCheckState | null;
   /** When the stored token expires, if the provider exposes it (ISO-8601). */
   expires_at?: string | null;
@@ -66,6 +68,16 @@ export function credentialHealth(p: ConnectionProvider, now: Date = new Date()):
   return p.check_state === 'error' ? 'unchecked' : null;
 }
 
+/** For an SSO connection: 'expiring' when the login grant behind it ends
+ *  within EXPIRY_WARN_DAYS, else null. An ended grant shows as not connected
+ *  (the server drops it), so there is no 'rejected' here. */
+export function ssoSessionHealth(p: ConnectionProvider, now: Date = new Date()): 'expiring' | null {
+  if (!p.connected || !isSsoProvider(p)) return null;
+  const exp = expiryTime(p);
+  if (exp === null || exp <= now.getTime()) return null;
+  return exp - now.getTime() <= EXPIRY_WARN_DAYS * 86_400_000 ? 'expiring' : null;
+}
+
 /** `expires_at` as epoch ms, or null when absent or unparseable. */
 export function expiryTime(p: ConnectionProvider): number | null {
   if (!p.expires_at) return null;
@@ -89,8 +101,20 @@ async function connectRequest(input: { providerKey: string; secret: string }): P
   });
 }
 
-async function disconnectRequest(providerKey: string): Promise<void> {
-  await apiClient.delete(`/api/connections/${encodeURIComponent(providerKey)}`);
+/** What the server says a disconnect did. For an `sso` provider `revoked`
+ *  tells whether the identity provider confirmed ending the grant; Reva
+ *  stops using it either way. */
+export interface DisconnectResult {
+  disconnected: boolean;
+  revoked?: boolean;
+  sso?: boolean;
+}
+
+async function disconnectRequest(providerKey: string): Promise<DisconnectResult> {
+  const response = await apiClient.delete<DisconnectResult>(
+    `/api/connections/${encodeURIComponent(providerKey)}`,
+  );
+  return response.data ?? { disconnected: false };
 }
 
 export function useConnections() {
@@ -117,7 +141,7 @@ export function useConnect() {
 
 export function useDisconnect() {
   const queryClient = useQueryClient();
-  return useApiMutation<void, string>(
+  return useApiMutation<DisconnectResult, string>(
     {
       mutationFn: disconnectRequest,
       onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.connections.all }),
