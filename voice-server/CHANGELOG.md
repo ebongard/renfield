@@ -8,6 +8,20 @@ version without a section here. Pushed digests live in `RELEASES.md`.
 - **`?code=` is redacted in log lines, as in the backend.** The voice-server's
   copy of the secret query names lacked the OAuth `code` the backend added in
   #1594, and `test_same_secret_names_as_backend` failed.
+- **The `/ws/voice` utterance cap is a far, configurable bound.** It was a
+  hardcoded 60 s (`MAX_UTTERANCE_S`) and cut long browser dictation
+  mid-sentence. Now `MAX_UTTERANCE_SECONDS`, default 600 s: a guard against a
+  forgotten open microphone, not a dictation limit. At the cap the server still
+  finalizes, closes with reason `max_utterance_seconds (<N>s)`, and logs a
+  content-free `reason=max_utterance` line. (renfield #1613)
+- **Partials transcribe a trailing 30 s window** (`PARTIAL_WINDOW_S`), not the
+  whole buffer: the work no longer grows with the utterance, and the server-VAD
+  backstop keeps getting confident partials on long dictation. The text before
+  the window stays as a fixed prefix, so the client's preview keeps growing;
+  the final transcription still covers everything. Right after a commit the
+  short new window cannot read as silence: the commit refreshes the speech
+  evidence, and the server-VAD's silence verdict waits until the window holds
+  `PARTIAL_MIN_WINDOW_S` (3 s). (renfield #1613)
 
 ## [0.3.9] — 2026-11-01
 

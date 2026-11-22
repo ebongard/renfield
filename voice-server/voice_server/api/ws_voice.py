@@ -56,7 +56,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PARTIAL_INTERVAL_S = 0.7
-MAX_UTTERANCE_S = 60
+# Partials transcribe a TRAILING window of the utterance, never all of it
+# (renfield #1613). They run inline in the receive loop every ~0.7 s; over the
+# whole buffer that work grows with the utterance (quadratic in total), and the
+# 600 s cap would make it ten times worse than the old 60 s. The window starts
+# at a committed boundary: once the audio since that boundary exceeds the
+# window, the last confident partial's text is kept as a fixed prefix and the
+# boundary moves to where that partial ended. The client replaces its preview
+# with every `partial_transcript`, so the prefix keeps the preview growing
+# instead of dropping its beginning. The word at a boundary may be split in the
+# preview; the FINAL transcription still covers the whole utterance.
+PARTIAL_WINDOW_S = 30
+# Right after a commit the new window holds only the last second or two of
+# audio, often starting mid-word, and Whisper is rarely confident on that. A
+# partial is the server-VAD's ONLY speech evidence, so such a window must not
+# read as silence: the commit itself refreshes `last_speech_at` (the partial
+# that justified it was confident), and the silence verdict waits until the
+# post-commit window holds at least this much audio. Applies only after the
+# first commit or slide, so a short utterance finalizes exactly as before.
+PARTIAL_MIN_WINDOW_S = 3
+# The utterance cap is `settings.max_utterance_seconds` (MAX_UTTERANCE_SECONDS,
+# default 600 s): a far bound against a forgotten open mic, not a dictation
+# limit (renfield #1613; was a hardcoded 60 s).
 # Suppress partial_transcript events below this confidence — protects
 # against faster-whisper hallucinations on near-silence when vad_filter
 # is off (the partials path). Empirically calibrated; the final pass
@@ -105,11 +126,58 @@ class SessionState:
     # safety net for clients without analyser access.
     last_speech_at: float = 0.0
     speech_seen: bool = False
+    # Partial window (PARTIAL_WINDOW_S): partials cover audio from
+    # `partial_base_samples` on; `partial_base_text` is the preview text of
+    # the audio before it. `partial_tail_*` is the last CONFIDENT partial of
+    # the current window: its text and the sample index where its audio ended.
+    partial_base_samples: int = 0
+    partial_base_text: str = ""
+    partial_tail_text: str = ""
+    partial_tail_end: int = 0
+
+
+def _accumulated_samples(state: SessionState) -> int:
+    return sum(a.size for a in state.audio_pcm)
 
 
 def _accumulated_seconds(state: SessionState) -> float:
-    total = sum(a.size for a in state.audio_pcm)
-    return total / 16000.0
+    return _accumulated_samples(state) / 16000.0
+
+
+def _pcm_from(state: SessionState, start: int, total: int) -> np.ndarray:
+    """The buffered PCM from sample `start` to the end, copying only that part
+    (walks the chunk list from the back, so the cost is bounded by the slice)."""
+    parts: list[np.ndarray] = []
+    pos = total
+    for chunk in reversed(state.audio_pcm):
+        if pos <= start:
+            break
+        chunk_start = pos - chunk.size
+        parts.append(chunk[max(0, start - chunk_start):])
+        pos = chunk_start
+    if not parts:
+        return np.zeros(0, dtype=np.float32)
+    parts.reverse()
+    return np.concatenate(parts)
+
+
+def _partial_window_can_judge_silence(state: SessionState) -> bool:
+    """False while a post-commit window is shorter than PARTIAL_MIN_WINDOW_S."""
+    if state.partial_base_samples == 0:
+        return True
+    window = _accumulated_samples(state) - state.partial_base_samples
+    return window >= PARTIAL_MIN_WINDOW_S * 16000
+
+
+def _reset_partial_window(state: SessionState) -> None:
+    state.partial_base_samples = 0
+    state.partial_base_text = ""
+    state.partial_tail_text = ""
+    state.partial_tail_end = 0
+
+
+def _join_text(*parts: str) -> str:
+    return " ".join(p.strip() for p in parts if p and p.strip())
 
 
 # Per-connection send serialization. TTS streams frames from a background
@@ -166,7 +234,24 @@ async def _maybe_emit_partial(ws: WebSocket, state: SessionState, stt: STTServic
         return
 
     state.last_partial_at = now
-    audio = np.concatenate(state.audio_pcm)
+    total = _accumulated_samples(state)
+    window = int(PARTIAL_WINDOW_S * 16000)
+    if total - state.partial_base_samples > window:
+        if state.partial_tail_end > state.partial_base_samples:
+            # Commit the last confident partial as the fixed prefix. It is
+            # fresh speech evidence: the new window is too short to judge yet.
+            state.partial_base_text = _join_text(state.partial_base_text, state.partial_tail_text)
+            state.partial_base_samples = state.partial_tail_end
+            state.last_speech_at = now
+        if total - state.partial_base_samples > window:
+            # No confident partial covered the older audio (silence, noise):
+            # nothing to keep, so the window slides -- by half, so speech that
+            # starts at its end gets a full context, not a one-second window
+            # committed on every step.
+            state.partial_base_samples = total - window // 2
+        state.partial_tail_text = ""
+        state.partial_tail_end = state.partial_base_samples
+    audio = _pcm_from(state, state.partial_base_samples, total)
     if audio.size < 16000 * 0.3:
         return
 
@@ -195,7 +280,11 @@ async def _maybe_emit_partial(ws: WebSocket, state: SessionState, stt: STTServic
         if last_conf < PARTIAL_CONFIDENCE_FLOOR:
             return
 
-        combined = " ".join(t.strip() for t in seg_texts if t.strip())
+        tail_text = _join_text(*seg_texts)
+        if tail_text:
+            state.partial_tail_text = tail_text
+            state.partial_tail_end = total
+        combined = _join_text(state.partial_base_text, tail_text)
         if combined and combined != state.last_partial_text:
             state.last_partial_text = combined
             await _send_json(ws, {
@@ -233,6 +322,7 @@ async def _finalize(
         logger.error("final STT failed: %s", e)
         await _send_error(ws, "stt_failed", str(e))
         state.audio_pcm.clear()
+        _reset_partial_window(state)
         return
 
     # Read the auto-detected language from the side-channel populated
@@ -267,6 +357,7 @@ async def _finalize(
     state.last_partial_at = 0.0
     state.last_speech_at = 0.0
     state.speech_seen = False
+    _reset_partial_window(state)
     # Inter-utterance protocol: close the decoder and DON'T auto-
     # restart. The next utterance starts when the client sends a
     # fresh session_start, which spawns a clean decoder. Chunks
@@ -491,6 +582,7 @@ async def ws_voice(
                         state.speech_seen
                         and elapsed >= SERVER_VAD_MIN_DURATION_S
                         and (now - state.last_speech_at) >= SERVER_VAD_SILENCE_S
+                        and _partial_window_can_judge_silence(state)
                     ):
                         logger.info(
                             "voice session %s auto-finalizing (server VAD)",
@@ -499,8 +591,14 @@ async def ws_voice(
                         await _finalize(websocket, state, stt, speaker)
                         state.speech_seen = False
                         state.last_speech_at = 0.0
-                    if _accumulated_seconds(state) >= MAX_UTTERANCE_S:
-                        logger.warning("voice session %s hit MAX_UTTERANCE_S, force-finalizing", user_id)
+                    cap_s = settings.max_utterance_seconds
+                    if _accumulated_seconds(state) >= cap_s:
+                        # Content-free: the reason and the bound, never audio or text.
+                        logger.warning(
+                            "voice session %s turn end: reason=max_utterance cap=%ss, force-finalizing",
+                            user_id,
+                            cap_s,
+                        )
                         await _finalize(websocket, state, stt, speaker)
                         # C.5: tell the browser to stop streaming. After
                         # the cap fires we don't accept more chunks for
@@ -509,7 +607,7 @@ async def ws_voice(
                         # continue.
                         await websocket.close(
                             code=status.WS_1011_INTERNAL_ERROR,
-                            reason=f"max_utterance_seconds ({MAX_UTTERANCE_S}s)",
+                            reason=f"max_utterance_seconds ({cap_s}s)",
                         )
                         return
                 except Exception as e:
@@ -543,6 +641,7 @@ async def ws_voice(
                     state.draining = False  # back to "live recording" state
                     state.audio_pcm.clear()
                     state.last_partial_text = ""
+                    _reset_partial_window(state)
                     state.last_partial_at = 0.0
                     state.last_speech_at = 0.0
                     state.speech_seen = False

@@ -720,7 +720,9 @@ class TestBatchBCHandlers:
         # hold full user messages and must expire with the flag off too.
         # +1: prune conversation tombstones (#1529) -- self-gates on
         # conversation_tombstone_retention_days, 0 = keep forever.
-        assert len(seeds) == 30
+        # +1: expire voice turn traces (#1613) -- ungated like the routing
+        # traces, so switching capture off never keeps rows forever.
+        assert len(seeds) == 31
         names = [s.name for s in seeds]
         # Names are the ON CONFLICT seed key — a duplicate would silently drop a
         # built-in. Expressed against len(seeds) so adding a built-in updates ONE

@@ -61,6 +61,7 @@ from api.routes import (
     tool_health,
     trajectories,
     users,
+    voice_turns,
 )
 from api.routes import config as config_routes
 from api.routes import knowledge_graph as kg_routes
@@ -281,6 +282,7 @@ app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
 app.include_router(trajectories.router, prefix="/api/trajectories", tags=["Trajectories"])
 app.include_router(routing_traces.router, prefix="/api/admin", tags=["Routing Traces"])
+app.include_router(voice_turns.router, prefix="/api/admin", tags=["Voice Turns"])
 app.include_router(tool_health.router, prefix="/api/tool-health", tags=["Tool Health"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 # Web Push (#79), dark by default: flag off => no route at all. With the flag

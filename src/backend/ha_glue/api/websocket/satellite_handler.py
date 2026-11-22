@@ -60,6 +60,8 @@ async def _route_satellite_tts_output(
 
     Similar to _route_tts_output but for the satellite WebSocket handler.
     """
+    # Whatever plays it, the turn lasts until the answer has been heard (#1613).
+    satellite_manager.note_answer_playback(session_id, tts_audio)
     # If satellite has no room_id, fallback to satellite itself
     if not satellite or not satellite.room_id:
         logger.debug("Satellite has no room_id, using satellite for output")
@@ -1205,6 +1207,11 @@ async def satellite_websocket(
                 # transcription like a finished sentence -- 7 times in 7 days,
                 # without any notice.
                 satellite_manager.set_turn_end_reason(session_id, reason)
+                # Kept on the session for the turn trace written at session
+                # end (#1613); the device's own VAD verdict, None if absent.
+                satellite_manager.set_vad_speech_seen(
+                    session_id, vad_speech_seen_from(data.get("vad_speech_seen")),
+                )
 
                 # Update state to processing
                 await satellite_manager.set_session_state(session_id, SatelliteState.PROCESSING)

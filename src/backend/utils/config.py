@@ -959,6 +959,12 @@ class Settings(BaseSettings):
     routing_traces_enabled: bool = False
     routing_traces_retention_days: int = Field(default=14, ge=1, le=365)
 
+    # Voice turn traces (#1613): one CONTENT-FREE row per voice turn end (no
+    # user, no text, no audio) for GET /api/admin/voice-turns/stats. Purged
+    # after voice_turn_traces_retention_days, also with the flag off.
+    voice_turn_traces_enabled: bool = False
+    voice_turn_traces_retention_days: int = Field(default=30, ge=1, le=365)
+
     # Conversation tombstones (#1485, #1529): days a deleted conversation's
     # session id stays recorded in deleted_conversation_sessions. 0 = keep
     # forever (no prune, no query). A record guards against a client that still
