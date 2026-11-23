@@ -568,6 +568,11 @@ sie **nicht** — der Hebel ist:
 AGENT_ROUTER_URL=http://ollama:11434   # klassifiziert mit OLLAMA_INTENT_MODEL
 ```
 
+Das Protokoll folgt der URL, wie bei `OLLAMA_VISION_URL` (eine Stelle:
+`llm_client.client_for_endpoint`): eine URL mit `/v1` (llama-server) bekommt den
+OpenAI-kompatiblen Adapter, jede andere den Ollama-Client. Bis #1635 bekam auch eine
+`/v1`-URL einen Ollama-Client, und jede Klassifikation lief in ein 404.
+
 Warum das lohnt: Die Klassifikation ist kurz und deterministisch, braucht kein
 35B-Modell, belegt sonst aber einen Slot der Haupt-GPU und verdünnt deren Prefix-Cache
 (gemessen 36,7 % Trefferquote bei 9,1:1 prompt-dominierter Last) mit Einmal-Prompts.
