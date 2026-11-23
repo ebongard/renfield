@@ -74,6 +74,21 @@ dashboard.
 
 No Grafana or Prometheus deployment is part of this repository.
 
+**In the production cluster** (since #1616) the collection lives in the cluster
+repository, not here:
+
+- A Prometheus in **agent mode** scrapes the backend of both instances with static
+  targets. It gets one `job` per instance: `renfield` (household) and
+  `renfield-xidra`.
+  - Every series carries `cluster="renfield-private"`.
+  - It needs no rights on the Kubernetes API.
+- It forwards the series by `remote_write` to the central Prometheus of the other
+  cluster, behind a gateway with separate write and read accounts.
+- Grafana runs outside both clusters and reads that Prometheus through the
+  gateway's read account.
+- A new instance, or a backend that moves, means a new target in the agent's
+  config there. Its `job` is what the dashboards' `Job` drop-down lists.
+
 ## How the panels relate to "healthy"
 
 The dashboards do not define health a second time.
