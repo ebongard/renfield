@@ -31,7 +31,9 @@ Loaded only when a manifest or the deploy script is read. The runbook is the `de
   `mail_accounts.yaml` is not the committed default. Swap ONLY the changed key. `mcp_servers.yaml`, `agent_roles.yaml`,
   `kg_scopes.yaml`, `mail_accounts.yaml` are ConfigMap-served and must NEVER appear in the backend image.
 - Never `kubectl patch` the live `renfield-env` ConfigMap as the source of truth: edit `k8s/configmap.yaml`, commit,
-  apply, then restart backend + workers. A live change that is not in git is a bug.
+  apply, then restart backend + workers. A live change that is not in git is a bug. The ONE exception is the GPU
+  fallback `bin/gpu-failover.sh` (marks the ConfigMap `renfield.io/gpu-failover`, `to-prod` restores git) — check
+  `bin/gpu-failover.sh status` before a deploy: an apply during a fallback silently switches back to the dead card.
 - Never touch satellites from a deploy (Pi Zero SD cards brick on a bad restart) — see `.claude/rules/satellites.md`.
 
 ## Ownership
