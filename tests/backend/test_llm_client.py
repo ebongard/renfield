@@ -1241,6 +1241,39 @@ class TestGetDedicatedClient:
 
         assert isinstance(result, _FallbackLLMClient)
 
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_v1_url_gets_the_openai_adapter(self, mock_settings, mock_cls):
+        """#1635: a llama-server URL in AGENT_ROUTER_URL must get the
+        OpenAI-compat adapter. Before, it got an Ollama client, whose
+        POST /api/chat llama-server answers with 404 on every classification."""
+        from utils.llm_client import OpenAICompatibleClient, get_dedicated_client
+
+        mock_settings.llm_openai_api_key = None
+        mock_settings.ollama_fallback_url = ""
+
+        result = get_dedicated_client("http://v100.local:8081/v1", "qwen3.6")
+
+        assert isinstance(result, OpenAICompatibleClient)
+        mock_cls.assert_not_called()
+
+    @pytest.mark.unit
+    @patch("utils.llm_client.settings")
+    def test_router_and_vision_share_the_protocol_choice(self, mock_settings):
+        """One decision for both tiers: the same /v1 URL yields the same
+        adapter whether the router or the vision tier asks for it."""
+        from utils.llm_client import get_dedicated_client, get_vision_client
+
+        mock_settings.llm_openai_api_key = None
+        mock_settings.ollama_fallback_url = ""
+        mock_settings.ollama_vision_url = "http://cuda.local:8081/v1"
+        mock_settings.ollama_vision_model = "qwen3.6"
+
+        vision_client, _model = get_vision_client()
+
+        assert get_dedicated_client("http://cuda.local:8081/v1", "qwen3.6") is vision_client
+
 
 async def _agen(*chunks):
     """Async generator yielding the given chunks (for streaming tests)."""
