@@ -53,9 +53,10 @@ Deshalb während des Fallbacks nicht deployen, oder danach `to-hostd` erneut aus
   der Cluster läuft mit `:latest` (2026-11-23: 0.35.1). Neue Modelle zieht nur der Cluster-Pod;
   was dort nicht im Speicher liegt, fehlt auch auf Host D.
 - **Feste Adresse:** Die Ziele sind IP-Adressen (Pods lösen kein mDNS auf). gpu-ct
-  (192.168.1.137) und die Testinstanz (192.168.1.51) brauchen deshalb eine feste
-  DHCP-Zuweisung auf der OPNsense. Ohne sie zeigt ein Fallback nach einem neuen Lease ins Leere,
-  und das Skript bricht dann am Probe-Schritt ab.
+  (192.168.1.137) und die Testinstanz (192.168.1.51) haben deshalb seit 2026-11-23 eine feste
+  DHCP-Zuweisung auf der OPNsense (ISC-DHCP, LAN, Hostnamen `gpu-ct` und `renfield-test`). Wer
+  einen Container neu anlegt, bekommt eine neue MAC und muss die Zuweisung nachziehen. Sonst zeigt
+  der Fallback ins Leere, und das Skript bricht schon am Probe-Schritt ab.
 
 ## Bausteine
 
