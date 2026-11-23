@@ -275,9 +275,14 @@ the role descriptions in `config/agent_roles.yaml`.
   a pruned-window miss, never duplicates); a loose fuzzy-near match is left unset
   (the "no fuzzy-near existing match" guardrail); a genuinely-new sender is **created**
   and assigned. Document-type and tags stay existing-match-only (no auto-create). Note:
-  the Paperless MCP's name→id resolver does bidirectional *substring* matching, so a
-  containment match (e.g. "Telekom" ⊂ "Telekom Deutschland GmbH") is reused rather than
-  duplicated — intended, and correct for recurring senders.
+  the Paperless MCP's `create_*` pre-check treats any containment match (e.g. "Telekom" ⊂
+  "Telekom Deutschland GmbH") as `already_exists`, so it is reused rather than duplicated —
+  intended, and correct for recurring senders. Resolving a name for a filter or a write
+  is stricter since `renfield-mcp-paperless` #19: a substring counts only when it is
+  unique (two candidates → an `Ambiguous …` error naming them), and **tags match exactly**
+  (case-insensitive) — "Auto" is never filed as "Autoversicherung". The MCP reloads a
+  taxonomy dimension when a name or an id misses, so an entry created in the Paperless UI
+  is found without a backend restart.
 - **Document date (Ausstellungsdatum).** The extracted `created_date` is submitted on
   the (non-blocking) upload **and reapplied post-consume** via `update_document` once the
   consume task yields a document id — Paperless can't set `created` before the doc exists,
