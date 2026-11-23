@@ -1407,7 +1407,7 @@ class TestRouterModelSettings:
             s.ollama_model = "llama3.2:3b"
 
             await router.classify("Hallo", ollama)
-            gdc.assert_called_once_with("http://fast-gpu:11434")
+            gdc.assert_called_once_with("http://fast-gpu:11434", "qwen3:1.7b")
             call_kwargs = mock_client.chat.call_args
             assert call_kwargs.kwargs["model"] == "qwen3:1.7b"
 
@@ -1434,7 +1434,7 @@ class TestRouterModelSettings:
             s.ollama_model = "llama3.2:3b"
 
             await router.classify("Hallo", ollama)
-            gdc.assert_called_once_with("http://main-gpu:11434")
+            gdc.assert_called_once_with("http://main-gpu:11434", "qwen3:8b")
             call_kwargs = mock_client.chat.call_args
             assert call_kwargs.kwargs["model"] == "qwen3:8b"
 

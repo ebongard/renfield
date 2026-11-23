@@ -554,7 +554,7 @@ def _maybe_wrap_openai_fallback(client: LLMClient | None) -> LLMClient | None:
     return _client_cache.get(cache_key)
 
 
-def get_dedicated_client(url: str) -> LLMClient:
+def get_dedicated_client(url: str, default_model: str = "") -> LLMClient:
     """Client bound to an explicit URL, bypassing the OpenAI-tier short-circuit.
 
     For callers with their own dedicated endpoint (e.g. the router's
@@ -562,8 +562,11 @@ def get_dedicated_client(url: str) -> LLMClient:
     OpenAI-compatible API: those callers use small local model names which
     external APIs reject with 400. llama-server ignores the requested model
     name, which masked this for local deployments.
+
+    The protocol follows the URL (``client_for_endpoint``): a ``/v1`` URL
+    (llama-server) gets the OpenAI-compatible adapter, anything else Ollama.
     """
-    return _make_client_with_fallback(url)
+    return client_for_endpoint(url, default_model)
 
 
 def get_default_client() -> LLMClient:
@@ -1050,15 +1053,31 @@ def get_vision_client() -> tuple[LLMClient, str] | None:
     model = settings.ollama_vision_model
     if not url or not model:
         return None
+    return client_for_endpoint(url, model), model
+
+
+def client_for_endpoint(url: str, default_model: str) -> LLMClient:
+    """Client for an explicitly configured endpoint, protocol taken from the URL.
+
+    The ONE place that decides the protocol for a configured URL (vision tier,
+    router): a URL containing ``/v1`` gets the OpenAI-compatible adapter,
+    anything else the native Ollama client with the usual fallback wrapping.
+    Each tier used to decide for itself, and the router never learned the
+    ``/v1`` branch — a llama-server URL in ``AGENT_ROUTER_URL`` got an Ollama
+    client and 404'd on ``/api/chat`` (#1635).
+
+    ``default_model`` only names the model when a caller passes none; every
+    current caller passes its model on each call.
+    """
     if "/v1" in url:
-        cache_key = f"__openai_compat_vision__:{_normalize_url(url)}"
+        cache_key = f"__openai_compat_endpoint__:{_normalize_url(url)}"
         if cache_key not in _client_cache:
             _client_cache[cache_key] = _make_openai_compat_client(  # type: ignore[assignment]
                 base_url=url,
-                default_model=model,
+                default_model=default_model,
             )
-        return _client_cache[cache_key], model  # type: ignore[return-value]
-    return _make_client_with_fallback(url), model
+        return _client_cache[cache_key]
+    return _make_client_with_fallback(url)
 
 
 def get_openai_compat_embed_client() -> OpenAICompatibleClient | None:

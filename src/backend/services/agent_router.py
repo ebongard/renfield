@@ -684,10 +684,10 @@ class AgentRouter:
             # agent tier uses one, sending this small local router model to an
             # external API that validates model IDs (400) — the router must
             # keep classifying on its configured endpoint regardless of where
-            # the agent lives. (llama-server URLs still work: create_llm_client
-            # picks the OpenAI-compat adapter for /v1 URLs, and llama-server
-            # ignores the requested model name.)
-            client = get_dedicated_client(router_url)
+            # the agent lives. A llama-server URL (/v1) gets the OpenAI-compat
+            # adapter (llm_client.client_for_endpoint), and llama-server
+            # ignores the requested model name.
+            client = get_dedicated_client(router_url, router_model)
         else:
             client = ollama.client
 
