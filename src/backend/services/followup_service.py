@@ -26,11 +26,37 @@ from loguru import logger
 _MAX_CHIP_CHARS = 80
 
 
+# Letters a German/English/Italian/French chip legitimately carries besides the
+# Latin alphabet: unit and math letters (µF, 100 Ω, π, Δt) and the ordinal
+# indicators (1ª, n.º). Matched on the Unicode character NAME.
+_ALLOWED_NON_LATIN_NAMES = frozenset({
+    "MICRO SIGN", "OHM SIGN", "KELVIN SIGN", "ANGSTROM SIGN",
+    "FEMININE ORDINAL INDICATOR", "MASCULINE ORDINAL INDICATOR",
+})
+
+
 def _is_latin_script(s: str) -> bool:
-    """True when every LETTER of *s* is a Latin letter (digits, punctuation and
-    symbols do not count). Accents and umlauts are Latin (LATIN SMALL LETTER A
-    WITH DIAERESIS)."""
-    return all(unicodedata.name(ch, "").startswith("LATIN") for ch in s if ch.isalpha())
+    """True when every LETTER of *s* belongs to Latin writing (digits,
+    punctuation and symbols do not count).
+
+    Latin writing = any letter whose Unicode name contains LATIN (umlauts, ß,
+    ligatures, fullwidth and superscript Latin), modifier letters (ʼ), Greek
+    (math/units) and the few symbol letters in ``_ALLOWED_NON_LATIN_NAMES``.
+    An ALLOWLIST on purpose: whatever other script the model drifts into
+    (Chinese observed, #1638) is dropped without naming it here first.
+    """
+    for ch in s:
+        if not ch.isalpha():
+            continue
+        name = unicodedata.name(ch, "")
+        if (
+            "LATIN" in name
+            or name.startswith(("GREEK", "MODIFIER LETTER"))
+            or name in _ALLOWED_NON_LATIN_NAMES
+        ):
+            continue
+        return False
+    return True
 
 
 def _parse_followups(raw: str, count: int) -> list[str]:

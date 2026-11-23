@@ -162,6 +162,14 @@ class TestScriptFilter:
         "What about the café's opening hours?",
         "Was passiert am 24.12. um 18:00 Uhr?",
         "Mehr dazu 👍",
+        # Review of #1639: letters that are not LATIN by name but belong in a
+        # German/English/Italian/French question.
+        "Wie rechne ich 5 µF in nF um?",
+        "Was bedeutet 100 Ω Widerstand?",
+        "Was ist π, und wie berechnet man Δt?",
+        "Ist das 1ª Classe oder il 2º piano?",
+        "Où est la gare, s’il vous plaît? Œuvre, cœur",
+        "Wie heißt die ﬁnale Version?",
     ])
     def test_latin_with_umlauts_accents_digits_and_symbols_survives(self, chip):
         assert _parse_followups(f'["{chip}"]', 3) == [chip]
