@@ -336,11 +336,14 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             _vision = get_vision_client()
             vision_client = _vision[0] if _vision else self.client
 
+            # temperature 0: a count has one right answer, and this gate decides
+            # whether an announcement plays — the server default (--temp 0.6) let
+            # the same frame yield different counts.
             resp = await vision_client.chat(
                 model=vision_model,
                 messages=messages,
                 stream=False,
-                options={"num_ctx": settings.ollama_num_ctx},
+                options={"num_ctx": settings.ollama_num_ctx, "temperature": 0},
             )
             await llm_circuit_breaker.record_success()
             content = (resp.message.content if resp and resp.message else "") or ""

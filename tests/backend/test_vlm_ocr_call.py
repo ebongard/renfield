@@ -1,6 +1,8 @@
-"""The VLM re-OCR call (OllamaService.extract_text_from_image) is deterministic.
+"""The vision calls with one right answer are deterministic: the VLM re-OCR
+(OllamaService.extract_text_from_image) and the people count of the announce
+privacy gate (count_people_in_image).
 
-A transcription has one right answer, so the call pins temperature 0 instead of
+A transcription or a count has one right answer, so the call pins temperature 0 instead of
 inheriting the server default (the 5090 llama-server runs --temp 0.6). Both
 adapters honour it: Ollama reads ``options`` natively, the OpenAI-compat adapter
 maps ``options.temperature`` to ``temperature``.
@@ -59,3 +61,16 @@ async def test_no_vision_model_means_no_call(monkeypatch):
 
     assert await svc.extract_text_from_image("aGVsbG8=") is None
     client.chat.assert_not_awaited()
+
+
+@pytest.mark.unit
+async def test_people_count_pins_temperature_zero(monkeypatch):
+    monkeypatch.setattr(settings, "ollama_vision_model", "qwen3.6")
+    client = _vision_client("2")
+    monkeypatch.setattr(llm_client, "get_vision_client", lambda: (client, "qwen3.6"))
+    svc = OllamaService.__new__(OllamaService)
+
+    assert await svc.count_people_in_image("aGVsbG8=") == 2
+    options = client.chat.await_args.kwargs["options"]
+    assert options["temperature"] == 0
+    assert options["num_ctx"] == settings.ollama_num_ctx
