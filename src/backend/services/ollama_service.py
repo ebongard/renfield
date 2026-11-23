@@ -336,11 +336,14 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             _vision = get_vision_client()
             vision_client = _vision[0] if _vision else self.client
 
+            # temperature 0: a count has one right answer, and this gate decides
+            # whether an announcement plays — the server default (--temp 0.6) let
+            # the same frame yield different counts.
             resp = await vision_client.chat(
                 model=vision_model,
                 messages=messages,
                 stream=False,
-                options={"num_ctx": settings.ollama_num_ctx},
+                options={"num_ctx": settings.ollama_num_ctx, "temperature": 0},
             )
             await llm_circuit_breaker.record_success()
             content = (resp.message.content if resp and resp.message else "") or ""
@@ -488,11 +491,15 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             _vision = get_vision_client()
             vision_client = _vision[0] if _vision else self.client
 
+            # temperature 0: a transcription has one right answer. Without it the
+            # server default applies (the 5090 unit runs --temp 0.6), and the same
+            # page came back near-verbatim on one run and unusable on the next
+            # (V100 model test 2026-11-23, real Paperless scans).
             resp = await vision_client.chat(
                 model=vision_model,
                 messages=messages,
                 stream=False,
-                options={"num_ctx": settings.ollama_num_ctx},
+                options={"num_ctx": settings.ollama_num_ctx, "temperature": 0},
             )
             await llm_circuit_breaker.record_success()
             content = (resp.message.content if resp and resp.message else "") or ""

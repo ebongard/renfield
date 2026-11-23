@@ -89,7 +89,9 @@ the room → the neutral "message waiting" + consent-to-`force` flow applies).
   the satellite captures a JPEG and replies `snapshot_result`. The image is
   **transient — never persisted**.
 - **Vision**: `OllamaService.count_people_in_image` (a non-streaming call to the
-  configured vision model) returns a headcount.
+  configured vision model) returns a headcount. It pins `temperature: 0`: under the
+  server default (`--temp 0.6` on the 5090) the same frame could yield different
+  counts (#1631).
 - **Config** (`ha_glue_settings`): `announce_camera_occupancy_check` (use it when
   a camera is in the room), `announce_snapshot_timeout`, and
   `announce_camera_check_fail_closed` — **default `false` (fail-open)**: if the
