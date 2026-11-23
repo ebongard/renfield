@@ -18,11 +18,45 @@ Gated by `followup_chips_enabled` (dark by default). Bounded by the caller via
 from __future__ import annotations
 
 import json
+import unicodedata
 
 from loguru import logger
 
 # Keep chips short + scannable; drop anything that's really a sentence/paragraph.
 _MAX_CHIP_CHARS = 80
+
+
+# Letters a German/English/Italian/French chip legitimately carries besides the
+# Latin alphabet: unit and math letters (µF, 100 Ω, π, Δt) and the ordinal
+# indicators (1ª, n.º). Matched on the Unicode character NAME.
+_ALLOWED_NON_LATIN_NAMES = frozenset({
+    "MICRO SIGN", "OHM SIGN", "KELVIN SIGN", "ANGSTROM SIGN",
+    "FEMININE ORDINAL INDICATOR", "MASCULINE ORDINAL INDICATOR",
+})
+
+
+def _is_latin_script(s: str) -> bool:
+    """True when every LETTER of *s* belongs to Latin writing (digits,
+    punctuation and symbols do not count).
+
+    Latin writing = any letter whose Unicode name contains LATIN (umlauts, ß,
+    ligatures, fullwidth and superscript Latin), modifier letters (ʼ), Greek
+    (math/units) and the few symbol letters in ``_ALLOWED_NON_LATIN_NAMES``.
+    An ALLOWLIST on purpose: whatever other script the model drifts into
+    (Chinese observed, #1638) is dropped without naming it here first.
+    """
+    for ch in s:
+        if not ch.isalpha():
+            continue
+        name = unicodedata.name(ch, "")
+        if (
+            "LATIN" in name
+            or name.startswith(("GREEK", "MODIFIER LETTER"))
+            or name in _ALLOWED_NON_LATIN_NAMES
+        ):
+            continue
+        return False
+    return True
 
 
 def _parse_followups(raw: str, count: int) -> list[str]:
@@ -102,6 +136,13 @@ def _parse_followups(raw: str, count: int) -> list[str]:
         # Showing it raw is worse than showing nothing — it is unreadable, and it
         # is tappable, so it would be sent back as the user's next message.
         if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
+            continue
+        # The call asks for German or English (generate_followups), both Latin
+        # script. The small intent model still drifts into Chinese now and then:
+        # observed 2026-11-23, an unrelated Chinese question under a German
+        # answer (#1638). A chip in the wrong script is unusable (a tap would put
+        # it into the composer), so it is dropped like any other unusable one.
+        if not _is_latin_script(s):
             continue
         key = s.casefold()
         if key in seen:
