@@ -1,6 +1,8 @@
 # Web Push — a content-free wake-up for proactive notifications (#79)
 
-**Status:** built, **dark by default** (`PUSH_NOTIFICATIONS_ENABLED=false`). Not rolled out on any instance.
+**Status:** built, **dark by default** (`PUSH_NOTIFICATIONS_ENABLED=false`). **Household:** the flag is set in
+`k8s/configmap.yaml` (2026-11-23, #1628); the feature becomes active once the VAPID pair and the contact address are
+in the `renfield-env-private` Secret (§8 step 2). xidra: not rolled out.
 No real push round trip has been made. The unit tests run the sender against a stub of `pywebpush`,
 the worker handlers as plain functions and once as the built bundle in a fake worker scope. On top
 of that the wire format was measured once (2026-11-13, §6 "Measured"): the real `pywebpush` in the
