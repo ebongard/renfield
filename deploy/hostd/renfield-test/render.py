@@ -27,7 +27,9 @@ import yaml
 
 
 def configmap(path, name):
-    for doc in yaml.safe_load_all(open(path)):
+    with open(path) as f:
+        docs = list(yaml.safe_load_all(f))
+    for doc in docs:
         if doc and doc.get("kind") == "ConfigMap" and doc["metadata"]["name"] == name:
             return doc["data"]
     sys.exit(f"ConfigMap {name} not found in {path}")

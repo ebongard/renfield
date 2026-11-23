@@ -31,7 +31,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 Environment=GPU=GPU-b672cf9f-2b0e-9663-dd58-4b8e5d42f892
-Environment=IMAGE=registry.treehouse.x-idra.de/renfield/voice-server@sha256:dcc54dafffc7bd6ec25c2bdd624b8b1a84bc098c0774702d041ceb701b5b73e0
+Environment=IMAGE=registry.treehouse.x-idra.de/renfield/voice-server@sha256:ed703e39cabfd3545bba1a055c76003a0c6f48f5881567b9d088bf5e509d0f89
 ExecStartPre=/usr/bin/test -r /mnt/llm/voice/ecapa_tdnn.onnx
 ExecStartPre=/usr/bin/test -d /var/lib/voice-server/hf-cache-voice/models--Systran--faster-whisper-medium
 ExecStartPre=-/usr/bin/docker rm -f voice-server
