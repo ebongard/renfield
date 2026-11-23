@@ -427,6 +427,7 @@ servers:
       list_custom_fields: mcp.paperless.read
       list_storage_paths: mcp.paperless.read
       update_document: mcp.paperless.write
+      modify_document_tags: mcp.paperless.write
       reprocess_document: mcp.paperless.write
       upload_document: mcp.paperless.write
       create_correspondent: mcp.paperless.write
@@ -449,6 +450,10 @@ servers:
       - search_documents
       - get_document
       - update_document
+      # Adds/removes tags on many documents in ONE call and keeps the others.
+      # update_document(tags=…) REPLACES the list, and tagging N documents one
+      # call each tripped the same-tool guard after 5 (2026-11-23).
+      - modify_document_tags
       # Taxonomy reads so the agent can answer "welche Dokumenttypen /
       # Korrespondenten / Tags habe ich?" directly. The create_* + other
       # list_* tools stay agent-hidden (the Paperless-Audit subsystem drives
