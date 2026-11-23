@@ -1,0 +1,44 @@
+# Ollama on Host D (LXC 100 "gpu-ct", RTX 4060 Ti 16 GB) — intent/router (qwen3:8b),
+# embeddings (qwen3-embedding:4b) and the chat fallback of the Renfield test system, and
+# the cold fallback for the cluster Ollama (docs/GPU_FAILOVER.md).
+#
+# - Model store = the cluster's NFS store (/mnt/llm/.ollama/models), READ-ONLY: the cluster
+#   pod is its only writer (it pulls). A new model therefore has to be pulled in the
+#   cluster first. Pinned to 0.30.8 like the 5090 host: 0.40.0 starts a `manifests-v2`
+#   migration in the store, which a read-only mount refuses and which would break the
+#   other readers (docs/GPU_TOPOLOGY.md §6).
+# - GPU by UUID (4060 Ti); the V100 belongs to llama-server.
+# - Same scheduling knobs as the cluster pod (k8s/ollama.yaml).
+
+[Unit]
+Description=Ollama 0.30.8 on :11434, RTX 4060 Ti
+Documentation=https://github.com/ebongard/renfield/blob/main/docs/GPU_FAILOVER.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/mnt/llm
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=GPU=GPU-b672cf9f-2b0e-9663-dd58-4b8e5d42f892
+ExecStartPre=/usr/bin/test -d /mnt/llm/.ollama/models/manifests
+ExecStartPre=-/usr/bin/docker rm -f ollama
+ExecStart=/usr/bin/docker run --rm --name ollama \
+  --network host \
+  --gpus device=${GPU} \
+  -e OLLAMA_HOST=0.0.0.0:11434 \
+  -e OLLAMA_MODELS=/models \
+  -e OLLAMA_KEEP_ALIVE=-1 \
+  -e OLLAMA_NUM_PARALLEL=1 \
+  -e OLLAMA_MAX_LOADED_MODELS=4 \
+  -v /mnt/llm/.ollama/models:/models:ro \
+  ollama/ollama:0.30.8
+ExecStop=/usr/bin/docker stop ollama
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

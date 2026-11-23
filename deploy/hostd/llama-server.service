@@ -1,0 +1,66 @@
+# llama-server on Host D (LXC 100 "gpu-ct", Tesla V100 32 GB) — the chat and vision LLM
+# of the Renfield test system and the cold fallback for cuda.local:8081
+# (docs/GPU_FAILOVER.md). Same image, model and flags as deploy/cuda-host/llama-server.service;
+# the differences are on purpose:
+#
+# - GPU by UUID, never `--gpus all` or an index: the CT sees the V100 AND the 4060 Ti, and
+#   /dev/nvidiaN follows the PCI order, which a new card shifts (docs/GPU_TOPOLOGY.md §6).
+# - Model files on the CT's local SSD (/models), not on NFS: the 22 GB load does not wait on
+#   the network, and the box comes up even when the NAS is down.
+# - Persistent PTX-JIT cache (/var/cache/nv): the CUDA 12.8 image has no sm_70 cubins, so
+#   every kernel is JIT-compiled from PTX. Without the cache the first request after a
+#   restart takes ~77 s instead of 0.34 s (§4.6).
+
+[Unit]
+Description=llama.cpp server (Qwen3.6-35B-A3B, chat + vision) on :8081, V100
+Documentation=https://github.com/ebongard/renfield/blob/main/docs/GPU_FAILOVER.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=GPU=GPU-5add46cd-44cc-520d-cc8f-55b873278b26
+ExecStartPre=/usr/bin/test -r /models/qwen3.6-35b-a3b-q4kxl.gguf
+ExecStartPre=/usr/bin/test -r /models/q36-mmproj-F16.gguf
+ExecStartPre=-/usr/bin/docker rm -f llama-server
+ExecStart=/usr/bin/docker run --rm --name llama-server \
+  --network host \
+  --gpus device=${GPU} \
+  -e CUDA_CACHE_MAXSIZE=4294967296 \
+  -v /var/cache/nv:/root/.nv \
+  --health-cmd "curl -fsS http://localhost:8081/health || exit 1" \
+  --health-interval 30s \
+  --health-timeout 5s \
+  --health-start-period 10m \
+  --health-retries 3 \
+  -v /models/qwen3.6-35b-a3b-q4kxl.gguf:/models/qwen3.6-35b-a3b.gguf:ro \
+  -v /models/q36-mmproj-F16.gguf:/models/qwen3.6-35b-a3b-mmproj.gguf:ro \
+  ghcr.io/ggml-org/llama.cpp@sha256:853b023acf6c10d093f5566129d93a69638b1a0c83213e62696952b00bb3881c \
+  --model /models/qwen3.6-35b-a3b.gguf \
+  --mmproj /models/qwen3.6-35b-a3b-mmproj.gguf \
+  --alias qwen3.6 \
+  --host 0.0.0.0 \
+  --port 8081 \
+  --ctx-size 262144 \
+  --n-gpu-layers 99 \
+  --cache-type-k q8_0 \
+  --cache-type-v q8_0 \
+  --flash-attn on \
+  --batch-size 4096 \
+  --ubatch-size 4096 \
+  --reasoning off \
+  --temp 0.6 \
+  --top-p 0.95 \
+  --top-k 20 \
+  --jinja \
+  --metrics
+ExecStop=/usr/bin/docker stop llama-server
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

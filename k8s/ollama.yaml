@@ -25,14 +25,17 @@ metadata:
 spec:
   # Shared small-models tier for Reva + Renfield (2026-05-13).
   #
-  # Hosts four small models that don't justify llama-server's per-model
+  # Hosts three small models that don't justify llama-server's per-model
   # process overhead but benefit from GPU inference:
-  #   - llama3.2:3b           ~2 GB  — Reva router, Renfield intent fallback
-  #   - qwen3:8b              ~5 GB  — Renfield intent
-  #   - qwen3-embedding:4b    ~3 GB  — Renfield embeddings (the old
+  #   - qwen3:8b             ~5.6 GB — router + intent of BOTH Renfield and
+  #                                    Reva, and Renfield's chat fallback
+  #   - qwen3-embedding:4b   ~4.4 GB — Renfield embeddings (the old
   #                                    llama-server-embed is retired)
-  #   - nomic-embed-text     ~0.5 GB — Reva embeddings
-  # Total resident: ~10 GB.
+  #   - nomic-embed-text     ~0.3 GB — Reva embeddings
+  # Total resident: ~10.3 GB (`ollama ps`, 2026-11-23).
+  # llama3.2:3b was Reva's router until 2026-09-04; Reva moved to qwen3:8b
+  # (reva 625cab1: 8/8 vs 7/8 router cases, and it shares the model Renfield
+  # keeps resident anyway), so nothing loads it any more.
   #
   # Pinned to k8s-gpu-1. GPU via DRA (Dynamic Resource Allocation), NOT the
   # device plugin — live since 2026-09-03, after the 5060 Ti failed (Xid 79) and
@@ -77,9 +80,9 @@ spec:
             - name: OLLAMA_MODELS
               value: /root/.ollama/models
             # Keep loaded models resident indefinitely. The hot-path
-            # small models (llama3.2:3b router, qwen3-embedding:4b)
-            # combined fit easily in the 32 GB combined VRAM (5070 Ti
-            # + 5060 Ti) so eviction has no upside. Previously 30m,
+            # small models (qwen3:8b router/intent, the two embedders)
+            # fit together in the 16 GB of the 5070 Ti (~10.3 GB),
+            # so eviction has no upside. Previously 30m,
             # which let Ollama unload between bursts of traffic and
             # added ~12 s cold-load tail latency to router calls.
             - name: OLLAMA_KEEP_ALIVE

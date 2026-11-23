@@ -1,0 +1,128 @@
+# Renfield test instance on Host D (LXC 101 "renfield-test") — README.md next to this file.
+#
+# Everything an instance needs except the GPU tier, which runs next door in LXC 100
+# (gpu-ct: llama-server :8081, Ollama :11434, voice-server :8091 — deploy/hostd/*.service).
+# Own Postgres, Redis, SearXNG and an own Paperless; nothing here talks to a production
+# system (overrides.env switches every such integration off).
+#
+# Env layering, later wins: base.env (rendered from k8s/configmap.yaml by render.py, so
+# the test instance follows the production settings) < overrides.env (committed: what
+# makes it the TEST instance) < secrets.env (generated on the box, never committed).
+# .env holds only the image refs (bin/update-compose-instance.sh writes them).
+
+x-backend-env: &backend-env
+  env_file: [base.env, overrides.env, secrets.env]
+
+x-backend-config: &backend-config
+  - uploads:/app/data/uploads
+  - cache-home:/app/data/cache-home
+  - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro
+  - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro
+  - ./config/kg_scopes.yaml:/app/config/kg_scopes.yaml:ro
+  - ./config/mail_accounts.yaml:/app/config/mail_accounts.yaml:ro
+
+x-worker: &worker
+  image: ${RENFIELD_BACKEND_IMAGE}
+  <<: *backend-env
+  volumes: *backend-config
+  restart: unless-stopped
+  # Like k8s: no probe. The image HEALTHCHECK probes :8000, which only the backend serves;
+  # a worker's liveness signal is its Redis heartbeat, which the upload endpoint checks.
+  healthcheck: {disable: true}
+  depends_on:
+    backend: {condition: service_healthy}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    env_file: [secrets.env]
+    environment:
+      POSTGRES_USER: renfield
+      POSTGRES_DB: renfield
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U renfield -d renfield"]
+      interval: 5s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    env_file: [secrets.env]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      retries: 30
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng@sha256:b36af7984b87191b595bc5301418ed6432c047668a4547ab531a7439b816fac3
+    volumes: [./searxng/settings.yml:/etc/searxng/settings.yml:ro]
+    restart: unless-stopped
+
+  backend:
+    image: ${RENFIELD_BACKEND_IMAGE}
+    <<: *backend-env
+    # The prod args (k8s/backend.yaml); the image CMD carries --reload for dev.
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "1000000"]
+    volumes: *backend-config
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  document-worker:
+    <<: *worker
+    command: ["python", "-m", "workers.document_processor_worker"]
+
+  pdf-split-worker:
+    <<: *worker
+    command: ["python", "-m", "workers.pdf_split_worker"]
+
+  meeting-worker:
+    <<: *worker
+    command: ["python", "-m", "workers.meeting_worker"]
+
+  frontend:
+    image: ${RENFIELD_FRONTEND_IMAGE}
+    restart: unless-stopped
+
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx:2.20
+    env_file: [secrets.env]
+    environment:
+      PAPERLESS_URL: http://renfield-test.local:8000
+      PAPERLESS_ADMIN_USER: admin
+      PAPERLESS_OCR_LANGUAGE: deu+eng
+      PAPERLESS_TIME_ZONE: Europe/Berlin
+      USERMAP_UID: "1000"
+      USERMAP_GID: "1000"
+    volumes:
+      - paperless-data:/usr/src/paperless/data
+      - paperless-media:/usr/src/paperless/media
+    depends_on:
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  # The ingress of the k8s instances: /api, /ws, /health -> backend, the rest -> frontend.
+  # TLS from Caddy's internal CA (browser voice needs a secure context); its root is in
+  # the caddy-data volume (README.md: trust it once per client).
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443", "8000:8000"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [backend, frontend, paperless]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
+  cache-home:
+  paperless-data:
+  paperless-media:
+  caddy-data:

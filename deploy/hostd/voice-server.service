@@ -1,0 +1,67 @@
+# voice-server on Host D (LXC 100 "gpu-ct", RTX 4060 Ti 16 GB) — STT, TTS, speaker
+# embedding and meeting diarization of the Renfield test system, and the cold fallback
+# for the cluster voice-server (docs/GPU_FAILOVER.md). Image and model env = the prod
+# Deployment (private_k8s/voice-server/10-deployment.yaml); update the digest together.
+#
+# Differences to prod, on purpose:
+# - 4060 Ti only (by UUID): the V100 cannot run it — torch cu128 has no sm_70, so pyannote
+#   fails there (docs/GPU_TOPOLOGY.md §6). sm_89 runs on the sm_86 cubin.
+# - Bridge network with other host ports: llama-server holds :8081 on this host.
+#   Anonymous listener (the one the Renfield backend uses) on :8091, the authenticated one
+#   only on localhost :8090 (health checks; no external client authenticates here).
+# - AUTH_CLIENTS = only the anonymous "renfield" client. No Reva row, so no verify
+#   secret on this box.
+# - hf-cache-voice is a LOCAL copy (/var/lib/voice-server/hf-cache-voice, seeded once with
+#   `cp -r /mnt/llm/hf-cache-voice /var/lib/voice-server/`), mounted writable over the
+#   read-only NFS path like prod's writable cache: huggingface_hub's snapshot_download
+#   rewrites refs/main even for a fully cached model, and on the read-only store the
+#   startup died with EROFS. pyannote is baked into the image (/opt/hf-cache).
+# - The image comes from the private Harbor: `docker login` with the pull-only robot
+#   account robot$renfield+hostd-pull (once, stored in /root/.docker/config.json).
+
+[Unit]
+Description=Renfield voice-server (STT/TTS/speaker/diarization) on :8091, RTX 4060 Ti
+Documentation=https://github.com/ebongard/renfield/blob/main/docs/GPU_FAILOVER.md
+Requires=docker.service
+After=docker.service network-online.target ollama.service
+Wants=network-online.target
+RequiresMountsFor=/mnt/llm
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=GPU=GPU-b672cf9f-2b0e-9663-dd58-4b8e5d42f892
+Environment=IMAGE=registry.treehouse.x-idra.de/renfield/voice-server@sha256:ed703e39cabfd3545bba1a055c76003a0c6f48f5881567b9d088bf5e509d0f89
+ExecStartPre=/usr/bin/test -r /mnt/llm/voice/ecapa_tdnn.onnx
+ExecStartPre=/usr/bin/test -d /var/lib/voice-server/hf-cache-voice/models--Systran--faster-whisper-medium
+ExecStartPre=-/usr/bin/docker rm -f voice-server
+ExecStart=/usr/bin/docker run --rm --name voice-server \
+  --gpus device=${GPU} \
+  -p 127.0.0.1:8090:8080 \
+  -p 8091:8081 \
+  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  -e WHISPER_MODEL=Systran/faster-whisper-medium \
+  -e WHISPER_COMPUTE_TYPE=int8_float16 \
+  -e WHISPER_DEVICE=cuda \
+  -e PIPER_VOICES_DIR=/mnt/llm/voice/piper \
+  -e PIPER_DEFAULT_VOICE_DE=de_DE-thorsten-medium \
+  -e PIPER_DEFAULT_VOICE_EN=en_US-amy-medium \
+  -e PIPER_USE_CUDA=true \
+  -e SPEAKER_MODEL_PATH=/mnt/llm/voice/ecapa_tdnn.onnx \
+  -e AUTH_MODE=registry \
+  -e ANON_PORT=8081 \
+  -e ANON_DEFAULT_CLIENT=renfield \
+  -e 'AUTH_CLIENTS={"renfield":{"anonymous":true}}' \
+  -e HF_HUB_CACHE=/mnt/llm/hf-cache-voice \
+  -e MEETING_ENABLED=true \
+  -v /mnt/llm:/mnt/llm:ro \
+  -v /var/lib/voice-server/hf-cache-voice:/mnt/llm/hf-cache-voice \
+  ${IMAGE}
+ExecStop=/usr/bin/docker stop voice-server
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

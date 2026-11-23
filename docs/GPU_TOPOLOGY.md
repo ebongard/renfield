@@ -4,6 +4,12 @@
 laufenden `voice-server`-Pod und über die Proxmox-API — nicht aus älteren Dokumenten
 übernommen. Ergänzt am selben Tag, nachdem eine Tesla V100 32 GB gekauft wurde (§6).
 
+**Nachtrag 2026-11-23:** Eine **RTX 4060 Ti 16 GB** steckt wieder im Bestand — in Proxmox-Host D
+neben der V100. Host D ist damit ein **vollständiges Renfield-Testsystem** und der **kalte Fallback**
+der Produktions-GPU-Schicht: V100 = `llama-server` (Chat + Vision), 4060 Ti = Ollama und voice-server,
+dazu ein GPU-loser Container mit der übrigen Instanz. Umschalten mit `bin/gpu-failover.sh`, Ablauf in
+**`docs/GPU_FAILOVER.md`** (#1636). Die Karten werden per UUID gewählt, nie per Index (§6).
+
 **Nachtrag 2026-10-07:** Die Tesla V100 ist in Betrieb — im Proxmox-Host D,
 nicht im Cluster — und selbst vermessen (§4.3, §4.4, §6). Nachgemessen auf allen fünf
 Proxmox-Hosts (`lspci`, VM-/LXC-Konfiguration) und in den VMs (`nvidia-smi`).
@@ -40,7 +46,8 @@ ersetzt (GPU-Node 1–3, 5090-Host, V100-Container, Proxmox-Host A–E).
 | GPU-Node 2 | 202 | Proxmox-Host A | **kein `hostpci`** — bestätigt ohne GPU |
 | GPU-Node 3 | 109 | **Proxmox-Host B** (i5-12600H, **Mobil-CPU**, 101 GB RAM) | `0000:01:00` = GB206 (`10de:2d04`), RTX 5060 Ti |
 | 5090-Host | 110 | **Proxmox-Host C** (i5-14600K, 188 GiB RAM) | `0000:01:00` = GB202, RTX 5090 (Mapping `gpu-rtx5090`) |
-| V100-Container | LXC 100 | **Proxmox-Host D** (i7-4770K, 31 GiB RAM) | **kein Passthrough** — der Host lädt den Treiber, der Container bekommt die Gerätedateien `/dev/nvidia*` (§6) |
+| GPU-Container `gpu-ct` | LXC 100 | **Proxmox-Host D** (i7-4770K, 31 GiB RAM) | **kein Passthrough** — der Host lädt den Treiber, der Container bekommt die Gerätedateien `/dev/nvidia*` beider Karten: `01:00` Tesla V100 32 GB, `02:00` RTX 4060 Ti 16 GB (seit 2026-11-23); jeder Dienst wählt seine Karte per UUID (§6) |
+| Testinstanz `renfield-test` | LXC 101 | Proxmox-Host D | keine GPU — Backend, Worker, Frontend, Postgres, Redis, SearXNG, Test-Paperless (`deploy/hostd/renfield-test/`) |
 
 Der fünfte Host (Proxmox-Host E) trägt nur eine GT 730 für die Konsole.
 
@@ -128,15 +135,24 @@ weiterhin (`replicas: 0`).
   gleicht dem alten in Image-ID, Argumenten, Einbindungen, Netz, GPUs und Healthcheck
   (`docker inspect` verglichen); verschieden sind nur `--rm` und die fehlende Docker-Restart-Policy.
   Den Neustart beim Booten deckt die Unit ab; ein Boot-Test steht noch aus.
-- **GPU-Node 1 (5070 Ti)** — Cluster-Ollama mit llama3.2:3b, qwen3:8b, qwen3-embedding:4b
-  und nomic-embed-text, zusammen etwa 10,1 von 16,3 GB, geteilt mit Reva.
+- **GPU-Node 1 (5070 Ti)** — Cluster-Ollama mit qwen3:8b (Router und Intent beider
+  Instanzen), qwen3-embedding:4b und nomic-embed-text, zusammen etwa 10,3 von 16,3 GB, geteilt
+  mit Reva. llama3.2:3b war bis 2026-09-04 Revas Router und wird nicht mehr geladen.
   `qwen3-vl:8b` lief früher hier und brauchte gemessen **11,9 GB** — es verdrängte alle
   anderen Modelle und wurde deshalb auf die 5090 verlegt.
 - **GPU-Node 3 (5060 Ti)** — voice-server: faster-whisper `medium` mit `int8_float16`,
   Sprechererkennung (ECAPA) über onnxruntime, Piper-TTS; pyannote-Diarisierung nur bei
   `MEETING_ENABLED`.
-- **Proxmox-Host D / V100-Container** — **Testbetrieb**, keine Instanz zeigt dorthin. Eingerichtet
-  am 2026-10-07 sind drei Dienste, von denen jeweils nur einer auf die Karte passt:
+- **Proxmox-Host D** — **Testsystem und kalter Fallback** (seit 2026-11-23, `docs/GPU_FAILOVER.md`);
+  keine Produktionsinstanz zeigt dorthin, bis `bin/gpu-failover.sh to-hostd` umschaltet. Im
+  GPU-Container laufen drei systemd-Units (`deploy/hostd/*.service`), alle neustartfest:
+  `llama-server` auf der **V100** (dasselbe Image, Modell und dieselben Argumente wie auf dem
+  5090-Host, Port 8081, Modell auf der lokalen SSD, ~1:50 min Ladezeit nach einem Kaltstart),
+  Ollama 0.30.8 auf der **4060 Ti** (qwen3:8b, qwen3-embedding:4b, nomic-embed-text, ~10,3 GB,
+  Port 11434) und der voice-server mit dem Produktions-Digest ebenfalls auf der **4060 Ti**
+  (Port 8091 anonym; zusammen 11,9 von 16 GB). Die Testinstanz `renfield-test` nutzt genau diese
+  Dienste. Der Stand vom 2026-10-07 darunter ist Geschichte.
+  *Historisch (2026-10-07):* eingerichtet waren drei Dienste, von denen jeweils nur einer auf die Karte passte:
   ein `llama-server` mit demselben Image, Modell und denselben Argumenten wie auf
   dem 5090-Host (Docker-Container `llama-server`, Port 8081), Strata mit
   `Qwen3.8-Flash-Next` Q2_0 (Docker-Container `strata`, Port 8080, §4.4) und Ollama 0.30.8
@@ -196,7 +212,7 @@ Luftstrom)? (4) Erst danach über VRAM und Bandbreite reden.
 
 ## 4. Papierwerte der beteiligten Karten
 
-| | **V100 PCIe 32 GB** | **RTX 5070 Ti** | **RTX 4060 Ti 16G** (nicht mehr im Bestand) | **RTX 5090** |
+| | **V100 PCIe 32 GB** | **RTX 5070 Ti** | **RTX 4060 Ti 16G** (seit 2026-11-23 in Host D) | **RTX 5090** |
 |---|---|---|---|---|
 | VRAM / Typ | 32 GB **HBM2** | 16 GB GDDR7 | 16 GB GDDR6 | 32 GB GDDR7 |
 | Bandbreite | **900 GB/s** | 896 GB/s | 288 GB/s | **1792 GB/s** |
@@ -620,6 +636,16 @@ DKMS) läuft auf dem Host, der unprivilegierte LXC-Container (ID 100) bekommt di
 Gerätedateien und denselben Treiber als Userspace. Darin laufen Docker mit dem
 NVIDIA-Container-Toolkit (`no-cgroups = true`, LXC-Feature `keyctl`) und der `llama-server`.
 Messwerte in §4.3. Von den Bedingungen unten sind damit erledigt:
+
+> **Zwei Karten in einem LXC (seit 2026-11-23): per UUID, nie per Index.** `/dev/nvidiaN` folgt der
+> PCI-Reihenfolge, und eine neu gesteckte Karte verschiebt sie (dieselbe Karte verschob auch die
+> NIC-Namen — deshalb sind die NICs mit `pve-network-interface-pinning` festgenagelt). Die anderen
+> Hosts pinnen ihre Karten über Proxmox-PCI-Mappings; die brauchen IOMMU, die Host D fehlt. Das
+> Gegenstück hier: Die Host-Unit `nvidia-devices` legt für **jede** Karte in
+> `/proc/driver/nvidia/gpus` ein `/dev/nvidiaN` an (fehlt eins, startet der Container nicht), der
+> Container bekommt alle, und jeder Docker-Container wählt seine Karte mit
+> `--gpus device=GPU-<uuid>`: V100 `GPU-5add46cd-44cc-520d-cc8f-55b873278b26`,
+> 4060 Ti `GPU-b672cf9f-2b0e-9663-dd58-4b8e5d42f892`.
 
 - **1 (R580):** 580.178.04 baut und lädt auf Kernel 7.0.14.
 - **2 (Ollama pinnen):** auf 0.30.8 festgelegt, dieselbe Version wie auf dem 5090-Host.
