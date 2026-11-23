@@ -34,10 +34,13 @@ def test_paperless_stanza_maps_tools():
 
     import pytest
     import yaml
+    # The COMMITTED file first: on the build box /app/config/ holds the dev
+    # container's own (older) copy, and reading it first meant this test never
+    # saw the repo's stanza — a new tool's gate could only ever fail here.
     candidates = [
+        Path(__file__).resolve().parents[2] / "config" / "mcp_servers.yaml",
         Path("config/mcp_servers.yaml"),
         Path("/app/config/mcp_servers.yaml"),
-        Path(__file__).resolve().parents[2] / "config" / "mcp_servers.yaml",
     ]
     # An EMPTY file counts as unreachable: in the prod-style container a kubelet
     # subPath bind-mount leaves a 0-byte /app/config/mcp_servers.yaml, and trusting
@@ -58,8 +61,12 @@ def test_paperless_stanza_maps_tools():
     # EVERY mutation must be mapped to write — an unmapped mutation falls back to
     # the server-level [read, write] and stays drivable by a read-only role.
     for mutation in (
-        "update_document", "reprocess_document", "upload_document",
+        "update_document", "modify_document_tags", "reprocess_document", "upload_document",
         "create_correspondent", "create_document_type", "create_storage_path",
         "create_tag", "delete_document",
     ):
         assert tp.get(mutation) == "mcp.paperless.write", f"{mutation} not write-gated"
+    # The class, not the named list: every tool the AGENT sees carries its own
+    # gate — a new agent-visible tool without one falls back to [read, write].
+    unmapped = [t for t in paperless.get("prompt_tools") or [] if t not in tp]
+    assert not unmapped, f"agent-visible paperless tools without a permission: {unmapped}"
