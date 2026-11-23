@@ -1,0 +1,15 @@
+renfield-test.local {
+	tls internal
+	@backend path /api /api/* /ws /ws/* /health /health/*
+	handle @backend {
+		reverse_proxy backend:8000
+	}
+	handle {
+		reverse_proxy frontend:80
+	}
+}
+
+# The test Paperless UI (LAN only, plain HTTP like the production Paperless VM).
+:8000 {
+	reverse_proxy paperless:8000
+}
