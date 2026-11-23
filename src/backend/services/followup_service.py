@@ -18,11 +18,19 @@ Gated by `followup_chips_enabled` (dark by default). Bounded by the caller via
 from __future__ import annotations
 
 import json
+import unicodedata
 
 from loguru import logger
 
 # Keep chips short + scannable; drop anything that's really a sentence/paragraph.
 _MAX_CHIP_CHARS = 80
+
+
+def _is_latin_script(s: str) -> bool:
+    """True when every LETTER of *s* is a Latin letter (digits, punctuation and
+    symbols do not count). Accents and umlauts are Latin (LATIN SMALL LETTER A
+    WITH DIAERESIS)."""
+    return all(unicodedata.name(ch, "").startswith("LATIN") for ch in s if ch.isalpha())
 
 
 def _parse_followups(raw: str, count: int) -> list[str]:
@@ -102,6 +110,13 @@ def _parse_followups(raw: str, count: int) -> list[str]:
         # Showing it raw is worse than showing nothing — it is unreadable, and it
         # is tappable, so it would be sent back as the user's next message.
         if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
+            continue
+        # The call asks for German or English (generate_followups), both Latin
+        # script. The small intent model still drifts into Chinese now and then:
+        # observed 2026-11-23, an unrelated Chinese question under a German
+        # answer (#1638). A chip in the wrong script is unusable (a tap would put
+        # it into the composer), so it is dropped like any other unusable one.
+        if not _is_latin_script(s):
             continue
         key = s.casefold()
         if key in seen:

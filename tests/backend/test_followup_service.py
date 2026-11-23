@@ -140,3 +140,28 @@ class TestJsonObjectOutput:
     def test_plain_lines_still_work(self):
         out = self._parse("- Frage A\n- Frage B")
         assert out == ["Frage A", "Frage B"]
+
+
+class TestScriptFilter:
+    """#1638: the call asks for German or English; a chip in another script (the
+    small model drifting into Chinese) is dropped, never shown."""
+
+    def test_the_observed_production_output(self):
+        raw = '["Gibt es noch andere Begriffe für Gelegenheiten?", "#交易时需要支付多少手续费？"]'
+        assert _parse_followups(raw, 3) == ["Gibt es noch andere Begriffe für Gelegenheiten?"]
+
+    def test_a_chip_mixing_scripts_is_dropped(self):
+        assert _parse_followups('["Was kostet 手续费?", "Und morgen?"]', 3) == ["Und morgen?"]
+
+    def test_cyrillic_is_dropped_too(self):
+        assert _parse_followups('["Что дальше?"]', 3) == []
+
+    @pytest.mark.parametrize("chip", [
+        "Wie viel kostet das in Österreich?",
+        "Gibt es Straßenbahnen in Zürich?",
+        "What about the café's opening hours?",
+        "Was passiert am 24.12. um 18:00 Uhr?",
+        "Mehr dazu 👍",
+    ])
+    def test_latin_with_umlauts_accents_digits_and_symbols_survives(self, chip):
+        assert _parse_followups(f'["{chip}"]', 3) == [chip]
