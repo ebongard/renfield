@@ -462,6 +462,8 @@ Home Assistant Automation → POST /api/notifications/webhook
 
 ### Web Push (#79, `PUSH_NOTIFICATIONS_ENABLED`, opt-in/dark)
 
+**Stand:** im Haushalt ist der Schalter gesetzt (2026-11-23); aktiv erst mit VAPID-Paar und Kontaktadresse im Secret `renfield-env-private`. xidra: aus.
+
 - **Was**: Eine Benachrichtigung meldet sich auch bei geschlossenem Browser als Systemmitteilung — über die Web Push API (VAPID), ohne Firebase-SDK und ohne eigene App. Design: [`design/web-push.md`](design/web-push.md).
 - **Wen**: genau die Personen, die die Benachrichtigung auch in der App erreicht (dieselbe Regel `is_visible_to` wie seit #1244): die adressierte Person, bei öffentlichen Meldungen ohne Adressat alle. Die Admin-Übersicht ist keine Zustellung.
 - **Inhalt**: Der Push trägt **keinen Text** — nur Kennung und Dringlichkeit. Auf dem Sperrbildschirm steht „Neue Benachrichtigung“; den Inhalt holt die App nach dem Antippen authentifiziert von der eigenen Instanz und zeigt ihn im gewohnten Toast.
