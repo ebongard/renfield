@@ -40,6 +40,13 @@ Zustand ist, und `to-prod` beendet ihn auf den Stand in git. Ein Deploy während
 (`kubectl apply` der ConfigMap) schaltet stillschweigend zurück auf die ausgefallene Karte.
 Deshalb während des Fallbacks nicht deployen, oder danach `to-hostd` erneut ausführen.
 
+## Host D ausschalten
+
+`bin/gpu-failover.sh status` zuerst. Zeigt eine Instanz „DIFFERS FROM GIT“, läuft ein Fallback:
+dann `to-prod`, sonst verliert die Produktion mit dem Ausschalten ihre GPU-Schicht. Danach
+`ssh root@192.168.1.49 poweroff` (Proxmox fährt beide Container sauber herunter). Host-Seite
+(NIC-Pinning, DHCP-Zuweisungen, Einschalten): `private_k8s/docs/hostd-gpu-testsystem.md`.
+
 ## Grenzen
 
 - **Langsamer:** Die V100 dekodiert mit etwa 0,4× der 5090 (§4.6). Sie drosselt bei 83 °C
