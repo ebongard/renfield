@@ -37,9 +37,9 @@ spec:
           args:
             - |
               set -euo pipefail
-              # Pre-pull the four small models hosted on this Ollama:
-              # router (Reva), intent (Renfield), embeddings for both.
-              for m in llama3.2:3b qwen3:8b qwen3-embedding:4b nomic-embed-text; do
+              # Pre-pull the small models hosted on this Ollama:
+              # router + intent (both instances), embeddings for both.
+              for m in qwen3:8b qwen3-embedding:4b nomic-embed-text; do
                 echo "Pulling $m ..."
                 code=$(curl -sS -o /tmp/out -w '%{http_code}' -X POST http://ollama:11434/api/pull \
                   -H 'Content-Type: application/json' \

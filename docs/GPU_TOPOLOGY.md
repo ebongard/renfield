@@ -128,8 +128,9 @@ weiterhin (`replicas: 0`).
   gleicht dem alten in Image-ID, Argumenten, Einbindungen, Netz, GPUs und Healthcheck
   (`docker inspect` verglichen); verschieden sind nur `--rm` und die fehlende Docker-Restart-Policy.
   Den Neustart beim Booten deckt die Unit ab; ein Boot-Test steht noch aus.
-- **GPU-Node 1 (5070 Ti)** — Cluster-Ollama mit llama3.2:3b, qwen3:8b, qwen3-embedding:4b
-  und nomic-embed-text, zusammen etwa 10,1 von 16,3 GB, geteilt mit Reva.
+- **GPU-Node 1 (5070 Ti)** — Cluster-Ollama mit qwen3:8b (Router und Intent beider
+  Instanzen), qwen3-embedding:4b und nomic-embed-text, zusammen etwa 10,3 von 16,3 GB, geteilt
+  mit Reva. llama3.2:3b war bis 2026-09-04 Revas Router und wird nicht mehr geladen.
   `qwen3-vl:8b` lief früher hier und brauchte gemessen **11,9 GB** — es verdrängte alle
   anderen Modelle und wurde deshalb auf die 5090 verlegt.
 - **GPU-Node 3 (5060 Ti)** — voice-server: faster-whisper `medium` mit `int8_float16`,
