@@ -502,6 +502,88 @@ der Release-Tags gelesen (aktuell **v0.31.0**), nichts davon gebaut oder gestart
 Für den Betrieb ändert das nichts: **llama.cpp bleibt der Weg** (§4.1). Die Aussage zu
 SGLang wurde nicht erneut geprüft.
 
+### 4.6 Modelltest auf der V100 (2026-11-22/23)
+
+Host neu aufgesetzt (PVE 9.2.32, Kernel 7.0.14 mit `pci=realloc,nocrs`, Treiber
+**580.196.07**, proprietär/DKMS), Container wie in §6. Image wie auf der 5090
+(`server-cuda` b12532 per Digest), `-ctk/-ctv q8_0`, `-fa on`, Thinking aus, Temperatur 0
+für die Messungen. Prüfungen je Modell: Long-Context mit Nadel (6,5k–103k), RAG-Treue (10
+Fragen, 3 nicht beantwortbar), `json_schema`-Pläne (5), Reva-Bench (19 Gespräche, 57 Turns,
+Entitäten), Reva-Tool-Auswahl (8–53 Tools), Renfield-Evals `memory_extraction` (9) und
+`kg_extraction` (3) sowie `AgentRouter.classify` über das Golden-Dataset (32 Fälle, nur
+LLM-Schicht).
+
+**Drei Befunde zum Betrieb, unabhängig vom Modell:**
+
+- **Der „66 s bis zum ersten Token"-Effekt aus §4.3 war PTX-JIT.** Das Image bringt `sm_70`
+  nur als PTX mit; der Treiber übersetzt beim ersten Request. Mit persistentem Cache
+  (`-v /var/cache/nv:/root/.nv -e CUDA_CACHE_MAXSIZE=4294967296`) kostet der erste Request
+  0,34 s statt 77 s, das Laden 6 s statt 55–102 s.
+- **`--batch-size/--ubatch-size 4096` statt 512: +29 % Prefill**, Decode unverändert, +2,2 GB
+  VRAM. Qwen3.6, je auf < 50 °C abgekühlt, Prefill in tok/s bei 6,5k / 32k / 103k:
+  512 → 2564 / 2209 / 1367, 2048 → 3143 / 2734 / 1646, **4096 → 3309 / 2918 / 1754**
+  (103k gesamt 75,9 → 59,2 s). Auch in die 5090-Unit übernommen; dort schrumpfen die
+  freien ~6,1 GiB aus §5 entsprechend.
+- **Die Karte drosselt thermisch** (V100-PCIe ist passiv, ein Gehäuselüfter bläst durch):
+  83 °C unter Dauerlast, im Testlauf ~2 h „SW Thermal Slowdown". Ein Power-Limit hilft nicht —
+  Qwen3.6 zieht im Mittel nur ~155 W; 250 W und 200 W liefern dieselben Werte. Kosten:
+  ~10 % Prefill im zweiten Durchgang, Decode unbetroffen. Abhilfe ist Luftführung, kein PL.
+
+**Ergebnisse** (Reihenfolge: Decode, Prefill bei ~100k, RAG/Pläne, Reva, Tool-Auswahl 53
+Tools, Memory/KG, Router):
+
+| Modell | Decode | pp 100k | RAG/Plan | Reva | Tools 53 | Mem/KG | Router |
+|---|---|---|---|---|---|---|---|
+| **Qwen3.6-35B-A3B UD-Q4_K_XL** | 94 | 1195 (1754 bei ub4096) | 10/10, 5/5 | 28/28, 235 s | 20/25 | 9/9, 3/3 | 26/32, 1,4 s |
+| dto. **mit MTP** (`--spec-type draft-mtp --spec-draft-n-max 2`) | 110 | 1522 | 10/10, 5/5 | 28/28, **171 s** | 20/25 | 9/9, 3/3 | 26/32, 1,1 s |
+| dto. auf Strata 0.2.20 | — | 679 (107k: 160 s) | 10/10, 5/5 | 28/28, 224 s | 20/25 | 9/9, 3/3 | 27/32 |
+| Gemma 4 26B-A4B UD-Q6_K | 81,5 | 874 | 10/10, 5/5 | 27/28, 251 s | 19/25 | 8/9, 3/3 | 28/32, 1,5 s |
+| Gemma 4 31B Q5_K_M | 24,6 | ~200 (103k: 510 s) | 10/10, 5/5 | 28/28, 800 s | 19/25 | 9/9, 3/3 | **30/32**, 6,2 s |
+| Qwen3.8-27B UD-Q5_K_XL | 29 | 376 | 10/10, 5/5 | 28/28, 1036 s | 21/25 | 9/9, 3/3 | 24/32, 5,7 s |
+| Nemotron 3.5 Lightning 30B-A3B | 133 | 1436 (tg 24,6) | 10/10 (5/7 zitiert) | 28/28, 161 s | 18/25 | **6/9**, 2/3 | 25/32 |
+| Nemotron 3.5 Bolt 74B-A9B 24GB | 58 | 448 (227 s) | 10/10, 5/5 | 27/28, 275 s | 19/25 | 9/9, 3/3 | 27/32, 4,1 s |
+| Granite 4.2 30B | 32 | tg 7,4 bei 58k | 10/10, 4/5 | 28/28, 823 s | 19/25 | 8/9, 3/3 | 27/32, 8,0 s |
+| Inkling 2 Mini (Unsloth-Build) | 29 | 240 | 8/10, 1/5 | 28/28, 931 s | **1/25** | 9/9, 3/3 | 26/32, 6,8 s |
+| qwen3:8b Q4_K_M | — | — | 9/10, 5/5 | — | 21/25 | 8/9, 3/3 | 27/32, 1,3 s |
+| Granite 4.2 8B | — | — | 10/10, 3/5 | — | 19/25 | 6/9, 3/3 | 24/32, 3,0 s |
+| MiMo-V2.6 9B | — | — | 8/10, 3/5 | — | 5/25 | 9/9, **0/3** | 24/32 |
+
+Zum Vergleich die 5090 mit Qwen3.6: Decode 248 tok/s, Reva 27/28 in 103 s, Memory 9/9,
+KG 3/3, Router 26/32 bei 0,48 s, Tool-Auswahl identisch. Die Modelle vor dem
+`ub4096`-Befund sind mit 512 gemessen.
+
+- **Lightning** fällt bei `memory_extraction` u. a. in `case-circle-leakage` durch — für
+  ein Gedächtnis mit Kreis-Stufen ein Ausschlussgrund, trotz höchstem Decode.
+- **Inkling** denkt auch bei `reasoning_effort: none` (trainiert) und läuft mit
+  Mainline-llama.cpp erst nach PR #32704; auf Strata 0.1.66 scheitert die Engine an einem
+  fehlenden Tensor der aktualisierten Unsloth-Dateien.
+- **Strata** muss Thinking per `reasoning_effort: none` in der Modell-Config abschalten
+  (Standard „high"); bei kurzem Kontext leicht schneller als llama.cpp, bei langem um den
+  Faktor 2 langsamer.
+- **MTP** verträgt laut Unsloth weder `-np > 1` noch `--mmproj` — also ein Slot, kein Vision.
+
+**Embeddings** (eigener deutscher Retrieval-Test, 40 Passagen, 24 paraphrasierte Fragen):
+qwen3-embedding-4b R@1 22/24 (23/24 mit Instruct-Präfix auf der Anfrage), MRR 0,979;
+EmbeddingGemma 2 (768 d) 22/24, MRR 0,958, 4–6× schneller; Harrier 0.6b 21/24. Kein NaN in
+fp16, GPU gegen CPU-Referenz cos ≥ 0,997. Kein Wechsel — er hieße komplettes Re-Embedding.
+
+**Vision/Dokumente** (15 echte Paperless-Dokumente, Produktions-Prompts): Der
+Metadaten-Extraktor (`paperless_metadata.yaml`, textbasiert) liefert mit Qwen3.6 wie mit
+Gemma 4 26B 15/15 gültiges JSON, 4× `null` beim Datum und kein erfundenes Datum. Die
+VLM-Re-OCR (`extract_text_from_image`) ist gegen Tesseract als Referenz nicht trennscharf
+zwischen beiden Modellen. Der Aufruf lief ohne Temperatur und damit mit dem Server-Default
+0,6 — eine Seite kam in einem Lauf unbrauchbar zurück; seitdem `temperature: 0`.
+Qwen3.6 + `mmproj-F16` bleibt das Vision-Modell.
+
+**Entscheidung:** Auf der V100 läuft dasselbe Modell wie auf der 5090 — **Qwen3.6-35B-A3B
+UD-Q4_K_XL mit `-ub 4096`**, für alle Textrollen; MTP nur, wenn die Karte einem einzelnen,
+sequenziellen Client gehört. llama.cpp statt Strata. Qualität gleich der 5090, Decode
+~0,4× (mit MTP ~0,45×), Router-Latenz 2–3×.
+
+**Nebenbefund:** Der Kommentar in `agent_router.py`, eine `/v1`-URL wähle den
+OpenAI-Adapter, stimmt nicht — `create_llm_client` baut immer einen Ollama-Client, eine
+llama-server-URL in `AGENT_ROUTER_URL` endet in 404.
+
 ## 5. Der eigentliche Engpass: das geteilte LLM-Tier
 
 Nicht das VRAM der 16-GB-Karten ist knapp, sondern der KV-Cache auf dem 5090-Host:

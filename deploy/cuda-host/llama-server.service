@@ -12,6 +12,10 @@
 # thing that starts it. Image by DIGEST (= server-cuda, CUDA 12.8.1, build
 # b12532-08c252e22, untagged upstream -- see README.md): the bare `server-cuda`
 # tag moves with every llama.cpp release.
+#
+# --batch-size/--ubatch-size 4096 instead of the default 512: +29 % prompt
+# processing on long contexts (measured on the V100, 103k tokens 75.9 -> 59.2 s,
+# decode unchanged), for ~2.2 GB more compute buffer (docs/GPU_TOPOLOGY.md §4.6).
 
 [Unit]
 Description=llama.cpp server (Qwen3.6-35B-A3B, chat + vision) on :8081
@@ -52,6 +56,8 @@ ExecStart=/usr/bin/docker run --rm --name llama-server \
   --cache-type-k q8_0 \
   --cache-type-v q8_0 \
   --flash-attn on \
+  --batch-size 4096 \
+  --ubatch-size 4096 \
   --reasoning off \
   --temp 0.6 \
   --top-p 0.95 \
