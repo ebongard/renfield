@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 
+from voice_server import metrics
 from voice_server.auth import AuthError, authenticate
 # NOTE: also fixes a latent NameError — the M4 session-cap check below
 # referenced `settings` without importing it, so every /ws/voice connect
@@ -528,6 +529,7 @@ async def ws_voice(
         logger.warning(
             "voice session rejected: at capacity (%d)", _active_sessions
         )
+        metrics.record_session_rejected("capacity")
         return
 
     user_id = str(payload.get("sub") or payload.get("user_id") or "unknown")
@@ -536,6 +538,7 @@ async def ws_voice(
     # counter — the finally references it, and this guarantees it's bound.
     state = SessionState(user_id=user_id, started_at=time.monotonic())
     _active_sessions += 1
+    metrics.set_sessions_active(_active_sessions)
     logger.info("voice session opened user=%s (active=%d)", user_id, _active_sessions)
 
     try:
@@ -693,3 +696,4 @@ async def ws_voice(
             await asyncio.gather(*state.tts_tasks.values(), return_exceptions=True)
         await _close_decoder(state)
         _active_sessions -= 1
+        metrics.set_sessions_active(_active_sessions)

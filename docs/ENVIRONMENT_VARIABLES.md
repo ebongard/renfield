@@ -304,6 +304,32 @@ scrape_configs:
 Grafana oder Prometheus gehört NICHT zum Repository und wird nicht mit
 ausgerollt.
 
+#### voice-server (eigene Config, NICHT diese Backend-`.env`)
+
+```bash
+METRICS_ENABLED=false   # voice-server: Prometheus-Exporter an
+METRICS_PORT=9100       # eigener Port, nie der API-Port 8080
+```
+
+**Default:** `false` / `9100` (#1642). Gelesen von `voice-server/voice_server/config.py`.
+
+- **Eigener Port, nicht `/metrics` auf 8080:** der externe Ingress des
+  voice-servers routet den GANZEN Pfad `/` von Port 8080. Eine Route dort
+  wäre außerhalb des Clusters erreichbar. Port 9100 steht in keinem Service,
+  auf den ein Ingress zeigt; eine NetworkPolicy lässt nur den Prometheus-Agenten
+  durch.
+- **Präfix `voice_server_`, nicht `renfield_`:** derselbe voice-server bedient
+  Haushalt, xidra und Reva. Die Reihen beschreiben den Server als Ganzes.
+- **Reihen:** `voice_server_stt_duration_seconds{pass,outcome}`,
+  `voice_server_tts_sentence_duration_seconds{voice,outcome}`,
+  `voice_server_speaker_embed_duration_seconds{outcome}`,
+  `voice_server_sessions_active`, `voice_server_sessions_rejected_total{reason}`,
+  `voice_server_component_ready{component}`. `outcome` ist `ok`, `error` oder
+  `cancelled` (Barge-in, geschlossene Sitzung — kein Fehler).
+- **Inhaltsfrei:** kein Transkript, kein Nutzer, kein Gerät, kein Client, kein
+  Sprecher in einem Label. Alle festen Kombinationen sind mit 0 vorbelegt.
+- Aus: kein Objekt, kein Port, jeder Messaufruf kehrt sofort zurück.
+
 ---
 
 ### Logging

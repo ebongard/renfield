@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from voice_server.config import settings
+from voice_server.metrics import observe_speaker_embed
 
 logger = logging.getLogger(__name__)
 
@@ -118,4 +119,5 @@ class SpeakerService:
         if not self.ready:
             raise RuntimeError("SpeakerService not ready")
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._embed_sync, audio_pcm)
+        with observe_speaker_embed():
+            return await loop.run_in_executor(None, self._embed_sync, audio_pcm)

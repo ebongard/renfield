@@ -48,6 +48,14 @@ workers run the same code but serve no `/metrics`, so work done there (document
 ingestion, for example) is not on these dashboards. The MCP servers export
 nothing of their own; what is shown about them is measured from the backend.
 
+The **voice-server** exports its own series (prefix `voice_server_`, #1642).
+It does so on a separate port (`METRICS_PORT`, default 9100) and only with
+`METRICS_ENABLED=true` in its own config; the series are listed in
+`docs/ENVIRONMENT_VARIABLES.md` under "Monitoring". No dashboard here reads
+them yet: `tests/backend/test_grafana_dashboards.py` checks every dashboard in
+this folder against the backend's registry, so a voice dashboard needs its own
+check first.
+
 ## Loading the dashboards
 
 **File provisioning** (dashboards follow the repository):

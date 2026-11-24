@@ -5,6 +5,9 @@ Endpoints:
   WS   /ws/voice               — streaming voice protocol
   POST /api/voice/stt          — REST STT for satellites (B.1.6)
   POST /api/voice/tts          — REST TTS for satellites (B.1.6)
+
+With METRICS_ENABLED, Prometheus metrics are served on METRICS_PORT (its own
+listener, not a route of this app). See voice_server/metrics.py.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
-from voice_server import __version__
+from voice_server import __version__, metrics
 from voice_server.config import settings
 from voice_server.log_safety import install_uvicorn_url_redaction
 
@@ -76,6 +79,11 @@ async def lifespan(app: FastAPI):
             "this image with libopus0 + opuslib."
         )
 
+    # Metrics (#1642) start BEFORE the warmup, so a warmup that hangs or leaves
+    # a component unready is visible as voice_server_component_ready 0 rather
+    # than as a missing target. None when METRICS_ENABLED is off.
+    metrics_server = metrics.start_exporter()
+
     # Lazy-load heavy services to keep cold-start visible in logs.
     from voice_server.services.speaker_service import SpeakerService
     from voice_server.services.stt_service import STTService
@@ -86,7 +94,9 @@ async def lifespan(app: FastAPI):
     app.state.speaker = SpeakerService()
 
     await app.state.stt.warmup()
+    metrics.set_component_ready("stt", app.state.stt.ready)
     await app.state.speaker.warmup()
+    metrics.set_component_ready("speaker", app.state.speaker.ready)
 
     # Meeting diarization (§2): only loads pyannote (~2 GB VRAM) when enabled, so
     # a non-meeting deployment is unaffected. warmup() no-ops when off.
@@ -94,6 +104,7 @@ async def lifespan(app: FastAPI):
 
     app.state.meeting = MeetingDiarizationService()
     await app.state.meeting.warmup()
+    metrics.set_component_ready("meeting", app.state.meeting.ready)
 
     # Registry mode with an anonymous client row (D16: the household has no
     # user logins) serves the SAME app on a second port. The deployment
@@ -158,6 +169,8 @@ async def lifespan(app: FastAPI):
                     await anon_task
                 except Exception:  # noqa: BLE001 — shutdown path, log only
                     logger.exception("anon listener shutdown error")
+        if metrics_server is not None:
+            metrics_server.shutdown()
         logger.info("voice-server shutting down")
 
 
