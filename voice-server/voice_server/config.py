@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     port: int = 8080
     log_level: str = "INFO"
 
+    # Prometheus metrics (#1642), dark by default. When on, they are served on
+    # their OWN port, never on `port`: the external Ingress routes all of
+    # port 8080, so a /metrics route there would leave the cluster. See
+    # voice_server/metrics.py.
+    metrics_enabled: bool = False
+    metrics_port: int = Field(default=9100, ge=1, le=65535)
+
     # Auth (D5)
     # auth_required=False mirrors backend's AUTH_ENABLED=false — for
     # single-user / no-auth deployments where /ws/voice is reachable

@@ -22,6 +22,7 @@ import wave
 from typing import AsyncIterator
 
 from voice_server.config import settings
+from voice_server.metrics import observe_tts_sentence
 
 logger = logging.getLogger(__name__)
 
@@ -130,5 +131,8 @@ class TTSService:
                 raise
 
         for seq, sentence in enumerate(sentences):
-            wav_bytes = await asyncio.to_thread(self._synth_one_sentence, voice, sentence)
+            # Timed around the synthesis only, never around the yield: the time
+            # a slow consumer takes to read a frame is not TTS latency.
+            with observe_tts_sentence(voice_name):
+                wav_bytes = await asyncio.to_thread(self._synth_one_sentence, voice, sentence)
             yield encode_binary_frame(request_id, seq, wav_bytes)

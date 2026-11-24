@@ -21,6 +21,7 @@ from typing import AsyncIterator
 import numpy as np
 
 from voice_server.config import settings
+from voice_server.metrics import observe_stt
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,8 @@ class STTService:
                 segments, info = self._model.transcribe(audio_pcm, **kwargs)
                 return list(segments), info
 
-            segments, info = await loop.run_in_executor(None, _run)
+            with observe_stt(partial=partial):
+                segments, info = await loop.run_in_executor(None, _run)
 
         # Side-channel: callers that need the detected language read it
         # after consuming the iterator. Avoids a breaking-change to

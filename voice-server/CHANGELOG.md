@@ -5,6 +5,21 @@ version without a section here. Pushed digests live in `RELEASES.md`.
 
 ## [Unreleased]
 
+- **Prometheus metrics, dark by default.** `METRICS_ENABLED=true` serves them on
+  their own port `METRICS_PORT` (default 9100), never on the API port 8080. The
+  external Ingress routes all of 8080, so a `/metrics` route there would leave
+  the cluster. The series:
+  - STT duration by pass (`partial`/`final`), TTS duration per sentence by
+    voice, and speaker-embedding duration, each by outcome (`ok`/`error`/`cancelled`).
+  - Open `/ws/voice` sessions and capacity rejects.
+  - A ready gauge per component (`stt`, `speaker`; `meeting` only with
+    `MEETING_ENABLED`).
+
+  Labels are content-free, and every bounded combination is primed at 0. A
+  failure inside the metric code never reaches a voice turn. The
+  `prometheus-client` dependency was already listed but unused until now.
+  (renfield #1642)
+
 ## [0.3.11] — 2026-11-22
 
 - **`final_transcript` says why the utterance ended.** New field `end_reason`:

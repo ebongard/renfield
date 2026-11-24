@@ -1017,6 +1017,15 @@ ergab, #1386). Seit #82 werden auch die offenen WebSocket-Verbindungen, die
 Dauer der LLM-Aufrufe der Agentenschleife, die MCP-Werkzeugaufrufe je Server
 und Ausgang sowie die RAG-Suche tatsächlich aufgezeichnet.
 
+Der **voice-server** hat seit #1642 eigene Metriken (Präfix `voice_server_`):
+Dauer und Ausgang von Spracherkennung, Sprachausgabe je Satz und
+Sprechererkennung, offene Sprachsitzungen, Abweisungen wegen Überlast und ein
+Bereit-Wert je Komponente. Abgeschaltet als Vorgabe (`METRICS_ENABLED` in
+seiner eigenen Config); eingeschaltet auf einem **eigenen Port** (`METRICS_PORT`,
+9100) statt als Route auf 8080, weil sein externer Ingress den ganzen Port 8080
+routet. Die Labels sind inhaltsfrei; Einzelheiten in
+`docs/ENVIRONMENT_VARIABLES.md`, Abschnitt „Monitoring“.
+
 ### Grafana-Dashboards
 
 Drei Dashboards für diese Metriken liegen als JSON für das Datei-Provisioning

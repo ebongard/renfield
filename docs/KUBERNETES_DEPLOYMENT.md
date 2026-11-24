@@ -281,16 +281,18 @@ Some GPU-backed services in the `renfield` namespace are exposed to **other clus
 | Hostname | Backend Service | Port | External consumer |
 |---|---|---|---|
 | `ollama.test.local` | `ollama` | 11434 | Reva router / embeddings |
-| `voice.test.local` | `voice-server` | 8080 | Reva voice (`VOICE_SERVER_URL`) |
+| `voice.test.local` | `voice-server` (namespace `voice`) | 8080 | Reva voice (`VOICE_SERVER_URL`) |
 
 The former `llama-agent.test.local` ingress (`llm-agent-external` → `llama-server-agent`) and the in-cluster
 `llama-server-agent` / `llama-server-embed` Deployments were retired on 2026-11-18: both sat at 0/0, the agent could
 not schedule (it requested 2 GPUs on k8s-gpu-1, which allocates none) and embeddings had long moved to Ollama. The
 chat/vision LLM runs **outside the cluster** on the 5090 host `cuda.local:8081` (see `docs/GPU_TOPOLOGY.md` §2).
 
-> In-cluster Renfield (`backend`) reaches these same services via the ClusterIP Services (`voice-server:8080`, `ollama:11434`) and does **not** use these ingresses.
+> In-cluster Renfield (`backend`) reaches these same services via ClusterIP Services and does **not** use these ingresses: `ollama:11434`, and the shared voice-server through its anonymous listener `voice-server-anon.voice:8081` (the household's `VOICE_SERVER_URL` in `k8s/configmap.yaml`; fenced by a NetworkPolicy in namespace `voice`).
+>
+> The voice ingress routes the **whole** path `/` of port 8080. That is why the voice-server's Prometheus metrics (#1642) are not a route there but have their own port 9100 and their own Service `voice-server-metrics`, which no ingress points at; a NetworkPolicy admits only the Prometheus agent's namespace `renfield-monitoring`. The manifests are in the private cluster repository, directory `voice-server/`.
 
-**Security — IP allowlist.** `ollama` and `voice-server` have no built-in auth, so these ingresses are gated by a Traefik `IPAllowList` middleware (`llm-ingress-allowlist`, namespace `renfield`) restricting the source to the consuming cluster's subnet — otherwise any LAN host could drive unauthenticated, uncapped inference on the GPU (DoS / cost-abuse).
+**Security — IP allowlist.** `ollama` and `voice-server` have no built-in auth, so these ingresses are gated by a Traefik `IPAllowList` middleware (`llm-ingress-allowlist`; one copy in namespace `renfield` for `ollama`, one in namespace `voice` for `voice-server`) restricting the source to the consuming cluster's subnet — otherwise any LAN host could drive unauthenticated, uncapped inference on the GPU (DoS / cost-abuse).
 
 ```yaml
 apiVersion: traefik.io/v1alpha1
