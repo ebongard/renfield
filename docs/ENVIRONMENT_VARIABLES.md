@@ -323,9 +323,10 @@ METRICS_PORT=9100       # eigener Port, nie der API-Port 8080
 - **Reihen:** `voice_server_stt_duration_seconds{pass,outcome}`,
   `voice_server_tts_sentence_duration_seconds{voice,outcome}`,
   `voice_server_speaker_embed_duration_seconds{outcome}`,
-  `voice_server_sessions_active`, `voice_server_sessions_rejected_total{reason}`,
-  `voice_server_component_ready{component}`. `outcome` ist `ok`, `error` oder
-  `cancelled` (Barge-in, geschlossene Sitzung — kein Fehler).
+  `voice_server_sessions_active`, `voice_server_sessions_rejected_total{reason}`
+  (nur Abweisungen wegen Überlast), `voice_server_component_ready{component}`
+  (`stt`, `speaker`; `meeting` nur bei `MEETING_ENABLED=true`). `outcome` ist
+  `ok`, `error` oder `cancelled` (Barge-in, geschlossene Sitzung — kein Fehler).
 - **Inhaltsfrei:** kein Transkript, kein Nutzer, kein Gerät, kein Client, kein
   Sprecher in einem Label. Alle festen Kombinationen sind mit 0 vorbelegt.
 - Aus: kein Objekt, kein Port, jeder Messaufruf kehrt sofort zurück.

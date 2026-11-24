@@ -170,7 +170,11 @@ async def lifespan(app: FastAPI):
                 except Exception:  # noqa: BLE001 — shutdown path, log only
                     logger.exception("anon listener shutdown error")
         if metrics_server is not None:
-            metrics_server.shutdown()
+            try:
+                metrics_server.shutdown()
+                metrics_server.server_close()
+            except Exception:
+                logger.exception("metrics exporter shutdown error")
         logger.info("voice-server shutting down")
 
 

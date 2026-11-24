@@ -12,7 +12,8 @@ version without a section here. Pushed digests live in `RELEASES.md`.
   - STT duration by pass (`partial`/`final`), TTS duration per sentence by
     voice, and speaker-embedding duration, each by outcome (`ok`/`error`/`cancelled`).
   - Open `/ws/voice` sessions and capacity rejects.
-  - A ready gauge per component (`stt`, `speaker`, `meeting`).
+  - A ready gauge per component (`stt`, `speaker`; `meeting` only with
+    `MEETING_ENABLED`).
 
   Labels are content-free, and every bounded combination is primed at 0. A
   failure inside the metric code never reaches a voice turn. The

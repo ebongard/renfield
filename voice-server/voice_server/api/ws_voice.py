@@ -523,13 +523,15 @@ async def ws_voice(
     # unbounded parallel sessions exhaust GPU STT/TTS.
     global _active_sessions
     if _active_sessions >= settings.max_concurrent_sessions:
+        # Counted first: a client that is already gone makes accept()/close()
+        # raise, and the reject still happened.
+        metrics.record_session_rejected("capacity")
         await websocket.accept()
         # 1013 = "Try Again Later" (avoid relying on a starlette constant name).
         await websocket.close(code=1013, reason="server at capacity")
         logger.warning(
             "voice session rejected: at capacity (%d)", _active_sessions
         )
-        metrics.record_session_rejected("capacity")
         return
 
     user_id = str(payload.get("sub") or payload.get("user_id") or "unknown")

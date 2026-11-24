@@ -92,8 +92,24 @@ def test_every_bounded_label_combination_is_primed(on):
         assert _value("voice_server_speaker_embed_duration_seconds_count", {"outcome": o}) == 0
     assert _value("voice_server_sessions_rejected_total", {"reason": "capacity"}) == 0
     assert _value("voice_server_sessions_active") == 0
-    for c in metrics.COMPONENTS:
+    for c in ("stt", "speaker"):
         assert _value("voice_server_component_ready", {"component": c}) == 0
+
+
+def test_meeting_ready_is_exported_only_when_meetings_are_on(monkeypatch):
+    """Off, meeting never warms up; a permanent 0 would look broken."""
+    monkeypatch.setattr(settings, "metrics_enabled", True)
+    monkeypatch.setattr(settings, "meeting_enabled", False)
+    metrics.init_metrics()
+    metrics.set_component_ready("meeting", True)
+    assert _value("voice_server_component_ready", {"component": "meeting"}) is None
+
+    metrics._reset_for_tests()
+    monkeypatch.setattr(settings, "meeting_enabled", True)
+    metrics.init_metrics()
+    assert _value("voice_server_component_ready", {"component": "meeting"}) == 0
+    metrics.set_component_ready("meeting", True)
+    assert _value("voice_server_component_ready", {"component": "meeting"}) == 1
 
 
 def test_labels_are_content_free(on):
@@ -196,6 +212,40 @@ async def test_tts_records_one_observation_per_sentence(on, monkeypatch):
         "voice_server_tts_sentence_duration_seconds_count",
         {"voice": settings.piper_default_voice_de, "outcome": "ok"},
     ) == 3
+
+
+async def test_a_barge_in_mid_synthesis_is_cancelled_not_error(on, monkeypatch):
+    """A real cancellation while Piper runs in its thread (the TTS barge-in)."""
+    import threading
+
+    from voice_server.services.tts_service import TTSService
+
+    started, release = threading.Event(), threading.Event()
+
+    def slow_synth(voice, sentence):
+        started.set()
+        release.wait(5)
+        return b"RIFF"
+
+    tts = TTSService()
+    monkeypatch.setattr(tts, "_load_voice", lambda name: object())
+    monkeypatch.setattr(tts, "_synth_one_sentence", slow_synth)
+
+    async def consume():
+        async for _ in tts.stream_sentences("Ein langer Satz.", uuid.uuid4(), language="de"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+
+    labels = {"voice": settings.piper_default_voice_de}
+    c = "voice_server_tts_sentence_duration_seconds_count"
+    assert _value(c, {**labels, "outcome": "cancelled"}) == 1
+    assert _value(c, {**labels, "outcome": "error"}) == 0
 
 
 async def test_speaker_embed_records(on, monkeypatch):

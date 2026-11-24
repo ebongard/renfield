@@ -43,8 +43,17 @@ OUTCOMES = ("ok", "error", "cancelled")
 #: speaking, ``final`` the strict pass whose text is used.
 STT_PASSES = ("partial", "final")
 
-#: Components whose warm/ready state is exported.
+#: Components whose warm/ready state can be exported. ``meeting`` only when
+#: MEETING_ENABLED is on: off, it never warms up, and a permanent 0 would read
+#: as "broken" to any alert on this gauge.
 COMPONENTS = ("stt", "speaker", "meeting")
+
+
+def exported_components() -> tuple[str, ...]:
+    """The components this configuration exports a ready value for."""
+    if settings.meeting_enabled:
+        return COMPONENTS
+    return tuple(c for c in COMPONENTS if c != "meeting")
 
 _registry: Any = None
 _stt_duration: Any = None
@@ -106,7 +115,7 @@ def init_metrics() -> bool:
     )
     _sessions_rejected = Counter(
         "voice_server_sessions_rejected_total",
-        "/ws/voice sessions refused before they started",
+        "/ws/voice sessions refused because the server was at capacity",
         ["reason"],
         registry=registry,
     )
@@ -129,7 +138,7 @@ def init_metrics() -> bool:
     for o in OUTCOMES:
         _speaker_embed_duration.labels(outcome=o)
     _sessions_rejected.labels(reason="capacity")
-    for c in COMPONENTS:
+    for c in exported_components():
         _component_ready.labels(component=c).set(0)
 
     _registry = registry
@@ -217,7 +226,7 @@ def record_session_rejected(reason: str) -> None:
 
 
 def set_component_ready(component: str, ready: bool) -> None:
-    if _component_ready is None:
+    if _component_ready is None or component not in exported_components():
         return
     try:
         _component_ready.labels(component=component).set(1 if ready else 0)
