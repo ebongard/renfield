@@ -40,6 +40,8 @@ set -euo pipefail
 BUILD_HOST="${RENFIELD_BUILD_HOST:-evdb@192.168.1.159}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VSDIR="$REPO_ROOT/voice-server"
+# shellcheck source=lib/voice-release-smoke.sh
+source "$REPO_ROOT/bin/lib/voice-release-smoke.sh"
 
 # --help in ANY position wins: `v0.4.0 --help` must never start a real release.
 for arg in "$@"; do
@@ -112,19 +114,15 @@ on_build "set -e; cd $STAGING && \
   docker push $IMAGE:$TAG"
 
 # --- post-build smoke (the built artifact, not the source) ------------------
+# The check itself lives in bin/lib/voice-release-smoke.sh (testable; #1645:
+# without `docker run -i` it had never checked anything).
 log "smoke: import app + opus + cu128 torch + pyannote + version == $VERSION"
-on_build "docker run --rm -e AUTH_REQUIRED=false $IMAGE:$TAG python - <<'PY'
-from voice_server import __version__
-from voice_server.services.opus_decode import OPUSLIB_AVAILABLE
-from voice_server.main import app  # import-smokes the whole ASGI surface
-import torch, torchaudio  # the meeting stack must match the pinned cu128 build
-assert torch.__version__.endswith(\"+cu128\"), f\"torch {torch.__version__}, expected +cu128\"
-assert torchaudio.__version__.endswith(\"+cu128\"), f\"torchaudio {torchaudio.__version__}\"
-from pyannote.audio import Pipeline  # noqa: F401 -- startup imports it (v0.3.8)
-assert __version__ == \"$VERSION\", f\"image reports {__version__}, expected $VERSION\"
-assert OPUSLIB_AVAILABLE, \"opuslib/libopus missing — satellites would 503 (silent skew)\"
-print(\"smoke ok:\", __version__)
-PY"
+if [[ $DRY_RUN == 1 ]]; then
+  printf '  [dry-run][%s] voice_release_smoke %s %s\n' "$BUILD_HOST" "$IMAGE:$TAG" "$VERSION"
+else
+  voice_release_smoke "$BUILD_HOST" "$IMAGE:$TAG" "$VERSION" \
+    || fail "image smoke failed for $IMAGE:$TAG - the image is pushed but NOT recorded; do not pin it"
+fi
 
 # --- contract export --------------------------------------------------------
 log "export OpenAPI contract"
