@@ -5,6 +5,8 @@ version without a section here. Pushed digests live in `RELEASES.md`.
 
 ## [Unreleased]
 
+## [0.3.12] — 2026-11-24
+
 - **Prometheus metrics, dark by default.** `METRICS_ENABLED=true` serves them on
   their own port `METRICS_PORT` (default 9100), never on the API port 8080. The
   external Ingress routes all of 8080, so a `/metrics` route there would leave
