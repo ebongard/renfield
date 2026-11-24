@@ -61,7 +61,7 @@ data:
     # IP-reputation blocking in late 2025 — SearXNG issues #4824/#5541, won't-fix:
     # it's not a scraper bug, no config or image upgrade recovers it). We keep DDG
     # enabled as best-effort (it self-recovers after ~1h idle) but must NOT depend
-    # on it. So enable several independent CAPTCHA-tolerant general engines — Yahoo
+    # on it. So enable several independent CAPTCHA-tolerant general engines — Yahoo (since disabled, see below)
     # + Marginalia on top of Bing/Mojeek/Wikipedia — so any single engine's CAPTCHA
     # is a non-event. (Yandex/Baidu are also CAPTCHA-tolerant but deliberately
     # omitted: routing queries to a Russian/Chinese engine is the wrong privacy
@@ -92,8 +92,14 @@ data:
         disabled: false
       - name: wikipedia
         disabled: false
+      # Yahoo disabled (2026-11-24): it no longer serves result pages to an
+      # automated client — seen in the cluster's SearXNG logs and reproduced
+      # with curl from a laptop on the home line. HTTP/2 disconnects mid-stream (~130 RemoteProtocolError/day
+      # per instance), HTTP/1.1 307s into a `/_bv/` bot check, then 500 with an
+      # empty body. It contributed nothing; every query paid its retry until
+      # SearXNG suspended it, and the cycle repeated.
       - name: yahoo
-        disabled: false
+        disabled: true
       - name: marginalia
         disabled: false
     ui:
