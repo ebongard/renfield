@@ -81,6 +81,23 @@ async def recompute_incident_edge_tiers(db: AsyncSession, entity_id: int) -> Non
     )
 
 
+async def clamp_edge_tier(db: AsyncSession, relation_id: int) -> int | None:
+    """Clamp one edge to the rule after a direct tier write (no commit).
+
+    A direct edit may LOWER an edge freely; it cannot lift it above its
+    endpoints or its cap. Returns the resulting tier (None: no such edge).
+    """
+    return (await db.execute(
+        text(
+            f"UPDATE kg_relations r SET circle_tier = LEAST(r.circle_tier, {EDGE_TIER_SQL}) "
+            "FROM kg_entities s, kg_entities o "
+            "WHERE r.subject_id = s.id AND r.object_id = o.id AND r.id = :rid "
+            "RETURNING r.circle_tier"
+        ),
+        {"rid": int(relation_id)},
+    )).scalar_one_or_none()
+
+
 async def cap_document_edges(db: AsyncSession, document_id: int, tier: int) -> list[str]:
     """Carry a document's tier onto the edges it is the recorded source of (no commit).
 

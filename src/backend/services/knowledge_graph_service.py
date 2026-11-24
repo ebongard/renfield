@@ -27,6 +27,7 @@ from models.database import (
 )
 from services.atom_owner import AtomOwnerResolverMixin
 from services.kg_edge_tier import (
+    cap_document_edges,
     capped_edge_tier,
     document_source_ref,
     lowered_cap,
@@ -2061,6 +2062,16 @@ async def _source_tier_cap(db: AsyncSession, document_id: int | None) -> int:
     return int(tier) if tier is not None else 0
 
 
+async def _reconcile_document_edges(db: AsyncSession, document_id: int) -> None:
+    """Cap this document's edges at its tier as it stands NOW, and commit (#1625)."""
+    from services.circle_resolver import CircleResolver
+
+    stale = await cap_document_edges(db, document_id, await _source_tier_cap(db, document_id))
+    await db.commit()
+    for atom_id in stale:
+        CircleResolver.invalidate_for_atom(atom_id)
+
+
 async def kg_post_document_ingest_hook(
     chunks: list[str],
     document_id: int | None = None,
@@ -2086,5 +2097,10 @@ async def kg_post_document_ingest_hook(
                 chunks, user_id=user_id, source_ref=source_ref, lang=lang,
                 tier_cap=await _source_tier_cap(db, document_id),
             )
+            if document_id:
+                # Extraction takes minutes; the document may have been made more
+                # private meanwhile, after its cascade ran over the edges that
+                # existed then. Re-apply the CURRENT tier to this document's edges.
+                await _reconcile_document_edges(db, document_id)
     except Exception as e:
         logger.warning(f"KG post_document_ingest hook failed: {error_text_without_content(e)}")

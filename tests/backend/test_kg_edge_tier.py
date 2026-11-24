@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import Atom, Document, KGEntity, KnowledgeBase, Role, User
 from services.atom_service import AtomService
 from services.kg_edge_tier import capped_edge_tier, lowered_cap
-from services.knowledge_graph_service import KnowledgeGraphService, _source_tier_cap
+from services.knowledge_graph_service import (
+    KnowledgeGraphService,
+    _reconcile_document_edges,
+    _source_tier_cap,
+)
 
 _seq = 0
 
@@ -229,6 +233,55 @@ class TestDocumentTierChange:
         assert await _edge_state(pg_db_session, rel.id) == (0, 0, 0)
         assert await _edge_state(pg_db_session, unrelated.id) == (2, 2, 2)
         await atoms.update_tier(doc.atom_id, {"tier": 4})
+        assert await _edge_state(pg_db_session, rel.id) == (0, 0, 0)
+
+
+class TestDirectEdgeTierEdit:
+    """PATCH /api/atoms/{id}/tier on a kg_edge atom goes through update_tier."""
+
+    pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
+
+    async def test_cannot_lift_an_edge_above_its_cap(self, pg_db_session, monkeypatch):
+        _commit_as_flush(pg_db_session, monkeypatch)
+        owner = await _make_user(pg_db_session, "cap_patch")
+        a = await _entity(pg_db_session, owner, "Org P", tier=4)
+        b = await _entity(pg_db_session, owner, "Org Q", tier=4)
+        rel = await KnowledgeGraphService(pg_db_session).save_relation(
+            subject_id=a.id, predicate="kennt", object_id=b.id, user_id=owner.id, tier_cap=0,
+        )
+        await AtomService(pg_db_session).update_tier(rel.atom_id, {"tier": 4})
+        assert await _edge_state(pg_db_session, rel.id) == (0, 0, 0)
+
+    async def test_can_lower_an_edge(self, pg_db_session, monkeypatch):
+        _commit_as_flush(pg_db_session, monkeypatch)
+        owner = await _make_user(pg_db_session, "cap_lower")
+        a = await _entity(pg_db_session, owner, "Org R", tier=2)
+        b = await _entity(pg_db_session, owner, "Org S", tier=2)
+        rel = await KnowledgeGraphService(pg_db_session).save_relation(
+            subject_id=a.id, predicate="kennt", object_id=b.id, user_id=owner.id,
+        )
+        await AtomService(pg_db_session).update_tier(rel.atom_id, {"tier": 1})
+        assert await _edge_state(pg_db_session, rel.id) == (1, None, 1)
+
+
+class TestHookReconcilesAtTheEnd:
+    pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
+
+    async def test_document_lowered_during_extraction(self, pg_db_session, monkeypatch):
+        """The edge was saved with the cap read at the START of the hook; the
+        document was lowered meanwhile. The end-of-hook pass catches it."""
+        _commit_as_flush(pg_db_session, monkeypatch)
+        owner = await _make_user(pg_db_session, "cap_race")
+        doc = await _doc(pg_db_session, owner, tier=2)
+        a = await _entity(pg_db_session, owner, "Org T", tier=2)
+        b = await _entity(pg_db_session, owner, "Org U", tier=2)
+        rel = await KnowledgeGraphService(pg_db_session).save_relation(
+            subject_id=a.id, predicate="kennt", object_id=b.id, user_id=owner.id,
+            source_session_id=f"doc:{doc.id}", tier_cap=2,
+        )
+        await pg_db_session.execute(
+            text("UPDATE documents SET circle_tier = 0 WHERE id = :d"), {"d": doc.id})
+        await _reconcile_document_edges(pg_db_session, doc.id)
         assert await _edge_state(pg_db_session, rel.id) == (0, 0, 0)
 
 

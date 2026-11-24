@@ -99,8 +99,11 @@ class TestTierCascade:
         # its .fetchall() must be iterable (empty is fine for this SQL-shape test).
         fact_ids = MagicMock()
         fact_ids.fetchall = MagicMock(return_value=[])
+        # 7th: the #1625 edge cap UPDATE … RETURNING (no edges here).
+        no_edges = MagicMock()
+        no_edges.fetchall = MagicMock(return_value=[])
         session.execute = AsyncMock(side_effect=[first, AsyncMock(), AsyncMock(),
-                                                 AsyncMock(), AsyncMock(), fact_ids])
+                                                 AsyncMock(), AsyncMock(), fact_ids, no_edges])
 
         svc = AtomService(session)
         svc.resolver = MagicMock()

@@ -50,6 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import (
     ATOM_TYPE_DOCUMENT_FACT,
     ATOM_TYPE_KB_DOCUMENT,
+    ATOM_TYPE_KG_EDGE,
     ATOM_TYPE_KG_NODE,
 )
 from models.database import (
@@ -57,7 +58,11 @@ from models.database import (
 )
 from services.atom_types import Atom
 from services.circle_resolver import CircleResolver, atom_from_orm
-from services.kg_edge_tier import cap_document_edges, recompute_incident_edge_tiers
+from services.kg_edge_tier import (
+    cap_document_edges,
+    clamp_edge_tier,
+    recompute_incident_edge_tiers,
+)
 from utils.log_safety import error_text_without_content
 
 # Source table → discriminator atom_type → row id column map.
@@ -287,6 +292,13 @@ class AtomService:
             ),
             {"tier": new_tier, "source_id": atom_orm.source_id},
         )
+
+        # #1625: a direct edit on an edge may lower it, never lift it above its
+        # endpoints or its document cap; the atom policy records what holds.
+        if atom_orm.atom_type == ATOM_TYPE_KG_EDGE:
+            clamped = await clamp_edge_tier(self.db, int(atom_orm.source_id))
+            if clamped is not None and clamped != new_tier:
+                atom_orm.policy = {**dict(new_policy), "tier": int(clamped)}
 
         # A direct tier edit on a single fact is a deliberate per-fact override
         # (fact_override=True); reset_fact_tier passes False to clear it. The
