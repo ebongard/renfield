@@ -2482,6 +2482,10 @@ class KGRelation(Base):
     # incident relations recompute their tier in the same transaction).
     atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True)
     circle_tier = Column(Integer, nullable=False, default=0)
+    # #1625: tier of the most private document that asserted this edge (NULL = no
+    # document source). circle_tier = LEAST(subject, object, tier_cap); it only
+    # goes down. The rule lives in services/kg_edge_tier.py.
+    tier_cap = Column(Integer, nullable=True)
 
     # --- Structured Memory (Phase 0): provenance ---
     # Who ASSERTED this fact (the authenticated speaker at extraction time),
