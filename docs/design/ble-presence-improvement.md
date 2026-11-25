@@ -557,7 +557,11 @@ because people at home without one now exist.
 **Confidence** keeps the legacy formula, applied to the vouching receiver's smoothed level, until stage 3
 derives it from the components.
 
-**Turning it on** is gated on a measurement: `renfield_presence_voice_check_total{decision, outcome}`
+**Switched on in the household on 2026-11-25** by the owner's decision, before the measurement below
+had collected anything (`k8s/configmap.yaml`). The counter then measures v2 while it acts, and the
+legacy decision is no longer checked. Turning it off is one key and a rollout restart.
+
+**Turning it on** was meant to be gated on a measurement: `renfield_presence_voice_check_total{decision, outcome}`
 counts, at every voice/auth sighting, whether each decision had the person in the sighting's zone. The
 shadow records both decisions; v2 is taken per person over the devices with the rule above. The log lines
 alone could not carry this, because they are lost at every deploy. Not part of A: the comparison the other
