@@ -666,7 +666,7 @@ data:
   # which live in the renfield-env-private Secret (PUSH_VAPID_*), never here.
   PUSH_NOTIFICATIONS_ENABLED: "true"
   # Glocke im Header (#1653): eigene Benachrichtigungen mit Badge, live ueber /ws/user.
-  NOTIFICATION_BELL_ENABLED: "false"
+  NOTIFICATION_BELL_ENABLED: "true"
   WISSEN_WORKSPACE_ENABLED: "true"
   PRESENCE_SWITCH_ENTER_MARGIN_DB: "4"
   # Placement v2 in SHADOW (#1549): a second room decision that only logs; nothing reads it.
