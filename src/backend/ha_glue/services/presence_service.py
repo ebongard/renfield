@@ -565,7 +565,14 @@ class PresenceService:
         decision and the placement v2 state."""
         old_room_id = current.room_id
         old_room_name = current.room_name
-        was_first = old_room_id is None and len(self._presence) == 1
+        if self._placement_state is None:
+            was_first = old_room_id is None and len(self._presence) == 1
+        else:
+            # Placement v2 keeps people at home without a room: the first
+            # room booking while nobody else has one is the first arrival.
+            was_first = old_room_id is None and not any(
+                p.room_id is not None for uid, p in self._presence.items() if uid != user_id
+            )
 
         current.room_id = best_room_id
         current.room_name = self._room_names.get(best_room_id) if best_room_id else None
@@ -711,7 +718,9 @@ class PresenceService:
             current.voice_pinned = True
             current.room_evidence_at = now
             current.voice_at = now
-            self._schedule_placement_state()
+            await self._decide_placement_state(now)
+            # Legacy: nothing was queued, so this fires nothing.
+            await self._fire_pending_events()
             return
 
         # Different room or first appearance — bypass hysteresis
@@ -782,18 +791,23 @@ class PresenceService:
 
         logger.debug(f"Presence: voice/auth — user {user_id} → {current.room_name or room_id}")
 
-        self._schedule_placement_state()
+        await self._decide_placement_state(now)
         await self._fire_pending_events()
 
     # ------------------------------------------------------------------
     # Placement v2 state (stage 2): the driver decides, these book
     # ------------------------------------------------------------------
 
-    def _schedule_placement_state(self) -> None:
-        """Re-arm the v2 deadline timer (no-op on the legacy path)."""
+    async def _decide_placement_state(self, now: float) -> None:
+        """After a voice/auth sighting: decide again at once (no-op on the
+        legacy path). The sighting is a new claim — whether the person's
+        sources now disagree must be known before any gate is asked, not at
+        the next report. Re-arms the timer; the same-room branch fires what
+        the decision queued."""
         state = self._placement_state
-        if state is not None:
-            state.schedule(self, time.time())
+        if state is None:
+            return
+        state.observe_report(self, now)
 
     async def _placement_state_tick(self) -> None:
         """A v2 deadline passed with no report: decide again, book, fire."""

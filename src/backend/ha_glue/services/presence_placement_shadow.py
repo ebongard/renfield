@@ -416,6 +416,7 @@ class PlacementShadow:
             for user_id in list(self._disagreements):
                 self._close(user_id, None, "clock reset")
             self._verdicts = {}
+            self._zone_since = {}   # times from the old clock would outrank new claims
             self._clock_high_water = now
             self._clock_behind_logged = False
             return True

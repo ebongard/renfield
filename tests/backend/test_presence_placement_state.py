@@ -441,3 +441,170 @@ class TestFlag:
                               capture_output=True, text=True, timeout=180)
         assert proc.returncode == 0, proc.stderr[-2000:]
         assert f"PROBE {loaded}" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# The event stream and the review's corner cases
+# ---------------------------------------------------------------------------
+
+
+def stream(fired) -> list[tuple[str, int | None, str | None]]:
+    return [(name, kw.get("room_id"), kw.get("source")) for name, kw in fired]
+
+
+class TestEventStream:
+    async def test_a_ble_move_fires_leave_last_left_enter(self, monkeypatch, clock):
+        svc, fired, _ = build_service(monkeypatch, clock)
+        for _ in range(4):
+            await report(svc, clock, "sat-kitchen", -45)
+        assert stream(fired) == [
+            ("presence_enter_room", KITCHEN, "ble"),
+            ("presence_first_arrived", KITCHEN, "ble"),
+        ]
+        fired.clear()
+        # The kitchen receiver's readings must age out of the freshness window
+        # (20 s) before the living room leads by the margin.
+        for _ in range(12):
+            await report(svc, clock, "sat-living", -45)
+        assert stream(fired) == [
+            ("presence_leave_room", KITCHEN, "ble"),
+            ("presence_last_left", KITCHEN, None),
+            ("presence_enter_room", LIVING, "ble"),
+        ]
+
+    async def test_first_arrived_while_someone_is_home_without_a_room(self, monkeypatch, clock):
+        """An unplaced person at home has no room: the first ROOM booking is
+        still the first arrival."""
+        svc, fired, _ = build_service(monkeypatch, clock)
+        svc._mac_to_user["AA:BB:CC:DD:EE:09"] = 2
+        await report(svc, clock, "sat-bath", -75, mac="AA:BB:CC:DD:EE:09")
+        assert svc.get_user_presence(2).room_id is None
+        for _ in range(4):
+            await report(svc, clock, "sat-kitchen", -45)
+        assert ("presence_first_arrived", KITCHEN, "ble") in stream(fired)
+
+    async def test_voice_then_ble_agreement_fires_nothing_twice(self, monkeypatch, clock):
+        svc, fired, _ = build_service(monkeypatch, clock)
+        await svc.register_voice_presence(user_id=1, room_id=KITCHEN, room_name="Kitchen")
+        for _ in range(6):
+            await report(svc, clock, "sat-kitchen", -45)
+        assert stream(fired) == [
+            ("presence_enter_room", KITCHEN, "voice"),
+            ("presence_first_arrived", KITCHEN, "voice"),
+        ]
+        assert not svc.is_location_uncertain(1, clock.now)
+
+    async def test_a_take_over_after_the_hold_is_one_leave_and_one_enter(self, monkeypatch, clock):
+        svc, fired, _ = build_service(monkeypatch, clock)
+        await svc.register_voice_presence(user_id=1, room_id=BATH, room_name="Bath")
+        hold_until = svc.get_user_presence(1).voice_hold_until
+        fired.clear()
+        while clock.now < hold_until - 3.0:
+            await report(svc, clock, "sat-living", -45)
+        assert fired == [] and room(svc) == BATH          # the hold runs
+        clock.now = hold_until + 0.1
+        await svc._placement_state_tick()                   # the wake at the hold's end, no report
+        assert room(svc) == LIVING
+        assert stream(fired) == [
+            ("presence_leave_room", BATH, "ble"),
+            ("presence_last_left", BATH, None),
+            ("presence_enter_room", LIVING, "ble"),
+        ]
+        assert not svc.get_user_presence(1).voice_pinned
+
+
+class TestVoiceIsDecidedAtOnce:
+    async def test_contested_right_after_the_sighting(self, monkeypatch, clock):
+        """The phone is placed in the kitchen; the person speaks in the bath.
+        Before any further report the gates must already see a contested room."""
+        svc, _fired, _ = build_service(monkeypatch, clock)
+        for _ in range(4):
+            await report(svc, clock, "sat-kitchen", -45)
+        await svc.register_voice_presence(user_id=1, room_id=BATH, room_name="Bath")
+        assert room(svc) == BATH
+        assert svc.get_user_presence(1).contested
+        assert svc.is_location_uncertain(1, clock.now)
+        assert 1 in svc.uncertain_user_ids()
+
+    async def test_the_same_room_sighting_is_decided_too(self, monkeypatch, clock):
+        svc, _fired, _ = build_service(monkeypatch, clock)
+        await svc.register_voice_presence(user_id=1, room_id=BATH, room_name="Bath")
+        for _ in range(4):
+            await report(svc, clock, "sat-kitchen", -45)
+        await svc.register_voice_presence(user_id=1, room_id=BATH, room_name="Bath")
+        assert svc.get_user_presence(1).contested
+
+
+class TestVoiceAndAbsence:
+    async def test_a_fresh_sighting_outlives_absent_devices(self, monkeypatch, clock):
+        svc, _fired, _ = build_service(monkeypatch, clock)
+        await report(svc, clock, "sat-kitchen", -45)
+        clock.now += 130.0                                  # the phone is past its deadline
+        await svc.register_voice_presence(user_id=1, room_id=BATH, room_name="Bath")
+        await svc._placement_state_tick()
+        assert room(svc) == BATH
+        clock.now += 121.0                                  # and now the sighting is too
+        await svc._placement_state_tick()
+        assert svc.get_user_presence(1) is None
+
+    async def test_unplaced_then_absent_fires_nothing(self, monkeypatch, clock):
+        svc, fired, _ = build_service(monkeypatch, clock)
+        await report(svc, clock, "sat-kitchen", -75)
+        assert svc.get_user_presence(1).room_id is None
+        clock.now += 121.0
+        await svc._placement_state_tick()
+        assert svc.get_user_presence(1) is None
+        assert fired == []
+
+
+class TestTimerAndClock:
+    async def test_the_timer_runs_the_tick(self, monkeypatch, clock):
+        svc, _fired, _ = build_service(monkeypatch, clock)
+        ticks: list[float] = []
+
+        async def tick():
+            ticks.append(clock.now)
+
+        monkeypatch.setattr(svc, "_placement_state_tick", tick)
+        svc._placement_state._fire(asyncio.get_running_loop(), svc)
+        await svc._placement_state._tick_task
+        assert ticks == [clock.now]
+
+    async def test_a_report_re_arms_the_one_timer(self, monkeypatch, clock):
+        svc, _fired, _ = build_service(monkeypatch, clock)
+        await report(svc, clock, "sat-kitchen", -45)
+        first = svc._placement_state._timer
+        await report(svc, clock, "sat-kitchen", -45)
+        assert first.cancelled()
+        assert svc._placement_state._timer is not first
+
+    def test_without_a_running_loop_nothing_is_armed(self, monkeypatch, clock):
+        svc, _fired, _ = build_service(monkeypatch, clock)
+        svc._placement_state.observe_report(svc, clock.now)
+        assert svc._placement_state._timer is None
+
+    async def test_a_clock_reset_forgets_the_zone_times(self, monkeypatch, clock):
+        svc, _fired, _ = build_service(monkeypatch, clock)
+        for _ in range(4):
+            await report(svc, clock, "sat-kitchen", -45)
+        assert svc._placement_state._zone_since
+        clock.now -= 500.0                                  # behind by more than the deadline
+        await svc._placement_state_tick()
+        assert PHONE not in svc._placement_state._zone_since or \
+            svc._placement_state._zone_since[PHONE][1] <= clock.now
+
+    async def test_a_failing_booking_leaves_presence_and_re_arms(self, monkeypatch, clock, log_lines):
+        svc, _fired, _ = build_service(monkeypatch, clock)
+        for _ in range(4):
+            await report(svc, clock, "sat-kitchen", -45)
+
+        def boom(*_a, **_kw):
+            raise KeyError("AA:BB:CC:DD:EE:01")
+
+        monkeypatch.setattr(svc, "_apply_placement", boom)
+        for _ in range(3):
+            await report(svc, clock, "sat-living", -45)
+        assert room(svc) == KITCHEN
+        errors = [line for line in log_lines if line.startswith("ERROR|") and "v2 state" in line]
+        assert len(errors) == 1 and "KeyError" in errors[0] and "AA:BB" not in errors[0]
+        assert svc._placement_state._timer is not None
