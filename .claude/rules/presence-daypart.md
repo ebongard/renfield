@@ -13,13 +13,11 @@ Loaded only when the daypart / LED-dimming / presence services are read. BLE/IRK
 - day / evening / night from configurable clock windows in the LOCAL timezone: `DAYPART_NIGHT_START`,
   `DAYPART_NIGHT_END`, `DAYPART_EVENING_START`, `DAYPART_TIMEZONE`. The night window wraps midnight.
 - Injects a `{time_context}` line into EVERY agent prompt.
-- A 5-min lifecycle watcher fires the `daypart_changed` hook on TRANSITIONS only; consumers must not assume a
-  periodic tick.
+- A 5-min watcher fires `daypart_changed` on TRANSITIONS only; consumers must not assume a periodic tick.
 
 ## Night LED Dimming (`ha_glue/services/led_dimming_service.py`) — backend-driven
 - Consumes `daypart_changed` → pushes `led_config{brightness}` to every connected satellite over the existing WS.
-- **The `register_ack` carries the current brightness**, so a satellite reconnecting mid-night comes up dimmed.
-  Removing that leaves a reconnecting satellite bright until the next transition.
+- **The `register_ack` carries the current brightness** — without it a satellite reconnecting mid-night stays bright.
 - The satellite SCALES `leds.brightness`, so animations keep running.
 - Symmetric: ANY transition out of night restores `LED_DAY_BRIGHTNESS`=20; night = `LED_NIGHT_BRIGHTNESS`=5.
 
@@ -32,9 +30,8 @@ Loaded only when the daypart / LED-dimming / presence services are read. BLE/IRK
   history is a read path, never a second source of truth for the current room.
 
 ## Bluetooth Device Scan (`BT_SCAN_ENABLED`, default off)
-- "scanne die Bluetooth-Geräte" → `internal.bluetooth_scan` (role `smart_home`) fans a discovery scan out to ALL
-  satellites over the `bt_scan_request` / `bt_scan_result` WS protocol — the same request-response pattern as
-  `capture_snapshot`.
+- `internal.bluetooth_scan` (role `smart_home`) fans a scan out to ALL satellites over `bt_scan_request` /
+  `bt_scan_result` (the `capture_snapshot` request-response pattern).
 - Each satellite runs Classic-BT inquiry + BLE discovery; the backend dedups by MAC, keeps the STRONGEST RSSI,
   groups per room, maps OUI → vendor. Only advertising/discoverable devices appear; a scan takes ~15–30 s.
 
@@ -46,13 +43,16 @@ Loaded only when the daypart / LED-dimming / presence services are read. BLE/IRK
   ends itself after `MAX_SESSION_SECONDS` so the role is re-checked. The view mirrors `_should_switch_filtered` —
   change the switch rule (hold, pin, margins) and `summarizeRooms` in `LiveReadings.tsx` must follow.
 
-## Placement v2 — stage 1 is SHADOW ONLY (`PRESENCE_PLACEMENT_V2_SHADOW_ENABLED`, default off)
+## Placement v2 — stage 1 shadow (`PRESENCE_PLACEMENT_V2_SHADOW_ENABLED`), stage 2 state (both default off)
 - `presence_placement.decide` stays PURE (no I/O, no module state, clock passed in): the labelled walk in
   `tests/backend/fixtures/` replays through it. In a `placed` verdict a gate uses `rooms` (the whole zone); `room` is a hint.
 - A silent receiver is CENSORED (at or below its cutoff, or deaf), never "far"; an uncalibrated one keeps a user home
   and never places, nor does NaN/±inf or a level outside −127…+20 dBm (gates use `_at_least`). Receiver numbers: NO defaults.
-- Nothing may READ a verdict from the shadow: it logs (START/STOP of a disagreement, one line per voice sighting)
-  and adds `placement_v2` to the live-readings payload. Flag off = module not imported. Stages 2/3: the design doc.
+- Nothing may READ a verdict from the SHADOW: it logs and adds `placement_v2` to the payload. Flag off = not imported.
+- Stage 2 (`PRESENCE_PLACEMENT_V2_STATE_ENABLED`, off): `PlacementState` books the state, legacy does not run. ONE rule:
+  the source that changed zone LAST wins (voice = a claim timed at the sighting; decide it AT ONCE). Contested / no room
+  / stale evidence = uncertain, last room stays booked. One `call_later` timer, no polling; `unavailable` changes
+  nothing. Go/no-go: `renfield_presence_voice_check_total`.
 
 ## IRK push
 IRKs are location-tracking keys: with enrollment on they go ONLY to authenticated satellites
