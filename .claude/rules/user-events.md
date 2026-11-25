@@ -24,7 +24,7 @@ byte-identical to before. Exposed to the browser via `/api/config/features` (`us
 
 ## Targeting
 - `fan_out(target=<int>)` → ONLY that user's sockets (a normal event never spams admins).
-  `fan_out(target=None)` → ONLY the `_ALL` bucket.
+  `fan_out(target=None)` → ONLY the `_ALL` bucket. `fan_out(target=EVERYONE)` → every distinct socket once.
 - `_ALL` = auth-off household sockets + (auth-on) admin sockets, so an unattributable change (`owner=None`, e.g.
   null-KB) still reaches someone.
 - Auth-off (`auth_enabled=false` — the single auth flag; `WS_AUTH_ENABLED` is retired): sockets register under `_ALL`
@@ -34,6 +34,9 @@ byte-identical to before. Exposed to the browser via `/api/config/features` (`us
 - `documents_changed`, reasons `ingested` / `paperless` / `deleted`: `rag_service.py` ingest-complete (worker) +
   `delete_document`; `folder_ingest_paperless.py` — all 5 terminal `paperless_state` writes via
   `_emit_paperless_changed`.
+- `notifications_changed` (#1653, only with `NOTIFICATION_BELL_ENABLED`), reasons `created` / `acknowledged` /
+  `dismissed`: `NotificationService._emit_changed` after commit. Target: the notification's user; public + untargeted
+  → `EVERYONE` (every distinct socket, never a registry key); personal untargeted → `None`; auth off → `None`.
 - **A new event** (`obligations_changed`, `notes_changed`, …) = a new `type` + a frontend `case`. No new socket,
   no new pub/sub plumbing.
 - Storm control is two-sided: server `EventCoalescer` window (`USER_EVENTS_COALESCE_WINDOW_SECONDS`, 1 s) AND a client

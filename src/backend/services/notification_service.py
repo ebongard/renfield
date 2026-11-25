@@ -13,7 +13,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import delete, or_, select, text
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
@@ -675,6 +675,7 @@ class NotificationService:
         notification.delivered_at = datetime.now(UTC).replace(tzinfo=None)
         notification.delivered_to = delivered_to
         await self.db.commit()
+        await self._emit_changed(notification.target_user_id, notification.privacy, "created")
 
         return {
             "notification_id": notification.id,
@@ -730,6 +731,87 @@ class NotificationService:
     # ------------------------------------------------------------------
     # CRUD
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Notification bell (#1653)
+    # ------------------------------------------------------------------
+
+    # Statuses that count as "unread" for the bell: not yet acknowledged or dismissed.
+    UNREAD_STATUSES = (NOTIFICATION_PENDING, NOTIFICATION_DELIVERED)
+
+    @staticmethod
+    async def _emit_changed(target_user_id: int | None, privacy: str | None, reason: str) -> None:
+        """Tell the affected browsers to refetch their bell. Content-free, after commit,
+        best-effort: a Redis failure never breaks creating or acknowledging.
+
+        Addressed to a user → that user's sockets. Public and untargeted → every
+        socket. Personal without a target is visible to admins only → the ``_ALL``
+        bucket. Auth off: every socket sits in ``_ALL``."""
+        if not (settings.notification_bell_enabled and settings.user_events_enabled):
+            return
+        try:
+            from services.redis_client import get_redis
+            from services.user_events import EVENT_NOTIFICATIONS_CHANGED, EVERYONE, publish_user_event
+
+            if not settings.auth_enabled:
+                target: int | str | None = None
+            elif target_user_id is not None:
+                target = target_user_id
+            elif privacy is None or privacy == "public":
+                target = EVERYONE
+            else:
+                target = None
+            await publish_user_event(get_redis(), target, EVENT_NOTIFICATIONS_CHANGED, reason)
+        except Exception as e:
+            logger.warning(f"notification bell: event not published: {error_text_without_content(e)}")
+
+    @staticmethod
+    def _live_clause():
+        """Not expired -- the same cut-off :meth:`list_notifications` applies."""
+        return (Notification.expires_at.is_(None)) | (
+            Notification.expires_at > datetime.now(UTC).replace(tzinfo=None)
+        )
+
+    async def count_unread(self, viewer_id: int | None, restrict_to_viewer: bool) -> int:
+        """Unacknowledged, undismissed, unexpired notifications the viewer may see."""
+        query = (
+            select(func.count())
+            .select_from(Notification)
+            .where(Notification.status.in_(self.UNREAD_STATUSES))
+            .where(self._live_clause())
+        )
+        if restrict_to_viewer:
+            query = query.where(self._visible_to_clause(viewer_id))
+        return int((await self.db.execute(query)).scalar_one())
+
+    async def acknowledge_all(
+        self,
+        acknowledged_by: str | None,
+        viewer_id: int | None,
+        restrict_to_viewer: bool,
+    ) -> int:
+        """Acknowledge every unread notification the viewer may see. Returns the count."""
+        query = (
+            select(Notification)
+            .where(Notification.status.in_(self.UNREAD_STATUSES))
+            .where(self._live_clause())
+        )
+        if restrict_to_viewer:
+            query = query.where(self._visible_to_clause(viewer_id))
+        notifications = list((await self.db.execute(query)).scalars().all())
+        if not notifications:
+            return 0
+        now = datetime.now(UTC).replace(tzinfo=None)
+        targets: set[tuple[int | None, str | None]] = set()
+        for n in notifications:
+            n.status = NOTIFICATION_ACKNOWLEDGED
+            n.acknowledged_at = now
+            n.acknowledged_by = acknowledged_by
+            targets.add((n.target_user_id, n.privacy))
+        await self.db.commit()
+        for target_user_id, privacy in targets:
+            await self._emit_changed(target_user_id, privacy, "acknowledged")
+        return len(notifications)
 
     async def resolve_ws_viewer_scope(self, auth_result: dict | None) -> tuple[bool, int | None]:
         """(restrict_to_viewer, viewer_id) for a notification ack over a WebSocket.
@@ -834,9 +916,7 @@ class NotificationService:
             query = query.where(Notification.created_at >= since)
 
         # Filter out expired
-        query = query.where(
-            (Notification.expires_at.is_(None)) | (Notification.expires_at > datetime.now(UTC).replace(tzinfo=None))
-        )
+        query = query.where(self._live_clause())
 
         query = query.offset(offset).limit(limit)
         result = await self.db.execute(query)
@@ -882,6 +962,7 @@ class NotificationService:
         notification.acknowledged_at = datetime.now(UTC).replace(tzinfo=None)
         notification.acknowledged_by = acknowledged_by
         await self.db.commit()
+        await self._emit_changed(notification.target_user_id, notification.privacy, "acknowledged")
         return True
 
     async def dismiss(
@@ -899,6 +980,7 @@ class NotificationService:
 
         notification.status = NOTIFICATION_DISMISSED
         await self.db.commit()
+        await self._emit_changed(notification.target_user_id, notification.privacy, "dismissed")
         return True
 
     async def cleanup_expired(self) -> int:

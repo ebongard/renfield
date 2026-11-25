@@ -106,6 +106,9 @@ export function useUserEvents({ enabled }: UseUserEventsOptions): void {
         window.dispatchEvent(new CustomEvent(SCAN_JOB_FINISHED_EVENT, { detail }));
         // The conversation list shows a preview + message count that just changed.
         void queryClient.invalidateQueries({ queryKey: keys.chatSessions.list() });
+      } else if (type === 'notifications_changed') {
+        // The header bell (#1653): refetch count + list. Content-free, no id.
+        void queryClient.invalidateQueries({ queryKey: keys.notifications.all });
       }
       // Future event types (obligations_changed, notes_changed, …) add a case
       // here that invalidates their own query key — no new socket needed.

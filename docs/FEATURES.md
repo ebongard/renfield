@@ -469,6 +469,13 @@ bekommt per Push „Anruf von 0170 …“ und „Neue Nachricht von 0170 … (0:
 wird nachgeliefert; eine schon zugestellte Meldung kommt nicht doppelt. Details: `docs/sip-integration-plan.md`,
 `docs/ENVIRONMENT_VARIABLES.md` → „Telefonie“.
 
+### Benachrichtigungs-Glocke (#1653, `NOTIFICATION_BELL_ENABLED`, dark)
+
+Eine Glocke mit Badge im Header zeigt die ungelesenen eigenen Benachrichtigungen, etwa Anrufe,
+AB-Nachrichten und Erinnerungen, die nie auf gemeinsamen Geräten erscheinen. Ein Klick öffnet die Liste;
+einzelne oder alle lassen sich als gelesen markieren. Neue Meldungen erscheinen sofort, ohne Neuladen
+(über `/ws/user`). Admins sehen in der Glocke nur ihre eigenen und öffentliche Meldungen.
+
 ### Web Push (#79, `PUSH_NOTIFICATIONS_ENABLED`, opt-in/dark)
 
 **Stand:** im Haushalt ist der Schalter gesetzt (2026-11-23); aktiv erst mit VAPID-Paar und Kontaktadresse im Secret `renfield-env-private`. xidra: aus.

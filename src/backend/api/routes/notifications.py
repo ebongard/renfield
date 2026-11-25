@@ -71,6 +71,22 @@ def _viewer_scope(current_user: User | None) -> tuple[bool, int | None]:
     return True, current_user.id
 
 
+def _bell_scope(current_user: User | None) -> tuple[bool, int | None]:
+    """(restrict_to_viewer, viewer_id) for the bell (#1653): always the viewer's OWN
+    notifications plus public ones -- admins too, so an admin's badge never counts
+    everyone's personal calls. Auth off: the single household sees everything."""
+    if not settings.auth_enabled:
+        return False, None
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return True, current_user.id
+
+
+def _require_bell() -> None:
+    if not settings.notification_bell_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
 def _notification_to_response(n) -> NotificationResponse:
     """Convert DB Notification to response schema."""
     return NotificationResponse(
@@ -157,11 +173,15 @@ async def list_notifications(
     since: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    mine: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """List notifications with optional filters — scoped to the caller."""
-    restrict, viewer_id = _viewer_scope(current_user)
+    """List notifications with optional filters — scoped to the caller.
+
+    ``mine=true`` narrows an admin's list to what the bell shows (#1653): their own
+    notifications plus public ones."""
+    restrict, viewer_id = _bell_scope(current_user) if mine else _viewer_scope(current_user)
     service = NotificationService(db)
 
     since_dt = None
@@ -188,6 +208,38 @@ async def list_notifications(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/unread-count")
+@limiter.limit(settings.api_rate_limit_chat)
+async def unread_count(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
+):
+    """The bell badge (#1653): the viewer's unread notifications plus public ones."""
+    _require_bell()
+    restrict, viewer_id = _bell_scope(current_user)
+    count = await NotificationService(db).count_unread(viewer_id, restrict)
+    return {"count": count}
+
+
+@router.post("/acknowledge-all")
+@limiter.limit(settings.api_rate_limit_chat)
+async def acknowledge_all_notifications(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
+):
+    """Mark all read in the bell (#1653) -- only what the bell shows the viewer."""
+    _require_bell()
+    restrict, viewer_id = _bell_scope(current_user)
+    acknowledged = await NotificationService(db).acknowledge_all(
+        acknowledged_by=current_user.username if current_user else None,
+        viewer_id=viewer_id,
+        restrict_to_viewer=restrict,
+    )
+    return {"success": True, "acknowledged": acknowledged}
 
 
 @router.patch("/{notification_id}/acknowledge")

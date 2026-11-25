@@ -156,6 +156,8 @@ export interface FeatureFlags {
    *  auth, VAPID key pair, contact address). Off => no toggle, no request to
    *  `/api/push/*`, no subscription attempt. */
   push_notifications_enabled?: boolean;
+  /** Notification bell in the header (#1653). */
+  notification_bell_enabled?: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {

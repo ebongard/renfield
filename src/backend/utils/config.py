@@ -2041,6 +2041,12 @@ class Settings(BaseSettings):
     # Recipients: every ACTIVE user of the instance gets a personal notification
     # (no room announcement, no public device broadcast) — fixed, not configurable.
 
+    # Notification bell (#1653): a bell with an unread badge in the app header
+    # that lists the viewer's own notifications (always viewer-scoped, admins
+    # included) and refreshes live over /ws/user (`notifications_changed`).
+    # Off = no bell, no extra endpoints answer, no events published.
+    notification_bell_enabled: bool = False
+
     # Web Push (#79): a content-free wake-up through the browser's push service
     # for the people the in-app notification reaches. Dark by default. The flag
     # alone activates nothing: every precondition (auth on, a valid VAPID key

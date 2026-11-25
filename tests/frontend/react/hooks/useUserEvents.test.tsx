@@ -173,6 +173,19 @@ describe('useUserEvents', () => {
     expect(spy).not.toHaveBeenCalledWith({ queryKey: ['knowledge', 'list'] });
   });
 
+  it('refreshes the notification bell on notifications_changed (#1653)', async () => {
+    const client = makeClient();
+    const spy = vi.spyOn(client, 'invalidateQueries').mockResolvedValue(undefined);
+    renderHook(() => useUserEvents({ enabled: true }), { wrapper: wrapper(client) });
+    await flushConnect();
+    const ws = latest();
+    ws.fireOpen();
+
+    ws.fireMessage({ type: 'notifications_changed', reason: 'created' });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['notifications'] });
+    expect(spy).not.toHaveBeenCalledWith({ queryKey: ['knowledge', 'list'] });
+  });
+
   it('ignores unknown event types', async () => {
     vi.useFakeTimers();
     const client = makeClient();

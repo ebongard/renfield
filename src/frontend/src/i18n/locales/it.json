@@ -1368,6 +1368,14 @@
       "unrouted": "Scansione completata, destinazione ancora aperta – la conversazione è stata eliminata.",
       "failed": "Scansione non riuscita – la conversazione è stata eliminata.",
       "interrupted": "Scansione interrotta – la conversazione è stata eliminata."
+    },
+    "bell": {
+      "label": "Notifiche",
+      "labelUnread": "Notifiche, {{count}} non lette",
+      "markRead": "Segna come letta",
+      "markAllRead": "Segna tutte come lette",
+      "empty": "Nessuna notifica",
+      "failed": "Impossibile caricare le notifiche"
     }
   },
   "errors": {
