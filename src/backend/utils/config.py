@@ -2031,6 +2031,16 @@ class Settings(BaseSettings):
     notification_poller_enabled: bool = False           # Master-Switch for MCP notification polling
     notification_poller_startup_delay: int = 30         # Delay before first poll (seconds)
 
+    # Telephony (#1650): Renfield holds ONE outbound WebSocket to the telephony
+    # gateway (DMZ) and receives call events by push. The gateway knows numbers
+    # only and never picks a recipient — privacy/recipient are decided here.
+    telephony_enabled: bool = False
+    telephony_gateway_url: str = ""                     # wss://<gateway>:8090/v1/events
+    telephony_gateway_token: SecretStr = ""
+    telephony_gateway_ca_pem: str = ""                  # self-signed gateway cert (PEM) = pinned trust anchor
+    # Recipients: every ACTIVE user of the instance gets a personal notification
+    # (no room announcement, no public device broadcast) — fixed, not configurable.
+
     # Web Push (#79): a content-free wake-up through the browser's push service
     # for the people the in-app notification reaches. Dark by default. The flag
     # alone activates nothing: every precondition (auth on, a valid VAPID key

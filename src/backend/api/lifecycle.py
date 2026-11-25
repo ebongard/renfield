@@ -390,6 +390,23 @@ def _schedule_notification_poller(app):
     logger.info("Notification Poller scheduled")
 
 
+def _schedule_telephony_client():
+    """Start the telephony client (#1650): one outbound WebSocket to the gateway,
+    call events by push. Dark when the feature is off; tracked in
+    ``_startup_tasks`` → cancelled on shutdown."""
+    if not settings.telephony_enabled:
+        return
+
+    async def telephony_main():
+        from services.telephony_client import run_telephony_client
+
+        await run_telephony_client()
+
+    task = asyncio.create_task(telephony_main())
+    _startup_tasks.append(task)
+    logger.info("Telephony client scheduled")
+
+
 async def _init_mcp(app: "FastAPI"):
     """Initialize MCP client connections to external tool servers."""
     if not settings.mcp_enabled:
@@ -829,6 +846,7 @@ async def lifespan(app: "FastAPI"):
         _schedule_whisper_preload()
     _schedule_reminder_checker()
     _schedule_notification_poller(app)
+    _schedule_telephony_client()
     _schedule_kiosk_weather_refresh(app)
     _schedule_kiosk_internal_health_refresh(app)
     _schedule_kiosk_peer_status_refresh(app)

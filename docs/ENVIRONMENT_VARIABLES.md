@@ -831,6 +831,30 @@ NOTIFICATION_POLLER_ENABLED=false
 NOTIFICATION_POLLER_STARTUP_DELAY=30     # Delay before first poll (seconds)
 ```
 
+#### Telefonie: Anruf-Ereignisse per Push (#1650)
+
+Renfield baut **eine** ausgehende WebSocket-Verbindung zum Telephony-Gateway (Asterisk, DMZ) auf und
+bekommt eingehende Anrufe und neue Nachrichten auf dem Anrufbeantworter per Push, ohne Polling. Das Gateway liefert nur Rufnummern. **Sichtbarkeit und
+Empfänger legt Renfield fest**, nie das Ereignis. Nach einem Reconnect wird nachgeliefert (Epoche +
+Sequenznummer in Redis), und jeder Anruf und jede Nachricht wird genau einmal gemeldet (Claim `<typ>:<call_id>` in Redis).
+Gateway und Protokoll liegen in einem privaten Repo.
+
+```bash
+TELEPHONY_ENABLED=false                  # Master-Switch (dark by default)
+TELEPHONY_GATEWAY_URL=                   # wss://<gateway>:8090/v1/events
+TELEPHONY_GATEWAY_TOKEN=                 # Token der Instanz (Secret), das Gateway kennt nur den SHA-256-Hash
+TELEPHONY_GATEWAY_CA_PEM=                # selbstsigniertes Gateway-Zertifikat (PEM), Pflicht bei wss://
+```
+
+**Empfänger sind fest vorgegeben:** Jeder aktive Nutzer der Instanz bekommt eine eigene persönliche
+Benachrichtigung (`privacy=personal`, `target_user_id`), also in seiner Liste und per Web-Push. Es gibt keine
+Ansage im Raum (`tts=false`) und keine öffentliche Ausgabe an gemeinsame Geräte. Die Duplikatprüfung ist für
+diese Ereignisse aus (`dedup=False`): Ein zweiter Anruf derselben Nummer ist ein neuer Anruf, und genau einmal
+stellt schon der Claim sicher.
+
+Bei `wss://` ohne `TELEPHONY_GATEWAY_CA_PEM` startet der Client **nicht** (kein ungeprüftes TLS). Ein falsches
+Token wird mit 401 abgewiesen, der Client versucht es mit Backoff (max. 60 s) erneut.
+
 #### Reminders
 
 ```bash

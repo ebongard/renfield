@@ -538,6 +538,7 @@ class NotificationService:
         target_user_id: int | None = None,
         llm_eligible: bool = False,
         urgency_fallback: str = "info",
+        dedup: bool = True,
     ) -> dict:
         """
         Process an incoming webhook notification.
@@ -550,6 +551,13 @@ class NotificationService:
         ``urgency_fallback`` is what ``urgency="auto"`` becomes when nothing
         was classified (step off, ineligible, or the model failed).
 
+        ``dedup=False`` skips the hash and the semantic duplicate check (the
+        user's own feedback suppression still applies). Only for server-side
+        senders that already deliver exactly once per event — the telephony
+        client (#1650): two calls from the same number are two calls, and the
+        semantic check is not scoped to the recipient, so a per-user fan-out
+        would otherwise reach only the first user. The webhook route never sets it.
+
         Returns dict with notification_id, status, delivered_to.
         Raises ValueError on dedup/suppression.
         """
@@ -559,7 +567,7 @@ class NotificationService:
 
         # 1. Hash-based dedup (fast first-pass)
         dedup_key = self._compute_dedup_key(event_type, title, message, room, target_user_id)
-        if await self._is_duplicate(dedup_key):
+        if dedup and await self._is_duplicate(dedup_key):
             logger.info(f"🔇 Notification suppressed (duplicate): {logged_content(title)}")
             raise ValueError("Duplicate notification suppressed")
 
@@ -577,7 +585,7 @@ class NotificationService:
             raise ValueError("Notification suppressed by feedback rule")
 
         # 4. Semantic dedup check
-        if embedding and await self._is_semantic_duplicate(embedding):
+        if dedup and embedding and await self._is_semantic_duplicate(embedding):
             raise ValueError("Semantic duplicate notification suppressed")
 
         # 5. Auto-classify urgency (only a server-vouched technical sender may
