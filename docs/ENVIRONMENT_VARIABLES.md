@@ -831,6 +831,30 @@ NOTIFICATION_POLLER_ENABLED=false
 NOTIFICATION_POLLER_STARTUP_DELAY=30     # Delay before first poll (seconds)
 ```
 
+#### Telefonie: Anruf-Ereignisse per Push (#1650)
+
+Renfield baut **eine** ausgehende WebSocket-Verbindung zum Telephony-Gateway (Asterisk, DMZ) auf und
+bekommt eingehende Anrufe und neue Nachrichten auf dem Anrufbeantworter per Push, ohne Polling. Das Gateway liefert nur Rufnummern. **Sichtbarkeit und
+Empfänger legt Renfield fest**, nie das Ereignis. Nach einem Reconnect wird nachgeliefert (Epoche +
+Sequenznummer in Redis), und eine zugestellte Meldung wird nicht wiederholt (Erledigt-Marke `<typ>:<call_id>` in Redis, erst NACH der Zustellung gesetzt: Bei einem Absturz mittendrin kommt sie im Zweifel doppelt, nie gar nicht). Ein Ereignis, das 3-mal scheitert, wird protokolliert und übersprungen, damit es nicht alle folgenden Anrufe blockiert.
+Gateway und Protokoll liegen in einem privaten Repo.
+
+```bash
+TELEPHONY_ENABLED=false                  # Master-Switch (dark by default)
+TELEPHONY_GATEWAY_URL=                   # wss://<gateway>:8090/v1/events
+TELEPHONY_GATEWAY_TOKEN=                 # Token der Instanz (Secret), das Gateway kennt nur den SHA-256-Hash
+TELEPHONY_GATEWAY_CA_PEM=                # selbstsigniertes Gateway-Zertifikat (PEM), Pflicht bei wss://
+```
+
+**Empfänger sind fest vorgegeben:** Jeder aktive Nutzer der Instanz (Geräte-Konten wie Satelliten/Kiosk ausgenommen) bekommt eine eigene persönliche
+Benachrichtigung (`privacy=personal`, `target_user_id`), also in seiner Liste und per Web-Push. Es gibt keine
+Ansage im Raum (`tts=false`) und keine öffentliche Ausgabe an gemeinsame Geräte. Die Duplikatprüfung ist für
+diese Ereignisse aus (`dedup=False`): Ein zweiter Anruf derselben Nummer ist ein neuer Anruf, und Wiederholungen
+verhindert schon die Erledigt-Marke.
+
+Bei `wss://` ohne `TELEPHONY_GATEWAY_CA_PEM` startet der Client **nicht** (kein ungeprüftes TLS); unverschlüsseltes `ws://` ist nur zu localhost erlaubt. Ein falsches
+Token wird mit 401 abgewiesen, der Client versucht es mit Backoff (max. 60 s) erneut.
+
 #### Reminders
 
 ```bash
