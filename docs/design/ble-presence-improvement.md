@@ -503,7 +503,7 @@ This is thin, and the recording itself says where:
     choice: past the deadline no reading a held verdict rests on would count any more.
 
   What this does not catch: a jump FORWARD looks like a long silence, to both decisions.
-- **Stage 2 — the state follows v2:** expiry by deadline (a timer per device, not a sweep inside a
+- **Stage 2 — the state follows v2** (part A built, dark — see "Stage 2, part A" below): expiry by deadline (a timer per device, not a sweep inside a
   report; `unavailable` must not fire leave events); `UserPresence` may be "home, room unknown";
   `is_location_uncertain` true for every source whose verdict is not `placed`; voice/auth sightings
   and the hold expressed in v2 terms; one rule for several devices of one person; parameters and
@@ -513,6 +513,63 @@ This is thin, and the recording itself says where:
   `home_unknown` as a possible listener everywhere; `confidence` is computed from the components;
   the kiosk payload gains "home, room unknown"; history and the agent's "where is X" can answer it;
   the legacy path and its settings are removed.
+
+### Stage 2, part A: the state follows v2 (2026-11-25)
+
+Code: `ha_glue/services/presence_placement_state.py` (`PlacementState`, a `PlacementShadow` that books
+instead of comparing), the pure rule `combine_person` in `presence_placement.py`, and the booking in
+`presence_service.py` (`_apply_placement`; room change and absence share `_book_room_change` /
+`_book_absent` with the legacy path). Flag: `PRESENCE_PLACEMENT_V2_STATE_ENABLED`, default off. With it
+on, `_assign_room` and `_cleanup_stale` do not run. Unusable receiver or zone settings leave the legacy
+decision acting, with one ERROR line.
+
+Why now: #1551 was first seen on a synthetic probe. Measured on the household on 2026-11-25, the one
+person with two registered devices had 1 340 BLE room entries in 7 days, and 538 of them returned to the
+room they had left less than 5 minutes before. The cause is in the legacy filter, which is kept per
+person but rebuilt from one device's sightings at a time: each device's pass deletes the rooms only the
+other device is heard in, and a current room with no filtered value switches without a margin.
+
+**One rule for the sources of one person** (owner's decision, 2026-11-25): the source that changed zone
+LAST wins. A device's time moves only when its placed zone becomes a different one. A device that drops to
+`home_unknown` and comes back to the same zone has not moved. A voice/auth sighting is a claim with the
+sighting's time. So a phone lying in one room cannot pull its person there, and after a voice turn
+elsewhere it cannot pull the person back once the hold ends. Only a device that moves after the sighting
+can. That is the old "the last certain sighting stands" rule, now without a dB release margin. Sources that
+name different zones make the person **contested**. The winner's room is booked, but it is uncertain. A
+sighting is decided at once, so the gates never see a voice room as certain while a device places the
+person elsewhere. The price: a stationary device that is misplaced for a moment counts as having "moved"
+and wins until something else moves.
+
+**Home, placed by nothing** (owner's decision): the last room stays booked. Kiosk, history and media
+follow keep showing it, and no leave event fires. `is_location_uncertain` is then true for every person
+whose room is not backed by current evidence: no room at all, contested, or the last placement or sighting
+older than the longer of the voice hold and the v2 freshness window. The privacy gates already count
+uncertain people as possible listeners, so they now do so for every unplaced case, not only for a held
+voice room. Showing "home, room unknown" on the displays is stage 3.
+
+**Expiry** is a deadline with ONE timer (`loop.call_later`), armed for the next moment a verdict can change
+without a report: a reading leaving the freshness window or the deadline, a receiver's sign of life
+running out, a voice hold ending, a voice-only person's deadline. A person is absent when every device is
+`absent` and no voice sighting is younger than the deadline. `unavailable` (no receiver alive) changes
+nothing and fires nothing. `first_arrived` fires at the first ROOM booking while nobody else has a room,
+because people at home without one now exist.
+
+**Confidence** keeps the legacy formula, applied to the vouching receiver's smoothed level, until stage 3
+derives it from the components.
+
+**Switched on in the household on 2026-11-25** by the owner's decision, before the measurement below
+had collected anything (`k8s/configmap.yaml`). The counter then measures v2 while it acts, and the
+legacy decision is no longer checked. Turning it off is one key and a rollout restart.
+
+**Turning it on** was meant to be gated on a measurement: `renfield_presence_voice_check_total{decision, outcome}`
+counts, at every voice/auth sighting, whether each decision had the person in the sighting's zone. The
+shadow records both decisions; v2 is taken per person over the devices with the rule above. The log lines
+alone could not carry this, because they are lost at every deploy. Not part of A: the comparison the other
+way round (legacy as shadow of v2), because the legacy decision mutates the state it decides on. The
+admin live-readings summary still mirrors the legacy switch rule.
+
+Parts B (parameters and zones from a table, with a calibration flow) and C (the satellite reports its
+cutoff, the age of its last advert and a BLE sign of life) follow as their own PRs.
 
 ### What stage 1 does NOT do
 

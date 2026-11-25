@@ -136,6 +136,11 @@ class HaGlueSettings(BaseSettings):
     presence_placement_v2_fresh_seconds: float = 20.0         # A receiver "hears" the device only with a reading this young
     presence_placement_v2_margin_db: float = 10.0             # dB the claiming zone must lead every receiver outside it
     presence_placement_v2_hysteresis_db: float = 3.0          # dB the bound and the margin are relaxed by for the incumbent zone
+    # Placement v2, stage 2: presence STATE follows the v2 verdicts instead of
+    # the legacy decision (docs/design/ble-presence-improvement.md → stage 2).
+    # Uses the receiver/zone settings above; unusable settings keep the legacy
+    # decision acting, with one ERROR line. Off: byte-identical legacy path.
+    presence_placement_v2_state_enabled: bool = False
     presence_household_roles: str = "Admin,Familie"     # Roles considered household members for privacy TTS
     presence_webhook_url: str = ""                      # URL to POST presence events (empty = disabled)
     presence_webhook_secret: SecretStr | None = None    # Shared secret for webhook auth (X-Webhook-Secret header)

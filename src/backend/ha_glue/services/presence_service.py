@@ -90,6 +90,13 @@ class UserPresence:
     # device or filter state, so it does not flicker with several devices and
     # works on the legacy path too. Drives ``is_location_uncertain``.
     room_evidence_at: float = 0.0
+    # Placement v2 state (stage 2) only. When the voice/auth sighting behind
+    # ``voice_pinned`` happened: the sighting is a claim like a device's, and
+    # under "the source that changed zone last wins" this is its time.
+    voice_at: float = 0.0
+    # The person's sources name more than one zone: the booked room is the
+    # winner's, but nothing that decides who can overhear may trust it.
+    contested: bool = False
 
 
 def _build_placement_shadow():
@@ -109,6 +116,22 @@ def _build_placement_shadow():
         return None
 
 
+def _build_placement_state():
+    """The placement v2 state driver, or None with one ERROR line when it
+    cannot be built. None means the LEGACY decision acts — presence tracking
+    must come up either way."""
+    try:
+        from ha_glue.services.presence_placement_state import PlacementState
+
+        return PlacementState.from_settings()
+    except Exception as e:
+        logger.error(
+            f"Presence v2 state: could not be built, the legacy decision acts "
+            f"({type(e).__name__}: {error_text_without_content(e)})."
+        )
+        return None
+
+
 class PresenceService:
     """
     In-memory presence tracking service.
@@ -117,6 +140,10 @@ class PresenceService:
     user_id → current room. Uses "strongest RSSI wins" with hysteresis
     to avoid room flicker.
     """
+
+    # Placement v2 state driver; None = the legacy decision acts. A class
+    # default, so a service built without ``__init__`` (test doubles) is legacy.
+    _placement_state = None
 
     def __init__(self):
         self._mac_to_user: dict[str, int] = {}          # MAC → user_id cache
@@ -148,7 +175,15 @@ class PresenceService:
         # flag is on — the module is not even imported then. Nothing in this
         # service ever reads a verdict from it.
         self._placement_shadow = None
-        if ha_glue_settings.presence_placement_v2_shadow_enabled:
+        # Placement v2, stage 2: with its flag on, v2 DRIVES the presence state
+        # (presence_placement_state.py) and the legacy decision does not run.
+        # It is also what ``_placement_shadow`` points at, so the voice line,
+        # the metric and the live-readings payload keep their one entry point.
+        self._placement_state = None
+        if ha_glue_settings.presence_placement_v2_state_enabled:
+            self._placement_state = _build_placement_state()
+            self._placement_shadow = self._placement_state
+        if self._placement_state is None and ha_glue_settings.presence_placement_v2_shadow_enabled:
             self._placement_shadow = _build_placement_shadow()
 
     async def load_device_registry(self, db: AsyncSession):
@@ -301,10 +336,13 @@ class PresenceService:
             ]
             self._sightings[key].append(sighting)
 
-            self._assign_room(key)
+            if self._placement_state is None:
+                self._assign_room(key)
 
-        # Clean up stale presence
-        self._cleanup_stale(now)
+        # Clean up stale presence. Under placement v2 the state driver owns
+        # expiry (by deadline, with a timer), called just below.
+        if self._placement_state is None:
+            self._cleanup_stale(now)
 
         # Placement v2 shadow: compares, logs, changes nothing here.
         shadow = getattr(self, "_placement_shadow", None)
@@ -512,9 +550,29 @@ class PresenceService:
             return
 
         # --- Execute the room change + events --------------------------------
+        self._book_room_change(current, user_id, best_room_id, best_satellite_id, confidence)
+
+    def _book_room_change(
+        self,
+        current: UserPresence,
+        user_id: int,
+        best_room_id: int,
+        best_satellite_id: str | None,
+        confidence: float,
+    ) -> None:
+        """Move ``current`` to ``best_room_id`` and queue the BLE events
+        (leave / last left / enter / first arrived). Shared by the legacy
+        decision and the placement v2 state."""
         old_room_id = current.room_id
         old_room_name = current.room_name
-        was_first = old_room_id is None and len(self._presence) == 1
+        if self._placement_state is None:
+            was_first = old_room_id is None and len(self._presence) == 1
+        else:
+            # Placement v2 keeps people at home without a room: the first
+            # room booking while nobody else has one is the first arrival.
+            was_first = old_room_id is None and not any(
+                p.room_id is not None for uid, p in self._presence.items() if uid != user_id
+            )
 
         current.room_id = best_room_id
         current.room_name = self._room_names.get(best_room_id) if best_room_id else None
@@ -571,21 +629,26 @@ class PresenceService:
                 stale_users.append(user_id)
 
         for user_id in stale_users:
-            old = self._presence.pop(user_id)
-            logger.debug(f"Presence: user {user_id} marked absent (was in {old.room_name or old.room_id})")
-            if old.room_id is not None:
-                self._pending_events.append(("presence_leave_room", {
-                    "user_id": user_id,
-                    "user_name": self.get_user_name(user_id),
+            self._book_absent(user_id)
+
+    def _book_absent(self, user_id: int) -> None:
+        """Drop the user from presence and queue leave / last-left for the room
+        they were in. Shared by the legacy sweep and the placement v2 state."""
+        old = self._presence.pop(user_id)
+        logger.debug(f"Presence: user {user_id} marked absent (was in {old.room_name or old.room_id})")
+        if old.room_id is not None:
+            self._pending_events.append(("presence_leave_room", {
+                "user_id": user_id,
+                "user_name": self.get_user_name(user_id),
+                "room_id": old.room_id,
+                "room_name": old.room_name,
+                "source": "ble",
+            }))
+            if not self.get_room_occupants(old.room_id):
+                self._pending_events.append(("presence_last_left", {
                     "room_id": old.room_id,
                     "room_name": old.room_name,
-                    "source": "ble",
                 }))
-                if not self.get_room_occupants(old.room_id):
-                    self._pending_events.append(("presence_last_left", {
-                        "room_id": old.room_id,
-                        "room_name": old.room_name,
-                    }))
 
     async def _fire_pending_events(self):
         """Fire all collected presence events via the hook system."""
@@ -654,6 +717,10 @@ class PresenceService:
             current.voice_hold_until = now + self._voice_hold_seconds
             current.voice_pinned = True
             current.room_evidence_at = now
+            current.voice_at = now
+            await self._decide_placement_state(now)
+            # Legacy: nothing was queued, so this fires nothing.
+            await self._fire_pending_events()
             return
 
         # Different room or first appearance — bypass hysteresis
@@ -696,6 +763,7 @@ class PresenceService:
         current.voice_hold_until = now + self._voice_hold_seconds
         current.voice_pinned = True
         current.room_evidence_at = now
+        current.voice_at = now
         if self._voice_hold_seconds > 0:
             # A BLE candidate that was counting towards a switch is void now.
             # Only with the hold on, so that 0 leaves the old path untouched.
@@ -723,7 +791,100 @@ class PresenceService:
 
         logger.debug(f"Presence: voice/auth — user {user_id} → {current.room_name or room_id}")
 
+        await self._decide_placement_state(now)
         await self._fire_pending_events()
+
+    # ------------------------------------------------------------------
+    # Placement v2 state (stage 2): the driver decides, these book
+    # ------------------------------------------------------------------
+
+    async def _decide_placement_state(self, now: float) -> None:
+        """After a voice/auth sighting: decide again at once (no-op on the
+        legacy path). The sighting is a new claim — whether the person's
+        sources now disagree must be known before any gate is asked, not at
+        the next report. Re-arms the timer; the same-room branch fires what
+        the decision queued."""
+        state = self._placement_state
+        if state is None:
+            return
+        state.observe_report(self, now)
+
+    async def _placement_state_tick(self) -> None:
+        """A v2 deadline passed with no report: decide again, book, fire."""
+        state = self._placement_state
+        if state is None:
+            return
+        state.observe_report(self, time.time())
+        await self._fire_pending_events()
+
+    def _apply_placement(
+        self,
+        user_id: int,
+        verdict,
+        *,
+        now: float,
+        last_heard: float | None,
+        device_zones: "set[frozenset]",
+        satellite_id: str | None,
+        confidence: float | None,
+    ) -> None:
+        """Book one person's v2 verdict (``presence_placement.PersonVerdict``).
+
+        ``last_heard``: newest reading of any of the person's devices inside
+        the deadline. ``device_zones``: zones a DEVICE currently places the
+        person in (a voice claim is not evidence of now).
+
+          * PLACED in the booked zone: evidence refreshed, no event.
+          * PLACED elsewhere: moved, with events — unless a voice hold runs.
+          * HOME_UNKNOWN: the last room stays booked; it turns uncertain once
+            its evidence is older than the window (owner's decision: the
+            display keeps the room, the privacy gates do not trust it).
+          * ABSENT: dropped with leave events once nothing — no device, no
+            voice — has been seen for the deadline.
+          * UNAVAILABLE: no receiver alive, nothing can be said: no change.
+        """
+        from ha_glue.services.presence_placement import PersonKind
+
+        current = self._presence.get(user_id)
+        kind = verdict.kind
+        if kind is PersonKind.UNAVAILABLE:
+            return
+        if kind is PersonKind.ABSENT:
+            if current is not None and now - current.last_seen > self._stale_timeout:
+                self._book_absent(user_id)
+            return
+
+        if current is None:
+            current = UserPresence(user_id=user_id)
+            self._presence[user_id] = current
+        if last_heard is not None:
+            current.last_seen = max(current.last_seen, last_heard)
+
+        if kind is PersonKind.HOME_UNKNOWN:
+            current.contested = False
+            return
+
+        winner = verdict.winner
+        current.contested = verdict.contested
+        if current.room_id is not None and current.room_id in winner.rooms:
+            if current.room_id in {r for zone in device_zones for r in zone}:
+                current.room_evidence_at = now
+            if winner.source != "voice":
+                current.satellite_id = satellite_id
+                if confidence is not None:
+                    current.confidence = confidence
+            current.consecutive_room_count += 1
+            return
+        if winner.source == "voice":
+            # Cannot happen: a voice claim is the booked room's own zone.
+            return
+        if current.room_id is not None and now < current.voice_hold_until:
+            return
+        self._book_room_change(
+            current, user_id, winner.room, satellite_id,
+            confidence if confidence is not None else current.confidence,
+        )
+        current.contested = verdict.contested
 
     def get_room_occupants(self, room_id: int) -> list[UserPresence]:
         """Get all users currently in a room."""
@@ -756,6 +917,17 @@ class PresenceService:
         the hold switched off. A user BLE placed is never uncertain here.
         """
         presence = self._presence.get(user_id)
+        if self._placement_state is not None:
+            # Placement v2: every room that nothing places the person in NOW is
+            # a guess — home with no room, contested sources, or evidence older
+            # than the window (home_unknown keeps the last room booked).
+            if presence is None:
+                return False
+            if presence.room_id is None or presence.contested:
+                return True
+            current_time = now if now is not None else time.time()
+            window = max(self._voice_hold_seconds, self._placement_state.fresh_s)
+            return current_time - presence.room_evidence_at > window
         if presence is None or presence.room_id is None or not presence.voice_pinned:
             return False
         current_time = now if now is not None else time.time()

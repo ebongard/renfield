@@ -670,6 +670,10 @@ data:
   PRESENCE_PLACEMENT_V2_SHADOW_ENABLED: "true"
   PRESENCE_PLACEMENT_V2_RECEIVERS: '{"sat-fitnessraum": {"offset_db": 0, "in_room_dbm": -53.0, "cutoff_dbm": -80}, "sat-wohnzimmer": {"offset_db": 0, "in_room_dbm": -55.0, "cutoff_dbm": -80}, "sat-kinderbad": {"offset_db": 0, "in_room_dbm": -61.0, "cutoff_dbm": -80}, "sat-kueche": {"offset_db": 0, "in_room_dbm": -47.4, "cutoff_dbm": -100}, "sat-esszimmer": {"offset_db": 0, "in_room_dbm": -76.4, "cutoff_dbm": -100}}'
   PRESENCE_PLACEMENT_V2_ZONES: '{"open-plan": [25, 17]}'
+  # Stage 2 (#1551): v2 DRIVES the presence state; the legacy decision does not run.
+  # Switched on by the owner on 2026-11-25 without the voice-check measurement first.
+  # Off again = remove or "false" + rollout restart (the legacy path is unchanged).
+  PRESENCE_PLACEMENT_V2_STATE_ENABLED: "true"
 
   # === §2 meeting transcription — flip ON for the household, 2026-07-17 ===
   # Frontend + backend + voice-server all shipped dark; this turns the feature on.

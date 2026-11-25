@@ -283,7 +283,16 @@ Segmente zu `{id}` (Kardinalitätsschutz).
   `vad_speech_seen` in `audio_end`, bei älteren Satelliten die Aufnahmelänge;
   nur `vad_heard_speech` löst am Satelliten ein kurzes LED-Signal aus
   (`feedback_cue`, kein Ton)
-- Alle drei mit 0 vorbelegt, damit `increase()` auch das erste Ereignis sieht
+- `renfield_presence_voice_check_total{decision,outcome}`: was eine
+  Raumentscheidung bei einer Sprach-/Auth-Sichtung glaubte — die kostenlose
+  Grundwahrheit, an der Raumentscheidung v2 gemessen wird, bevor sie den
+  Präsenzzustand bestimmen darf. `decision`: `legacy` oder `v2` (je Person über
+  alle Geräte, nur die Geräte — die Sichtung ist die geprüfte Wahrheit);
+  `outcome`: `match` (in der Zone der Sichtung), `miss` (woanders), `unplaced`
+  (nirgends: abwesend, Raum unbekannt, kein Gerät). Im Schattenbetrieb zählen
+  beide, mit `PRESENCE_PLACEMENT_V2_STATE_ENABLED` nur `v2`. Kein Nutzer, kein Raum
+  im Label
+- Alle vier mit 0 vorbelegt, damit `increase()` auch das erste Ereignis sieht
 - Circuit Breaker State + Failures
 
 Die WebSocket-, LLM- und MCP-Metriken standen seit 2026-02 in dieser Liste,
@@ -1279,6 +1288,14 @@ PRESENCE_PLACEMENT_V2_HYSTERESIS_DB=3.0          # um so viele dB werden Grenze 
 # (HYSTERESIS_DB > MARGIN_DB, FRESH_SECONDS > PRESENCE_STALE_TIMEOUT, ein Wert <= 0, nan/inf).
 # Was das NICHT abdeckt: die vier Zahlen sind gewöhnliche Fließkomma-Einstellungen. Ein Wert, der keine Zahl
 # ist (z.B. "zehn"), hält das Backend beim Start an — wie bei jeder anderen Zahl-Einstellung auch.
+# Stufe 2: v2 BESTIMMT den Präsenzzustand, die bisherige Entscheidung läuft nicht mehr (Design-Dokument →
+# "Stage 2"). Nutzt die Empfänger-/Zonen-Einstellungen oben; sind sie unbrauchbar, entscheidet weiter die
+# bisherige Logik (eine ERROR-Zeile). Mehrere Geräte einer Person: die Quelle, die ZULETZT die Zone gewechselt
+# hat, gewinnt (eine Sprach-Sichtung zählt als Quelle mit ihrem Zeitpunkt). Uneinige Quellen und "zu Hause,
+# keinem Raum zugeordnet" gelten als unsicher (Privatsphäre-Tore: mögliche Zuhörerin); der letzte Raum bleibt
+# für die Anzeige gebucht. Aus = bisheriger Pfad unverändert, das Modul wird nicht geladen. Erst einschalten,
+# wenn renfield_presence_voice_check_total zeigt, dass v2 mindestens so oft trifft wie die bisherige Logik.
+PRESENCE_PLACEMENT_V2_STATE_ENABLED=false
 
 # Presence Webhooks (Automation-Hooks)
 PRESENCE_WEBHOOK_URL=""                  # URL für Presence-Events (leer = deaktiviert). Unterstützt n8n Webhook-Trigger

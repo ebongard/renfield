@@ -1013,7 +1013,9 @@ Enthält u. a. den MCP-Health-Heartbeat `renfield_mcp_health_ticks_total`,
 `renfield_agent_outcome_total` (wie ein Agent-Lauf endete, mit 0 vorbelegt),
 `renfield_agent_schema_repairs_total` (#1381) und
 `renfield_voice_empty_turn_total` (warum ein Sprachdurchlauf keinen Text
-ergab, #1386). Seit #82 werden auch die offenen WebSocket-Verbindungen, die
+ergab, #1386) und `renfield_presence_voice_check_total` (ob die bisherige
+Raumentscheidung und Raumentscheidung v2 die Person bei einer Sprach-Sichtung im
+richtigen Raum hatten — der Maßstab, bevor v2 den Präsenzzustand bestimmt, #1551). Seit #82 werden auch die offenen WebSocket-Verbindungen, die
 Dauer der LLM-Aufrufe der Agentenschleife, die MCP-Werkzeugaufrufe je Server
 und Ausgang sowie die RAG-Suche tatsächlich aufgezeichnet.
 
