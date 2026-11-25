@@ -1763,6 +1763,14 @@
     "critical": "Critique",
     "info": "Information",
     "low": "Faible",
+    "bell": {
+      "label": "Notifications",
+      "labelUnread": "Notifications, {{count}} non lues",
+      "markRead": "Marquer comme lue",
+      "markAllRead": "Tout marquer comme lu",
+      "empty": "Aucune notification",
+      "failed": "Impossible de charger les notifications"
+    },
     "scanJob": {
       "done": "Numérisation terminée – détails dans le chat.",
       "unrouted": "Numérisation terminée, destination encore à définir – détails dans le chat.",

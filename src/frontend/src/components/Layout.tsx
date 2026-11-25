@@ -53,6 +53,7 @@ import NotificationToast from './NotificationToast';
 import { useOpenPushedNotification } from '../hooks/useOpenPushedNotification';
 import ScanJobToast from './ScanJobToast';
 import NavBadge from './NavBadge';
+import NotificationBell from './NotificationBell';
 import { useWissensbasisAvailable } from '../api/resources/wissensbasis';
 import { useDraftCountQuery } from '../api/resources/skills';
 import { useFeatureFlags } from '../api/resources/brain';
@@ -199,6 +200,8 @@ export default function Layout({ children }: LayoutProps) {
   // Web Push (#79): a click on a push hands over an id; fetch and show it in
   // the toast below. Inert while the feature is off.
   useOpenPushedNotification(featureFlags?.push_notifications_enabled === true);
+  // Header bell (#1653): the viewer's own notifications. Never on the login surface.
+  const bellEnabled = featureFlags?.notification_bell_enabled === true && (!authEnabled || isAuthenticated);
   // Business-instance Phase 1: append the Projects entry only when the runtime flag is on.
   // Gated off the typed /api/config/features flag (NOT item.feature — the
   // AuthContext feature map defaults missing keys to true, so it can't hide it).
@@ -444,6 +447,7 @@ export default function Layout({ children }: LayoutProps) {
               X-IDRA), users have no satellites; the "Set up device" button
               links to a flow that doesn't apply. Hide it. */}
           <div className="flex items-center space-x-2 sm:space-x-3">
+            <NotificationBell enabled={bellEnabled} />
             <LanguageSwitcher compact />
             <ThemeToggle />
             {import.meta.env.VITE_APP_EDITION !== 'pro' && <DeviceStatus compact />}

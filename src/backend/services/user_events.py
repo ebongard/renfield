@@ -45,6 +45,9 @@ ALL: str = "__all__"
 
 # Event types (extend freely; the frontend maps each to a query invalidation).
 EVENT_DOCUMENTS_CHANGED = "documents_changed"
+# The viewer's notification bell changed (#1653): one of their notifications was
+# created, acknowledged or dismissed. The browser refetches; no notification id.
+EVENT_NOTIFICATIONS_CHANGED = "notifications_changed"
 # A scan the user requested has finished; the outcome is already a message in the
 # requesting conversation, so the browser only reloads it (still content-free).
 EVENT_SCAN_JOB_FINISHED = "scan_job_finished"

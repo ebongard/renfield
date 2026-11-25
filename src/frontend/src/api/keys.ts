@@ -227,6 +227,11 @@ export const keys = {
     detail: (id: number) => ['trajectories', 'detail', id] as const,
     stats: () => ['trajectories', 'stats'] as const,
   },
+  notifications: {
+    all: ['notifications'] as const,
+    unreadCount: () => ['notifications', 'unreadCount'] as const,
+    mine: () => ['notifications', 'mine'] as const,
+  },
   push: {
     all: ['push'] as const,
     subscriptions: () => ['push', 'subscriptions'] as const,

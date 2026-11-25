@@ -155,6 +155,8 @@ class FeatureFlags(BaseModel):
     # valid VAPID key pair, contact address) -- the same function the routes
     # and the sender ask, so the UI never offers a toggle that answers 404.
     push_notifications_enabled: bool = False
+    # Notification bell in the header (#1653). Off => no bell, endpoints 404.
+    notification_bell_enabled: bool = False
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -189,4 +191,5 @@ async def get_features(
         speaker_recognition_enabled=settings.speaker_recognition_enabled,
         voice_client_id=settings.voice_browser_client_id,
         push_notifications_enabled=push_active(),
+        notification_bell_enabled=settings.notification_bell_enabled,
     )

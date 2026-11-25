@@ -1767,6 +1767,14 @@
       "unrouted": "Scan finished, destination still open – its conversation was deleted.",
       "failed": "Scan failed – its conversation was deleted.",
       "interrupted": "Scan interrupted – its conversation was deleted."
+    },
+    "bell": {
+      "label": "Notifications",
+      "labelUnread": "Notifications, {{count}} unread",
+      "markRead": "Mark as read",
+      "markAllRead": "Mark all read",
+      "empty": "No notifications",
+      "failed": "Could not load notifications"
     }
   },
   "errors": {

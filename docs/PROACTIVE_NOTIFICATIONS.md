@@ -153,7 +153,20 @@ Hintergrund (2026-09-14): Vorher konnte jeder angemeldete Nutzer die persönlich
 
 Liste mit optionalen Filtern, auf die Sichtbarkeit des Aufrufers beschränkt.
 
-**Query-Parameter:** `room_id`, `urgency`, `status`, `since` (ISO 8601), `limit` (default: 50), `offset` (default: 0)
+**Query-Parameter:** `room_id`, `urgency`, `status`, `since` (ISO 8601), `limit` (default: 50), `offset` (default: 0),
+`mine` (default: false; `true` = die Liste der Glocke: nur an den Aufrufer adressierte, auch für Admins,
+ohne verworfene, neueste zuerst; die anderen Filter gelten dann nicht; ohne `NOTIFICATION_BELL_ENABLED` `404`)
+
+### GET /api/notifications/unread-count (#1653)
+
+`{"count": n}`: ungelesene (`pending`/`delivered`), nicht abgelaufene Benachrichtigungen, die an den Aufrufer
+adressiert sind (auch für Admins; Auth aus: alle). Nur mit `NOTIFICATION_BELL_ENABLED`, sonst `404`;
+anonym bei Auth an `401`.
+
+### POST /api/notifications/acknowledge-all (#1653)
+
+„Alle gelesen“ in der Glocke: bestätigt genau die Meldungen, die der Zähler zählt. `{"success": true, "acknowledged": n}`.
+Gleiche Schalter- und Auth-Regel wie oben.
 
 ### PATCH /api/notifications/{id}/acknowledge
 
@@ -252,6 +265,14 @@ Die Toast-Komponente (`NotificationToast`) erscheint oben rechts im Browser:
 - **Max 3 sichtbar:** Restliche werden gequeued
 - **Dark Mode:** Volle Unterstützung
 - **i18n:** Deutsch + Englisch
+
+**Glocke im Header (#1653, `NOTIFICATION_BELL_ENABLED`, dark):** `components/NotificationBell.tsx` zeigt die
+Zahl der ungelesenen eigenen Meldungen und öffnet die letzten 20 (`mine=true`). Einzelne oder alle lassen sich
+als gelesen markieren. Anlegen, Bestätigen und Verwerfen veröffentlichen nach dem Commit das inhaltsfreie
+User-Ereignis `notifications_changed` an den Empfänger (ohne Empfänger: keins; Auth aus: Haushalts-Bucket).
+Der Browser lädt Zähler und Liste dann neu, zusätzlich nach einem Reconnect von `/ws/user` und beim
+Zurückkehren in den Tab. Öffentliche Meldungen stehen nicht in der Glocke (gemeinsame Zeile, „gelesen“ gälte
+für alle); sie erscheinen weiter als Toast auf allen Geräten.
 
 ---
 

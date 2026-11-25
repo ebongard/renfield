@@ -34,6 +34,9 @@ byte-identical to before. Exposed to the browser via `/api/config/features` (`us
 - `documents_changed`, reasons `ingested` / `paperless` / `deleted`: `rag_service.py` ingest-complete (worker) +
   `delete_document`; `folder_ingest_paperless.py` — all 5 terminal `paperless_state` writes via
   `_emit_paperless_changed`.
+- `notifications_changed` (#1653, only with `NOTIFICATION_BELL_ENABLED`), reasons `created` / `acknowledged` /
+  `dismissed`: `NotificationService._emit_changed` after commit. Target: the notification's user; untargeted → no
+  event (auth on, the bell holds only addressed ones); auth off → `None`. The client also refetches on reconnect.
 - **A new event** (`obligations_changed`, `notes_changed`, …) = a new `type` + a frontend `case`. No new socket,
   no new pub/sub plumbing.
 - Storm control is two-sided: server `EventCoalescer` window (`USER_EVENTS_COALESCE_WINDOW_SECONDS`, 1 s) AND a client
