@@ -85,12 +85,12 @@ class RedisStateStore:
 
 
 def format_number(number: str) -> str:
-    """Display form: German numbers nationally (``0170 1234567``), others as E.164."""
+    """Display form: German numbers nationally without spaces (``01701234567``),
+    others as E.164."""
     if not number or not _NUMBER_RE.match(number):
         return "Unbekannt"  # "anonymous", and anything from the DMZ that is not a plain number
     if number.startswith("+49") and len(number) > 5:
-        national = "0" + number[3:]
-        return f"{national[:4]} {national[4:]}" if national.startswith("01") else national
+        return "0" + number[3:]
     return number
 
 
@@ -118,17 +118,21 @@ def build_notification(event: dict) -> dict:
     """Map an ``incoming_call``/``voicemail`` event to the recipient-independent
     NotificationService.process_webhook kwargs (recipient is added per user)."""
     caller = format_number(str(event.get("caller", "")))
+    did = _plain_number(event.get("did"))
+    # "Anruf von <Anrufer> an <angerufene Nummer>" -- the called number tells which
+    # line rang (private, business, ...). Without a valid DID the "an" part is left out.
+    route = f"von {caller} an {format_number(did)}" if did else f"von {caller}"
     if event.get("type") == "voicemail":
         duration = format_duration(event.get("duration_s"))
         title, message = (
-            f"Neue Nachricht von {caller}",
-            f"Neue Nachricht auf dem Anrufbeantworter von {caller} ({duration})",
+            f"Neue Nachricht {route}",
+            f"Neue Nachricht auf dem Anrufbeantworter {route} ({duration})",
         )
     else:
-        title, message = f"Anruf von {caller}", f"Eingehender Anruf von {caller}"
+        title, message = f"Anruf {route}", f"Eingehender Anruf {route}"
     data = {
         "call_id": str(event.get("call_id", ""))[:64],
-        "did": _plain_number(event.get("did")),
+        "did": did,
         "caller": _plain_number(event.get("caller")),
     }
     if event.get("type") == "voicemail":

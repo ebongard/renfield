@@ -124,7 +124,7 @@ def _fast_backoff(monkeypatch):
 @pytest.mark.parametrize(
     "number,expected",
     [
-        ("+491701234567", "0170 1234567"),
+        ("+491701234567", "01701234567"),
         ("+49301234567", "0301234567"),
         ("+441234567890", "+441234567890"),
         ("anonymous", "Unbekannt"),
@@ -151,7 +151,8 @@ def test_build_notification_never_takes_recipient_or_privacy_from_event():
     assert kw["dedup"] is False
     assert kw["source"] == "telephony"
     assert kw["event_type"] == "telephony.incoming_call"
-    assert kw["title"] == "Anruf von 0170 1234567"
+    assert kw["title"] == "Anruf von 01701234567 an 0301234567"
+    assert kw["message"] == "Eingehender Anruf von 01701234567 an 0301234567"
     assert "target_user_id" not in kw["data"] and "privacy" not in kw["data"]
 
 
@@ -331,7 +332,7 @@ def test_build_notification_voicemail():
         {"type": "voicemail", "call_id": "v1", "did": "+49301234568", "caller": "+491701234567", "duration_s": 83}
     )
     assert kw["event_type"] == "telephony.voicemail"
-    assert kw["title"] == "Neue Nachricht von 0170 1234567"
+    assert kw["title"] == "Neue Nachricht von 01701234567 an 0301234568"
     assert kw["message"].endswith("(1:23)")
     assert kw["data"]["duration_s"] == 83
 
@@ -418,7 +419,7 @@ def test_untrusted_caller_text_never_reaches_the_notification():
     kw = tc.build_notification(
         {"type": "voicemail", "call_id": "c" * 500, "caller": "<b>" + "9" * 300, "did": "x", "duration_s": "1e400"}
     )
-    assert kw["title"] == "Neue Nachricht von Unbekannt"
+    assert kw["title"] == "Neue Nachricht von Unbekannt"  # invalid DID: no "an" part
     assert kw["data"]["caller"] is None and kw["data"]["did"] is None
     assert len(kw["data"]["call_id"]) == 64 and kw["data"]["duration_s"] == 0
 

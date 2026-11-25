@@ -464,7 +464,7 @@ Home Assistant Automation → POST /api/notifications/webhook
 ### Telefonie: Anrufe und Anrufbeantworter (#1650, `TELEPHONY_ENABLED`, dark)
 
 Renfield hält eine ausgehende WebSocket-Verbindung zu einem Telephony-Gateway (Asterisk) in der DMZ und
-bekommt per Push „Anruf von 0170 …“ und „Neue Nachricht von 0170 … (0:23)“. Jeder aktive Nutzer der Instanz
+bekommt per Push „Anruf von 0170… an 0301…“ und „Neue Nachricht von 0170… an 0301… (0:23)“. Jeder aktive Nutzer der Instanz
 (ohne Geräte-Konten) bekommt eine eigene persönliche Meldung, ohne Raumansage. Nach einem Verbindungsabbruch
 wird nachgeliefert; eine schon zugestellte Meldung kommt nicht doppelt. Details: `docs/sip-integration-plan.md`,
 `docs/ENVIRONMENT_VARIABLES.md` → „Telefonie“.
