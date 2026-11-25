@@ -41,6 +41,9 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from ha_glue.services.presence_placement import (
+    Claim,
+    PersonKind,
+    PersonVerdict,
     PlacementConfig,
     PlacementVerdict,
     Reading,
@@ -48,12 +51,14 @@ from ha_glue.services.presence_placement import (
     ReceiverEvidence,
     ReceiverParams,
     VerdictKind,
+    combine_person,
     decide,
     parse_receiver_params,
     parse_zones,
 )
 from ha_glue.utils.config import ha_glue_settings
 from utils.config import settings
+from utils.metrics import record_presence_voice_check
 
 if TYPE_CHECKING:
     from ha_glue.services.presence_service import PresenceService
@@ -132,6 +137,13 @@ def _person_agrees(verdicts: list[PlacementVerdict], legacy_room_id: int | None)
     return any(v.is_placed and v.covers(legacy_room_id) for v in verdicts)
 
 
+def _person_outcome(person: PersonVerdict, sighting_zone: frozenset) -> str:
+    """The metric outcome of a person verdict against a sighting's zone."""
+    if person.kind is not PersonKind.PLACED:
+        return "unplaced"
+    return "match" if person.winner.rooms == sighting_zone else "miss"
+
+
 def _fmt(value: float | None, signed: bool = False) -> str:
     if value is None:
         return "-"
@@ -159,13 +171,28 @@ class PlacementShadow:
         # back (time sync); the decision must not follow it.
         self._clock_high_water: float | None = None
         self._clock_behind_logged = False  # one WARNING per hold, not per report
+        # device key → (the zone it was last PLACED in, when it became that
+        # zone). "The source that changed zone last wins" reads this: a phone
+        # lying in one room keeps its old time however often it is re-placed.
+        self._zone_since: dict[str, tuple[frozenset, float]] = {}
+
+    # The decision this object's voice lines and metric speak for besides v2.
+    # The state driver (stage 2) replaces the legacy decision, so it has none.
+    _CHECKS_LEGACY = True
+    _LOG_PREFIX = LOG_PREFIX
+    _FLAG = "presence_placement_v2_shadow_enabled"
+    _OFF_MESSAGE = "settings rejected, shadow stays OFF"
+
+    @property
+    def fresh_s(self) -> float:
+        return self._config.fresh_s
 
     @classmethod
     def from_settings(cls) -> PlacementShadow | None:
         """Build the shadow from the settings, validating them. ``None`` when
         the flag is off — and when the settings are unusable: a diagnostic
         must not stop the backend, so it reports the error and stays off."""
-        if not ha_glue_settings.presence_placement_v2_shadow_enabled:
+        if not getattr(ha_glue_settings, cls._FLAG):
             return None
         try:
             params = parse_receiver_params(ha_glue_settings.presence_placement_v2_receivers)
@@ -184,16 +211,16 @@ class PlacementShadow:
             # to parse, a number no float holds) ends the same way: one ERROR
             # line, never a raise into the presence service's constructor.
             detail = str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {e}"
-            logger.error(f"{LOG_PREFIX} settings rejected, shadow stays OFF: {detail}")
+            logger.error(f"{cls._LOG_PREFIX} {cls._OFF_MESSAGE}: {detail}")
             return None
         logger.info(
-            f"{LOG_PREFIX} ON — {len(params)} calibrated receiver(s), {len(zones)} zone(s), "
+            f"{cls._LOG_PREFIX} ON — {len(params)} calibrated receiver(s), {len(zones)} zone(s), "
             f"margin {config.margin_db:g} dB, hysteresis {config.hysteresis_db:g} dB, "
             f"fresh {config.fresh_s:g} s, deadline {config.absent_after_s:g} s"
         )
         if not params:
             logger.info(
-                f"{LOG_PREFIX} no receiver is calibrated — every verdict will be "
+                f"{cls._LOG_PREFIX} no receiver is calibrated — every verdict will be "
                 "home_unknown, absent or unavailable"
             )
         return cls(params, zones, config)
@@ -220,8 +247,10 @@ class PlacementShadow:
                     continue
                 verdict = self._decide(presence, key, receivers, now)
                 decided[key] = verdict
+                self._note_zone(key, verdict, now)
                 by_user.setdefault(user_id, []).append(verdict)
             self._verdicts = decided
+            self._zone_since = {k: v for k, v in self._zone_since.items() if k in decided}
             for user_id, verdicts in by_user.items():
                 self._track_agreement(presence, user_id, verdicts, now)
             for user_id in [u for u in self._disagreements if u not in by_user]:
@@ -245,6 +274,13 @@ class PlacementShadow:
             else:
                 hit = "match" if legacy_room_id == room_id else "miss"
                 legacy = f"{self._room_label(presence, legacy_room_id)}[{hit}]"
+            sighting_zone = self._zone_of(room_id)
+            if self._CHECKS_LEGACY:
+                record_presence_voice_check(
+                    "legacy",
+                    "unplaced" if legacy_room_id is None
+                    else "match" if legacy_room_id in sighting_zone else "miss",
+                )
 
             if self._clock_is_behind(now):
                 # No verdict can be had at this clock value, and one decided at
@@ -254,18 +290,27 @@ class PlacementShadow:
             else:
                 receivers = self._receivers(presence)
                 beliefs = []
+                kinds: list[VerdictKind] = []
+                claims: list[Claim] = []
                 for key in presence._sightings:
                     if presence._user_for_key(key) != user_id:
                         continue
                     verdict = self._decide(presence, key, receivers, now)
+                    kinds.append(verdict.kind)
+                    claim = self._claim(key, verdict, now)
+                    if claim is not None:
+                        claims.append(claim)
                     if verdict.is_placed:
                         hit = "match" if verdict.covers(room_id) else "miss"
                         beliefs.append(f"[{hit}] {self._describe(presence, verdict)}")
                     else:
                         beliefs.append(self._describe(presence, verdict))
                 v2 = " | ".join(beliefs) if beliefs else "no tracked device"
+                # Devices only: the sighting is the truth being checked.
+                person = combine_person(kinds, claims, None)
+                record_presence_voice_check("v2", _person_outcome(person, sighting_zone))
             logger.info(
-                f"{LOG_PREFIX} voice sighting user {user_id} in {room}: legacy={legacy} v2={v2}"
+                f"{self._LOG_PREFIX} voice sighting user {user_id} in {room}: legacy={legacy} v2={v2}"
             )
         except Exception as e:
             self._log_failure("note_voice_sighting", e)
@@ -364,7 +409,7 @@ class PlacementShadow:
         behind = high - now
         if behind > self._config.absent_after_s:
             logger.warning(
-                f"{LOG_PREFIX} the clock is {behind:.1f} s behind the last decided report, "
+                f"{self._LOG_PREFIX} the clock is {behind:.1f} s behind the last decided report, "
                 f"more than the deadline ({self._config.absent_after_s:g} s): taken as a clock "
                 f"reset — {len(self._disagreements)} open case(s) closed, verdicts cleared"
             )
@@ -377,7 +422,7 @@ class PlacementShadow:
         if not self._clock_behind_logged:
             self._clock_behind_logged = True
             logger.warning(
-                f"{LOG_PREFIX} the clock stepped back by {behind:.1f} s; verdicts are "
+                f"{self._LOG_PREFIX} the clock stepped back by {behind:.1f} s; verdicts are "
                 "held until it has passed the earlier time again"
             )
         return False
@@ -387,6 +432,36 @@ class PlacementShadow:
         Changes nothing — the reset, if it is one, happens at the next report."""
         high = self._clock_high_water
         return high is not None and now < high
+
+    def _zone_of(self, room_id: int | None) -> frozenset:
+        """The rooms decided as one unit with ``room_id`` (just itself when it
+        is in no open-plan zone)."""
+        if room_id is None:
+            return frozenset()
+        for rooms in self._zones.values():
+            if room_id in rooms:
+                return frozenset(rooms)
+        return frozenset({room_id})
+
+    def _note_zone(self, key: str, verdict: PlacementVerdict, now: float) -> None:
+        """Remember when a device's placed zone last CHANGED. A verdict that
+        is not placed changes nothing: a device that drops to home_unknown
+        and comes back to the same zone has not moved."""
+        if not verdict.is_placed:
+            return
+        known = self._zone_since.get(key)
+        if known is None or known[0] != verdict.rooms:
+            self._zone_since[key] = (verdict.rooms, now)
+
+    def _claim(self, key: str, verdict: PlacementVerdict, now: float) -> Claim | None:
+        """A device's claim on its person, or None unless it is placed. For a
+        verdict decided by a READ (not yet noted) the time is ``now`` when it
+        names a zone other than the remembered one."""
+        if not verdict.is_placed:
+            return None
+        known = self._zone_since.get(key)
+        since = known[1] if known is not None and known[0] == verdict.rooms else now
+        return Claim(source=key, rooms=verdict.rooms, room=verdict.room, since=since)
 
     def _receivers(self, presence: PresenceService) -> dict[str, Receiver]:
         """Every receiver the decision should know: the connected roster (with
@@ -466,7 +541,7 @@ class PlacementShadow:
             return
         self._disagreements[user_id] = _Disagreement(since=now, cause=cause, pairs={pair})
         logger.info(
-            f"{LOG_PREFIX} disagreement START user {user_id} cause={cause}: "
+            f"{self._LOG_PREFIX} disagreement START user {user_id} cause={cause}: "
             f"legacy={self._describe_legacy(presence, user_id, now)} "
             f"v2={self._describe_all(presence, verdicts)}"
         )
@@ -478,7 +553,7 @@ class PlacementShadow:
         case = self._disagreements.pop(user_id)
         lasted = "?" if ended_at is None else f"{ended_at - case.since:.0f}"
         logger.info(
-            f"{LOG_PREFIX} disagreement STOP user {user_id} cause={case.cause} after "
+            f"{self._LOG_PREFIX} disagreement STOP user {user_id} cause={case.cause} after "
             f"{lasted} s ({len(case.pairs)} distinct pair(s)): {state}"
         )
 
@@ -568,6 +643,6 @@ class PlacementShadow:
             return
         self._failures_logged.add(where)
         logger.warning(
-            f"{LOG_PREFIX} {where} failed ({type(error).__name__}); further failures "
+            f"{self._LOG_PREFIX} {where} failed ({type(error).__name__}); further failures "
             "there are not logged. Presence tracking is unaffected."
         )

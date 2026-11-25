@@ -41,6 +41,7 @@ _rag_search_duration_seconds = None
 _agent_outcome_total = None
 _agent_schema_repairs_total = None
 _voice_empty_turn_total = None
+_presence_voice_check_total = None
 _injection_attempts_total = None
 _budget_reductions_total = None
 _output_guard_violations_total = None
@@ -70,7 +71,7 @@ def _init_metrics():
     global _memory_total, _memory_cleanup_total
     global _mcp_tool_duration_seconds, _rag_search_duration_seconds
     global _agent_outcome_total, _agent_schema_repairs_total, _injection_attempts_total
-    global _voice_empty_turn_total
+    global _voice_empty_turn_total, _presence_voice_check_total
     global _budget_reductions_total, _output_guard_violations_total
     global _llm_response_truncated_total
     global _router_fallback_total, _embedding_errors_total
@@ -200,6 +201,16 @@ def _init_metrics():
             "renfield_voice_empty_turn_total",
             "Voice turns that ended without text, by source and kind",
             ["source", "kind"],
+        )
+
+        # What each room decision believed at a voice/auth sighting — the free
+        # ground truth that decides whether placement v2 may drive presence
+        # (ha_glue/services/presence_placement_shadow.py). Counts only: no
+        # user, no room. Primed at startup.
+        _presence_voice_check_total = Counter(
+            "renfield_presence_voice_check_total",
+            "Room decisions checked against a voice/auth sighting, by decision and outcome",
+            ["decision", "outcome"],
         )
 
         _injection_attempts_total = Counter(
@@ -677,6 +688,31 @@ def _prime_voice_empty_turn() -> None:
             _voice_empty_turn_total.labels(source=source, kind=kind)
 
 
+#: Label values of renfield_presence_voice_check_total. ``decision``: the
+#: legacy room decision or placement v2 (taken per person over all devices).
+#: ``outcome``: the person was placed in the sighting's zone (match), placed
+#: elsewhere (miss), or placed nowhere (unplaced: absent, home_unknown, no device).
+PRESENCE_VOICE_CHECK_DECISIONS = ("legacy", "v2")
+PRESENCE_VOICE_CHECK_OUTCOMES = ("match", "miss", "unplaced")
+
+
+def record_presence_voice_check(decision: str, outcome: str):
+    """Record what one room decision believed at a voice/auth sighting."""
+    if not _metrics_initialized:
+        return
+    _presence_voice_check_total.labels(
+        decision=_bounded(decision, PRESENCE_VOICE_CHECK_DECISIONS, "v2"),
+        outcome=_bounded(outcome, PRESENCE_VOICE_CHECK_OUTCOMES, "unplaced"),
+    ).inc()
+
+
+def _prime_presence_voice_check() -> None:
+    """Export a 0 sample per decision and outcome (see `_prime_llm_response_truncated`)."""
+    for decision in PRESENCE_VOICE_CHECK_DECISIONS:
+        for outcome in PRESENCE_VOICE_CHECK_OUTCOMES:
+            _presence_voice_check_total.labels(decision=decision, outcome=outcome)
+
+
 def record_injection_attempt(category: str):
     """Record a prompt injection attempt detection."""
     if not _metrics_initialized:
@@ -888,6 +924,7 @@ def setup_metrics(app: "FastAPI"):
     _prime_agent_outcome()
     _prime_agent_schema_repairs()
     _prime_voice_empty_turn()
+    _prime_presence_voice_check()
     _prime_websocket_connections()
 
     from starlette.middleware.base import BaseHTTPMiddleware

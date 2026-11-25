@@ -585,6 +585,87 @@ def decide(
 
 
 # ---------------------------------------------------------------------------
+# One person, several sources (stage 2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Claim:
+    """One source that places a person in a zone: a device whose verdict is
+    PLACED, or a voice/auth sighting.
+
+    ``since`` is when this source last CHANGED zone — for a device the moment
+    its placed zone became a different one, for a sighting the moment it
+    happened. A device that stays where it lies keeps its old ``since``.
+    """
+
+    source: str          # device key, or "voice"
+    rooms: frozenset     # the zone (what a gate uses)
+    room: RoomKey        # the hint inside it
+    since: float
+
+
+class PersonKind(str, Enum):
+    PLACED = "placed"
+    HOME_UNKNOWN = "home_unknown"
+    ABSENT = "absent"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class PersonVerdict:
+    """Where ONE person is, from all of their sources.
+
+    ``contested``: the claims name more than one zone. The winner is still
+    booked (the room must be something), but nothing that decides who can
+    overhear may trust it.
+    """
+
+    kind: PersonKind
+    winner: Claim | None = None
+    contested: bool = False
+
+    @property
+    def rooms(self) -> frozenset:
+        return self.winner.rooms if self.winner is not None else frozenset()
+
+
+def combine_person(
+    device_kinds: Collection[VerdictKind],
+    claims: Sequence[Claim],
+    incumbent_rooms: frozenset | None,
+) -> PersonVerdict:
+    """The one rule for several sources of one person (owner's decision,
+    2026-11-25): the source that changed zone LAST wins. A phone left lying in
+    another room never changes zone, so it cannot pull the person away from the
+    room they were last seen or heard moving into.
+
+    ``device_kinds``: the verdict kind of every tracked device of the person
+    (placed ones included). ``claims``: the placing sources. On a tie in
+    ``since`` the incumbent zone stays; otherwise the order of ``claims``
+    decides, so the result is deterministic.
+
+    Without a claim: HOME_UNKNOWN when any device is heard within the deadline,
+    ABSENT when every device is absent, UNAVAILABLE otherwise (no receiver is
+    alive for at least one device: silence then proves nothing).
+    """
+    if claims:
+        zones = {c.rooms for c in claims}
+
+        def rank(c: Claim) -> tuple[float, int]:
+            return (c.since, 1 if incumbent_rooms is not None and c.rooms == incumbent_rooms else 0)
+
+        winner = max(claims, key=rank)
+        return PersonVerdict(PersonKind.PLACED, winner=winner, contested=len(zones) > 1)
+    kinds = set(device_kinds)
+    if VerdictKind.HOME_UNKNOWN in kinds or VerdictKind.PLACED in kinds:
+        return PersonVerdict(PersonKind.HOME_UNKNOWN)
+    if kinds and kinds <= {VerdictKind.ABSENT}:
+        return PersonVerdict(PersonKind.ABSENT)
+    return PersonVerdict(PersonKind.UNAVAILABLE)
+
+
+# ---------------------------------------------------------------------------
 # Configuration (JSON settings; a later stage moves this into a table)
 # ---------------------------------------------------------------------------
 
