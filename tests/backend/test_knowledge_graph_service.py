@@ -1145,6 +1145,8 @@ class TestDocumentIngestHook:
                 user_id=1,
                 source_ref="doc:42",
                 lang="de",
+                # #1625: no such document in the test DB -> fail-closed cap 0.
+                tier_cap=0,
             )
 
     @pytest.mark.unit
@@ -1173,6 +1175,8 @@ class TestDocumentIngestHook:
                 user_id=None,
                 source_ref=None,
                 lang="de",
+                # #1625: a chat upload has no document -> owner only.
+                tier_cap=0,
             )
 
     @pytest.mark.unit

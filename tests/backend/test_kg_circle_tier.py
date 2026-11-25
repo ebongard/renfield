@@ -103,11 +103,13 @@ class TestUpdateEntityCircleTierDispatch:
             result = await svc.update_entity_circle_tier(entity_id=5, circle_tier=3)
         assert result is ent
         assert ent.circle_tier == 3
-        # The kg_relations recompute is issued
-        db.execute.assert_awaited_once()
-        sql_text = str(db.execute.call_args.args[0])
+        # The kg_relations recompute (#1625: endpoints AND the document cap) is
+        # issued first, then the edge atom policies follow it.
+        assert db.execute.await_count == 2
+        sql_text = str(db.execute.await_args_list[0].args[0])
         assert "UPDATE kg_relations" in sql_text
-        assert "LEAST(s.circle_tier, o.circle_tier)" in sql_text
+        assert "LEAST(s.circle_tier, o.circle_tier, COALESCE(r.tier_cap" in sql_text
+        assert "UPDATE atoms" in str(db.execute.await_args_list[1].args[0])
         db.commit.assert_awaited_once()
         # Explicit flush MUST come before the raw UPDATE so LEAST() reads
         # the new entity.circle_tier (CRITICAL for cascade correctness).

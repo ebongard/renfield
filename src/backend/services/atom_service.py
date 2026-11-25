@@ -58,6 +58,11 @@ from models.database import (
 )
 from services.atom_types import Atom
 from services.circle_resolver import CircleResolver, atom_from_orm
+from services.kg_edge_tier import (
+    cap_document_edges,
+    clamp_edge_tier,
+    recompute_incident_edge_tiers,
+)
 from utils.log_safety import error_text_without_content
 
 # Source table → discriminator atom_type → row id column map.
@@ -288,6 +293,13 @@ class AtomService:
             {"tier": new_tier, "source_id": atom_orm.source_id},
         )
 
+        # #1625: a direct edit on an edge may lower it, never lift it above its
+        # endpoints or its document cap; the atom policy records what holds.
+        if atom_orm.atom_type == ATOM_TYPE_KG_EDGE:
+            clamped = await clamp_edge_tier(self.db, int(atom_orm.source_id))
+            if clamped is not None and clamped != new_tier:
+                atom_orm.policy = {**dict(new_policy), "tier": int(clamped)}
+
         # A direct tier edit on a single fact is a deliberate per-fact override
         # (fact_override=True); reset_fact_tier passes False to clear it. The
         # kb_document cascade below then preserves overridden facts.
@@ -314,31 +326,10 @@ class AtomService:
                 int(atom_orm.source_id), new_tier,
             )
 
-        # KG node cascade: incident relations recompute MIN(subject, object).
+        # KG node cascade: incident relations recompute LEAST(subject, object,
+        # tier_cap) and their atom policies follow (services/kg_edge_tier.py).
         if atom_orm.atom_type == ATOM_TYPE_KG_NODE:
-            entity_id = int(atom_orm.source_id)
-            await self.db.execute(
-                text(
-                    "UPDATE kg_relations r SET circle_tier = "
-                    "LEAST(s.circle_tier, o.circle_tier) "
-                    "FROM kg_entities s, kg_entities o "
-                    "WHERE r.subject_id = s.id AND r.object_id = o.id "
-                    "AND (r.subject_id = :entity_id OR r.object_id = :entity_id)"
-                ),
-                {"entity_id": entity_id},
-            )
-            # Also update atoms.policy for those relations to stay in sync.
-            await self.db.execute(
-                text(
-                    "UPDATE atoms SET policy = json_build_object('tier', r.circle_tier), "
-                    "updated_at = NOW() "
-                    "FROM kg_relations r "
-                    "WHERE atoms.atom_type = :edge_type "
-                    "AND atoms.source_id = r.id::text "
-                    "AND (r.subject_id = :entity_id OR r.object_id = :entity_id)"
-                ),
-                {"edge_type": ATOM_TYPE_KG_EDGE, "entity_id": entity_id},
-            )
+            await recompute_incident_edge_tiers(self.db, int(atom_orm.source_id))
 
         await self.db.commit()
         self.resolver.invalidate_for_atom(atom_id)
@@ -349,9 +340,10 @@ class AtomService:
             self.resolver.invalidate_for_atom(fa)
 
     async def _cascade_kb_document_tier(self, doc_id: int, new_tier: int) -> list[str]:
-        """Carry a ``kb_document`` tier to its chunks, facts and fact atoms (no commit).
+        """Carry a ``kb_document`` tier to its chunks, facts, fact atoms and, when
+        lower, its knowledge-graph edges (#1625) (no commit).
 
-        Returns the fact atom ids, whose cached access decisions the caller must
+        Returns the fact and changed edge atom ids, whose cached access decisions the caller must
         invalidate after its commit.
         """
         await self.db.execute(
@@ -408,7 +400,10 @@ class AtomService:
                 {"doc_id": doc_id},
             )).fetchall()
         ]
-        return fact_atom_ids
+        # #1625: the edges this document is the recorded source of follow a
+        # LOWER tier down (cap and tier), never a higher one up.
+        edge_atom_ids = await cap_document_edges(self.db, doc_id, new_tier)
+        return fact_atom_ids + edge_atom_ids
 
     async def rehome_document(
         self, doc_id: int, *, atom_id: str | None, owner_user_id: int, tier: int,

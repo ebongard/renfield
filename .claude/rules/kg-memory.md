@@ -37,7 +37,17 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   with `match_entity_type=True`, `use_embedding=False`.
 
 ## `merge_entities(loser, winner)`
-- **A merge never raises visibility: survivor tier = MIN.** Relations recompute `circle_tier=LEAST(subject,object)`.
+- **A merge never raises visibility: survivor tier = MIN.** Relations recompute `circle_tier=LEAST(subject,object,tier_cap)`;
+  a collapsed duplicate hands its lowest `tier_cap` to the survivor.
+
+## Edge tier = LEAST(subject, object, tier_cap) (#1625)
+- `tier_cap` = tier of the most private source document (NULL = no document). It only goes DOWN. The rule lives
+  ONCE in `services/kg_edge_tier.py`; every recompute calls it — a cap-blind `LEAST(s.circle_tier, o.circle_tier)`
+  anywhere else silently lifts the cap on the next entity tier change (`test_kg_edge_tier.py` greps for it).
+- The ingest hook READS the document tier (`_source_tier_cap`), it is not passed in; no document = cap 0 (fail-closed).
+  It re-caps at its END (`_reconcile_document_edges`): extraction takes minutes, the document may be lowered meanwhile.
+- A direct `update_tier` on a `kg_edge` atom is CLAMPED (`clamp_edge_tier`): lowering is free, lifting above the rule is not.
+- Entity tier is NOT capped by a document — the private part is the edge. Pre-cutover document edges stay uncapped (D-2a).
 - FOR UPDATE + `services/merge_guard.is_already_merged`; reparent `kg_relations`, re-dedup, follow
   `conversation_memories.subject_entity_id`, tombstone the loser. Cross-user pairs are refused.
 

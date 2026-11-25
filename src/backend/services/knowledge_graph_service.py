@@ -26,6 +26,14 @@ from models.database import (
     KGRelation,
 )
 from services.atom_owner import AtomOwnerResolverMixin
+from services.kg_edge_tier import (
+    cap_document_edges,
+    capped_edge_tier,
+    document_source_ref,
+    lowered_cap,
+    recompute_incident_edge_tiers,
+    sync_edge_atom_policy,
+)
 from services.kg_name_signals import names_differ_only_in_digit_tokens
 from services.kg_validator import load_heuristics as load_kg_heuristics
 from services.kg_validator import validate_relation as validate_kg_relation
@@ -799,11 +807,16 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         source_session_id: str | None = None,
         stated_by_user_id: int | None = None,
         source_message_id: int | None = None,
+        tier_cap: int | None = None,
     ) -> KGRelation:
         """Save a relation, deduplicating same subject+predicate+object.
 
         ``stated_by_user_id`` is the speaker who asserted the fact (provenance),
         distinct from ``user_id`` (the graph owner) — enables "who told me X".
+
+        ``tier_cap`` is the tier of the source document (#1625): the edge is never
+        more open than it. A re-asserted identical triple takes the lower cap and
+        drops its tier to it; it never rises (``services/kg_edge_tier.py``).
         """
         # Check for existing relation
         query = select(KGRelation).where(
@@ -821,16 +834,22 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         if existing:
             # Update confidence (take the max)
             existing.confidence = max(existing.confidence or 0, confidence)
+            if tier_cap is not None:
+                existing.tier_cap = lowered_cap(existing.tier_cap, tier_cap)
+                lowered = min(int(existing.circle_tier or 0), existing.tier_cap)
+                if lowered != existing.circle_tier:
+                    existing.circle_tier = lowered
+                    await self.db.flush()
+                    await sync_edge_atom_policy(self.db, existing.id)
             await self.db.flush()
             return existing
 
-        # Inherit the relation's circle_tier from MIN(subject_tier, object_tier)
-        # — the relation can be no more visible than the more-restricted endpoint
-        # (CEO Finding E cascade rule, mirrors AtomService.update_tier:198-210).
+        # The relation can be no more visible than the more-restricted endpoint
+        # (CEO Finding E) nor than its source document (#1625).
         endpoints = (await self.db.execute(
             select(KGEntity.circle_tier).where(KGEntity.id.in_([subject_id, object_id]))
         )).scalars().all()
-        relation_tier = min(endpoints) if endpoints else 0
+        relation_tier = capped_edge_tier(list(endpoints), tier_cap)
 
         # Same atom-first ordering as _get_or_create_entity: kg_relations.atom_id
         # is NOT NULL with a non-deferrable FK, so the atoms row is pre-created
@@ -854,6 +873,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             source_message_id=source_message_id,
             atom_id=atom_id,
             circle_tier=relation_tier,
+            tier_cap=tier_cap,
         )
         self.db.add(relation)
         await self.db.flush()
@@ -982,10 +1002,12 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             "UPDATE kg_relations SET is_active = false "
             "WHERE subject_id = :w AND object_id = :w AND is_active = true"
         ), {"w": wid})
-        # carry max(confidence) onto the survivor of each now-duplicate triple ...
+        # carry max(confidence) and the lowest tier cap (#1625; min() skips NULL)
+        # onto the survivor of each now-duplicate triple ...
         await self.db.execute(text(
-            "UPDATE kg_relations surv SET confidence = agg.maxc "
-            "FROM (SELECT subject_id, predicate, object_id, max(confidence) AS maxc "
+            "UPDATE kg_relations surv SET confidence = agg.maxc, tier_cap = agg.minc "
+            "FROM (SELECT subject_id, predicate, object_id, max(confidence) AS maxc, "
+            "             min(tier_cap) AS minc "
             "      FROM kg_relations WHERE is_active = true "
             "      GROUP BY subject_id, predicate, object_id HAVING count(*) > 1) agg "
             "WHERE surv.subject_id = agg.subject_id AND surv.predicate = agg.predicate "
@@ -1003,18 +1025,8 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             "    AND k.object_id = r.object_id)"
         ))
         # recompute tier on every winner-incident active relation + sync atom policy
-        await self.db.execute(text(
-            "UPDATE kg_relations r SET circle_tier = LEAST(s.circle_tier, o.circle_tier) "
-            "FROM kg_entities s, kg_entities o "
-            "WHERE r.subject_id = s.id AND r.object_id = o.id "
-            "  AND (r.subject_id = :w OR r.object_id = :w)"
-        ), {"w": wid})
-        await self.db.execute(text(
-            "UPDATE atoms SET policy = json_build_object('tier', r.circle_tier), updated_at = NOW() "
-            "FROM kg_relations r "
-            "WHERE atoms.atom_type = :edge AND atoms.source_id = r.id::text "
-            "  AND (r.subject_id = :w OR r.object_id = :w)"
-        ), {"edge": ATOM_TYPE_KG_EDGE, "w": wid})
+        # (#1625: the tier cap counts, so a merge can never lift a document cap).
+        await recompute_incident_edge_tiers(self.db, wid)
         # keep the survivor's own kg_node atom policy in lockstep with merged_tier.
         # CAST(:t AS INTEGER): json_build_object is VARIADIC "any", so asyncpg
         # can't infer a bare param's type -> IndeterminateDatatypeError ($1).
@@ -1243,8 +1255,12 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         user_id: int | None = None,
         source_ref: str | None = None,
         lang: str = "de",
+        tier_cap: int | None = None,
     ) -> tuple[list[KGEntity], list[KGRelation]]:
-        """Extract entities and relations from a free-text passage (e.g. document chunk)."""
+        """Extract entities and relations from a free-text passage (e.g. document chunk).
+
+        ``tier_cap``: the source document's tier; no edge from this passage is
+        more open than it (#1625)."""
         from models.database import User
         from services.prompt_manager import prompt_manager
 
@@ -1377,6 +1393,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
                 user_id=user_id,
                 confidence=conf,
                 source_session_id=source_ref,
+                tier_cap=tier_cap,
             )
             saved_relations.append(relation)
 
@@ -1398,6 +1415,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         user_id: int | None = None,
         source_ref: str | None = None,
         lang: str = "de",
+        tier_cap: int | None = None,
     ) -> tuple[list[KGEntity], list[KGRelation]]:
         """Extract entities and relations from multiple text chunks sequentially."""
         all_entities: list[KGEntity] = []
@@ -1409,6 +1427,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             try:
                 entities, relations = await self.extract_from_text(
                     chunk_text, user_id=user_id, source_ref=source_ref, lang=lang,
+                    tier_cap=tier_cap,
                 )
                 all_entities.extend(entities)
                 all_relations.extend(relations)
@@ -1660,16 +1679,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         # session configs disable it; subtle drift if it ever flips).
         entity.circle_tier = int(circle_tier)
         await self.db.flush()
-        await self.db.execute(
-            text(
-                "UPDATE kg_relations r SET circle_tier = "
-                "LEAST(s.circle_tier, o.circle_tier) "
-                "FROM kg_entities s, kg_entities o "
-                "WHERE r.subject_id = s.id AND r.object_id = o.id "
-                "AND (r.subject_id = :entity_id OR r.object_id = :entity_id)"
-            ),
-            {"entity_id": int(entity_id)},
-        )
+        await recompute_incident_edge_tiers(self.db, int(entity_id))
         await self.db.commit()
         await self.db.refresh(entity)
         return entity
@@ -2036,6 +2046,32 @@ def _strip_speaker_pseudonyms(chunks: list[str]) -> list[str]:
     return [_SPEAKER_PSEUDONYM_PREFIX_RE.sub("", c) for c in chunks]
 
 
+async def _source_tier_cap(db: AsyncSession, document_id: int | None) -> int:
+    """The tier no edge from this ingest may exceed (#1625), read from the database.
+
+    Read here rather than passed by the caller, so a new ``post_document_ingest``
+    caller cannot forget it. Fail-closed: no document (a chat upload) or a
+    document that is gone caps at tier 0 — owner only.
+    """
+    if not document_id:
+        return 0
+    from models.database import Document
+    tier = (await db.execute(
+        select(Document.circle_tier).where(Document.id == int(document_id))
+    )).scalar_one_or_none()
+    return int(tier) if tier is not None else 0
+
+
+async def _reconcile_document_edges(db: AsyncSession, document_id: int) -> None:
+    """Cap this document's edges at its tier as it stands NOW, and commit (#1625)."""
+    from services.circle_resolver import CircleResolver
+
+    stale = await cap_document_edges(db, document_id, await _source_tier_cap(db, document_id))
+    await db.commit()
+    for atom_id in stale:
+        CircleResolver.invalidate_for_atom(atom_id)
+
+
 async def kg_post_document_ingest_hook(
     chunks: list[str],
     document_id: int | None = None,
@@ -2055,10 +2091,16 @@ async def kg_post_document_ingest_hook(
 
         async with AsyncSessionLocal() as db:
             svc = KnowledgeGraphService(db)
-            source_ref = f"doc:{document_id}" if document_id else None
+            source_ref = document_source_ref(document_id) if document_id else None
             lang = kwargs.get("lang", settings.default_language)
             await svc.extract_from_chunks(
                 chunks, user_id=user_id, source_ref=source_ref, lang=lang,
+                tier_cap=await _source_tier_cap(db, document_id),
             )
+            if document_id:
+                # Extraction takes minutes; the document may have been made more
+                # private meanwhile, after its cascade ran over the edges that
+                # existed then. Re-apply the CURRENT tier to this document's edges.
+                await _reconcile_document_edges(db, document_id)
     except Exception as e:
         logger.warning(f"KG post_document_ingest hook failed: {error_text_without_content(e)}")
