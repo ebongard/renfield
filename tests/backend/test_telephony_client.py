@@ -1,9 +1,9 @@
 """Tests for the telephony client (#1650) against an in-process fake gateway.
 
-Covers: number formatting, the notification mapping (privacy/recipient come
-from settings, never from the event), push delivery, resume after reconnect,
-epoch change (gateway restart), exactly-once via call claims, claim release on
-a failed delivery, the auth header, and the dark-by-default lifecycle hook.
+Covers: number formatting, the notification mapping (recipients and privacy are
+fixed here, never taken from the event), push delivery, resume after reconnect,
+epoch change (gateway restart), dedup via done-markers, retry of a failed
+delivery, poison events, the auth header, and the dark-by-default lifecycle hook.
 """
 
 import asyncio
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 class MemoryStore:
     def __init__(self, epoch="", seq=0):
         self.epoch, self.seq = epoch, seq
-        self.claims: set[str] = set()
+        self.done: set[str] = set()
 
     async def load(self):
         return self.epoch, self.seq
@@ -29,14 +29,11 @@ class MemoryStore:
     async def save(self, epoch, seq):
         self.epoch, self.seq = epoch, seq
 
-    async def claim(self, call_id):
-        if call_id in self.claims:
-            return False
-        self.claims.add(call_id)
-        return True
+    async def is_done(self, key):
+        return key in self.done
 
-    async def release(self, call_id):
-        self.claims.discard(call_id)
+    async def mark_done(self, key):
+        self.done.add(key)
 
 
 class FakeGateway:
@@ -102,12 +99,13 @@ async def _wait_for(cond, timeout=3.0):
     raise AssertionError("condition not met in time")
 
 
-def _client(gw, store, delivered, token="tok", fail_first=False):
-    state = {"failed": False}
+def _client(gw, store, delivered, token="tok", fail_first=False, fail_times=0):
+    state = {"failed": 0}
+    fail_times = fail_times or (1 if fail_first else 0)
 
     async def deliver(event):
-        if fail_first and not state["failed"]:
-            state["failed"] = True
+        if state["failed"] < fail_times:
+            state["failed"] += 1
             raise RuntimeError("db down")
         delivered.append(event)
 
@@ -227,7 +225,7 @@ async def test_new_epoch_resets_position(gateway):
 async def test_claimed_call_is_not_announced_twice(gateway):
     gateway.add(type="incoming_call", call_id="dup", did="d", caller="x")
     store, delivered = MemoryStore(), []
-    store.claims.add("incoming_call:dup")  # e.g. another pod / earlier run already announced it
+    store.done.add("incoming_call:dup")  # e.g. another pod / earlier run already announced it
     task = asyncio.create_task(_client(gateway, store, delivered).run())
     try:
         await _wait_for(lambda: store.seq == 1)
@@ -236,7 +234,7 @@ async def test_claimed_call_is_not_announced_twice(gateway):
         task.cancel()
 
 
-async def test_failed_delivery_releases_claim_and_is_retried(gateway):
+async def test_failed_delivery_is_retried(gateway):
     gateway.add(type="incoming_call", call_id="c9", did="d", caller="x")
     store, delivered = MemoryStore(), []
     task = asyncio.create_task(_client(gateway, store, delivered, fail_first=True).run())
@@ -271,6 +269,46 @@ async def test_refuses_wss_without_pinned_cert():
     ):
         await tc.run_telephony_client()
     run.assert_not_called()
+
+
+async def test_refuses_plain_ws_to_a_non_loopback_host():
+    with (
+        patch.object(tc.settings, "telephony_gateway_url", "ws://gateway.invalid:8090/v1/events"),
+        patch.object(tc.settings, "telephony_gateway_token", tc.settings.telephony_gateway_token.__class__("t")),
+        patch.object(tc.TelephonyClient, "run") as run,
+    ):
+        await tc.run_telephony_client()
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("ws://127.0.0.1:1/x", True),
+        ("ws://localhost:1/x", True),
+        ("ws://[::1]:1/x", True),
+        ("ws://10.0.0.1/x", False),
+        ("ws://gateway.invalid/x", False),
+    ],
+)
+def test_is_loopback(url, expected):
+    assert tc._is_loopback(url) is expected
+
+
+async def test_malformed_frame_is_skipped_not_a_reconnect_loop(gateway):
+    store, delivered = MemoryStore(), []
+    task = asyncio.create_task(_client(gateway, store, delivered).run())
+    try:
+        await _wait_for(lambda: gateway.conns)
+        for ws in gateway.conns:
+            await ws.send("kein json")
+            await ws.send(json.dumps({"type": "incoming_call", "call_id": "x"}))  # no seq
+        gateway.add(type="incoming_call", call_id="ok", did="d", caller="x")
+        await _wait_for(lambda: delivered)
+        assert [e["call_id"] for e in delivered] == ["ok"]
+        assert len(gateway.hellos) == 1  # stayed connected
+    finally:
+        task.cancel()
 
 
 async def test_refuses_without_url_or_token():
@@ -347,3 +385,65 @@ async def test_process_webhook_dedup_flag(dedup, expect):
             await svc.process_webhook(event_type="t", title="a", message="b", dedup=dedup)
     assert is_dup.called is dedup
     assert not is_sem.called
+
+
+async def test_event_failing_every_time_is_dropped_and_does_not_block_the_next(gateway):
+    gateway.add(type="incoming_call", call_id="poison", did="d", caller="x")
+    gateway.add(type="incoming_call", call_id="next", did="d", caller="x")
+    store, delivered = MemoryStore(), []
+    task = asyncio.create_task(_client(gateway, store, delivered, fail_times=tc.MAX_ATTEMPTS).run())
+    try:
+        await _wait_for(lambda: delivered)
+        assert [e["call_id"] for e in delivered] == ["next"]
+        assert "incoming_call:poison" in store.done and store.seq == 2
+    finally:
+        task.cancel()
+
+
+async def test_implausible_seq_is_skipped_and_does_not_silence_later_events(gateway):
+    store, delivered = MemoryStore(), []
+    task = asyncio.create_task(_client(gateway, store, delivered).run())
+    try:
+        await _wait_for(lambda: gateway.conns)
+        for ws in gateway.conns:
+            await ws.send(json.dumps({"type": "incoming_call", "call_id": "forged", "seq": 2**62}))
+        gateway.add(type="incoming_call", call_id="real", did="d", caller="x")
+        await _wait_for(lambda: delivered)
+        assert [e["call_id"] for e in delivered] == ["real"] and store.seq == 1
+    finally:
+        task.cancel()
+
+
+def test_untrusted_caller_text_never_reaches_the_notification():
+    kw = tc.build_notification(
+        {"type": "voicemail", "call_id": "c" * 500, "caller": "<b>" + "9" * 300, "did": "x", "duration_s": "1e400"}
+    )
+    assert kw["title"] == "Neue Nachricht von Unbekannt"
+    assert kw["data"]["caller"] is None and kw["data"]["did"] is None
+    assert len(kw["data"]["call_id"]) == 64 and kw["data"]["duration_s"] == 0
+
+
+async def test_invalid_ca_pem_is_logged_not_a_crash():
+    with (
+        patch.object(tc.settings, "telephony_gateway_url", "wss://gateway.invalid:8090/v1/events"),
+        patch.object(tc.settings, "telephony_gateway_token", tc.settings.telephony_gateway_token.__class__("t")),
+        patch.object(
+            tc.settings, "telephony_gateway_ca_pem", "-----BEGIN CERTIFICATE-----\nkaputt\n-----END CERTIFICATE-----\n"
+        ),
+        patch.object(tc.TelephonyClient, "run") as run,
+    ):
+        await tc.run_telephony_client()
+    run.assert_not_called()
+
+
+async def test_silent_gateway_times_out_waiting_for_welcome(monkeypatch):
+    monkeypatch.setattr(tc, "WELCOME_TIMEOUT_SECONDS", 0.05)
+
+    async def mute(ws):
+        await ws.wait_closed()
+
+    async with serve(mute, "127.0.0.1", 0) as server:
+        url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1/events"
+        client = tc.TelephonyClient(url, "tok", MemoryStore(), lambda e: None)
+        with pytest.raises(TimeoutError):
+            await client._session()

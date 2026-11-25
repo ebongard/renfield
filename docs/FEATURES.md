@@ -461,6 +461,14 @@ Home Assistant Automation → POST /api/notifications/webhook
 - **MCP-Polling:** `NOTIFICATION_POLLER_ENABLED=true` lässt Renfield MCP-Server (E-Mail, Kalender) aktiv nach Events abfragen, statt nur Push-Webhooks zu empfangen.
 - Vollständiger Einrichtungs-Guide + HA-Vorlagen: [`docs/PROACTIVE_NOTIFICATIONS.md`](PROACTIVE_NOTIFICATIONS.md) und [`docs/PROACTIVE_SCHEDULING_TEMPLATES.md`](PROACTIVE_SCHEDULING_TEMPLATES.md).
 
+### Telefonie: Anrufe und Anrufbeantworter (#1650, `TELEPHONY_ENABLED`, dark)
+
+Renfield hält eine ausgehende WebSocket-Verbindung zu einem Telephony-Gateway (Asterisk) in der DMZ und
+bekommt per Push „Anruf von 0170 …“ und „Neue Nachricht von 0170 … (0:23)“. Jeder aktive Nutzer der Instanz
+(ohne Geräte-Konten) bekommt eine eigene persönliche Meldung, ohne Raumansage. Nach einem Verbindungsabbruch
+wird nachgeliefert; eine schon zugestellte Meldung kommt nicht doppelt. Details: `docs/sip-integration-plan.md`,
+`docs/ENVIRONMENT_VARIABLES.md` → „Telefonie“.
+
 ### Web Push (#79, `PUSH_NOTIFICATIONS_ENABLED`, opt-in/dark)
 
 **Stand:** im Haushalt ist der Schalter gesetzt (2026-11-23); aktiv erst mit VAPID-Paar und Kontaktadresse im Secret `renfield-env-private`. xidra: aus.

@@ -13,9 +13,12 @@ events over it. Protocol (JSON text frames)::
 Guarantees:
 - Resume: (epoch, last seq) are stored in Redis; after a reconnect the gateway
   replays what was missed. A new epoch (gateway restart) replays from 0.
-- Exactly once: an announced event (``incoming_call``, ``voicemail``) is
-  delivered only after claiming ``<type>:<call_id>`` in Redis (SET NX), so a
-  replay never announces it twice.
+- At least once, deduplicated: an announced event (``incoming_call``,
+  ``voicemail``) is marked ``<type>:<call_id>`` in Redis only AFTER it was
+  delivered, and the resume position only advances after that. A replay skips
+  marked events; a crash mid-delivery repeats the event rather than losing it.
+  An event that fails ``MAX_ATTEMPTS`` times is skipped (logged) so it cannot
+  block every later call.
 - Trust boundary: the gateway sends numbers only. Recipients are decided here,
   never by the event: every active user of the instance gets a personal
   notification of their own (``target_user_id``) — no room announcement and no
@@ -28,6 +31,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import ssl
 from collections.abc import Awaitable, Callable
 from typing import Protocol
@@ -41,13 +45,17 @@ STATE_KEY = "telephony:resume"
 CLAIM_PREFIX = "telephony:call:"
 CLAIM_TTL_SECONDS = 24 * 3600
 BACKOFF_MAX_SECONDS = 60.0
+WELCOME_TIMEOUT_SECONDS = 10.0
+MAX_ATTEMPTS = 3
+MAX_SEQ_JUMP = 10_000  # a seq far beyond what the gateway announced is a bug or forgery
+_NUMBER_RE = re.compile(r"^\+?[0-9]{1,20}$")
 
 
 class StateStore(Protocol):
     async def load(self) -> tuple[str, int]: ...
     async def save(self, epoch: str, seq: int) -> None: ...
-    async def claim(self, call_id: str) -> bool: ...
-    async def release(self, call_id: str) -> None: ...
+    async def is_done(self, key: str) -> bool: ...
+    async def mark_done(self, key: str) -> None: ...
 
 
 class RedisStateStore:
@@ -69,17 +77,17 @@ class RedisStateStore:
     async def save(self, epoch: str, seq: int) -> None:
         await self._redis.set(STATE_KEY, json.dumps({"epoch": epoch, "seq": seq}))
 
-    async def claim(self, call_id: str) -> bool:
-        return bool(await self._redis.set(f"{CLAIM_PREFIX}{call_id}", "1", nx=True, ex=CLAIM_TTL_SECONDS))
+    async def is_done(self, key: str) -> bool:
+        return bool(await self._redis.exists(f"{CLAIM_PREFIX}{key}"))
 
-    async def release(self, call_id: str) -> None:
-        await self._redis.delete(f"{CLAIM_PREFIX}{call_id}")
+    async def mark_done(self, key: str) -> None:
+        await self._redis.set(f"{CLAIM_PREFIX}{key}", "1", ex=CLAIM_TTL_SECONDS)
 
 
 def format_number(number: str) -> str:
     """Display form: German numbers nationally (``0170 1234567``), others as E.164."""
-    if not number or number == "anonymous":
-        return "Unbekannt"
+    if not number or not _NUMBER_RE.match(number):
+        return "Unbekannt"  # "anonymous", and anything from the DMZ that is not a plain number
     if number.startswith("+49") and len(number) > 5:
         national = "0" + number[3:]
         return f"{national[:4]} {national[4:]}" if national.startswith("01") else national
@@ -89,11 +97,20 @@ def format_number(number: str) -> str:
 ANNOUNCED_TYPES = ("incoming_call", "voicemail")
 
 
-def format_duration(seconds: object) -> str:
+def _plain_number(value: object) -> str | None:
+    text = str(value or "")
+    return text if _NUMBER_RE.match(text) else None
+
+
+def _seconds(value: object) -> int:
     try:
-        total = max(int(float(seconds)), 0)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        total = 0
+        return min(max(int(float(value)), 0), 24 * 3600)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def format_duration(seconds: object) -> str:
+    total = _seconds(seconds)
     return f"{total // 60}:{total % 60:02d}"
 
 
@@ -109,9 +126,13 @@ def build_notification(event: dict) -> dict:
         )
     else:
         title, message = f"Anruf von {caller}", f"Eingehender Anruf von {caller}"
-    data = {"call_id": event.get("call_id"), "did": event.get("did"), "caller": event.get("caller")}
+    data = {
+        "call_id": str(event.get("call_id", ""))[:64],
+        "did": _plain_number(event.get("did")),
+        "caller": _plain_number(event.get("caller")),
+    }
     if event.get("type") == "voicemail":
-        data["duration_s"] = event.get("duration_s")
+        data["duration_s"] = _seconds(event.get("duration_s"))
     return {
         "event_type": f"telephony.{event.get('type')}",
         "title": title,
@@ -129,8 +150,8 @@ async def notify_users(event: dict, user_ids: list[int], process) -> int:
     """One personal notification per user. ``process`` = process_webhook.
 
     A user's feedback suppression raises ValueError — that skips only that user.
-    Any other error propagates, so the call claim is released and the replay
-    retries (users already notified may then get it twice — better than none).
+    Any other error propagates, so the event is retried (users already notified
+    may then get it twice — accepted: rare, and better than none).
     """
     base = build_notification(event)
     sent = 0
@@ -143,15 +164,22 @@ async def notify_users(event: dict, user_ids: list[int], process) -> int:
     return sent
 
 
-async def deliver_via_notification_service(event: dict) -> None:
+async def recipient_user_ids(db) -> list[int]:
+    """Active human accounts. Device accounts (satellites, kiosk) are users too — never recipients."""
     from sqlalchemy import select
 
     from models.database import User
+
+    query = select(User.id).where(User.is_active.is_(True), User.is_device_account.is_(False)).order_by(User.id)
+    return list((await db.execute(query)).scalars())
+
+
+async def deliver_via_notification_service(event: dict) -> None:
     from services.database import AsyncSessionLocal
     from services.notification_service import NotificationService
 
     async with AsyncSessionLocal() as db:
-        user_ids = list((await db.execute(select(User.id).where(User.is_active.is_(True)))).scalars())
+        user_ids = await recipient_user_ids(db)
         if not user_ids:
             logger.warning("Telephony event without any active user — nobody to notify")
             return
@@ -188,6 +216,7 @@ class TelephonyClient:
         self._ssl = ssl_ctx
         self._connect = connect
         self.connected = asyncio.Event()
+        self._attempts: dict[str, int] = {}
 
     async def run(self) -> None:
         """Connect, consume, reconnect with backoff — until cancelled."""
@@ -195,14 +224,15 @@ class TelephonyClient:
         while True:
             try:
                 await self._session()
-                backoff = 1.0
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # network errors, closed connections, bad frames
+            except Exception as e:  # network errors, closed connections, failed deliveries
                 logger.warning(
                     "Telephony gateway connection lost (%s): %s", type(e).__name__, error_text_without_content(e)
                 )
             finally:
+                if self.connected.is_set():
+                    backoff = 1.0  # the session was healthy: start the backoff over
                 self.connected.clear()
             await self._sleep(backoff + random.uniform(0, backoff / 4))
             backoff = min(backoff * 2, BACKOFF_MAX_SECONDS)
@@ -214,37 +244,72 @@ class TelephonyClient:
         async with self._connect(self._url, **kwargs) as ws:
             epoch, seq = await self._store.load()
             await ws.send(json.dumps({"type": "hello", "epoch": epoch, "resume_from": seq}))
-            welcome = json.loads(await ws.recv())
+            welcome = json.loads(await asyncio.wait_for(ws.recv(), WELCOME_TIMEOUT_SECONDS))
             if welcome.get("type") != "welcome":
                 raise ValueError("gateway did not send welcome")
             if welcome.get("epoch") != epoch:
                 epoch, seq = welcome.get("epoch", ""), 0  # gateway restarted: replay comes from 0
                 await self._store.save(epoch, seq)
+            try:
+                ceiling = max(int(welcome.get("last_seq", 0)), seq)
+            except (TypeError, ValueError):
+                ceiling = seq
             logger.info("Telephony gateway connected (instance=%s)", welcome.get("instance"))
             self.connected.set()
             async for raw in ws:
-                event = json.loads(raw)
-                event_seq = int(event.get("seq", 0))
+                try:
+                    event = json.loads(raw)
+                    event_seq = int(event["seq"])
+                except (ValueError, TypeError, KeyError):
+                    # Skip, don't reconnect: the replay would hand us the same frame again
+                    # and every later call would be stuck behind it.
+                    logger.warning("Telephony gateway sent a malformed frame — skipped")
+                    continue
                 if event_seq <= seq:
                     continue
-                await self._handle(event)
-                seq = event_seq
+                if event_seq > ceiling + MAX_SEQ_JUMP:
+                    logger.warning("Telephony gateway sent an implausible seq — frame skipped")
+                    continue
+                if not await self._handle(event):
+                    raise RuntimeError("delivery failed — reconnect and retry")
+                seq, ceiling = event_seq, max(ceiling, event_seq)
                 await self._store.save(epoch, seq)
 
-    async def _handle(self, event: dict) -> None:
+    async def _handle(self, event: dict) -> bool:
+        """True = done with this event (delivered, skipped or nothing to do); False = retry."""
         if event.get("type") not in ANNOUNCED_TYPES:
-            return  # call_ended etc.: nothing to announce
-        call_id = str(event.get("call_id") or "")
+            return True  # call_ended etc.: nothing to announce
+        call_id = str(event.get("call_id") or "")[:64]
         if not call_id:
-            return
-        claim = f"{event['type']}:{call_id}"
-        if not await self._store.claim(claim):
-            return
+            return True
+        key = f"{event['type']}:{call_id}"
+        if await self._store.is_done(key):
+            return True
         try:
             await self._deliver(event)
-        except Exception:
-            await self._store.release(claim)  # let the replay after reconnect deliver it
-            raise
+        except Exception as e:
+            attempts = self._attempts.get(key, 0) + 1
+            self._attempts[key] = attempts
+            if attempts < MAX_ATTEMPTS:
+                logger.warning("Telephony delivery failed (%d/%d): %s", attempts, MAX_ATTEMPTS, type(e).__name__)
+                return False
+            logger.error("Telephony event dropped after %d failed deliveries: %s", attempts, type(e).__name__)
+        self._attempts.pop(key, None)
+        await self._store.mark_done(key)
+        return True
+
+
+def _is_loopback(url: str) -> bool:
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    host = urlsplit(url).hostname or ""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 async def run_telephony_client() -> None:
@@ -255,11 +320,18 @@ async def run_telephony_client() -> None:
         logger.error("TELEPHONY_ENABLED but TELEPHONY_GATEWAY_URL/TOKEN missing — telephony client not started")
         return
     ssl_ctx = None
+    if not settings.telephony_gateway_url.startswith("wss://") and not _is_loopback(settings.telephony_gateway_url):
+        logger.error("TELEPHONY_GATEWAY_URL must be wss:// (plain ws:// only to localhost) — not started")
+        return
     if settings.telephony_gateway_url.startswith("wss://"):
         if not settings.telephony_gateway_ca_pem:
             logger.error("TELEPHONY_GATEWAY_CA_PEM missing for wss:// — refusing to connect without a pinned cert")
             return
-        ssl_ctx = ssl_context_for(settings.telephony_gateway_ca_pem)
+        try:
+            ssl_ctx = ssl_context_for(settings.telephony_gateway_ca_pem)
+        except (ssl.SSLError, ValueError) as e:
+            logger.error("TELEPHONY_GATEWAY_CA_PEM is not a valid certificate (%s) — not started", type(e).__name__)
+            return
     client = TelephonyClient(
         settings.telephony_gateway_url,
         settings.telephony_gateway_token.get_secret_value(),

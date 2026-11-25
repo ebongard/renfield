@@ -281,7 +281,9 @@ Ein neuer Verweis auf `notifications.id` braucht dieselbe Regel.
 
 ## Deduplizierung
 
-Hash-basiert (SHA256 von `event_type + title + message + room`). Innerhalb des konfigurierbaren Suppressions-Fensters (default: 60s) werden identische Benachrichtigungen unterdrückt. HTTP 429 wird zurückgegeben.
+Hash-basiert (SHA256 von `event_type + title + message + room + target_user_id`). Innerhalb des konfigurierbaren Suppressions-Fensters (default: 60s) werden identische Benachrichtigungen unterdrückt. HTTP 429 wird zurückgegeben. Mit `PROACTIVE_SEMANTIC_DEDUP_ENABLED` kommt eine Ähnlichkeitsprüfung über Embeddings hinzu. Sie ist **nicht** auf den Empfänger bezogen.
+
+**`process_webhook(dedup=False)`** schaltet beide Prüfungen ab (die Feedback-Unterdrückung des Nutzers bleibt). Das ist nur für serverseitige Sender gedacht, die Wiederholungen je Ereignis selbst verhindern. Bisher ist das nur die Telefonie (#1650): Ein zweiter Anruf derselben Nummer ist ein neuer Anruf, und die Verteilung an jeden Nutzer würde sonst an der Ähnlichkeitsprüfung scheitern. Die Webhook-Route setzt den Parameter nie.
 
 ---
 
