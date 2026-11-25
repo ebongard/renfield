@@ -640,6 +640,9 @@ data:
   ROLE_SURFACING_ENABLED: "true"
   ROOM_HANDOFF_ENABLED: "true"
   SATELLITE_ENROLLMENT_ENABLED: "true"
+  # Telefonie (#1650): Anrufe/AB-Nachrichten per Push vom Telephony-Gateway.
+  # URL, Token und Gateway-Zertifikat liegen im Secret renfield-env-private.
+  TELEPHONY_ENABLED: "true"
   SCHEDULED_TASKS_ENABLED: "true"
   SCHICHT_A_EXTRACTION_ENABLED: "true"
   # #1162: functional health probe for the search MCP (degraded when too few
