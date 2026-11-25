@@ -1,9 +1,10 @@
 /**
- * Notification bell (#1653) -- `/api/notifications`. The bell shows the viewer's
- * OWN notifications plus public ones (`mine=true`; admins are scoped too). The
- * count and "mark all read" routes exist only while `notification_bell_enabled`
- * is on; callers gate on that flag. Live refresh: the content-free
- * `notifications_changed` user event invalidates `keys.notifications.all`.
+ * Notification bell (#1653) -- `/api/notifications`. Auth on, the bell holds only
+ * the notifications addressed to the viewer (admins too); `mine=true` and the
+ * count use the same server-side rule. These routes exist only while
+ * `notification_bell_enabled` is on; callers gate on that flag. Live refresh: the
+ * content-free `notifications_changed` user event (and a socket reconnect)
+ * invalidates `keys.notifications.all`; returning to the tab refetches too.
  */
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -36,13 +37,20 @@ async function fetchMine(): Promise<BellNotification[]> {
   const response = await apiClient.get<{ notifications: BellNotification[] }>('/api/notifications', {
     params: { mine: true, limit: BELL_LIST_LIMIT },
   });
-  // Dismissed ones are gone for the viewer; acknowledged ones stay, dimmed.
-  return (response.data.notifications ?? []).filter((n) => n.status !== 'dismissed');
+  // The server already leaves dismissed ones out; acknowledged ones stay, dimmed.
+  return response.data.notifications ?? [];
 }
 
 export function useUnreadNotificationCount(enabled: boolean) {
   return useApiQuery(
-    { queryKey: keys.notifications.unreadCount(), queryFn: fetchUnreadCount, enabled },
+    {
+      queryKey: keys.notifications.unreadCount(),
+      queryFn: fetchUnreadCount,
+      enabled,
+      // Safety net for a missed event or USER_EVENTS_ENABLED=false: one cheap
+      // COUNT when the user comes back to the tab (the app-wide default is off).
+      refetchOnWindowFocus: true,
+    },
     'notifications.bell.failed',
   );
 }

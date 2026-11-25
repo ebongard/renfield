@@ -1,8 +1,9 @@
-"""Notification bell (#1653): unread count, "mark all read", `mine` filter and the
+"""Notification bell (#1653): unread count, "mark all read", `mine` list and the
 content-free `notifications_changed` user event.
 
-The bell is ALWAYS viewer-scoped -- an admin's badge counts their own notifications
-plus public ones, never everyone's personal calls.
+Auth on, the bell holds ONLY notifications addressed to the viewer -- admins too.
+Public ones are shared rows (one person's "read" would clear everyone's badge) and
+already reach every device as a toast.
 """
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -107,9 +108,10 @@ async def test_count_unread_is_scoped_and_ignores_read_dismissed_expired(db_sess
     from services.notification_service import NotificationService
 
     service = NotificationService(db_session)
-    # alice: her unread call + the two public ones. Not bob's, not the untargeted personal one.
-    assert await service.count_unread(people["alice"].id, restrict_to_viewer=True) == 3
-    assert await service.count_unread(people["bob"].id, restrict_to_viewer=True) == 3
+    # alice: only her unread call -- not bob's, not public, not read/dismissed/expired.
+    assert await service.count_unread(people["alice"].id, restrict_to_viewer=True) == 1
+    assert await service.count_unread(people["bob"].id, restrict_to_viewer=True) == 1
+    assert await service.count_unread(people["admin"].id, restrict_to_viewer=True) == 0
     # Unrestricted (auth off): every unread, unexpired row.
     assert await service.count_unread(None, restrict_to_viewer=False) == 5
 
@@ -119,20 +121,20 @@ async def test_acknowledge_all_touches_only_what_the_viewer_sees(db_session, peo
 
     service = NotificationService(db_session)
     done = await service.acknowledge_all("alice", people["alice"].id, restrict_to_viewer=True)
-    assert done == 3
+    assert done == 1
 
-    for name in ("for_alice", "broadcast", "legacy_null_privacy"):
-        await db_session.refresh(rows[name])
-        assert rows[name].status == NOTIFICATION_ACKNOWLEDGED
-        assert rows[name].acknowledged_by == "alice"
-    for name in ("for_bob", "personal_no_target"):
+    await db_session.refresh(rows["for_alice"])
+    assert rows["for_alice"].status == NOTIFICATION_ACKNOWLEDGED
+    assert rows["for_alice"].acknowledged_by == "alice"
+    # Shared public rows stay unread for everyone else.
+    for name in ("for_bob", "personal_no_target", "broadcast", "legacy_null_privacy"):
         await db_session.refresh(rows[name])
         assert rows[name].status == NOTIFICATION_DELIVERED
     assert await service.count_unread(people["alice"].id, restrict_to_viewer=True) == 0
 
-    from services.user_events import EVENT_NOTIFICATIONS_CHANGED, EVERYONE
+    from services.user_events import EVENT_NOTIFICATIONS_CHANGED
 
-    assert set(_targets(published)) == {people["alice"].id, EVERYONE}
+    assert _targets(published) == [people["alice"].id]
     assert all(c.args[2] == EVENT_NOTIFICATIONS_CHANGED for c in published.await_args_list)
 
 
@@ -147,13 +149,11 @@ async def test_acknowledge_all_with_nothing_unread_publishes_nothing(db_session,
 
 async def test_event_targets(bell_on, published):
     from services.notification_service import NotificationService
-    from services.user_events import EVERYONE
 
-    await NotificationService._emit_changed(7, "personal", "created")
-    await NotificationService._emit_changed(None, "public", "created")
-    await NotificationService._emit_changed(None, None, "created")
-    await NotificationService._emit_changed(None, "personal", "created")
-    assert _targets(published) == [7, EVERYONE, EVERYONE, None]
+    await NotificationService._emit_changed(7, "created")
+    # Untargeted notifications are in nobody's bell (auth on): no event at all.
+    await NotificationService._emit_changed(None, "created")
+    assert _targets(published) == [7]
     # Content-free: only (redis, target, type, reason).
     assert all(len(c.args) == 4 and not c.kwargs for c in published.await_args_list)
 
@@ -162,7 +162,7 @@ async def test_event_auth_off_goes_to_household_bucket(bell_on, published):
     from services.notification_service import NotificationService
 
     bell_on.auth_enabled = False
-    await NotificationService._emit_changed(7, "personal", "created")
+    await NotificationService._emit_changed(7, "created")
     assert _targets(published) == [None]
 
 
@@ -171,7 +171,7 @@ async def test_no_event_when_bell_or_user_events_off(bell_on, published, monkeyp
     from services.notification_service import NotificationService
 
     monkeypatch.setattr(bell_on, flag, False)
-    await NotificationService._emit_changed(7, "personal", "created")
+    await NotificationService._emit_changed(7, "created")
     published.assert_not_awaited()
 
 
@@ -183,7 +183,7 @@ async def test_publish_failure_never_breaks_the_caller(bell_on, monkeypatch):
         raise RuntimeError("redis down")
 
     monkeypatch.setattr(redis_client, "get_redis", boom)
-    await NotificationService._emit_changed(7, "personal", "created")  # must not raise
+    await NotificationService._emit_changed(7, "created")  # must not raise
 
 
 async def test_single_acknowledge_and_dismiss_publish(db_session, people, rows, bell_on, published):
@@ -193,9 +193,8 @@ async def test_single_acknowledge_and_dismiss_publish(db_session, people, rows, 
     alice = people["alice"].id
     assert await service.acknowledge(rows["for_alice"].id, "alice", viewer_id=alice, restrict_to_viewer=True)
     assert await service.dismiss(rows["broadcast"].id, viewer_id=alice, restrict_to_viewer=True)
-    from services.user_events import EVERYONE
-
-    assert _targets(published) == [alice, EVERYONE]
+    # The public one is not in any bell: only alice's acknowledge publishes.
+    assert _targets(published) == [alice]
 
 
 # --- routes ----------------------------------------------------------------------------------
@@ -234,14 +233,14 @@ async def client_as(db_session: AsyncSession, bell_on):
 async def test_route_unread_count_member(client_as, people, rows):
     async with client_as(people["alice"]) as client:
         resp = await client.get("/api/notifications/unread-count")
-    assert resp.status_code == 200 and resp.json() == {"count": 3}
+    assert resp.status_code == 200 and resp.json() == {"count": 1}
 
 
 async def test_route_unread_count_admin_is_scoped_too(client_as, people, rows):
     async with client_as(people["admin"]) as client:
         resp = await client.get("/api/notifications/unread-count")
-    # Only the two public ones -- not alice's, bob's or the untargeted personal one.
-    assert resp.json() == {"count": 2}
+    # Nothing addressed to the admin -- not alice's, bob's, public or untargeted ones.
+    assert resp.json() == {"count": 0}
 
 
 async def test_route_mine_narrows_admin_list(client_as, people, rows):
@@ -249,7 +248,28 @@ async def test_route_mine_narrows_admin_list(client_as, people, rows):
         everything = await client.get("/api/notifications")
         mine = await client.get("/api/notifications", params={"mine": "true"})
     assert "Arzttermin" in {n["title"] for n in everything.json()["notifications"]}
-    assert {n["title"] for n in mine.json()["notifications"]} == {"Waschmaschine fertig", "Alte Meldung"}
+    assert mine.json()["notifications"] == []
+
+
+async def test_route_mine_lists_own_without_dismissed_or_expired(client_as, people, rows):
+    async with client_as(people["alice"]) as client:
+        mine = await client.get("/api/notifications", params={"mine": "true"})
+    assert [n["title"] for n in mine.json()["notifications"]] in (["Anruf", "Gelesen"], ["Gelesen", "Anruf"])
+
+
+async def test_route_mine_limit_applies_after_dismissed_filter(client_as, db_session, people, rows):
+    """Dismissed rows never use up the list slots while older unread ones exist."""
+    now = datetime.utcnow()
+    db_session.add_all([
+        Notification(event_type="test", title=f"Weg {i}", message="x", urgency="info", source="test",
+                     status=NOTIFICATION_DISMISSED, privacy="personal", target_user_id=people["alice"].id,
+                     created_at=now + timedelta(minutes=i + 1))
+        for i in range(5)
+    ])
+    await db_session.commit()
+    async with client_as(people["alice"]) as client:
+        mine = await client.get("/api/notifications", params={"mine": "true", "limit": "2"})
+    assert {n["title"] for n in mine.json()["notifications"]} == {"Anruf", "Gelesen"}
 
 
 async def test_route_anonymous_refused(client_as, rows):
@@ -263,11 +283,12 @@ async def test_routes_absent_when_bell_off(client_as, people, rows, bell_on):
     async with client_as(people["alice"]) as client:
         assert (await client.get("/api/notifications/unread-count")).status_code == 404
         assert (await client.post("/api/notifications/acknowledge-all")).status_code == 404
+        assert (await client.get("/api/notifications", params={"mine": "true"})).status_code == 404
 
 
 async def test_route_acknowledge_all(client_as, people, rows, published):
     async with client_as(people["alice"]) as client:
         resp = await client.post("/api/notifications/acknowledge-all")
         after = await client.get("/api/notifications/unread-count")
-    assert resp.json() == {"success": True, "acknowledged": 3}
+    assert resp.json() == {"success": True, "acknowledged": 1}
     assert after.json() == {"count": 0}

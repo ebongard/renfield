@@ -42,15 +42,11 @@ USER_EVENTS_CHANNEL = "renfield:events:user"
 
 # Sentinel registry key for the broadcast bucket (auth-off household + admins).
 ALL: str = "__all__"
-# Publish-side target meaning "every connected socket" (#1653): a public
-# notification concerns every user, not only the ``_ALL`` bucket. Never a
-# registry key -- sockets register under a user id or ``ALL`` only.
-EVERYONE: str = "__everyone__"
 
 # Event types (extend freely; the frontend maps each to a query invalidation).
 EVENT_DOCUMENTS_CHANGED = "documents_changed"
-# The viewer's notification list or unread count changed (#1653): created,
-# acknowledged or dismissed. The browser refetches its bell; no notification id.
+# The viewer's notification bell changed (#1653): one of their notifications was
+# created, acknowledged or dismissed. The browser refetches; no notification id.
 EVENT_NOTIFICATIONS_CHANGED = "notifications_changed"
 # A scan the user requested has finished; the outcome is already a message in the
 # requesting conversation, so the browser only reloads it (still content-free).
@@ -87,7 +83,7 @@ def build_event(
 
 async def publish_user_event(
     redis: Any,
-    target_user_id: int | str | None,
+    target_user_id: int | None,
     event_type: str,
     reason: str | None = None,
     *,
@@ -98,7 +94,7 @@ async def publish_user_event(
     worker passes its own ``aioredis`` client, the API pod passes ``get_redis()``.
 
     ``target_user_id=None`` routes to the ``_ALL`` bucket (auth-off household /
-    admins); :data:`EVERYONE` reaches every connected socket. Best-effort: a Redis hiccup must never break the ingest/upload path
+    admins). Best-effort: a Redis hiccup must never break the ingest/upload path
     that emitted it, so failures are swallowed with a warning.
     """
     try:
@@ -191,19 +187,12 @@ class UserEventRegistry:
                 seen.add(id(ws))
         return len(seen)
 
-    def _recipients(self, target: int | str | None) -> list[Any]:
-        # target=None → the ALL bucket; target=int → that user's sockets only;
-        # target=EVERYONE → every distinct socket (a socket under N keys once).
-        if target == EVERYONE:
-            unique: dict[int, Any] = {}
-            for bucket in self._clients.values():
-                for ws in bucket:
-                    unique.setdefault(id(ws), ws)
-            return list(unique.values())
+    def _recipients(self, target: int | None) -> list[Any]:
+        # target=None → the ALL bucket; target=int → that user's sockets only.
         key: int | str = ALL if target is None else target
         return list(self._clients.get(key, ()))
 
-    async def fan_out(self, target: int | str | None, event: dict[str, Any]) -> int:
+    async def fan_out(self, target: int | None, event: dict[str, Any]) -> int:
         """Send ``event`` to every recipient of ``target``; prune dead sockets.
         Returns the number of sockets the event was delivered to. No-op (returns
         0) when nobody is listening."""
@@ -236,13 +225,13 @@ class EventCoalescer:
     def __init__(self, window_seconds: float, flush) -> None:
         self._window = window_seconds
         self._flush = flush  # async (target, event) -> Any
-        self._pending: dict[tuple[int | str | None, str, str | None, bool], dict[str, Any]] = {}
+        self._pending: dict[tuple[int | None, str, str | None, bool], dict[str, Any]] = {}
         self._task: asyncio.Task | None = None
 
     @staticmethod
     def _key(
-        target: int | str | None, event: dict[str, Any],
-    ) -> tuple[int | str | None, str, str | None, bool]:
+        target: int | None, event: dict[str, Any],
+    ) -> tuple[int | None, str, str | None, bool]:
         # The session is part of the key: two conversations' events inside one
         # window are two different signals (each tab reacts to its own), and
         # last-wins would silently drop one of them. So is the deleted flag
@@ -253,7 +242,7 @@ class EventCoalescer:
             event.get("conversation_deleted") is True,
         )
 
-    def submit(self, target: int | str | None, event: dict[str, Any]) -> None:
+    def submit(self, target: int | None, event: dict[str, Any]) -> None:
         if self._window <= 0:
             # No coalescing — schedule an immediate flush of just this event.
             self._pending[self._key(target, event)] = event

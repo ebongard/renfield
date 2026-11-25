@@ -636,6 +636,9 @@ class NotificationService:
         self.db.add(notification)
         await self.db.commit()
         await self.db.refresh(notification)
+        # Right after the row exists (it already counts as unread), so a failing
+        # delivery below still refreshes the bell.
+        await self._emit_changed(notification.target_user_id, "created")
 
         logger.info(f"📨 Notification #{notification.id} created: {logged_content(title)} (urgency={urgency})")
 
@@ -675,7 +678,6 @@ class NotificationService:
         notification.delivered_at = datetime.now(UTC).replace(tzinfo=None)
         notification.delivered_to = delivered_to
         await self.db.commit()
-        await self._emit_changed(notification.target_user_id, notification.privacy, "created")
 
         return {
             "notification_id": notification.id,
@@ -740,30 +742,36 @@ class NotificationService:
     UNREAD_STATUSES = (NOTIFICATION_PENDING, NOTIFICATION_DELIVERED)
 
     @staticmethod
-    async def _emit_changed(target_user_id: int | None, privacy: str | None, reason: str) -> None:
-        """Tell the affected browsers to refetch their bell. Content-free, after commit,
+    async def _emit_changed(target_user_id: int | None, reason: str) -> None:
+        """Tell the owner's browsers to refetch their bell. Content-free, after commit,
         best-effort: a Redis failure never breaks creating or acknowledging.
 
-        Addressed to a user → that user's sockets. Public and untargeted → every
-        socket. Personal without a target is visible to admins only → the ``_ALL``
-        bucket. Auth off: every socket sits in ``_ALL``."""
+        Auth on: only a notification addressed to a user is in anyone's bell, so an
+        untargeted one publishes nothing. Auth off: the household bucket ``_ALL``."""
         if not (settings.notification_bell_enabled and settings.user_events_enabled):
+            return
+        if settings.auth_enabled and target_user_id is None:
             return
         try:
             from services.redis_client import get_redis
-            from services.user_events import EVENT_NOTIFICATIONS_CHANGED, EVERYONE, publish_user_event
+            from services.user_events import EVENT_NOTIFICATIONS_CHANGED, publish_user_event
 
-            if not settings.auth_enabled:
-                target: int | str | None = None
-            elif target_user_id is not None:
-                target = target_user_id
-            elif privacy is None or privacy == "public":
-                target = EVERYONE
-            else:
-                target = None
+            target = target_user_id if settings.auth_enabled else None
             await publish_user_event(get_redis(), target, EVENT_NOTIFICATIONS_CHANGED, reason)
         except Exception as e:
             logger.warning(f"notification bell: event not published: {error_text_without_content(e)}")
+
+    @staticmethod
+    def _bell_clause(viewer_id: int | None, restrict_to_viewer: bool):
+        """What the bell shows: auth on (restricted) → ONLY notifications addressed to
+        the viewer, admins included. Public ones are shared rows -- one person's
+        "read" would clear everyone's badge -- and already reach every device as a
+        toast. Unrestricted (auth off) → everything."""
+        if not restrict_to_viewer:
+            return None
+        if viewer_id is None:
+            return Notification.id.is_(None)  # nobody: matches no row
+        return Notification.target_user_id == viewer_id
 
     @staticmethod
     def _live_clause():
@@ -773,16 +781,35 @@ class NotificationService:
         )
 
     async def count_unread(self, viewer_id: int | None, restrict_to_viewer: bool) -> int:
-        """Unacknowledged, undismissed, unexpired notifications the viewer may see."""
+        """Unacknowledged, undismissed, unexpired notifications in the viewer's bell."""
         query = (
             select(func.count())
             .select_from(Notification)
             .where(Notification.status.in_(self.UNREAD_STATUSES))
             .where(self._live_clause())
         )
-        if restrict_to_viewer:
-            query = query.where(self._visible_to_clause(viewer_id))
+        clause = self._bell_clause(viewer_id, restrict_to_viewer)
+        if clause is not None:
+            query = query.where(clause)
         return int((await self.db.execute(query)).scalar_one())
+
+    async def list_bell(
+        self, viewer_id: int | None, restrict_to_viewer: bool, limit: int = 20,
+    ) -> list[Notification]:
+        """The bell's list: newest first, same scope as :meth:`count_unread`, without
+        dismissed rows -- filtered BEFORE the limit, so dismissed rows never use up
+        the slots while the badge counts unread ones further down."""
+        query = (
+            select(Notification)
+            .where(Notification.status != NOTIFICATION_DISMISSED)
+            .where(self._live_clause())
+            .order_by(Notification.created_at.desc())
+            .limit(limit)
+        )
+        clause = self._bell_clause(viewer_id, restrict_to_viewer)
+        if clause is not None:
+            query = query.where(clause)
+        return list((await self.db.execute(query)).scalars().all())
 
     async def acknowledge_all(
         self,
@@ -790,27 +817,28 @@ class NotificationService:
         viewer_id: int | None,
         restrict_to_viewer: bool,
     ) -> int:
-        """Acknowledge every unread notification the viewer may see. Returns the count."""
+        """Acknowledge every unread notification in the viewer's bell. Returns the count."""
         query = (
             select(Notification)
             .where(Notification.status.in_(self.UNREAD_STATUSES))
             .where(self._live_clause())
         )
-        if restrict_to_viewer:
-            query = query.where(self._visible_to_clause(viewer_id))
+        clause = self._bell_clause(viewer_id, restrict_to_viewer)
+        if clause is not None:
+            query = query.where(clause)
         notifications = list((await self.db.execute(query)).scalars().all())
         if not notifications:
             return 0
         now = datetime.now(UTC).replace(tzinfo=None)
-        targets: set[tuple[int | None, str | None]] = set()
+        targets: set[int | None] = set()
         for n in notifications:
             n.status = NOTIFICATION_ACKNOWLEDGED
             n.acknowledged_at = now
             n.acknowledged_by = acknowledged_by
-            targets.add((n.target_user_id, n.privacy))
+            targets.add(n.target_user_id)
         await self.db.commit()
-        for target_user_id, privacy in targets:
-            await self._emit_changed(target_user_id, privacy, "acknowledged")
+        for target_user_id in targets:
+            await self._emit_changed(target_user_id, "acknowledged")
         return len(notifications)
 
     async def resolve_ws_viewer_scope(self, auth_result: dict | None) -> tuple[bool, int | None]:
@@ -962,7 +990,7 @@ class NotificationService:
         notification.acknowledged_at = datetime.now(UTC).replace(tzinfo=None)
         notification.acknowledged_by = acknowledged_by
         await self.db.commit()
-        await self._emit_changed(notification.target_user_id, notification.privacy, "acknowledged")
+        await self._emit_changed(notification.target_user_id, "acknowledged")
         return True
 
     async def dismiss(
@@ -980,7 +1008,7 @@ class NotificationService:
 
         notification.status = NOTIFICATION_DISMISSED
         await self.db.commit()
-        await self._emit_changed(notification.target_user_id, notification.privacy, "dismissed")
+        await self._emit_changed(notification.target_user_id, "dismissed")
         return True
 
     async def cleanup_expired(self) -> int:

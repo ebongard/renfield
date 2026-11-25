@@ -474,7 +474,8 @@ wird nachgeliefert; eine schon zugestellte Meldung kommt nicht doppelt. Details:
 Eine Glocke mit Badge im Header zeigt die ungelesenen eigenen Benachrichtigungen, etwa Anrufe,
 AB-Nachrichten und Erinnerungen, die nie auf gemeinsamen Geräten erscheinen. Ein Klick öffnet die Liste;
 einzelne oder alle lassen sich als gelesen markieren. Neue Meldungen erscheinen sofort, ohne Neuladen
-(über `/ws/user`). Admins sehen in der Glocke nur ihre eigenen und öffentliche Meldungen.
+(über `/ws/user`). Die Glocke enthält nur Meldungen an die angemeldete Person, auch bei Admins;
+öffentliche Meldungen erscheinen weiter als Einblendung auf allen Geräten.
 
 ### Web Push (#79, `PUSH_NOTIFICATIONS_ENABLED`, opt-in/dark)
 

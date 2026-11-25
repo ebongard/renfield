@@ -4,7 +4,8 @@
  *  - disabled => nothing rendered and no request to /api/notifications;
  *  - the badge shows the unread count (99+ cap) and hides at zero;
  *  - opening lists `mine=true` notifications; acknowledge / mark-all hit the API
- *    and the count refetches.
+ *    and the count refetches; a failed acknowledge is shown;
+ *  - focus moves into the panel on open and back to the bell on Escape.
  */
 import { describe, it, expect } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
@@ -30,7 +31,7 @@ function item(id: number, title: string, status = 'delivered') {
   };
 }
 
-function mockApi(count: number): Api {
+function mockApi(count: number, ackStatus = 200): Api {
   const api: Api = { calls: [], count, listParams: null };
   server.use(
     http.get(`${BASE_URL}/api/notifications/unread-count`, () => {
@@ -41,12 +42,13 @@ function mockApi(count: number): Api {
       api.calls.push('GET list');
       api.listParams = new URL(request.url).searchParams;
       return HttpResponse.json({
-        notifications: [item(1, 'Neue Nachricht'), item(2, 'Alter Anruf', 'acknowledged'), item(3, 'Weg', 'dismissed')],
-        total: 3, limit: 20, offset: 0,
+        notifications: [item(1, 'Neue Nachricht'), item(2, 'Alter Anruf', 'acknowledged')],
+        total: 2, limit: 20, offset: 0,
       });
     }),
     http.patch(`${BASE_URL}/api/notifications/:id/acknowledge`, ({ params }) => {
       api.calls.push(`PATCH ack ${String(params.id)}`);
+      if (ackStatus !== 200) return HttpResponse.json({ detail: 'Rate limit' }, { status: ackStatus });
       api.count = Math.max(0, api.count - 1);
       return HttpResponse.json({ success: true });
     }),
@@ -87,7 +89,7 @@ describe('NotificationBell', () => {
     expect(screen.queryByTestId('notification-bell-badge')).toBeNull();
   });
 
-  it('lists own notifications on open, hides dismissed, acknowledges one', async () => {
+  it('lists own notifications on open and acknowledges one', async () => {
     const api = mockApi(1);
     const user = userEvent.setup();
     renderWithProviders(<NotificationBell enabled />);
@@ -98,7 +100,6 @@ describe('NotificationBell', () => {
     const items = await screen.findAllByTestId('notification-bell-item');
     expect(items).toHaveLength(2);
     expect(api.listParams?.get('mine')).toBe('true');
-    expect(screen.queryByText('Weg')).toBeNull();
 
     // Only the unread one offers "mark as read".
     const markRead = screen.getAllByRole('button', { name: /gelesen markieren|mark as read/i });
@@ -119,13 +120,27 @@ describe('NotificationBell', () => {
     await waitFor(() => expect(screen.queryByTestId('notification-bell-badge')).toBeNull());
   });
 
-  it('closes on Escape', async () => {
-    mockApi(1);
+  it('shows an error when acknowledging fails', async () => {
+    mockApi(1, 429);
     const user = userEvent.setup();
     renderWithProviders(<NotificationBell enabled />);
     await user.click(await screen.findByTestId('notification-bell'));
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    await screen.findAllByTestId('notification-bell-item');
+    await user.click(screen.getByRole('button', { name: /gelesen markieren|mark as read/i }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.getByTestId('notification-bell-badge')).toHaveTextContent('1');
+  });
+
+  it('moves focus into the panel and back to the bell on Escape', async () => {
+    mockApi(1);
+    const user = userEvent.setup();
+    renderWithProviders(<NotificationBell enabled />);
+    const bell = await screen.findByTestId('notification-bell');
+    await user.click(bell);
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveFocus();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(bell).toHaveFocus();
   });
 });

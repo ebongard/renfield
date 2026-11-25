@@ -56,6 +56,7 @@ export function useUserEvents({ enabled }: UseUserEventsOptions): void {
 
     let ws: WebSocket | null = null;
     let attempt = 0;
+    let hasOpened = false;
     let intentionalClose = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -138,6 +139,10 @@ export function useUserEvents({ enabled }: UseUserEventsOptions): void {
         ws = new WebSocket(url);
         ws.onopen = () => {
           attempt = 0;
+          // Events are not replayed: whatever changed while the socket was down
+          // (sleep, deploy) would stay stale. Refetch the bell once on reconnect.
+          if (hasOpened) void queryClient.invalidateQueries({ queryKey: keys.notifications.all });
+          hasOpened = true;
           clearHeartbeat();
           heartbeatTimer = setInterval(() => {
             try {

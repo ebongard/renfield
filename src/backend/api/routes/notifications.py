@@ -72,9 +72,9 @@ def _viewer_scope(current_user: User | None) -> tuple[bool, int | None]:
 
 
 def _bell_scope(current_user: User | None) -> tuple[bool, int | None]:
-    """(restrict_to_viewer, viewer_id) for the bell (#1653): always the viewer's OWN
-    notifications plus public ones -- admins too, so an admin's badge never counts
-    everyone's personal calls. Auth off: the single household sees everything."""
+    """(restrict_to_viewer, viewer_id) for the bell (#1653): always ONLY the viewer's
+    own notifications -- admins too, so an admin's badge never counts everyone's
+    personal calls. Auth off: the single household sees everything."""
     if not settings.auth_enabled:
         return False, None
     if current_user is None:
@@ -179,9 +179,18 @@ async def list_notifications(
 ):
     """List notifications with optional filters — scoped to the caller.
 
-    ``mine=true`` narrows an admin's list to what the bell shows (#1653): their own
-    notifications plus public ones."""
-    restrict, viewer_id = _bell_scope(current_user) if mine else _viewer_scope(current_user)
+    ``mine=true`` returns what the bell shows (#1653): the notifications addressed
+    to the caller (admins too), newest first, without dismissed ones. The other
+    filters do not apply to it."""
+    if mine:
+        _require_bell()
+        restrict, viewer_id = _bell_scope(current_user)
+        rows = await NotificationService(db).list_bell(viewer_id, restrict, limit=min(limit, 200))
+        return NotificationListResponse(
+            notifications=[_notification_to_response(n) for n in rows],
+            total=len(rows), limit=limit, offset=0,
+        )
+    restrict, viewer_id = _viewer_scope(current_user)
     service = NotificationService(db)
 
     since_dt = None
@@ -217,7 +226,7 @@ async def unread_count(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """The bell badge (#1653): the viewer's unread notifications plus public ones."""
+    """The bell badge (#1653): unread notifications addressed to the viewer."""
     _require_bell()
     restrict, viewer_id = _bell_scope(current_user)
     count = await NotificationService(db).count_unread(viewer_id, restrict)

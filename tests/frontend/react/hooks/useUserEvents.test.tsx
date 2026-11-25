@@ -181,6 +181,7 @@ describe('useUserEvents', () => {
     const ws = latest();
     ws.fireOpen();
 
+    expect(spy).not.toHaveBeenCalled(); // the first open is not a reconnect
     ws.fireMessage({ type: 'notifications_changed', reason: 'created' });
     expect(spy).toHaveBeenCalledWith({ queryKey: ['notifications'] });
     expect(spy).not.toHaveBeenCalledWith({ queryKey: ['knowledge', 'list'] });
@@ -220,6 +221,21 @@ describe('useUserEvents', () => {
     ws.fireOpen();
     unmount();
     expect(ws.readyState).toBe(3); // CLOSED
+  });
+
+  it('refreshes the notification bell after a reconnect, not on the first open (#1653)', async () => {
+    vi.useFakeTimers();
+    const client = makeClient();
+    const spy = vi.spyOn(client, 'invalidateQueries').mockResolvedValue(undefined);
+    renderHook(() => useUserEvents({ enabled: true }), { wrapper: wrapper(client) });
+    await flushConnect();
+    latest().fireOpen();
+    expect(spy).not.toHaveBeenCalled();
+    latest().fireClose();
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushConnect();
+    latest().fireOpen();
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['notifications'] });
   });
 
   it('reconnects after an unexpected close', async () => {

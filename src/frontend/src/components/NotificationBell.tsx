@@ -41,6 +41,8 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
   const { t, i18n } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const panelId = useId();
 
   const count = useUnreadNotificationCount(enabled);
@@ -55,8 +57,12 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
       if (containerRef.current && target && !containerRef.current.contains(target)) setIsOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsOpen(false);
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        buttonRef.current?.focus();
+      }
     };
+    panelRef.current?.focus();
     document.addEventListener('mousedown', onDocClick);
     document.addEventListener('keydown', onKey);
     return () => {
@@ -74,6 +80,7 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
   return (
     <div className="relative" ref={containerRef}>
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setIsOpen((open) => !open)}
         className="relative p-2.5 rounded-lg transition-colors text-gray-600 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700"
@@ -96,8 +103,10 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
 
       {isOpen && (
         <div
+          ref={panelRef}
+          tabIndex={-1}
           id={panelId}
-          className="absolute right-0 mt-2 w-80 max-w-[calc(100vw-1rem)] rounded-lg shadow-lg bg-white border border-gray-200 dark:bg-gray-800 dark:border-gray-700 z-50"
+          className="absolute right-0 mt-2 w-80 focus:outline-hidden max-w-[calc(100vw-1rem)] rounded-lg shadow-lg bg-white border border-gray-200 dark:bg-gray-800 dark:border-gray-700 z-50"
           role="dialog"
           aria-label={t('notifications.title')}
         >
@@ -115,6 +124,12 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
               </button>
             )}
           </div>
+
+          {(acknowledge.errorMessage || acknowledgeAll.errorMessage) && (
+            <p className="px-4 py-2 text-xs text-red-600 dark:text-red-400" role="alert">
+              {acknowledge.errorMessage ?? acknowledgeAll.errorMessage}
+            </p>
+          )}
 
           <ul className="max-h-96 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700">
             {list.isLoading && (

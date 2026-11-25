@@ -1212,9 +1212,10 @@ Siehe `docs/PROACTIVE_SCHEDULING_TEMPLATES.md` für fertige Templates.
 
 ### Benachrichtigungs-Glocke (#1653)
 
-Eine Glocke mit Badge im Header jeder Seite (nicht auf `/kiosk`). Sie zählt und listet die **eigenen**
-Benachrichtigungen des Betrachters plus öffentliche, auch für Admins, damit deren Badge nicht die
-persönlichen Anrufe aller zählt. Persönliche Meldungen ohne Raum (Anrufe, AB-Nachrichten, Erinnerungen)
+Eine Glocke mit Badge im Header jeder Seite (nicht auf `/kiosk`). Bei Auth an zählt und listet sie **nur
+die an den Betrachter adressierten** Benachrichtigungen, auch für Admins, damit deren Badge nicht die
+persönlichen Anrufe aller zählt. Öffentliche Meldungen gehören nicht hinein: Sie sind eine gemeinsame Zeile,
+„gelesen“ einer Person würde sie bei allen löschen, und sie erscheinen ohnehin auf allen Geräten. Persönliche Meldungen ohne Raum (Anrufe, AB-Nachrichten, Erinnerungen)
 erscheinen sonst in der offenen App nirgends.
 
 ```bash
@@ -1224,7 +1225,8 @@ NOTIFICATION_BELL_ENABLED=false
 - Aus: keine Glocke, `GET /api/notifications/unread-count` und `POST /api/notifications/acknowledge-all`
   antworten 404, es werden keine Ereignisse veröffentlicht.
 - Live-Aktualisierung über `/ws/user` (Ereignis `notifications_changed`, ohne Inhalt). Braucht
-  `USER_EVENTS_ENABLED=true` (Standard). Ohne Live-Kanal lädt die Glocke beim Seitenaufruf.
+  `USER_EVENTS_ENABLED=true` (Standard). Nach einem Reconnect und beim Zurückkehren in den Tab lädt die
+  Glocke den Zähler neu (Ereignisse werden nicht nachgeliefert).
 - Ungelesen = Status `pending` oder `delivered`, nicht abgelaufen.
 
 ### Web Push (#79)

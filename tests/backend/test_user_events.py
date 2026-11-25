@@ -120,22 +120,6 @@ async def test_fan_out_none_target_hits_all_bucket():
     assert user_ws.sent == []
 
 
-async def test_fan_out_everyone_reaches_each_socket_once():
-    """#1653: a public notification concerns every user. An admin socket sits
-    under its user id AND ``_ALL`` -- it still gets the event exactly once."""
-    reg = ue.UserEventRegistry()
-    alice, bob, admin = FakeWS(), FakeWS(), FakeWS()
-    reg.register(7, alice)
-    reg.register(8, bob)
-    reg.register(9, admin)
-    reg.register(ue.ALL, admin)
-
-    delivered = await reg.fan_out(ue.EVERYONE, {"type": "notifications_changed"})
-
-    assert delivered == 3
-    assert alice.sent == bob.sent == admin.sent == [{"type": "notifications_changed"}]
-
-
 async def test_fan_out_all_of_a_users_tabs():
     reg = ue.UserEventRegistry()
     tab1, tab2 = FakeWS(), FakeWS()
