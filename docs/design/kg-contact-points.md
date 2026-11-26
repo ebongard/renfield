@@ -1,7 +1,7 @@
 # Kontaktpunkte — Telefon, Mobil, Fax, Mail, Web an Personen und Firmen
 
 **Issue:** [#1240](https://github.com/ebongard/renfield/issues/1240)
-**Status:** Review-Entscheidungen getroffen 2026-09-13 (§11) — **kein Go zum Bauen**; Stufe 1 braucht ein ausdrückliches Go
+**Status:** Stufe 1 gebaut 2026-11-26 (§13), dunkel hinter `CONTACT_POINTS_ENABLED`. Stufen 2–4 offen.
 **Datum:** 2026-09-13
 **Autor:** Claude Opus 5
 **Bezug:** #875 / PR #1213 (Gültigkeitsintervalle auf `kg_relations`)
@@ -252,3 +252,29 @@ Offen bleibt allein das **Go für Stufe 1**.
 - **R5 — Löschpflicht.** Wird eine Person gelöscht (Entität), müssen ihre Kontaktpunkte mit
   (`ON DELETE CASCADE` greift nur bei hartem Löschen; der Soft-Delete über `is_active` braucht eine
   ausdrückliche Kaskade).
+
+## 13. Stufe 1 — wie gebaut (2026-11-26)
+
+Gebaut: Tabelle `kg_entity_contact_points` (Migration `pc20261126_kg_contact_points`), Modell
+`KGEntityContactPoint`, `contact_points_circles_filter`, Tier-Regel `services/contact_point_tier.py`,
+Normalisierung + Dienst `services/contact_points.py`, REST unter `/api/knowledge-graph`
+(`GET|POST /entities/{id}/contact-points`, `PATCH|DELETE /contact-points/{id}`, `GET /contact-points/lookup`),
+Agent-Tool `internal.find_contact`, Abschnitt „Kontaktdaten" im Wissen-Drawer. v1 kennt nur
+`phone` / `mobile` / `fax`; `email` / `web` folgen mit ihren Quellen.
+
+Abweichungen von §4–§7, aus der Architektur-Review vom 2026-11-26:
+
+| # | Entwurf | gebaut | Grund |
+|---|---|---|---|
+| A1 | `circle_tier = LEAST(Entität, Quelle)`, Kaskade „für `kg_node`" | zusätzlich Spalte `source_tier`; die Kaskade läuft bei JEDER Tier-Änderung der Entität (mit und ohne Atom, Merge) UND bei der eines Dokuments; `source_tier` geht nur runter | Ohne Dokument-Kaskade bliebe ein privater gestelltes Dokument mit offeneren Nummern zurück |
+| A2 | `source_ref TEXT` | dazu echter FK `document_id` (ON DELETE CASCADE) | Löschen und Neuauswerten eines Dokuments sonst mit Waisen |
+| A3 | Merge nicht erwähnt | `reparent_contact_points` in `merge_entities`: umhängen, Kollision endet beim Verlierer (`superseded_by_id`), niedrigere `source_tier` bleibt | Sonst blieben Nummern am Grabstein hängen |
+| A7 | R5: Soft-Delete braucht ausdrückliche Kaskade | `delete_entity` löscht die Kontaktpunkte | Die Nummern einer gelöschten Person dienen nichts mehr |
+| — | Schreibrecht offen | `KG_MANAGE` + Entität sichtbar + Eigentümer (Admin: jede) | Schreiben ist eigentümergebunden wie überall in Circles |
+
+Für die Stufen 2–4 gilt zusätzlich (noch nicht gebaut): Zuordnung über eine **Zählabfrage** statt
+`resolve_entity` (A4, das `.first()` über Tiers und die `mention_count`-Erhöhung), eine Adressbuch-Karte mit einer
+anderswo schon vorhandenen Nummer nur bei verwandtem Namen (A5), und für Dokumente nur Briefkopf/Fußzeile, nie
+„bestätigt", keine Nummer mehrerer Aussteller (A6). Hergang: `docs/design/caller-lookup.md` §6 (Branch
+`docs/caller-lookup-design`).
+

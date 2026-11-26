@@ -51,7 +51,8 @@ UNIDENTIFIED turn (`user_permissions=None`: device/satellite token, unrecognized
 ## H4 — handlers re-assert their runtime flag
 A tool re-checks its feature flag in-handler and refuses rather than persist something nothing will ever act on:
 `internal.create_reminder` / `list_reminders` / `cancel_reminder` → `settings.proactive_reminders_enabled`; `internal.ingest_file` → `FOLDER_INGEST_ENABLED`;
-`internal.find_duplicate_documents` → `DOCUMENT_DEDUPE_ENABLED` (dark).
+`internal.find_duplicate_documents` → `DOCUMENT_DEDUPE_ENABLED` (dark); `internal.find_contact` → `CONTACT_POINTS_ENABLED` (dark,
+also only REGISTERED while on).
 
 ## Destructive / write tools — safety properties
 - `internal.paperless_dedupe`: a THIN CALLER of `mcp.paperless.dedupe_documents` (the logic lives in the Paperless MCP).

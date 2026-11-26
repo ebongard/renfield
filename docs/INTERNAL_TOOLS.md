@@ -35,6 +35,7 @@ Source paths are relative to `src/backend/`.
 | `internal.refile_to_paperless` | Re-file `failed` documents to Paperless | `services/kb_maintenance_tool.py` | `Permission.RAG_MANAGE` |
 | `internal.paperless_dedupe` | Destructive: find + delete duplicate Paperless documents | `services/paperless_dedupe_tool.py` | `Permission.ADMIN` |
 | `internal.find_duplicate_documents` | KB near-duplicate detection, propose-only | `services/document_dedupe_tool.py` | `DOCUMENT_DEDUPE_ENABLED` (dark) |
+| `internal.find_contact` | Phone/mobile/fax of a KG person or organization, or whose number it is (read-only) | `services/contact_point_tool.py` | `CONTACT_POINTS_ENABLED` (dark) |
 
 `AUTH_ENABLED=false` skips every permission gate, and with auth on an authenticated low-privilege user is always
 refused. An UNIDENTIFIED turn (`user_permissions=None` — a device/satellite token or an unrecognized voice) is handled
@@ -271,6 +272,17 @@ Gate: **`Permission.ADMIN`**, fail-closed: with auth on an unidentified turn (`u
 
 Backs "finde und lösche die Duplikate in Paperless" / "räum die doppelten Dokumente auf".
 
+### `internal.find_contact`
+
+Source: `services/contact_point_tool.py` (#1240, `CONTACT_POINTS_ENABLED`, dark; design `docs/design/kg-contact-points.md`).
+
+- `name`: the contact points of the entities with that exact name or alias (case-insensitive), optional `kind`
+  (`phone` / `mobile` / `fax`). `number`: reverse lookup, "whose number is this?" (normalized to E.164).
+- Read-only. Circle-filtered for the injected `user_id`, through BOTH `contact_points_circles_filter` and the entity
+  filter: a value is never more visible than its entity or its source. A `user_id` in the arguments is ignored.
+- Registered only while the flag is on (a dark instance's agent never offers it); the handler re-checks the flag (H4).
+- Contact points never enter the general RAG context, only an answer that asks for them.
+
 ### `internal.find_duplicate_documents`
 
 Source: `services/document_dedupe_tool.py`. User-facing description: `docs/FEATURES.md`, "Duplikat-Erkennung".
@@ -332,7 +344,7 @@ Dispatch for these tools is a special case in `services/action_executor.py` that
 
 - `mcp_manager`, `session_id`, and the authenticated `user_id` for `knowledge_search` / `list_my_memories` / `ingest_file` /
   `ingest_status` / `reindex_documents` / `list_chunkless_documents` / `list_unfiled_documents` /
-  `refile_to_paperless` / `find_duplicate_documents` / `create_reminder`;
+  `refile_to_paperless` / `find_duplicate_documents` / `find_contact` / `create_reminder`;
 - `session_id` for `create_reminder`;
 - `user_permissions` for `reindex_documents`'s + `refile_to_paperless`'s `RAG_MANAGE` gate,
   `list_unfiled_documents`'s owner-scope admin check, and `paperless_dedupe`'s `ADMIN` gate;
