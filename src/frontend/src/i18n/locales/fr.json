@@ -2858,8 +2858,8 @@
     "labelLabel": "Contexte",
     "kind": {
       "phone": "Téléphone",
-      "mobile": "Mobile",
-      "fax": "Fax"
+      "mobile": "Portable",
+      "fax": "Télécopie"
     },
     "label": {
       "none": "—",
