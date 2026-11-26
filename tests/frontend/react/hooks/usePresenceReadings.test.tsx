@@ -235,6 +235,29 @@ describe('usePresenceReadings', () => {
     });
   });
 
+  it('carries the placement v2 mode and verdict through to the snapshot', async () => {
+    // The panel and the hiding of the legacy rooms key on the mode; the
+    // component tests pass a snapshot in directly, so only this test sees
+    // whether the hook copies it out of the frame.
+    const base = snapshot(-55);
+    const verdict = { kind: 'home_unknown', reason: 'outside_bound' };
+    const { result } = renderHook(() => usePresenceReadings());
+    await flushConnect();
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage({
+        ...base,
+        placement_v2_mode: 'state',
+        devices: [{ ...base.devices[0], placement_v2: verdict }],
+      });
+    });
+    expect(result.current.snapshot?.placement_v2_mode).toBe('state');
+    expect(result.current.snapshot?.devices[0].placement_v2).toMatchObject(verdict);
+
+    act(() => latest().fireMessage(base)); // no v2 running: the key stays absent
+    expect(result.current.snapshot).not.toHaveProperty('placement_v2_mode');
+  });
+
   it('reads a backend that does not send the voice-hold fields yet', async () => {
     const old = snapshot(-55);
     const { voice_hold_s: _h, voice_release_margin_db: _r, ...oldSettings } = old.settings;
