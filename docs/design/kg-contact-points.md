@@ -284,8 +284,21 @@ Nachgezogen aus `/review` (2026-11-26):
 | R6 | Bearbeiten/Löschen für jeden sichtbar, Löschen ohne Rückfrage | `editable` in der Liste, Bedienelemente nur für Eigentümer/Admin, Löschen mit Bestätigung, 403 als `not_owner` übersetzt |
 | R7 | Modell ohne `server_default`, `user_id` mit CASCADE | an die Migration angeglichen; `user_id` ohne Löschregel wie `kg_entities.user_id` |
 
-Offen: das Werkzeug steht nur in der Rolle `general`. `knowledge` hat keine Agent-Schleife; ob der Router
-Fragen nach Telefonnummern zuverlässig zu `general` schickt, ist nicht gemessen (`bin/measure-router.py`).
+| R8 | Telefonfragen erreichten das Werkzeug nicht: der Router schickte sie meist zu `conversation` | bei eingeschaltetem Flag ein Satz an der Rolle mit dem Werkzeug (`CONTACT_LOOKUP_ROUTE`, heute `general`); Flag aus = Router-Prompt unverändert |
+
+Gemessen 2026-11-26 (`bin/measure-router.py --cases bin/router-cases-contact.json`, `qwen3:8b`, 20 Fälle × 3,
+nur die Klassifikationsschicht; der semantische Schnellpfad davor ist nicht gemessen):
+
+| | Flag aus | Flag an |
+|---|---|---|
+| Telefonfragen → `general` | 9/30 (21× `conversation`) | 30/30 |
+| alle Fälle (je Variante) | 39/60 | 57/60 |
+
+Verschoben hat sich eine Kontrolle: „Wie hoch war die letzte Stromrechnung laut Dokument?" geht bei eingeschaltetem
+Flag zu `general` statt `knowledge`. Das ist vertretbar, weil `general` auch `internal.knowledge_search` hat.
+„Was steht im Mietvertrag …" ging umgekehrt von `general` zu `knowledge`. Warum `knowledge` nicht die Zielrolle ist:
+Die Rolle hat keine Agent-Schleife, kann also kein Werkzeug rufen, und §9 hält die Nummern aus dem allgemeinen
+RAG-Kontext heraus.
 
 Für die Stufen 2–4 gilt zusätzlich (noch nicht gebaut): Zuordnung über eine **Zählabfrage** statt
 `resolve_entity` (A4, das `.first()` über Tiers und die `mention_count`-Erhöhung), eine Adressbuch-Karte mit einer

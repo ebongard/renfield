@@ -282,8 +282,11 @@ Source: `services/contact_point_tool.py` (#1240, `CONTACT_POINTS_ENABLED`, dark;
   filter: a value is never more visible than its entity or its source. A `user_id` in the arguments is ignored.
 - Permission gate like the REST read: with auth on, an identified user without `kg.view` is refused
   (`user_permissions` injected by `action_executor`); an unidentified turn (`None`) reaches public values only.
-- Role: only `general` (`internal_tools: null`) carries it. `knowledge` has no agent loop (RAG path), so a phone
-  question routed there does not reach the tool — the router wording for it is still open (§13 of the design).
+- Role: `general` (`internal_tools: null`) carries it; `knowledge` has no agent loop (RAG path) and cannot call it.
+  While the flag is on, `AgentRouter._build_role_descriptions` appends one sentence (`CONTACT_LOOKUP_ROUTE`) to the
+  role that can run the tool (`contact_lookup_role_name`), so a phone question is routed there; flag off = the router
+  prompt byte for byte as before. Measured 2026-11-26 (`bin/measure-router.py --cases bin/router-cases-contact.json`,
+  `qwen3:8b`): phone questions to `general` 3/10 → 10/10, controls 39/60 → 57/60.
 - Registered only while the flag is on (a dark instance's agent never offers it); the handler re-checks the flag (H4).
 - Contact points never enter the general RAG context, only an answer that asks for them.
 
