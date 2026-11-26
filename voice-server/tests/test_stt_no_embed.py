@@ -77,6 +77,50 @@ def test_embed_false_never_runs_the_speaker_model(client):
     assert speaker.calls == 0
 
 
+@pytest.fixture
+def no_decode(monkeypatch):
+    """Skip the media decode so the privacy tests run everywhere (no ffmpeg/libopus)."""
+    pcm = np.zeros(16000, dtype=np.float32)
+
+    async def fake_upload(audio):
+        return pcm
+
+    monkeypatch.setattr(rest_voice, "decode_upload_to_pcm", fake_upload)
+    monkeypatch.setattr(rest_voice, "decode_opus_packets_to_pcm", lambda blob: pcm)
+
+
+def _post(http, path, data=None):
+    return http.post(path, files={"audio": ("a.bin", io.BytesIO(b"x" * 64), "application/octet-stream")}, data=data)
+
+
+@pytest.mark.parametrize("path", ["/api/voice/stt", "/api/voice/stt-opus"])
+@pytest.mark.parametrize("value", ["false", "False", "0", "no", "off", " false "])
+def test_every_false_spelling_skips_the_model(client, no_decode, path, value):
+    http, speaker = client
+    r = _post(http, path, {"embed": value})
+    assert r.status_code == 200, r.text
+    assert (r.json()["embedded"], r.json()["speaker_embedding"], speaker.calls) == (False, None, 0)
+
+
+@pytest.mark.parametrize("path", ["/api/voice/stt", "/api/voice/stt-opus"])
+@pytest.mark.parametrize("value", ["", "maybe", "nein", "2"])
+def test_an_unclear_value_is_refused_not_defaulted(client, no_decode, path, value):
+    # FastAPI would read an empty bool Form field as "missing" -> default True:
+    # a voiceprint the caller explicitly did not want. Refuse instead.
+    http, speaker = client
+    r = _post(http, path, {"embed": value})
+    assert r.status_code == 422, r.text
+    assert speaker.calls == 0
+
+
+@pytest.mark.parametrize("path", ["/api/voice/stt", "/api/voice/stt-opus"])
+def test_absent_field_and_true_still_embed(client, no_decode, path):
+    http, speaker = client
+    assert _post(http, path).json()["embedded"] is True
+    assert _post(http, path, {"embed": "true"}).json()["embedded"] is True
+    assert speaker.calls == 2
+
+
 @needs_ffmpeg
 def test_default_still_embeds(client):
     http, speaker = client

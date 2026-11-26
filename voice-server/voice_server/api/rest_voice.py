@@ -74,6 +74,31 @@ async def _require_token(
         raise HTTPException(status_code=401, detail=str(e)) from e
 
 
+_EMBED_TRUE = frozenset({"true", "1", "yes", "on"})
+_EMBED_FALSE = frozenset({"false", "0", "no", "off"})
+
+
+async def _embed_requested(request: Request) -> bool:
+    """The ``embed`` form field, parsed STRICTLY (renfield #1669).
+
+    Not a ``bool = Form(True)``: FastAPI treats an empty form value as missing and
+    would fall back to the default -- ``embed=`` would then compute a voiceprint of
+    a caller who asked for none. Absent = True (old clients unchanged); an explicit
+    true/false spelling decides; anything else, empty included, is a 422.
+    The form is the one FastAPI already parsed (Starlette caches it on the request).
+    """
+    form = await request.form()
+    if "embed" not in form:
+        return True
+    raw = form.get("embed")
+    value = raw.strip().lower() if isinstance(raw, str) else None
+    if value in _EMBED_TRUE:
+        return True
+    if value in _EMBED_FALSE:
+        return False
+    raise HTTPException(status_code=422, detail="embed must be true or false")
+
+
 class STTResponse(BaseModel):
     text: str
     language: str
@@ -91,7 +116,6 @@ async def stt_endpoint(
     request: Request,
     audio: UploadFile = File(...),
     language: str | None = Form(default=None),
-    embed: bool = Form(default=True),
     _user: dict = Depends(_require_token),
 ) -> STTResponse:
     """Transcribe a single audio file. One-shot (not streaming)."""
@@ -109,7 +133,7 @@ async def stt_endpoint(
     if pcm.size == 0:
         raise HTTPException(status_code=400, detail="empty PCM after decode")
 
-    return await _transcribe_and_embed(request, pcm, language, embed=embed)
+    return await _transcribe_and_embed(request, pcm, language, embed=await _embed_requested(request))
 
 
 @router.post("/api/voice/stt-opus", response_model=STTResponse)
@@ -117,7 +141,6 @@ async def stt_opus_endpoint(
     request: Request,
     audio: UploadFile = File(...),
     language: str | None = Form(default=None),
-    embed: bool = Form(default=True),
     _user: dict = Depends(_require_token),
 ) -> STTResponse:
     """Transcribe a satellite's raw Opus packets (C1 transport).
@@ -145,7 +168,7 @@ async def stt_opus_endpoint(
     if pcm.size == 0:
         raise HTTPException(status_code=400, detail="empty PCM after opus decode")
 
-    return await _transcribe_and_embed(request, pcm, language, embed=embed)
+    return await _transcribe_and_embed(request, pcm, language, embed=await _embed_requested(request))
 
 
 async def _transcribe_and_embed(

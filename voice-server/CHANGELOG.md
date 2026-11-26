@@ -13,8 +13,12 @@ version without a section here. Pushed digests live in `RELEASES.md`.
   computed and returned; also false when the embed failed). A client that must
   not create a voiceprint (a phone caller's voice on the answering machine)
   checks `embedded` and refuses the result otherwise, so an older server that
-  ignores the form field is caught. Default unchanged (`embed=true`), so
-  satellites and voice turns behave as before. (renfield #1669)
+  ignores the form field is caught. Default unchanged (field absent = embed),
+  so satellites and voice turns behave as before. Parsed STRICTLY: true/1/yes/on
+  or false/0/no/off; anything else, an EMPTY value included, is a 422 — a plain
+  `bool = Form(True)` would read `embed=` as missing and embed after all.
+  Only the REST endpoints: `/ws/voice` and the meeting path still embed as
+  before (they serve household voices). (renfield #1669)
 
 ## [0.3.12] — 2026-11-24
 
