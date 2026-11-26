@@ -1600,10 +1600,16 @@ class Satellite:
                         # room goes SILENTLY BLE-presence-blind (no error).
                         devices = (self.ble_scanner.get_readings() if started
                                    else await self.ble_scanner.scan(self._ble_known_macs))
+                        mode = "continuous" if started else "periodic"
                     else:
                         devices = await self.ble_scanner.scan(self._ble_known_macs)
+                        mode = "periodic"
+                    # Every cycle, also without a device: the status tells the
+                    # backend whether a silence means "not here" or "not heard".
+                    await self.ws_client.send_ble_presence(
+                        devices, scanner=self.ble_scanner.status(mode)
+                    )
                     if devices:
-                        await self.ws_client.send_ble_presence(devices)
                         print(f"BLE scan: {len(devices)} known devices detected")
                 except Exception as e:
                     print(f"BLE scan error: {e}")

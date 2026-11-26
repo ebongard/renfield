@@ -1296,3 +1296,102 @@ class TestFailureIsolation:
         assert verdict.kind is VerdictKind.PLACED
         assert [e.receiver_id for e in verdict.components.receivers] == ["sat-kitchen"]
         assert payload["kind"] == "placed"
+
+
+# ---------------------------------------------------------------------------
+# What the satellite reports (#1551 stage 2 C)
+# ---------------------------------------------------------------------------
+
+
+def scanner(cutoff: float = -80, age: float | None = 0.5, running: bool = True,
+            mode: str = "continuous") -> dict:
+    return {"mode": mode, "running": running, "cutoff_dbm": cutoff, "last_advert_age_s": age}
+
+
+class TestSatelliteReport:
+    async def _send(self, svc, clock, satellite, devices, status=None, step=3.0):
+        clock.now += step
+        room_id = {"sat-kitchen": KITCHEN, "sat-bath": BATH}[satellite]
+        await svc.process_ble_report(satellite_id=satellite, room_id=room_id,
+                                     devices=devices, room_name=None, scanner=status)
+
+    async def test_a_reading_is_dated_by_its_advertisement(self, monkeypatch, clock):
+        svc, _ = build_service(monkeypatch, clock, enabled=True)
+        await self._send(svc, clock, "sat-kitchen", [{"mac": MAC, "rssi": -50, "age_s": 7.0}])
+        assert svc._sightings[MAC][-1].timestamp == pytest.approx(clock.now - 7.0, abs=1e-6)
+        # No usable age (an older satellite, or junk): the report time.
+        for age in (None, -3, "7", float("nan"), True):
+            await self._send(svc, clock, "sat-kitchen", [{"mac": MAC, "rssi": -50, "age_s": age}])
+            assert svc._sightings[MAC][-1].timestamp == clock.now, age
+
+    async def test_a_reading_older_than_the_window_is_dropped(self, monkeypatch, clock):
+        svc, _ = build_service(monkeypatch, clock, enabled=True)
+        await self._send(svc, clock, "sat-kitchen",
+                         [{"mac": MAC, "rssi": -50, "age_s": float(svc._stale_timeout)}])
+        assert MAC not in svc._sightings
+
+    async def test_a_status_without_devices_is_kept(self, monkeypatch, clock):
+        svc, _ = build_service(monkeypatch, clock, enabled=True)
+        await self._send(svc, clock, "sat-bath", [], scanner(cutoff=-100, age=4.0))
+        status = svc._scanner_status["sat-bath"]
+        assert status.cutoff_dbm == -100 and status.running
+        assert status.last_advert_at == pytest.approx(clock.now - 4.0, abs=1e-6)
+
+    def test_a_malformed_status_never_raises(self):
+        parse = presence_service_module.parse_scanner_status
+        assert parse(None, T0) is None and parse("x", T0) is None
+        assert parse({"mode": "other"}, T0) is None
+        odd = parse({"mode": "periodic", "running": "yes", "cutoff_dbm": -300,
+                     "last_advert_age_s": -1}, T0)
+        assert odd.running is False and odd.cutoff_dbm is None and odd.last_advert_age_s is None
+        assert odd.last_advert_at is None
+        stopped = parse(scanner(running=False), T0)
+        assert stopped.last_advert_at is None  # a stopped scanner proves nothing
+
+    async def test_the_decision_takes_the_reported_cutoff_and_the_scanner_window(
+        self, monkeypatch, clock
+    ):
+        svc, _ = build_service(monkeypatch, clock, enabled=True)
+        await self._send(svc, clock, "sat-bath", [], scanner(cutoff=-100, age=2.0))
+        receivers = svc._placement_shadow._receivers(svc)
+        bath, kitchen = receivers["sat-bath"], receivers["sat-kitchen"]
+        assert bath.params.cutoff_dbm == -100.0 and bath.params.in_room_dbm == -60.0
+        assert bath.alive_at == pytest.approx(clock.now - 2.0, abs=1e-6)
+        assert bath.alive_window_s == placement.SCANNER_ALIVE_S
+        # The kitchen has not reported a status (an older satellite): heartbeat.
+        assert kitchen.alive_at == clock.now and kitchen.alive_window_s is None
+        assert kitchen.params.cutoff_dbm == -80.0
+
+    async def test_a_deaf_scanner_with_a_live_heartbeat_is_offline(self, monkeypatch, clock):
+        svc, _ = build_service(monkeypatch, clock, enabled=True)
+        await self._send(svc, clock, "sat-bath", [], scanner(age=placement.SCANNER_ALIVE_S + 5))
+        for _ in range(4):
+            await self._send(svc, clock, "sat-kitchen", [{"mac": MAC, "rssi": -50}])
+        shadow = svc._placement_shadow
+        verdict = shadow._decide(svc, MAC, shadow._receivers(svc), clock.now)
+        assert "sat-bath" in verdict.components.offline
+
+    async def test_a_cutoff_at_the_bound_is_uncalibrated_and_said_once(
+        self, monkeypatch, clock, log_lines
+    ):
+        svc, _ = build_service(monkeypatch, clock, enabled=True)
+        for _ in range(3):
+            await self._send(svc, clock, "sat-bath", [], scanner(cutoff=-60))
+        assert svc._placement_shadow._receivers(svc)["sat-bath"].params is None
+        warnings = [line for line in log_lines if "reports cutoff" in line]
+        assert len(warnings) == 1 and warnings[0].startswith("WARNING|")
+
+    async def test_classic_readings_count_for_the_legacy_decision_not_for_v2(
+        self, monkeypatch, clock
+    ):
+        svc, _ = build_service(monkeypatch, clock, enabled=True)
+        for _ in range(6):
+            await self._send(svc, clock, "sat-kitchen",
+                             [{"mac": MAC, "rssi": -50, "transport": "classic"}])
+        assert svc.get_user_presence(1).room_id == KITCHEN   # legacy, unchanged
+        shadow = svc._placement_shadow
+        verdict = shadow._decide(svc, MAC, shadow._receivers(svc), clock.now)
+        assert verdict.kind is not VerdictKind.PLACED
+        assert verdict.components.receivers and all(
+            e.samples == 0 for e in verdict.components.receivers
+        )

@@ -98,6 +98,9 @@ class ClassicBTScanner:
             results.append({
                 "mac": mac_u,
                 "rssi": await self._resolve_rssi(mac_u, now),
+                # Not dBm: a golden-range offset mapped onto -50 (or that -50
+                # itself). Presence, yes; a level to compare rooms by, no.
+                "transport": "classic",
             })
 
         # Drop cached RSSI for MACs no longer in the whitelist (bounded growth).

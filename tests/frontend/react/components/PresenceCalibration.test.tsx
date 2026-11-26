@@ -197,6 +197,50 @@ describe('PresenceCalibration', () => {
     );
   });
 
+  it('shows the cutoff the satellite reports and whether its scanner hears', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/presence/calibration`, () => HttpResponse.json(calibration({
+        receivers: [
+          { satellite_id: 'sat-kueche', offset_db: 0, in_room_dbm: -47.4, cutoff_dbm: -80 },
+          { satellite_id: 'sat-neu', offset_db: 0, in_room_dbm: -60, cutoff_dbm: -80 },
+        ],
+        scanners: [{
+          satellite_id: 'sat-kueche', mode: 'continuous', running: true,
+          cutoff_dbm: -100, last_advert_age_s: 41.6, hearing: false,
+        }],
+      }))),
+    );
+    renderWithProviders(<PresenceCalibration />);
+    const kueche = await screen.findByTestId('calibrated-sat-kueche');
+    expect(kueche).toHaveTextContent('-100');          // the satellite's value applies
+    expect(kueche).toHaveTextContent('gespeichert: -80');
+    expect(screen.getByTestId('scanner-sat-kueche')).toHaveTextContent('seit 42 s nichts gehört');
+    // An older satellite reports nothing: the stored cutoff, said so.
+    expect(screen.getByTestId('calibrated-sat-neu')).not.toHaveTextContent('gespeichert');
+    expect(screen.getByTestId('scanner-sat-neu')).toHaveTextContent('meldet nichts (vor 1.4.23)');
+  });
+
+  it('says when the proposed cutoff comes from the satellite', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    server.use(
+      http.post(`${BASE_URL}/api/presence/calibration/proposal`, () =>
+        HttpResponse.json({
+          satellite_id: 'sat-neu', samples: 11, in_room_dbm: -62, min_dbm: -66,
+          median_dbm: -60, max_dbm: -55, cutoff_dbm: -100, offset_db: 0, current: null,
+          cutoff_source: 'satellite',
+        })),
+    );
+    renderWithProviders(<PresenceCalibration />);
+    await chooseAndStart(user, 'sat-neu');
+    await act(async () => { vi.advanceTimersByTime(MEASUREMENT_SECONDS * 1000); });
+    await user.click(await screen.findByRole('button', { name: 'Auswerten' }));
+    const proposal = await screen.findByTestId('proposal');
+    expect(within(proposal).getByLabelText('Schnittgrenze (dBm)')).toHaveValue('-100');
+    expect(proposal).toHaveTextContent('Vom Satelliten gemeldet; dieser Wert gilt.');
+    expect(within(proposal).getByRole('button', { name: 'Speichern' })).toBeEnabled();
+  });
+
   it('removes a calibration only after the second click', async () => {
     const user = userEvent.setup();
     let deleted = 0;

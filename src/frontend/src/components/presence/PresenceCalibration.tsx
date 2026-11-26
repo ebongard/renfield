@@ -29,6 +29,7 @@ import {
   usePresenceCalibrationQuery,
   type Calibration,
   type CalibrationProposal,
+  type CalibrationScanner,
   type CalibrationZone,
 } from '../../api/resources/presence';
 
@@ -155,6 +156,9 @@ function ProposalForm({ proposal, formatDbm, onSaved, onCancel }: ProposalFormPr
       </div>
       {proposal.cutoff_dbm === null && (
         <p id="cutoff-hint" className={`mt-2 text-sm ${MUTED}`}>{t('presence.calibration.cutoffHint')}</p>
+      )}
+      {proposal.cutoff_source === 'satellite' && (
+        <p className={`mt-2 text-sm ${MUTED}`}>{t('presence.calibration.cutoffFromSatellite')}</p>
       )}
       {error && (
         <p role="alert" className="mt-3 text-sm text-primary-700 dark:text-primary-400">{error}</p>
@@ -342,6 +346,18 @@ interface ReceiversProps {
 function ReceiverTable({ calibration, roomOf, formatDbm, onChanged }: ReceiversProps) {
   const { t } = useTranslation();
   const errorText = useErrorText();
+  const scanners = useMemo(
+    () => new Map((calibration.scanners ?? []).map((s) => [s.satellite_id, s])),
+    [calibration.scanners],
+  );
+  const scannerText = (scanner: CalibrationScanner | undefined): string => {
+    if (!scanner) return t('presence.calibration.scannerUnknown');
+    if (!scanner.running) return t('presence.calibration.scannerStopped');
+    if (scanner.hearing) return t('presence.calibration.scannerHearing');
+    return t('presence.calibration.scannerSilent', {
+      seconds: scanner.last_advert_age_s === null ? '–' : Math.round(scanner.last_advert_age_s),
+    });
+  };
   const [confirming, setConfirming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -373,18 +389,33 @@ function ReceiverTable({ calibration, roomOf, formatDbm, onChanged }: ReceiversP
                 <th scope="col" className={`${TH} text-right`}>{t('presence.calibration.fieldBound')}</th>
                 <th scope="col" className={`${TH} text-right`}>{t('presence.calibration.fieldCutoff')}</th>
                 <th scope="col" className={`${TH} text-right`}>{t('presence.calibration.fieldOffset')}</th>
+                <th scope="col" className={TH}>{t('presence.calibration.colScanner')}</th>
                 <th scope="col" className={TH}><span className="sr-only">{t('presence.calibration.actions')}</span></th>
               </tr>
             </thead>
             <tbody>
-              {calibration.receivers.map((r) => (
+              {calibration.receivers.map((r) => {
+                const scanner = scanners.get(r.satellite_id);
+                const reported = scanner?.cutoff_dbm ?? null;
+                return (
                 <tr key={r.satellite_id} data-testid={`calibrated-${r.satellite_id}`}
                     className="border-b border-gray-100 dark:border-gray-800 last:border-0">
                   <td className="py-2 px-3 font-mono text-xs text-gray-900 dark:text-white">{r.satellite_id}</td>
                   <td className={`py-2 px-3 ${MUTED}`}>{roomOf(r.satellite_id) ?? t('presence.readings.unknownRoom')}</td>
                   <td className={`${TD} text-right`}>{formatDbm(r.in_room_dbm)}</td>
-                  <td className={`${TD} text-right`}>{formatDbm(r.cutoff_dbm)}</td>
+                  <td className={`${TD} text-right`}>
+                    {/* The satellite's own cutoff is the one in effect. */}
+                    {formatDbm(reported ?? r.cutoff_dbm)}
+                    {reported !== null && reported !== r.cutoff_dbm && (
+                      <span className={`block text-xs ${MUTED}`}>
+                        {t('presence.calibration.cutoffStored', { value: formatDbm(r.cutoff_dbm) })}
+                      </span>
+                    )}
+                  </td>
                   <td className={`${TD} text-right`}>{formatDbm(r.offset_db)}</td>
+                  <td className={`py-2 px-3 ${MUTED}`} data-testid={`scanner-${r.satellite_id}`}>
+                    {scannerText(scanner)}
+                  </td>
                   <td className="py-2 px-3 text-right whitespace-nowrap">
                     {confirming === r.satellite_id ? (
                       <span className="inline-flex gap-2">
@@ -405,7 +436,8 @@ function ReceiverTable({ calibration, roomOf, formatDbm, onChanged }: ReceiversP
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

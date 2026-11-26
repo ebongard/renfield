@@ -283,6 +283,22 @@ class TestDeadline:
         # The reading turns stale after the freshness window (20 s).
         assert delay == pytest.approx(20.0, abs=0.5)
 
+    async def test_the_timer_follows_a_scanners_sign_of_life(self, monkeypatch, clock):
+        """A satellite >= 1.4.23 is alive by its scanner's last advert, with
+        the scanner window: the timer wakes when that runs out, not 60 s after
+        the heartbeat (#1551 stage 2 C)."""
+        svc, _fired, _ = build_service(monkeypatch, clock)
+        clock.now += 2.0
+        room_id, room_name = SATS["sat-kitchen"]
+        await svc.process_ble_report(
+            satellite_id="sat-kitchen", room_id=room_id, room_name=room_name,
+            devices=[{"mac": PHONE, "rssi": -45, "age_s": 0.0}],
+            scanner={"mode": "continuous", "running": True, "cutoff_dbm": -80,
+                     "last_advert_age_s": 15.0},
+        )
+        delay = svc._placement_state._timer.when() - asyncio.get_running_loop().time()
+        assert delay == pytest.approx(15.0, abs=0.5)  # 30 s window, last advert 15 s ago
+
     async def test_absent_after_the_deadline_without_any_report(self, monkeypatch, clock):
         svc, fired, _ = build_service(monkeypatch, clock)
         for _ in range(4):

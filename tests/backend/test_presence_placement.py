@@ -22,6 +22,7 @@ import pytest
 from ha_glue.services.presence_placement import (
     RSSI_MAX_DBM,
     RSSI_MIN_DBM,
+    SCANNER_ALIVE_S,
     PlacementComponents,
     PlacementConfig,
     PlacementConfigError,
@@ -35,6 +36,7 @@ from ha_glue.services.presence_placement import (
     VerdictKind,
     _ZoneCandidate,
     decide,
+    effective_params,
     parse_receiver_params,
     parse_zones,
     smooth,
@@ -888,3 +890,49 @@ class TestParsers:
     def test_unusable_zones_are_rejected(self, raw):
         with pytest.raises(PlacementConfigError):
             parse_zones(raw)
+
+
+# ---------------------------------------------------------------------------
+# What the satellite reports (stage 2 part C)
+# ---------------------------------------------------------------------------
+
+
+class TestScannerReport:
+    def _bath(self, heard_ago: float) -> Receiver:
+        return Receiver(room=BATH, params=ReceiverParams(0.0, -60.0, -80.0),
+                        alive_at=NOW - heard_ago, alive_window_s=SCANNER_ALIVE_S)
+
+    def test_a_scanner_that_heard_nothing_for_the_window_says_nothing(self):
+        """Its process may be alive (heartbeat), its radio is not hearing:
+        offline, not 'at or below the cutoff'."""
+        verdict = run({"kitchen": steady(-72.0)},
+                      {"kitchen": calibrated(KITCHEN, in_room=-75.0),
+                       "bath": self._bath(SCANNER_ALIVE_S + 1)})
+        assert verdict.components.offline == ("bath",)
+        assert verdict.components.censored == ()
+
+    def test_a_scanner_that_hears_makes_its_silence_count(self):
+        verdict = run({"kitchen": steady(-72.0)},
+                      {"kitchen": calibrated(KITCHEN, in_room=-75.0),
+                       "bath": self._bath(SCANNER_ALIVE_S - 1)})
+        assert verdict.components.censored == ("bath",)
+        assert evidence_of(verdict, "bath").comparable_dbm == -80.0
+
+    def test_the_window_is_the_scanners_not_the_heartbeats(self):
+        """At 45 s the heartbeat window (60 s) would still count it alive."""
+        assert CONFIG.receiver_alive_s > 45 > SCANNER_ALIVE_S
+        verdict = run({"kitchen": steady(-72.0)},
+                      {"kitchen": calibrated(KITCHEN, in_room=-75.0), "bath": self._bath(45)})
+        assert verdict.components.offline == ("bath",)
+
+    def test_the_reported_cutoff_wins(self):
+        stored = ReceiverParams(0.0, -60.0, -80.0)
+        assert effective_params(stored, -100.0) == ReceiverParams(0.0, -60.0, -100.0)
+        assert effective_params(stored, -80.0) is stored
+        assert effective_params(stored, None) is stored     # an older satellite
+        assert effective_params(None, -100.0) is None       # still uncalibrated
+
+    def test_a_reported_cutoff_at_or_above_the_bound_leaves_it_uncalibrated(self):
+        stored = ReceiverParams(0.0, -60.0, -80.0)
+        for cutoff in (-60.0, -50.0, float("nan"), float("inf")):
+            assert effective_params(stored, cutoff) is None, cutoff

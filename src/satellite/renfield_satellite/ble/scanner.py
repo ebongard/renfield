@@ -12,6 +12,16 @@ Two modes:
     smoothed (EWMA) and reported with a freshness window. Lower presence latency
     and steadier RSSI for room arbitration. Requires no extra adapter features,
     but benefits from BlueZ Experimental (AdvertisementMonitor) being enabled.
+
+What the backend's placement needs beyond the readings (#1551 stage 2 C):
+  - ``status()``: the mode, the cutoff (``rssi_threshold`` — below it nothing is
+    reported, so a silent receiver means "at or below the cutoff"), whether the
+    scanner runs, and the age of the last advertisement of ANY device. That age
+    is the BLE sign of life: a heartbeat proves the process, not the radio.
+  - ``age_s`` per reading: how old the newest advertisement behind it is. The
+    backend dates the reading by it instead of by the moment the report arrives.
+  - In continuous mode a device is reported only when a NEW advertisement came
+    in since the last report: repeating an old value made it look fresh.
 """
 
 import time
@@ -51,10 +61,15 @@ class BLEScanner:
         self._known_macs: set[str] = set()
         # identity_name -> IRK (16 bytes, MSO-first) for resolving rotating RPAs
         self._irks: dict[str, bytes] = {}
-        # tracking key -> [ewma_rssi, last_seen_monotonic, last_mac, identity]
+        # tracking key -> [ewma_rssi, last_seen_monotonic, last_mac, identity,
+        #                  last_seen_already_reported]
         # key is the MAC for whitelisted devices, or "id:<name>" for an
         # IRK-resolved identity (stable across the phone's RPA rotation).
         self._readings: dict[str, list] = {}
+        # Monotonic time of the last advertisement of ANY device (sign of life),
+        # and whether the last periodic burst ran without an error.
+        self._last_advert_at: float | None = None
+        self._periodic_ok = False
 
         if not BLEAK_AVAILABLE:
             print("Warning: bleak not installed. BLE scanning disabled.")
@@ -85,8 +100,12 @@ class BLEScanner:
                 return_adv=True,
             )
         except Exception as e:
+            self._periodic_ok = False
             print(f"BLE scan error: {e}")
             return []
+        self._periodic_ok = True
+        if devices:
+            self._last_advert_at = time.monotonic()
 
         results = []
         # devices is dict {BLEDevice: AdvertisementData} when return_adv=True
@@ -97,7 +116,8 @@ class BLEScanner:
                 continue
             rssi = adv_data.rssi
             if rssi is not None and rssi >= self.rssi_threshold:
-                entry = {"mac": mac, "rssi": rssi}
+                # Heard within this burst; the burst's length is the bound.
+                entry = {"mac": mac, "rssi": rssi, "age_s": 0.0}
                 if identity:
                     entry["identity"] = identity
                 results.append(entry)
@@ -145,7 +165,10 @@ class BLEScanner:
 
     def _on_detection(self, device, adv_data) -> None:
         """bleak detection callback: fold each advertisement into a per-device
-        (or per-resolved-identity) EWMA RSSI. Cheap; runs on the event loop."""
+        (or per-resolved-identity) EWMA RSSI. Cheap; runs on the event loop.
+        Every advertisement, of any device, is the radio's sign of life."""
+        now = time.monotonic()
+        self._last_advert_at = now
         rssi = getattr(adv_data, "rssi", None)
         if rssi is None:
             return
@@ -153,10 +176,9 @@ class BLEScanner:
         key, identity = self._classify(mac)
         if key is None:
             return
-        now = time.monotonic()
         entry = self._readings.get(key)
         if entry is None:
-            self._readings[key] = [float(rssi), now, mac, identity]
+            self._readings[key] = [float(rssi), now, mac, identity, None]
         else:
             a = self.smoothing_alpha
             entry[0] = a * float(rssi) + (1.0 - a) * entry[0]
@@ -191,19 +213,39 @@ class BLEScanner:
         self._readings.clear()
 
     def get_readings(self) -> list[dict]:
-        """Snapshot of fresh, above-threshold devices with smoothed RSSI.
-        Prunes stale entries (unseen > freshness_seconds)."""
+        """Above-threshold devices with a NEW advertisement since the last call,
+        with the smoothed RSSI and the age of that advertisement. Prunes stale
+        entries (unseen > freshness_seconds)."""
         now = time.monotonic()
         results = []
         for key in list(self._readings):
-            rssi, last_seen, mac, identity = self._readings[key]
+            entry = self._readings[key]
+            rssi, last_seen, mac, identity, reported = entry
             if now - last_seen > self.freshness_seconds:
                 self._readings.pop(key, None)
                 continue
+            if reported is not None and last_seen <= reported:
+                continue  # nothing new: the backend already has this value
+            entry[4] = last_seen
             rssi_i = int(round(rssi))
             if rssi_i >= self.rssi_threshold:
-                entry = {"mac": mac, "rssi": rssi_i}
+                reading = {"mac": mac, "rssi": rssi_i, "age_s": round(now - last_seen, 2)}
                 if identity:
-                    entry["identity"] = identity
-                results.append(entry)
+                    reading["identity"] = identity
+                results.append(reading)
         return results
+
+    def status(self, mode: str) -> dict:
+        """What the backend needs to read a silence: the mode actually running
+        (``continuous`` or ``periodic``), the cutoff, whether the scanner runs,
+        and the age of the last advertisement of any device (None = none yet)."""
+        running = self._scanner is not None if mode == "continuous" else self._periodic_ok
+        age = None
+        if self._last_advert_at is not None:
+            age = round(max(0.0, time.monotonic() - self._last_advert_at), 2)
+        return {
+            "mode": mode,
+            "running": bool(running),
+            "cutoff_dbm": self.rssi_threshold,
+            "last_advert_age_s": age,
+        }

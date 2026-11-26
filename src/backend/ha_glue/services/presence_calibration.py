@@ -96,9 +96,12 @@ class Proposal:
     min_dbm: float
     median_dbm: float
     max_dbm: float
-    # The receiver's current cutoff; None for an uncalibrated receiver.
+    # The cutoff the satellite reports, else the receiver's stored one; None
+    # when neither is known (an older satellite, uncalibrated).
     cutoff_dbm: float | None
     offset_db: float
+    # "satellite" | "stored" | None — where ``cutoff_dbm`` comes from.
+    cutoff_source: str | None = None
 
 
 def _settings_set() -> bool:
@@ -353,7 +356,12 @@ def propose(
 
     by_time: dict[float, float] = {}
     for s in presence._sightings.get(key, ()):
-        if s.satellite_id == satellite_id and since <= s.timestamp <= now and _finite_level(s.rssi):
+        if (
+            s.satellite_id == satellite_id
+            and since <= s.timestamp <= now
+            and _finite_level(s.rssi)
+            and getattr(s, "comparable", True)  # Classic BT: no level (DeviceSighting)
+        ):
             by_time[s.timestamp] = float(s.rssi)  # one reading per instant
     values = list(by_time.values())
     if len(values) < MIN_SAMPLES:
@@ -365,10 +373,17 @@ def propose(
 
     in_room = round(percentile(values, IN_ROOM_PERCENTILE), 1)
     # The cutoff is a property of the satellite's firmware, not of this
-    # measurement: the receiver's current value, or unknown (the admin enters
-    # it; stage 2 part C has the satellite report it). The weakest reading in
-    # the window is NOT a cutoff — with every device close it sits far above it.
-    cutoff = current.cutoff_dbm if current is not None else None
+    # measurement: what the satellite reports (it filters there, so it wins),
+    # else the receiver's stored value, else unknown (the admin enters it).
+    # The weakest reading in the window is NOT a cutoff — with every device
+    # close it sits far above it.
+    status = getattr(presence, "_scanner_status", {}).get(satellite_id)
+    if status is not None and status.cutoff_dbm is not None:
+        cutoff, cutoff_source = status.cutoff_dbm, "satellite"
+    elif current is not None:
+        cutoff, cutoff_source = current.cutoff_dbm, "stored"
+    else:
+        cutoff, cutoff_source = None, None
     if cutoff is not None and not in_room > cutoff:
         raise CalibrationError(
             "bound_not_above_cutoff",
@@ -384,4 +399,5 @@ def propose(
         max_dbm=max(values),
         cutoff_dbm=cutoff,
         offset_db=current.offset_db if current is not None else 0.0,
+        cutoff_source=cutoff_source,
     )

@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from ha_glue.services.presence_placement import (
+    SCANNER_ALIVE_S,
     Claim,
     PersonKind,
     PersonVerdict,
@@ -53,6 +54,7 @@ from ha_glue.services.presence_placement import (
     VerdictKind,
     combine_person,
     decide,
+    effective_params,
     parse_receiver_params,
     parse_zones,
 )
@@ -175,6 +177,9 @@ class PlacementShadow:
         # zone). "The source that changed zone last wins" reads this: a phone
         # lying in one room keeps its old time however often it is re-placed.
         self._zone_since: dict[str, tuple[frozenset, float]] = {}
+        # (satellite, reported cutoff) pairs already warned about: a reported
+        # cutoff at or above the stored bound — one WARNING per pair.
+        self._cutoff_conflicts_logged: set[tuple[str, float]] = set()
 
     # The decision this object's voice lines and metric speak for besides v2.
     # The state driver (stage 2) replaces the legacy decision, so it has none.
@@ -484,17 +489,51 @@ class PlacementShadow:
         except Exception as e:
             self._log_failure("satellite roster", e)
             roster = {}
+        statuses = getattr(presence, "_scanner_status", {})
         for satellite_id, (room_id, heartbeat_at) in roster.items():
+            status = statuses.get(satellite_id)
+            if status is None:
+                # An older satellite: the heartbeat is all there is.
+                receivers[satellite_id] = Receiver(
+                    room=room_id, params=self._params.get(satellite_id), alive_at=heartbeat_at
+                )
+                continue
             receivers[satellite_id] = Receiver(
-                room=room_id, params=self._params.get(satellite_id), alive_at=heartbeat_at
+                room=room_id,
+                params=self._params_with_reported_cutoff(satellite_id, status.cutoff_dbm),
+                alive_at=status.last_advert_at,
+                alive_window_s=SCANNER_ALIVE_S,
             )
         for sightings in presence._sightings.values():
             for s in sightings:
                 if s.satellite_id not in receivers:
+                    status = statuses.get(s.satellite_id)
                     receivers[s.satellite_id] = Receiver(
-                        room=s.room_id, params=self._params.get(s.satellite_id)
+                        room=s.room_id,
+                        params=self._params_with_reported_cutoff(
+                            s.satellite_id, status.cutoff_dbm if status else None
+                        ),
                     )
         return receivers
+
+    def _params_with_reported_cutoff(
+        self, satellite_id: str, reported_cutoff_dbm: float | None
+    ) -> ReceiverParams | None:
+        """The stored numbers with the cutoff the satellite reports
+        (``effective_params``). A reported cutoff at or above the stored bound
+        leaves the receiver uncalibrated, and says so once."""
+        stored = self._params.get(satellite_id)
+        params = effective_params(stored, reported_cutoff_dbm)
+        if stored is not None and params is None:
+            key = (satellite_id, float(reported_cutoff_dbm))
+            if key not in self._cutoff_conflicts_logged:
+                self._cutoff_conflicts_logged.add(key)
+                logger.warning(
+                    f"{self._LOG_PREFIX} {satellite_id} reports cutoff {reported_cutoff_dbm} dBm, "
+                    f"not below its in-room bound {stored.in_room_dbm} dBm: the receiver counts "
+                    "as uncalibrated until it is measured again."
+                )
+        return params
 
     def _decide(
         self,
@@ -505,6 +544,8 @@ class PlacementShadow:
     ) -> PlacementVerdict:
         readings: dict[str, list[Reading]] = {}
         for s in presence._sightings.get(key, ()):
+            if not getattr(s, "comparable", True):
+                continue  # Classic BT: presence, not a level (DeviceSighting)
             readings.setdefault(s.satellite_id, []).append(Reading(at=s.timestamp, rssi=s.rssi))
         return decide(readings, receivers, self._zones, self._verdicts.get(key), now, self._config)
 

@@ -86,10 +86,17 @@ def satellite_app(monkeypatch):
     monkeypatch.setattr(led, "get_led_dimming_service", lambda: dimming)
 
     reports: list[list] = []
+    scanners: list = []
+    forgotten: list[str] = []
 
     class _Presence:
-        async def process_ble_report(self, *, satellite_id, room_id, devices, room_name=None):
+        async def process_ble_report(self, *, satellite_id, room_id, devices, room_name=None,
+                                     scanner=None):
             reports.append(devices)
+            scanners.append(scanner)
+
+        def forget_scanner_status(self, satellite_id):
+            forgotten.append(satellite_id)
 
     monkeypatch.setattr(presence, "get_presence_service", lambda: _Presence())
 
@@ -108,6 +115,7 @@ def satellite_app(monkeypatch):
     app = FastAPI()
     app.include_router(sh.router)
     app.state.mgr, app.state.reports, app.state.events = mgr, reports, events
+    app.state.scanners, app.state.forgotten = scanners, forgotten
     return app
 
 
@@ -190,6 +198,25 @@ async def test_satellite_state_frames_during_a_long_turn_keep_the_socket(satelli
     assert app.state.reports == [
         _ble(i)["devices"] for i in range(STATE_FRAMES) if i % 10 != 0
     ]
+
+
+async def test_a_ble_report_hands_the_scanner_status_on(satellite_app):
+    """#1551 stage 2 C: the status of a satellite >= 1.4.23 reaches the presence
+    service, also in a report without devices; a (re)registration drops the old one."""
+    app = satellite_app
+    status = {"mode": "continuous", "running": True, "cutoff_dbm": -100, "last_advert_age_s": 1.5}
+    async with serve(app) as base, connect(f"{base}/ws/satellite", ping_interval=None) as ws:
+        await ws.send(_sat(REGISTER))
+        await _until(ws, lambda f: f.get("type") == "register_ack", 5)
+        await ws.send(_sat({"type": "ble_presence", "satellite_id": SAT_ID, "devices": [],
+                            "scanner": status}))
+        await ws.send(_sat(_ble(1)))  # an older satellite: no status
+        async with asyncio.timeout(5):
+            while len(app.state.scanners) < 2:
+                await asyncio.sleep(0.01)
+    assert app.state.forgotten == [SAT_ID]
+    assert app.state.scanners == [status, None]
+    assert app.state.reports[0] == []
 
 
 async def test_satellite_audio_flood_during_a_turn_closes_with_1013(satellite_app, monkeypatch):
