@@ -862,6 +862,8 @@ CALLER_LOOKUP_TIMEOUT_S=0.5     # je Empfänger; langsamer = nur die Nummer
 - An: je Empfänger eine Suche in den Kontaktpunkten, die DIESER Person sichtbar sind („Anruf von Beispiel Praxis an
   …“; im Text daneben die Nummer und „Name laut Kontaktdaten/laut Dokument, nicht geprüft“). Kein Treffer: Ort bzw.
   „Mobilfunk“, offline aus `phonenumbers`. Fax zählt nie. Nie vorgelesen, nie an ein LLM.
+- Eine Meldung MIT Namen geht als `privacy=confidential` raus (ein gemeinsames Raumdisplay zeigt sie nur, wenn der
+  Empfänger allein ist); ohne Namen bleibt es `personal`.
 - Jeder Fehler und jede Zeitüberschreitung fällt auf die reine Nummer zurück und löst keine Wiederholung aus.
 - Aus: der Text ist Byte für Byte wie vorher.
 

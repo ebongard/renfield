@@ -18,7 +18,7 @@ Design: ``docs/design/caller-lookup.md``. Dark behind ``CALLER_LOOKUP_ENABLED``.
 from __future__ import annotations
 
 import asyncio
-import re
+import unicodedata
 from dataclasses import dataclass
 
 from loguru import logger
@@ -29,7 +29,11 @@ from utils.log_safety import error_text_without_content
 SOURCE_RANK = {"manual": 0, "vcard": 1, "chat": 2, "document": 3}
 MAX_NAMES = 2
 MAX_NAME_LENGTH = 80
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
+# Unicode categories removed from an untrusted name: controls (C0/C1), format
+# characters (bidi overrides/isolates, zero-width), line/paragraph separators. A
+# U+202E in a document-extracted name would otherwise reorder the number and the
+# "nicht geprüft" caveat printed after it.
+_STRIP_CATEGORIES = {"Cc", "Cf", "Zl", "Zp"}
 
 
 @dataclass(frozen=True)
@@ -48,7 +52,10 @@ class CallerHint:
 
 def _clean(name: str) -> str:
     """Untrusted text from the KG: one line, bounded."""
-    return _CONTROL_RE.sub(" ", str(name or "")).strip()[:MAX_NAME_LENGTH]
+    text = "".join(
+        " " if unicodedata.category(ch) in _STRIP_CATEGORIES else ch for ch in str(name or "")
+    )
+    return " ".join(text.split())[:MAX_NAME_LENGTH]
 
 
 def offline_place(raw: str) -> str | None:
@@ -68,6 +75,12 @@ def offline_place(raw: str) -> str | None:
     return _clean(place) or None
 
 
+async def _place(raw: str) -> str | None:
+    # The geocoder loads its data on first use (synchronous): off the event loop,
+    # so the timeout still holds and the gateway client keeps running.
+    return await asyncio.to_thread(offline_place, raw)
+
+
 async def _lookup(raw: str, recipient_id: int | None) -> CallerHint | None:
     from services.contact_points import ContactPointService, normalize_phone
     from services.database import AsyncSessionLocal
@@ -75,10 +88,11 @@ async def _lookup(raw: str, recipient_id: int | None) -> CallerHint | None:
     if normalize_phone(raw) is None:
         return None  # withheld / not a number: nothing to say
     async with AsyncSessionLocal() as db:
-        hits = await ContactPointService(db).lookup_number(raw, recipient_id, limit=20)
+        # Generous limit: lookup_number orders by name, the ranking happens here.
+        hits = await ContactPointService(db).lookup_number(raw, recipient_id, limit=100)
     hits = [h for h in hits if h.point.kind != "fax"]
     if not hits:
-        return CallerHint(place=offline_place(raw))
+        return CallerHint(place=await _place(raw))
     top = min(SOURCE_RANK.get(h.point.source_type, len(SOURCE_RANK)) for h in hits)
     names: list[str] = []
     source = None
@@ -90,7 +104,7 @@ async def _lookup(raw: str, recipient_id: int | None) -> CallerHint | None:
         if name and name not in names:
             names.append(name)
     if not names:
-        return CallerHint(place=offline_place(raw))
+        return CallerHint(place=await _place(raw))
     return CallerHint(names=tuple(names[:MAX_NAMES]), more=len(names) > MAX_NAMES, source=source)
 
 

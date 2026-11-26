@@ -38,6 +38,20 @@ class TestText:
         assert kw["data"]["caller_name"] == "Beispiel Praxis"
         assert kw["data"]["caller"] == "+49301234567"
 
+    def test_a_name_makes_the_notification_confidential(self):
+        # The name passed THIS recipient's circle filter; a shared room display must
+        # not show it to another household member ("personal" would allow that).
+        assert tc.build_notification(CALL)["privacy"] == "personal"
+        assert tc.build_notification(CALL, CallerHint(place="Berlin"))["privacy"] == "personal"
+        named = tc.build_notification(CALL, CallerHint(names=("Beispiel Praxis",), source="manual"))
+        assert named["privacy"] == "confidential"
+
+    def test_untrusted_name_loses_bidi_and_control_characters(self):
+        from services.caller_lookup import _clean
+
+        assert _clean("Beispiel\u202e Praxis\u200b\x85\u2028GmbH\n") == "Beispiel Praxis GmbH"
+        assert len(_clean("x" * 500)) == 80
+
     def test_document_source_is_named(self):
         kw = tc.build_notification(VOICEMAIL, CallerHint(names=("Beispiel Stadtwerke",), source="document"))
         assert "Name laut Dokument, nicht geprüft" in kw["message"]

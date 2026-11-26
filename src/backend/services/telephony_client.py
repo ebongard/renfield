@@ -149,10 +149,15 @@ def build_notification(event: dict, hint=None) -> dict:
     }
     if event.get("type") == "voicemail":
         data["duration_s"] = _seconds(event.get("duration_s"))
+    privacy = "personal"
     if label:
         # Snapshot of what this recipient was shown; never read back as identity.
         data["caller_name"] = label
         data["caller_name_source"] = hint.source
+        # The name came through THIS recipient's circle filter. "personal" lets the
+        # room delivery show it on a shared display to any household member in the
+        # room; "confidential" = only while the recipient is alone (fail-closed).
+        privacy = "confidential"
     return {
         "event_type": f"telephony.{event.get('type')}",
         "title": title,
@@ -161,7 +166,7 @@ def build_notification(event: dict, hint=None) -> dict:
         "tts": False,
         "data": data,
         "source": "telephony",
-        "privacy": "personal",
+        "privacy": privacy,
         "dedup": False,  # exactly once per event already (call claim); a repeat call is a new call
     }
 

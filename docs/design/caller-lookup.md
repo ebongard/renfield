@@ -129,7 +129,15 @@ user_id)`); `build_notification(event, hint)` with `hint=None` is byte-identical
 - Text (owner's decision, variant A): the title carries only the name ("Anruf von Beispiel Praxis an …"); the
   message adds the number and "Name laut Kontaktdaten|laut Dokument, nicht geprüft". `tts` stays false. The
   notification `data` keeps a snapshot `caller_name` + `caller_name_source` — never read back as identity.
-- Miss: an offline hint from `phonenumbers` (town of a landline, "Mobilfunk"); nothing leaves the instance.
+- A named notification goes out `privacy="confidential"` (review 2026-11-26): the name passed THIS recipient's
+  circle filter, and `personal` would let the room delivery show it on a shared display to any household member.
+  Without a name it stays `personal`. Names lose Unicode categories Cc/Cf/Zl/Zp (bidi overrides, zero-width): a
+  U+202E in a document-extracted name would reorder the number and the caveat after it.
+- The name does reach the LOCAL embedding model when semantic dedup or feedback learning is on
+  (`process_webhook` embeds title + message per user, `notifications.embedding`). Not a prompt, never another
+  user's row; accepted.
+- Miss: an offline hint from `phonenumbers` (town of a landline, "Mobilfunk"), computed in a thread (the geocoder
+  loads its data on first use); nothing leaves the instance.
 - Own session per lookup, `asyncio.wait_for(CALLER_LOOKUP_TIMEOUT_S=0.5)`; every failure → `None` → the plain
   number. `resolve_caller` never raises, so a lookup can never trigger the event retry (duplicate notifications).
 - Not yet: person + its `arbeitet_bei` organization folded into one hit; clearing the snapshot in open
