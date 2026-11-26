@@ -5,7 +5,8 @@ than the source it came from:
 
     kg_entity_contact_points.circle_tier = LEAST(entity tier, source_tier)
 
-``source_tier`` only ever goes DOWN. A document made more private lowers the
+``source_tier`` of an automatic source only ever goes DOWN (an owner may
+reopen a value they entered by hand, ``ContactPointService.update``). A document made more private lowers the
 ``source_tier`` of every value it is the recorded source of. A document made
 more open does not lift it, mirroring ``kg_relations.tier_cap`` (``kg_edge_tier.py``).
 

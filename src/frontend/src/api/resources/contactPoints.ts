@@ -2,7 +2,7 @@
  * Contact points (#1240) -- phone / mobile / fax as attributes of a KG entity.
  * The routes exist only while `contact_points_enabled` is on; callers gate on
  * that flag. Reads are circle-filtered server-side; writes need the entity's
- * owner (or an admin).
+ * owner (or an admin) -- the list says so in `editable`.
  */
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -25,16 +25,26 @@ export interface ContactPoint {
   created_at: string;
 }
 
-/** Error codes the backend returns as `detail` (translated under contactPoints.errors). */
+/**
+ * Error codes the backend returns as a string `detail` (translated under
+ * contactPoints.errors). A bad kind/label never gets here: the request schema
+ * rejects it first, with a validation list as `detail`.
+ */
 export const CONTACT_POINT_ERROR_CODES: ReadonlySet<string> = new Set([
-  'duplicate', 'invalid_number', 'invalid_kind', 'invalid_label',
+  'duplicate', 'invalid_number', 'not_owner',
 ]);
 
-async function fetchContactPoints(entityId: number): Promise<ContactPoint[]> {
-  const response = await apiClient.get<{ contact_points: ContactPoint[] }>(
+export interface ContactPointList {
+  points: ContactPoint[];
+  /** May the caller add / remove values (owner of the entity, or admin)? */
+  editable: boolean;
+}
+
+async function fetchContactPoints(entityId: number): Promise<ContactPointList> {
+  const response = await apiClient.get<{ contact_points: ContactPoint[]; editable?: boolean }>(
     `/api/knowledge-graph/entities/${entityId}/contact-points`,
   );
-  return response.data.contact_points ?? [];
+  return { points: response.data.contact_points ?? [], editable: response.data.editable === true };
 }
 
 export interface CreateContactPointInput {

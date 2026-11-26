@@ -2825,6 +2825,8 @@
     "couldNotLoad": "Could not load contact details.",
     "add": "Add",
     "remove": "Remove {{value}}",
+    "confirmRemove": "Really remove {{value}}",
+    "cancelRemove": "Cancel",
     "kindLabel": "Type",
     "valueLabel": "Number",
     "valuePlaceholder": "e.g. +49 170 1234567",
@@ -2849,8 +2851,7 @@
     "errors": {
       "duplicate": "This number is already stored here.",
       "invalid_number": "That is not a valid phone number.",
-      "invalid_kind": "Unknown type.",
-      "invalid_label": "Unknown context."
+      "not_owner": "Only the owner of this entry can change its contact details."
     }
   }
 }

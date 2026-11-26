@@ -103,7 +103,9 @@ class TestTierCascade:
         no_edges = MagicMock()
         no_edges.fetchall = MagicMock(return_value=[])
         session.execute = AsyncMock(side_effect=[first, AsyncMock(), AsyncMock(),
-                                                 AsyncMock(), AsyncMock(), fact_ids, no_edges])
+                                                 AsyncMock(), AsyncMock(), fact_ids, no_edges,
+                                                 # #1240: contact-point cap + recompute
+                                                 AsyncMock(), AsyncMock()])
 
         svc = AtomService(session)
         svc.resolver = MagicMock()

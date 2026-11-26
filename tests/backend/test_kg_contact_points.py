@@ -224,6 +224,54 @@ class TestVisibility:
         assert len(await svc.list_for_entity(firm.id, owner.id)) == 2
         assert len(await svc.lookup_number("0171 1234567", owner.id)) == 1
 
+    async def test_a_grant_on_the_entity_never_reaches_a_more_private_value(
+        self, pg_db_session, monkeypatch, enabled,
+    ):
+        from models.database import AtomExplicitGrant
+
+        _commit_as_flush(pg_db_session, monkeypatch)
+        owner = await _make_user(pg_db_session, "cp_grant_owner")
+        grantee = await _make_user(pg_db_session, "cp_grantee")
+        e = await _entity(pg_db_session, owner, "Grant Person", tier=2, with_atom=True)
+        svc = ContactPointService(pg_db_session)
+        as_open = await svc.add(e, kind="phone", value=LANDLINE)
+        await svc.add(e, kind="mobile", value=MOBILE, source_tier=0)
+        assert await svc.list_for_entity(e.id, grantee.id) == []
+        pg_db_session.add(AtomExplicitGrant(
+            atom_id=e.atom_id, granted_to_user_id=grantee.id, granted_by=owner.id))
+        await pg_db_session.flush()
+        # The grant opens the entity and its values as open as the entity --
+        # not the mobile the owner made MORE private than the person.
+        assert [p.id for p in await svc.list_for_entity(e.id, grantee.id)] == [as_open.id]
+        assert await svc.lookup_number(MOBILE, grantee.id) == []
+
+    async def test_anonymous_sees_public_only_and_auth_off_sees_all(
+        self, pg_db_session, monkeypatch, enabled,
+    ):
+        _commit_as_flush(pg_db_session, monkeypatch)
+        owner = await _make_user(pg_db_session, "cp_anon")
+        stranger = await _make_user(pg_db_session, "cp_anon_x")
+        firm = await _entity(pg_db_session, owner, "Anon Firma", tier=4, etype="organization")
+        svc = ContactPointService(pg_db_session)
+        public_line = await svc.add(firm, kind="phone", value=LANDLINE)
+        await svc.add(firm, kind="mobile", value=MOBILE, source_tier=2)
+        assert [p.id for p in await svc.list_for_entity(firm.id, None)] == [public_line.id]
+        # Single-user mode is one trust domain: the filter is skipped.
+        enabled.auth_enabled = False
+        assert len(await svc.list_for_entity(firm.id, stranger.id)) == 2
+        assert len(await svc.lookup_number(MOBILE, None)) == 1
+
+    async def test_kind_filter_by_name(self, pg_db_session, monkeypatch, enabled):
+        _commit_as_flush(pg_db_session, monkeypatch)
+        owner = await _make_user(pg_db_session, "cp_kind")
+        e = await _entity(pg_db_session, owner, "Kind Person", tier=2)
+        svc = ContactPointService(pg_db_session)
+        await svc.add(e, kind="phone", value=LANDLINE)
+        await svc.add(e, kind="mobile", value=MOBILE)
+        hits = await svc.find_for_name("Kind Person", owner.id, kind="mobile")
+        assert [h.point.normalized for h in hits] == [MOBILE_E164]
+        assert len(await svc.find_for_name("kind person", owner.id)) == 2
+
     async def test_tombstone_and_ended_values_never_match(self, pg_db_session, monkeypatch, enabled):
         _commit_as_flush(pg_db_session, monkeypatch)
         owner = await _make_user(pg_db_session, "cp_tomb")
@@ -282,6 +330,25 @@ class TestTierCascade:
         assert await _tiers(pg_db_session, cp.id) == (0, 0)
         await atoms.update_tier(doc.atom_id, {"tier": 4})
         assert await _tiers(pg_db_session, cp.id) == (0, 0)
+
+    async def test_an_edit_cannot_lift_a_document_value_above_its_source(
+        self, pg_db_session, monkeypatch, enabled,
+    ):
+        _commit_as_flush(pg_db_session, monkeypatch)
+        owner = await _make_user(pg_db_session, "cp_lift")
+        firm = await _entity(pg_db_session, owner, "Firma Lift", tier=4, etype="organization")
+        svc = ContactPointService(pg_db_session)
+        cp = await svc.add(firm, kind="phone", value=LANDLINE, source_tier=1)
+        cp.source_type = "document"
+        await pg_db_session.flush()
+        await svc.update(cp, source_tier=4)
+        assert await _tiers(pg_db_session, cp.id) == (1, 1)
+        await svc.update(cp, source_tier=0)
+        assert await _tiers(pg_db_session, cp.id) == (0, 0)
+        # A manual value is the owner's own choice and may be opened again.
+        manual = await svc.add(firm, kind="mobile", value=MOBILE, source_tier=0)
+        await svc.update(manual, source_tier=4)
+        assert await _tiers(pg_db_session, manual.id) == (4, 4)
 
     async def test_deleting_the_document_takes_its_values(self, pg_db_session, monkeypatch, enabled):
         _commit_as_flush(pg_db_session, monkeypatch)
@@ -342,6 +409,20 @@ class TestSoftDelete:
         assert (await pg_db_session.execute(text(
             "SELECT count(*) FROM kg_entity_contact_points WHERE entity_id = :e"), {"e": e.id})).scalar() == 0
 
+    async def test_invalid_entity_cleanup_takes_the_values_too(self, pg_db_session, monkeypatch, enabled):
+        from services.kg_cleanup_service import KGCleanupService
+
+        _commit_as_flush(pg_db_session, monkeypatch)
+        owner = await _make_user(pg_db_session, "cp_cleanup")
+        junk = await _entity(pg_db_session, owner, "https://beispiel.test/x", tier=2)
+        await ContactPointService(pg_db_session).add(junk, kind="mobile", value=MOBILE)
+        await KGCleanupService(pg_db_session).cleanup_invalid_entities(dry_run=False)
+        await pg_db_session.refresh(junk)
+        assert junk.is_active is False
+        assert (await pg_db_session.execute(text(
+            "SELECT count(*) FROM kg_entity_contact_points WHERE entity_id = :e"),
+            {"e": junk.id})).scalar() == 0
+
 
 # --- routes -------------------------------------------------------------------------------
 
@@ -400,6 +481,16 @@ class TestRoutes:
             patched = await c.patch(f"/api/knowledge-graph/contact-points/{body['id']}",
                                     json={"label": "work", "circle_tier": 0})
             assert (patched.json()["label"], patched.json()["circle_tier"]) == ("work", 0)
+            cleared = await c.patch(f"/api/knowledge-graph/contact-points/{body['id']}",
+                                    json={"label": None})
+            assert cleared.json()["label"] is None
+            # Leaving the label out keeps it; only an explicit null clears it.
+            await c.patch(f"/api/knowledge-graph/contact-points/{body['id']}", json={"label": "work"})
+            kept = await c.patch(f"/api/knowledge-graph/contact-points/{body['id']}", json={"circle_tier": 0})
+            assert kept.json()["label"] == "work"
+            assert (await c.get(base)).json()["editable"] is True
+            junk = await c.get("/api/knowledge-graph/contact-points/lookup", params={"number": "keine Nummer"})
+            assert (junk.status_code, junk.json()["hits"]) == (200, [])
             gone = await c.delete(f"/api/knowledge-graph/contact-points/{body['id']}")
             assert gone.status_code == 200
             assert (await c.get(base)).json()["contact_points"] == []
@@ -411,20 +502,37 @@ class TestRoutes:
         public = await _entity(pg_db_session, owner, "Oeffentliche Firma", tier=4, etype="organization")
         private = await _entity(pg_db_session, owner, "Private Person", tier=0)
         cp = await ContactPointService(pg_db_session).add(public, kind="phone", value=LANDLINE)
+        hidden = await ContactPointService(pg_db_session).add(private, kind="mobile", value=MOBILE)
+        # A value more private than its public entity: the entity is visible, the value not.
+        own_private = await ContactPointService(pg_db_session).add(
+            public, kind="mobile", value="0171 1234567", source_tier=0)
         async with client_as(other) as c:
             # Sees the public value, cannot change it or add one.
             assert len((await c.get(f"/api/knowledge-graph/entities/{public.id}/contact-points"))
                        .json()["contact_points"]) == 1
             assert (await c.post(f"/api/knowledge-graph/entities/{public.id}/contact-points",
                                  json={"kind": "mobile", "value": MOBILE})).status_code == 403
-            assert (await c.delete(f"/api/knowledge-graph/contact-points/{cp.id}")).status_code == 403
-            # The private entity does not exist for him.
+            listed = (await c.get(f"/api/knowledge-graph/entities/{public.id}/contact-points")).json()
+            assert listed["editable"] is False
+            refused = await c.delete(f"/api/knowledge-graph/contact-points/{cp.id}")
+            assert (refused.status_code, refused.json()["detail"]) == (403, "not_owner")
+            patched = await c.patch(f"/api/knowledge-graph/contact-points/{cp.id}", json={"label": "work"})
+            assert (patched.status_code, patched.json()["detail"]) == (403, "not_owner")
+            # The private entity does not exist for them -- nor do its values.
             assert (await c.get(f"/api/knowledge-graph/entities/{private.id}/contact-points")).status_code == 404
+            for verb in ("patch", "delete"):
+                kwargs = {"json": {"label": "work"}} if verb == "patch" else {}
+                r = await getattr(c, verb)(f"/api/knowledge-graph/contact-points/{hidden.id}", **kwargs)
+                assert r.status_code == 404, verb
+                r = await getattr(c, verb)(f"/api/knowledge-graph/contact-points/{own_private.id}", **kwargs)
+                assert r.status_code == 404, verb
+        # Nothing was changed by the refused calls.
+        assert (await ContactPointService(pg_db_session).get_visible(cp.id, owner.id)).label is None
 
     async def test_anonymous_refused(self, client_as):
         async with client_as(None) as c:
             assert (await c.get("/api/knowledge-graph/contact-points/lookup",
-                                params={"number": MOBILE})).status_code in (401, 403)
+                                params={"number": MOBILE})).status_code == 401
 
     async def test_everything_404_when_off(self, pg_db_session, monkeypatch, client_as, enabled):
         _commit_as_flush(pg_db_session, monkeypatch)
@@ -474,6 +582,34 @@ class TestTool:
         # A user id in the LLM's arguments changes nothing: only the injected one counts.
         hidden = await tool.find_contact({"name": "tool person", "user_id": owner.id}, user_id=stranger.id)
         assert hidden["data"]["contacts"] == []
+
+    @pytest.mark.postgres
+    @pytest.mark.asyncio
+    async def test_permission_gate_and_unidentified_turn(self, pg_db_session, monkeypatch, enabled):
+        import services.contact_point_tool as tool
+
+        owner = await _make_user(pg_db_session, "cp_tool_gate")
+        firm = await _entity(pg_db_session, owner, "Gate Firma", tier=4, etype="organization")
+        await pg_db_session.commit()
+        svc = ContactPointService(pg_db_session)
+        await svc.add(firm, kind="phone", value=LANDLINE)
+        await svc.add(firm, kind="mobile", value=MOBILE, source_tier=2)
+
+        @asynccontextmanager
+        async def _session():
+            yield pg_db_session
+
+        monkeypatch.setattr(tool, "AsyncSessionLocal", _session)
+        # An identified user without KG_VIEW is refused, like the REST read.
+        refused = await tool.find_contact({"name": "gate firma"}, user_id=owner.id,
+                                          user_permissions=["chat.own"])
+        assert refused["success"] is False and refused["data"]["contacts"] == []
+        allowed = await tool.find_contact({"name": "gate firma"}, user_id=owner.id,
+                                          user_permissions=["kg.view"])
+        assert len(allowed["data"]["contacts"]) == 2
+        # An unidentified turn (no user, no permissions) reaches public values only.
+        anon = await tool.find_contact({"name": "gate firma"}, user_id=None, user_permissions=None)
+        assert [c["normalized"] for c in anon["data"]["contacts"]] == [LANDLINE_E164]
 
     def test_tool_advertised_only_when_enabled(self, enabled):
         from services.agent_tools import AgentToolRegistry

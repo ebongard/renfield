@@ -267,6 +267,8 @@ class ContactPointResponse(BaseModel):
 
 class ContactPointListResponse(BaseModel):
     contact_points: list[ContactPointResponse]
+    # Whether the caller may add / change / remove values of this entity.
+    editable: bool = False
 
 
 class ContactPointLookupHit(BaseModel):

@@ -74,6 +74,7 @@ def circles_filter_clause(
     source_id_expr: str | None = None,
     owner_atom_id_expr: str | None = None,
     kb_share_kb_id_expr: str | None = None,
+    grant_guard_expr: str | None = None,
     peer: PeerScope | None = None,
 ) -> str:
     """
@@ -134,6 +135,11 @@ def circles_filter_clause(
                            covers documents added to the KB after it was made.
                            Documents only; a NULL KB never matches. Dropped for
                            federated queries like the grant branch.
+        grant_guard_expr:  structural SQL condition ANDed into the explicit-grant
+                           branch. For rows whose grant lives on ANOTHER atom
+                           (contact points: the grant is on the entity) -- the
+                           guard keeps a grant from reaching a row its owner
+                           made more private than that atom. NEVER user input.
         peer:              a `PeerScope` makes the query FEDERATED: the
                            "owner equality" and "explicit grant" branches drop
                            out, and the tier comes from the PAIRING instead of
@@ -210,6 +216,8 @@ def circles_filter_clause(
             f"  AND g.granted_to_user_id = :{asker_param}"
             f")"
         )
+        if grant_guard_expr:
+            parts[-1] = f"({grant_guard_expr} AND {parts[-1]})"
 
     if kb_share_kb_id_expr and peer is None:
         # KB-level share (kb_shares PK (kb_id, user_id) — an index probe). Same
@@ -361,11 +369,19 @@ def contact_points_circles_filter(
     ``source_id = cp.entity_id``). Callers must ALSO apply
     :func:`kg_entities_circles_filter` to the joined entity -- a value is never
     reachable through an entity the asker cannot see.
+
+    A grant on the entity reaches only values at least as open as the entity
+    (``source_tier >= entity tier``): a number the owner made MORE private than
+    its person stays out of a grantee's reach (review F1).
     """
     src = "kg_entities"
     clause = circles_filter_clause(
         table_alias=alias, source_table_value=src,
         source_id_expr=f"{alias}.entity_id", peer=peer,
+        grant_guard_expr=(
+            f"{alias}.source_tier >= (SELECT ge.circle_tier FROM kg_entities ge"
+            f" WHERE ge.id = {alias}.entity_id)"
+        ),
     )
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer

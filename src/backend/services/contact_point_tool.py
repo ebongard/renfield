@@ -5,7 +5,9 @@ Two modes:
   - ``number``: reverse lookup, "whose number is this?".
 
 Both are circle-filtered for the authenticated asker (``user_id`` injected by
-``action_executor``, never from LLM params). Contact points never enter the
+``action_executor``, never from LLM params). With auth on, an identified user
+without ``KG_VIEW`` is refused (the REST read needs it too); an unidentified turn
+(``user_permissions=None``) gets public values only, via the circle filter. Contact points never enter the
 general RAG context (design §9): only a question that asks for them reaches them.
 """
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 from loguru import logger
 
 from models.database import CONTACT_POINT_KINDS
+from models.permissions import Permission, has_permission
 from services.database import AsyncSessionLocal
 from utils.config import settings
 from utils.log_safety import error_text_without_content
@@ -47,13 +50,22 @@ def _point(hit) -> dict:
     }
 
 
-async def find_contact(parameters: dict, user_id: int | None = None) -> dict:
+async def find_contact(
+    parameters: dict, user_id: int | None = None, user_permissions: list[str] | None = None,
+) -> dict:
     if not settings.contact_points_enabled:
         return {
             "success": True, "action_taken": False,
             "message": "Kontaktdaten im Wissensgraphen sind auf dieser Instanz nicht aktiviert.",
             "data": {"enabled": False, "contacts": []},
         }
+    if settings.auth_enabled and user_permissions is not None:
+        if not has_permission(user_permissions, Permission.KG_VIEW):
+            return {
+                "success": False, "action_taken": False,
+                "message": "Zum Lesen von Kontaktdaten fehlt die Berechtigung (Wissensgraph).",
+                "data": {"contacts": []},
+            }
     name = str(parameters.get("name") or "").strip()
     number = str(parameters.get("number") or "").strip()
     kind = str(parameters.get("kind") or "").strip().lower() or None

@@ -2577,8 +2577,9 @@ class KGEntityContactPoint(Base):
 
     Tier: ``circle_tier = LEAST(entity tier, source_tier)`` -- one rule, one place
     (``services/contact_point_tier.py``). ``source_tier`` is the tier of the source
-    the value came from and only ever goes DOWN (a document made more private lowers
-    it, a more open one does not lift it). Never an atom of its own: explicit grants
+    the value came from. For an automatic source (document, vCard, chat) it only
+    ever goes DOWN (a document made more private lowers it, a more open one does not
+    lift it); only a value the owner entered by hand may be opened again. Never an atom of its own: explicit grants
     act on the entity (``contact_points_circles_filter``).
 
     ``valid_to`` NULL = still valid. A value ends only when a source says so (an
@@ -2589,7 +2590,8 @@ class KGEntityContactPoint(Base):
 
     id = Column(Integer, primary_key=True)
     entity_id = Column(Integer, ForeignKey("kg_entities.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    # Same rule as kg_entities.user_id: a user who still holds data is not deleted.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     kind = Column(String(16), nullable=False)
     label = Column(String(16), nullable=True)
     value = Column(Text, nullable=False)          # verbatim, as in the source
@@ -2599,15 +2601,15 @@ class KGEntityContactPoint(Base):
     # Real FK so a re-extracted or deleted document takes its values along (A2).
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=True, index=True)
     confidence = Column(Float, nullable=True)
-    source_tier = Column(Integer, nullable=False, default=0)
-    circle_tier = Column(Integer, nullable=False, default=0)
+    source_tier = Column(Integer, nullable=False, default=0, server_default="0")
+    circle_tier = Column(Integer, nullable=False, default=0, server_default="0")
     valid_from = Column(DateTime, nullable=True)
     valid_to = Column(DateTime, nullable=True)
     superseded_by_id = Column(
         Integer, ForeignKey("kg_entity_contact_points.id", ondelete="SET NULL"), nullable=True,
     )
     created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False, server_default=sa_text("now()"))
 
     __table_args__ = (
         # One live value per (entity, kind, normalized); ended rows may repeat.

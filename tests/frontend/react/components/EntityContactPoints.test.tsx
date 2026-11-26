@@ -4,7 +4,9 @@
  *  - lists the entity's numbers with kind, label and source;
  *  - adding posts kind/value/label and refetches; the field clears on success;
  *  - a backend error code (duplicate / invalid_number) is shown translated;
- *  - removing deletes by id;
+ *  - removing asks for an inline confirmation, then deletes by id;
+ *  - a caller who may not edit sees no add form and no remove buttons;
+ *  - a fax number is plain text, not a tel: link;
  *  - the drawer renders the section only while `contact_points_enabled` is on.
  * Fictitious numbers only.
  */
@@ -31,13 +33,16 @@ function point(id: number, value: string, kind = 'mobile', label: string | null 
 
 interface Api { calls: string[]; posted: unknown[] }
 
-function mockApi(initial = [point(1, '0170 1234567')], postStatus = 201, postDetail = ''): Api {
+function mockApi(
+  initial = [point(1, '0170 1234567')], postStatus = 201, postDetail = '', editable = true,
+  deleteStatus = 200,
+): Api {
   const api: Api = { calls: [], posted: [] };
   let rows = [...initial];
   server.use(
     http.get(LIST_URL, () => {
       api.calls.push('GET');
-      return HttpResponse.json({ contact_points: rows });
+      return HttpResponse.json({ contact_points: rows, editable });
     }),
     http.post(LIST_URL, async ({ request }) => {
       const body = await request.json();
@@ -49,6 +54,7 @@ function mockApi(initial = [point(1, '0170 1234567')], postStatus = 201, postDet
     }),
     http.delete(`${BASE_URL}/api/knowledge-graph/contact-points/:id`, ({ params }) => {
       api.calls.push(`DELETE ${String(params.id)}`);
+      if (deleteStatus !== 200) return HttpResponse.json({ detail: 'not_owner' }, { status: deleteStatus });
       rows = rows.filter((r) => String(r.id) !== String(params.id));
       return HttpResponse.json({ success: true });
     }),
@@ -93,14 +99,45 @@ describe('EntityContactPoints', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/schon gespeichert|already stored/);
   });
 
-  it('removes a number by id', async () => {
+  it('removes a number by id after confirming', async () => {
     const api = mockApi();
     const user = userEvent.setup();
     renderWithProviders(<EntityContactPoints entityId={42} />);
     await screen.findAllByTestId('contact-point');
-    await user.click(screen.getByRole('button', { name: /0170 1234567 entfernen|Remove 0170 1234567/ }));
+    await user.click(screen.getByRole('button', { name: /^0170 1234567 entfernen$|^Remove 0170 1234567$/ }));
+    // First click only asks; cancelling sends nothing.
+    await user.click(screen.getByRole('button', { name: /Abbrechen|Cancel/ }));
+    expect(api.calls).not.toContain('DELETE 1');
+    await user.click(screen.getByRole('button', { name: /^0170 1234567 entfernen$|^Remove 0170 1234567$/ }));
+    await user.click(screen.getByRole('button', { name: /wirklich entfernen|Really remove/ }));
     await waitFor(() => expect(api.calls).toContain('DELETE 1'));
     await waitFor(() => expect(screen.queryAllByTestId('contact-point')).toHaveLength(0));
+  });
+
+  it('shows a read-only list to a caller who may not edit', async () => {
+    mockApi([point(1, '0170 1234567')], 201, '', false);
+    renderWithProviders(<EntityContactPoints entityId={42} />);
+    await screen.findAllByTestId('contact-point');
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: /entfernen|Remove/ })).toBeNull();
+  });
+
+  it('translates a refused delete', async () => {
+    mockApi([point(1, '0170 1234567')], 201, '', true, 403);
+    const user = userEvent.setup();
+    renderWithProviders(<EntityContactPoints entityId={42} />);
+    await screen.findAllByTestId('contact-point');
+    await user.click(screen.getByRole('button', { name: /^0170 1234567 entfernen$|^Remove 0170 1234567$/ }));
+    await user.click(screen.getByRole('button', { name: /wirklich entfernen|Really remove/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Eigentümer|owner/);
+  });
+
+  it('renders a fax number as text, not as a tel: link', async () => {
+    mockApi([point(3, '030 7654321', 'fax', 'work')]);
+    renderWithProviders(<EntityContactPoints entityId={42} />);
+    const row = await screen.findByTestId('contact-point');
+    expect(row).toHaveTextContent('030 7654321');
+    expect(screen.queryByRole('link')).toBeNull();
   });
 });
 

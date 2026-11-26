@@ -32,6 +32,9 @@ from models.database import (
 from services.contact_point_tier import contact_point_tier
 from utils.config import settings
 
+# The partial unique index on live (entity, kind, normalized) values.
+LIVE_UNIQUE_INDEX = "uq_contact_points_live"
+
 # Longest value accepted verbatim; a phone number in any notation is far shorter.
 MAX_VALUE_LENGTH = 64
 
@@ -156,8 +159,10 @@ class ContactPointService:
             params["kind"] = kind
         return await self._hits(where, params, asker_id, limit)
 
-    async def get(self, point_id: int) -> KGEntityContactPoint | None:
-        return await self.db.get(KGEntityContactPoint, int(point_id))
+    async def get_visible(self, point_id: int, asker_id: int | None) -> KGEntityContactPoint | None:
+        """The live point if the asker may see it AND its entity -- one row, both filters."""
+        hits = await self._hits("cp.id = :pid", {"pid": int(point_id)}, asker_id, limit=1)
+        return hits[0].point if hits else None
 
     # --- writes (the route checks the entity is visible AND owned) -------------
 
@@ -207,6 +212,10 @@ class ContactPointService:
                 self.db.add(point)
                 await self.db.flush()
         except IntegrityError as exc:
+            # Only the live-value unique index is a duplicate; anything else (an
+            # FK on an entity deleted meanwhile) is a real error, not a 409.
+            if LIVE_UNIQUE_INDEX not in str(exc.orig):
+                raise
             raise ContactPointError("duplicate", "the entity already has this value") from exc
         await self.db.commit()
         await self.db.refresh(point)
@@ -223,7 +232,13 @@ class ContactPointService:
             point.label = label
         if source_tier is not None:
             entity = await self.db.get(KGEntity, point.entity_id)
-            point.source_tier = min(int(source_tier), TIER_PUBLIC)
+            requested = min(int(source_tier), TIER_PUBLIC)
+            # Only a value the owner entered may be opened again: a value from a
+            # document / vCard / chat carries its SOURCE's tier, which only goes
+            # down (contact_point_tier.py) -- an edit may lower it, never lift it.
+            if point.source_type != CONTACT_POINT_SOURCE_MANUAL:
+                requested = min(requested, int(point.source_tier))
+            point.source_tier = requested
             point.circle_tier = contact_point_tier(int(entity.circle_tier or 0), point.source_tier)
         await self.db.commit()
         await self.db.refresh(point)

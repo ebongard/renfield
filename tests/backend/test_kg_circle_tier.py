@@ -104,8 +104,10 @@ class TestUpdateEntityCircleTierDispatch:
         assert result is ent
         assert ent.circle_tier == 3
         # The kg_relations recompute (#1625: endpoints AND the document cap) is
-        # issued first, then the edge atom policies follow it.
-        assert db.execute.await_count == 2
+        # issued first, then the edge atom policies follow it, then the contact
+        # points recompute LEAST(entity, source) (#1240).
+        assert db.execute.await_count == 3
+        assert "kg_entity_contact_points" in str(db.execute.await_args_list[2].args[0])
         sql_text = str(db.execute.await_args_list[0].args[0])
         assert "UPDATE kg_relations" in sql_text
         assert "LEAST(s.circle_tier, o.circle_tier, COALESCE(r.tier_cap" in sql_text

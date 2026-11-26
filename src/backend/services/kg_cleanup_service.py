@@ -82,6 +82,10 @@ class KGCleanupService:
                 .where(KGEntity.id.in_(invalid_ids))
                 .values(is_active=False)
             )
+            # R5 (#1240): a soft-deleted entity takes its contact points along.
+            from services.contact_points import delete_entity_contact_points
+            for eid in invalid_ids:
+                await delete_entity_contact_points(self.db, eid)
 
             # Cascade-deactivate orphaned relations. #875: no validity filter — a
             # cascade must also retire EXPIRED edges of a deleted entity.

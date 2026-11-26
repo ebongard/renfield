@@ -2850,6 +2850,8 @@
     "couldNotLoad": "Impossible de charger les coordonnées.",
     "add": "Ajouter",
     "remove": "Supprimer {{value}}",
+    "confirmRemove": "Vraiment supprimer {{value}}",
+    "cancelRemove": "Annuler",
     "kindLabel": "Type",
     "valueLabel": "Numéro",
     "valuePlaceholder": "p. ex. +49 170 1234567",
@@ -2874,8 +2876,7 @@
     "errors": {
       "duplicate": "Ce numéro est déjà enregistré ici.",
       "invalid_number": "Ce n’est pas un numéro de téléphone valide.",
-      "invalid_kind": "Type inconnu.",
-      "invalid_label": "Contexte inconnu."
+      "not_owner": "Seul le propriétaire de cette entrée peut modifier ses coordonnées."
     }
   }
 }

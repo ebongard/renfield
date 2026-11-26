@@ -1,6 +1,6 @@
 import { useId, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Phone, Smartphone, Printer, Trash2 } from 'lucide-react';
+import { Phone, Smartphone, Printer, Trash2, Check, X } from 'lucide-react';
 
 import {
   CONTACT_POINT_ERROR_CODES,
@@ -33,8 +33,9 @@ function useErrorText(error: unknown, fallback: string | null): string | null {
 /**
  * "Kontaktdaten" of a KG person/organization (#1240): the numbers stored as
  * attributes of the entity, with their source. The caller renders this only
- * while `contact_points_enabled` is on. A user who may not edit the entity gets
- * a 403 on add/delete, shown inline.
+ * while `contact_points_enabled` is on. Add / remove are shown only when the
+ * backend says the caller may edit (`editable`); removing is a hard delete and
+ * asks for an inline confirmation first. A 403 that still happens is translated.
  */
 export default function EntityContactPoints({ entityId }: EntityContactPointsProps) {
   const { t } = useTranslation();
@@ -45,10 +46,12 @@ export default function EntityContactPoints({ entityId }: EntityContactPointsPro
   const [kind, setKind] = useState<ContactPointKind>('mobile');
   const [label, setLabel] = useState<ContactPointLabel | ''>('');
   const [value, setValue] = useState('');
+  const [confirmId, setConfirmId] = useState<number | null>(null);
 
   const createError = useErrorText(create.error, create.errorMessage);
   const removeError = useErrorText(remove.error, remove.errorMessage);
-  const points: ContactPoint[] = list.data ?? [];
+  const points: ContactPoint[] = list.data?.points ?? [];
+  const editable = list.data?.editable === true;
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -85,25 +88,51 @@ export default function EntityContactPoints({ entityId }: EntityContactPointsPro
               <li key={p.id} className="flex items-center gap-2 text-sm" data-testid="contact-point">
                 <Icon className="w-4 h-4 shrink-0 text-gray-400 dark:text-gray-500" aria-hidden="true" />
                 <span className="sr-only">{t(`contactPoints.kind.${p.kind}`)}</span>
-                <a
-                  href={p.kind === 'fax' ? undefined : `tel:${p.normalized}`}
-                  className="text-gray-900 dark:text-white tabular-nums hover:text-primary-600 dark:hover:text-primary-400"
-                >
-                  {p.value}
-                </a>
+                {p.kind === 'fax' ? (
+                  <span className="text-gray-900 dark:text-white tabular-nums">{p.value}</span>
+                ) : (
+                  <a
+                    href={`tel:${p.normalized}`}
+                    className="text-gray-900 dark:text-white tabular-nums hover:text-primary-600 dark:hover:text-primary-400"
+                  >
+                    {p.value}
+                  </a>
+                )}
                 {p.label && (
                   <span className="text-xs text-gray-500 dark:text-gray-400">{t(`contactPoints.label.${p.label}`)}</span>
                 )}
                 <span className="text-xs text-gray-400 dark:text-gray-500">{t(`contactPoints.source.${p.source_type}`, p.source_type)}</span>
-                <button
-                  type="button"
-                  onClick={() => remove.mutate(p.id)}
-                  disabled={remove.isPending}
-                  className="ml-auto min-w-11 min-h-11 flex items-center justify-center rounded-md text-gray-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50"
-                  aria-label={t('contactPoints.remove', { value: p.value })}
-                >
-                  <Trash2 className="w-4 h-4" aria-hidden="true" />
-                </button>
+                {editable && confirmId !== p.id && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmId(p.id)}
+                    className="ml-auto min-w-11 min-h-11 flex items-center justify-center rounded-md text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+                    aria-label={t('contactPoints.remove', { value: p.value })}
+                  >
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                )}
+                {editable && confirmId === p.id && (
+                  <span className="ml-auto flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => { remove.mutate(p.id); setConfirmId(null); }}
+                      disabled={remove.isPending}
+                      className="min-w-11 min-h-11 flex items-center justify-center rounded-md text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-50"
+                      aria-label={t('contactPoints.confirmRemove', { value: p.value })}
+                    >
+                      <Check className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmId(null)}
+                      className="min-w-11 min-h-11 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                      aria-label={t('contactPoints.cancelRemove')}
+                    >
+                      <X className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  </span>
+                )}
               </li>
             );
           })}
@@ -111,37 +140,39 @@ export default function EntityContactPoints({ entityId }: EntityContactPointsPro
       )}
       {removeError && <p className="text-xs text-red-600 dark:text-red-400" role="alert">{removeError}</p>}
 
-      <form onSubmit={onSubmit} className="flex flex-wrap items-end gap-2" aria-label={t('contactPoints.add')}>
-        <label className="flex flex-col text-xs text-gray-500 dark:text-gray-400">
-          {t('contactPoints.kindLabel')}
-          <select className="input py-1" value={kind} onChange={(e) => setKind(e.target.value as ContactPointKind)}>
-            {KINDS.map((k) => <option key={k} value={k}>{t(`contactPoints.kind.${k}`)}</option>)}
-          </select>
-        </label>
-        <label className="flex flex-col flex-1 min-w-[9rem] text-xs text-gray-500 dark:text-gray-400">
-          {t('contactPoints.valueLabel')}
-          <input
-            className="input py-1"
-            type="tel"
-            inputMode="tel"
-            autoComplete="off"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={t('contactPoints.valuePlaceholder')}
-            maxLength={64}
-          />
-        </label>
-        <label className="flex flex-col text-xs text-gray-500 dark:text-gray-400">
-          {t('contactPoints.labelLabel')}
-          <select className="input py-1" value={label} onChange={(e) => setLabel(e.target.value as ContactPointLabel | '')}>
-            <option value="">{t('contactPoints.label.none')}</option>
-            {LABELS.map((l) => <option key={l} value={l}>{t(`contactPoints.label.${l}`)}</option>)}
-          </select>
-        </label>
-        <button type="submit" className="btn-primary min-h-11" disabled={create.isPending || !value.trim()}>
-          {t('contactPoints.add')}
-        </button>
-      </form>
+      {editable && (
+        <form onSubmit={onSubmit} className="flex flex-wrap items-end gap-2" aria-label={t('contactPoints.add')}>
+          <label className="flex flex-col text-xs text-gray-500 dark:text-gray-400">
+            {t('contactPoints.kindLabel')}
+            <select className="input py-1" value={kind} onChange={(e) => setKind(e.target.value as ContactPointKind)}>
+              {KINDS.map((k) => <option key={k} value={k}>{t(`contactPoints.kind.${k}`)}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col flex-1 min-w-[9rem] text-xs text-gray-500 dark:text-gray-400">
+            {t('contactPoints.valueLabel')}
+            <input
+              className="input py-1"
+              type="tel"
+              inputMode="tel"
+              autoComplete="off"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={t('contactPoints.valuePlaceholder')}
+              maxLength={64}
+            />
+          </label>
+          <label className="flex flex-col text-xs text-gray-500 dark:text-gray-400">
+            {t('contactPoints.labelLabel')}
+            <select className="input py-1" value={label} onChange={(e) => setLabel(e.target.value as ContactPointLabel | '')}>
+              <option value="">{t('contactPoints.label.none')}</option>
+              {LABELS.map((l) => <option key={l} value={l}>{t(`contactPoints.label.${l}`)}</option>)}
+            </select>
+          </label>
+          <button type="submit" className="btn-primary min-h-11" disabled={create.isPending || !value.trim()}>
+            {t('contactPoints.add')}
+          </button>
+        </form>
+      )}
       {createError && <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">{createError}</p>}
     </section>
   );

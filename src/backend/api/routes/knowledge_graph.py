@@ -761,6 +761,10 @@ async def run_reconciler(
 # the entity visible AND owned by the caller (admins: any). Off => 404 everywhere.
 # =============================================================================
 
+# Stable error code the UI translates (contactPoints.errors.not_owner).
+NOT_OWNER = "not_owner"
+
+
 def _require_contact_points() -> None:
     if not settings.contact_points_enabled:
         raise HTTPException(status_code=404, detail="Not found")
@@ -793,17 +797,14 @@ async def _visible_entity(db: AsyncSession, entity_id: int, user: User | None):
 
 
 async def _editable_point(db: AsyncSession, point_id: int, user: User | None):
-    """The point, if its entity is visible AND editable by the caller -- else 404/403."""
+    """The point, if it AND its entity are visible and the caller may edit -- else 404/403."""
     svc = ContactPointService(db)
-    point = await svc.get(point_id)
+    point = await svc.get_visible(point_id, user.id if user else None)
     if point is None:
         raise HTTPException(status_code=404, detail="Contact point not found")
     entity = await _visible_entity(db, point.entity_id, user)
-    visible = {p.id for p in await svc.list_for_entity(entity.id, user.id if user else None)}
-    if point.id not in visible:
-        raise HTTPException(status_code=404, detail="Contact point not found")
     if not _may_edit_entity(entity, user):
-        raise HTTPException(status_code=403, detail="Not the owner of this entity")
+        raise HTTPException(status_code=403, detail=NOT_OWNER)
     return svc, point
 
 
@@ -818,7 +819,10 @@ async def list_contact_points(
     _require_contact_points()
     entity = await _visible_entity(db, entity_id, user)
     points = await ContactPointService(db).list_for_entity(entity.id, user.id if user else None)
-    return ContactPointListResponse(contact_points=[_contact_point_response(p) for p in points])
+    return ContactPointListResponse(
+        contact_points=[_contact_point_response(p) for p in points],
+        editable=_may_edit_entity(entity, user),
+    )
 
 
 @router.post("/entities/{entity_id}/contact-points", response_model=ContactPointResponse, status_code=201)
@@ -833,7 +837,7 @@ async def create_contact_point(
     _require_contact_points()
     entity = await _visible_entity(db, entity_id, user)
     if not _may_edit_entity(entity, user):
-        raise HTTPException(status_code=403, detail="Not the owner of this entity")
+        raise HTTPException(status_code=403, detail=NOT_OWNER)
     try:
         point = await ContactPointService(db).add(
             entity, kind=body.kind, value=body.value, label=body.label,

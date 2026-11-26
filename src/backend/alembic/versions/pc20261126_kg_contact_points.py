@@ -31,7 +31,7 @@ def upgrade() -> None:
         TABLE,
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("entity_id", sa.Integer, sa.ForeignKey("kg_entities.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=True),
+        sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id"), nullable=True),
         sa.Column("kind", sa.String(16), nullable=False),
         sa.Column("label", sa.String(16), nullable=True),
         sa.Column("value", sa.Text, nullable=False),

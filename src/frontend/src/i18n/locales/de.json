@@ -2825,6 +2825,8 @@
     "couldNotLoad": "Kontaktdaten konnten nicht geladen werden.",
     "add": "Hinzufügen",
     "remove": "{{value}} entfernen",
+    "confirmRemove": "{{value}} wirklich entfernen",
+    "cancelRemove": "Abbrechen",
     "kindLabel": "Art",
     "valueLabel": "Nummer",
     "valuePlaceholder": "z. B. 0170 1234567",
@@ -2849,8 +2851,7 @@
     "errors": {
       "duplicate": "Diese Nummer ist hier schon gespeichert.",
       "invalid_number": "Das ist keine gültige Telefonnummer.",
-      "invalid_kind": "Unbekannte Art.",
-      "invalid_label": "Unbekannter Bereich."
+      "not_owner": "Nur der Eigentümer dieses Eintrags kann Kontaktdaten ändern."
     }
   }
 }

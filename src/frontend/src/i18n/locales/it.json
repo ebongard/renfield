@@ -2507,6 +2507,8 @@
     "couldNotLoad": "Impossibile caricare i contatti.",
     "add": "Aggiungi",
     "remove": "Rimuovi {{value}}",
+    "confirmRemove": "Rimuovere davvero {{value}}",
+    "cancelRemove": "Annulla",
     "kindLabel": "Tipo",
     "valueLabel": "Numero",
     "valuePlaceholder": "es. +49 170 1234567",
@@ -2531,8 +2533,7 @@
     "errors": {
       "duplicate": "Questo numero è già salvato qui.",
       "invalid_number": "Non è un numero di telefono valido.",
-      "invalid_kind": "Tipo sconosciuto.",
-      "invalid_label": "Ambito sconosciuto."
+      "not_owner": "Solo il proprietario di questa voce può modificarne i recapiti."
     }
   }
 }
