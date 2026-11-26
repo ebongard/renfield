@@ -2053,6 +2053,10 @@ class Settings(BaseSettings):
     contact_points_enabled: bool = False
     # Region for numbers written without a country code ("0170 ...").
     contact_points_default_region: str = "DE"
+    # Stage 4 (#1240): the issuer's own numbers from documents (letterhead/footer
+    # block, deterministic, no LLM; services/document_contact_points.py). Needs
+    # CONTACT_POINTS_ENABLED too. Off = the Schicht-A hook writes nothing new.
+    contact_points_from_documents_enabled: bool = False
 
     # Web Push (#79): a content-free wake-up through the browser's push service
     # for the people the in-app notification reaches. Dark by default. The flag

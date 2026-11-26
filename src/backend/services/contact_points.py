@@ -5,8 +5,9 @@ organization, never on its own node. Every read goes through
 ``contact_points_circles_filter`` AND the entity filter. Every tier goes through
 ``services/contact_point_tier.py``.
 
-Stage 1 writes only what an owner enters by hand (``source_type='manual'``).
-The automatic sources (vCard, chat, documents, mail) come in later stages.
+Stage 1 writes what an owner enters by hand (``source_type='manual'``); the
+document source (``services/document_contact_points.py``) writes
+``source_type='document'``. vCard and chat come in later stages.
 """
 from __future__ import annotations
 
@@ -34,6 +35,18 @@ from utils.config import settings
 
 # The partial unique index on live (entity, kind, normalized) values.
 LIVE_UNIQUE_INDEX = "uq_contact_points_live"
+
+# A value read from a document names nobody while the same number is live on
+# ANOTHER entity of the same owner: a tax advisor's or a property manager's number
+# printed on letters for many issuers (design §14). Applied on every read; the
+# rows stay, so the evidence is kept and the value comes back once it is unique.
+DOCUMENT_AMBIGUITY_SQL = (
+    "NOT (cp.source_type = 'document' AND EXISTS ("
+    "SELECT 1 FROM kg_entity_contact_points o JOIN kg_entities oe ON oe.id = o.entity_id "
+    "WHERE o.normalized = cp.normalized AND o.entity_id <> cp.entity_id "
+    "AND o.valid_to IS NULL AND oe.is_active AND oe.canonical_id IS NULL "
+    "AND o.user_id IS NOT DISTINCT FROM cp.user_id))"
+)
 
 # Longest value accepted verbatim; a phone number in any notation is far shorter.
 MAX_VALUE_LENGTH = 64
@@ -116,8 +129,9 @@ class ContactPointService:
                 "SELECT cp.id, e.id AS entity_id, e.name, e.entity_type "
                 "FROM kg_entity_contact_points cp JOIN kg_entities e ON e.id = cp.entity_id "
                 "WHERE cp.valid_to IS NULL AND e.is_active AND e.canonical_id IS NULL "
-                f"AND {where}{vis} "
-                "ORDER BY e.name, cp.kind, cp.id LIMIT :limit"
+                f"AND {DOCUMENT_AMBIGUITY_SQL} AND {where}{vis} "
+                # A document value ranks after every other source (never "confirmed").
+                "ORDER BY e.name, cp.kind, (cp.source_type = 'document'), cp.id LIMIT :limit"
             ),
             {**params, **vis_params, "limit": int(limit)},
         )).all()
