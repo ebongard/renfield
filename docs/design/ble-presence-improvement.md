@@ -503,8 +503,8 @@ This is thin, and the recording itself says where:
     choice: past the deadline no reading a held verdict rests on would count any more.
 
   What this does not catch: a jump FORWARD looks like a long silence, to both decisions.
-- **Stage 2 — the state follows v2** (part A built and on in the household, part B built — see
-  "Stage 2, part A/B" below): expiry by deadline (a timer per device, not a sweep inside a
+- **Stage 2 — the state follows v2** (parts A, B and C built, A and B on in the household — see
+  "Stage 2, part A/B/C" below): expiry by deadline (a timer per device, not a sweep inside a
   report; `unavailable` must not fire leave events); `UserPresence` may be "home, room unknown";
   `is_location_uncertain` true for every source whose verdict is not `placed`; voice/auth sightings
   and the hold expressed in v2 terms; one rule for several devices of one person; parameters and
@@ -570,7 +570,7 @@ way round (legacy as shadow of v2), because the legacy decision mutates the stat
 admin live-readings summary still mirrored the legacy switch rule; part B shows the v2 verdict instead.
 
 Parts B (parameters and zones from a table, with a calibration flow) and C (the satellite reports its
-cutoff, the age of its last advert and a BLE sign of life) follow as their own PRs.
+cutoff, the age of its last advert and a BLE sign of life) followed as their own PRs.
 
 ### Stage 2, part B: calibration in tables, with a guided measurement (2026-11-26)
 
@@ -601,11 +601,11 @@ Code: tables `presence_receivers`, `presence_zones`, `presence_zone_rooms` (migr
   that device since the start, from the readings the presence service keeps anyway (the 120 s window) —
   no second recorder — and proposes their 10th percentile, the rule the labelled walk was scored with
   (`IN_ROOM_PERCENTILE`, now in `presence_placement.py`). At least 10 readings (`MIN_SAMPLES`, a choice:
-  the satellites that cut at −80 repeat their own smoothed value for 20 s). Nothing is saved until the
+  before part C the satellites repeated their own smoothed value for 20 s). Nothing is saved until the
   admin confirms; the old values stay visible.
 - **The cutoff is never derived from readings.** It is a property of the satellite's firmware; with every
-  device close, the weakest reading in the window sits far above it. A calibrated receiver keeps its
-  value; an uncalibrated one needs it typed in until part C has the satellite report it.
+  device close, the weakest reading in the window sits far above it. Since part C the satellite reports
+  it; an older satellite keeps the stored value, an uncalibrated one needs it typed in.
 - **The live-readings view** shows the v2 verdict, the margin against the runner-up and every receiver's
   distance to its bound. While v2 books the state, the legacy room comparison is hidden: it decides
   nothing then.
@@ -615,6 +615,46 @@ JSON that has become unusable after the seed still switches v2 off at the next s
 tables are fine — once the tables hold the numbers, the JSON keys can simply be removed from the
 ConfigMap. And a write reaches only the process that handled it: the backend runs as ONE replica; a
 second one would learn of a change at its next start.
+
+### Stage 2, part C: the satellite says what a silence means (2026-11-26, satellite 1.4.23)
+
+Measured in the code, not on a walk: three things the decision assumed about a receiver were not true.
+
+- **The cutoff was copied by hand.** The satellite drops every reading below its `ble_rssi_threshold`
+  (fleet −80, Küche and Esszimmer −100); the calibration held the same numbers typed in. Now every BLE
+  cycle carries `scanner.cutoff_dbm`, and **the reported cutoff wins** over the stored one (owner's
+  decision, 2026-11-26: the satellite filters there). `effective_params`; a reported cutoff at or above
+  the stored in-room bound leaves the receiver uncalibrated, with one WARNING.
+- **A reading was dated by its arrival.** In continuous mode the satellite reported the smoothed value
+  of every device heard in its last 20 s, every 3 s: a 19 s old advertisement arrived as new, and the
+  repeats counted as readings. Now each reading carries `age_s` and is dated `arrival − age_s` (no usable
+  age, an older satellite: the arrival); one no younger than the 120 s window is dropped. And a device
+  is reported only after a NEW advertisement — the backend's freshness window does the rest.
+- **The heartbeat was the sign of life.** It proves the process, not the radio: a scanner that stopped
+  hearing kept its receiver "censored" (silence = at or below the cutoff, evidence against that room).
+  A satellite now reports with EVERY BLE cycle, also with no device: mode, running, cutoff, and the age
+  of the last advertisement of ANY device. That advertisement is the sign of life, counted for
+  `SCANNER_ALIVE_S` = 30 s (owner's choice: a house is never that quiet with a working radio; the
+  heartbeat window stays 60 s for older satellites). After it the receiver is `offline`: it says
+  nothing either way. The state driver's timer wakes when that window runs out.
+
+Classic Bluetooth reports carry `transport: "classic"`: their "rssi" is a golden-range offset mapped
+onto −50 dBm (or that −50 itself), presence but no level. The legacy decision uses them as before;
+v2 and the guided measurement never read them — a v2 placement of a Classic-only device is therefore
+not possible (none is registered in the household).
+
+Compatibility: a backend without part C ignores the new fields and the empty reports; a satellite
+before 1.4.23 is judged by its heartbeat and the stored cutoff, as before. A (re)registration drops the
+satellite's last status (`forget_scanner_status`): after an OTA rollback below 1.4.23 a kept status would
+age out and leave a connected receiver offline for good. Roll the backend out first, then the fleet.
+
+Limits, on purpose:
+- The legacy decision changes with the satellite, not with a flag: fewer repeats per device (only new
+  advertisements) and readings dated a few seconds earlier, so it lets go of a room about 20 s sooner.
+  It decides on no instance any more (v2 in the household, presence off on xidra).
+- `SCANNER_ALIVE_S` assumes the fleet's continuous scan every 3 s. A satellite on the periodic default
+  (`scan_interval` 30 s plus a 5 s burst) would read offline for a few seconds of every cycle; none is
+  configured that way.
 
 ### What stage 1 does NOT do
 

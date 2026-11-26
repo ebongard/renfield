@@ -733,6 +733,20 @@ class CalibrationZone(BaseModel):
     room_ids: list[int] = Field(..., max_length=100)
 
 
+class CalibrationScanner(BaseModel):
+    """What a satellite (>= 1.4.23) last said about its BLE scanner."""
+
+    satellite_id: str
+    mode: str
+    running: bool
+    # The cutoff it filters at — the one in effect (it wins over the stored one).
+    cutoff_dbm: float | None
+    # Seconds since it last heard an advertisement of any device, as of now.
+    last_advert_age_s: float | None
+    # Heard something within the window that counts as a sign of life.
+    hearing: bool
+
+
 class CalibrationResponse(BaseModel):
     # "database" | "empty" — where the numbers in effect come from.
     source: str
@@ -744,6 +758,7 @@ class CalibrationResponse(BaseModel):
     zones: list[CalibrationZone]
     min_samples: int
     in_room_percentile: float
+    scanners: list[CalibrationScanner] = []
 
 
 class ReceiverUpdate(BaseModel):
@@ -775,10 +790,12 @@ class ProposalResponse(BaseModel):
     min_dbm: float
     median_dbm: float
     max_dbm: float
-    # None = the receiver is uncalibrated; the admin enters its cutoff.
+    # None = no cutoff known (older satellite, uncalibrated): the admin enters it.
     cutoff_dbm: float | None
     offset_db: float
     current: CalibrationReceiver | None
+    # "satellite" | "stored" | None — where cutoff_dbm comes from.
+    cutoff_source: str | None = None
 
 
 def _require_presence() -> None:
@@ -786,7 +803,24 @@ def _require_presence() -> None:
         raise HTTPException(status_code=404, detail="Presence detection is disabled")
 
 
+def _scanners(presence, now: float) -> list[CalibrationScanner]:
+    from ha_glue.services.presence_placement import SCANNER_ALIVE_S
+
+    out = []
+    for satellite_id, status in sorted(getattr(presence, "_scanner_status", {}).items()):
+        heard_at = status.last_advert_at
+        age = round(max(0.0, now - heard_at), 1) if heard_at is not None else None
+        out.append(CalibrationScanner(
+            satellite_id=satellite_id, mode=status.mode, running=status.running,
+            cutoff_dbm=status.cutoff_dbm, last_advert_age_s=age,
+            hearing=age is not None and age <= SCANNER_ALIVE_S,
+        ))
+    return out
+
+
 def _calibration_response(calibration) -> CalibrationResponse:
+    import time
+
     from ha_glue.services.presence_calibration import IN_ROOM_PERCENTILE, MIN_SAMPLES
 
     presence = get_presence_service()
@@ -805,6 +839,7 @@ def _calibration_response(calibration) -> CalibrationResponse:
         ],
         min_samples=MIN_SAMPLES,
         in_room_percentile=IN_ROOM_PERCENTILE,
+        scanners=_scanners(presence, time.time()),
     )
 
 
@@ -932,6 +967,7 @@ async def propose_calibration(
         max_dbm=proposal.max_dbm,
         cutoff_dbm=proposal.cutoff_dbm,
         offset_db=proposal.offset_db,
+        cutoff_source=proposal.cutoff_source,
         current=(
             CalibrationReceiver(satellite_id=body.satellite_id, offset_db=current.offset_db,
                                 in_room_dbm=current.in_room_dbm, cutoff_dbm=current.cutoff_dbm)

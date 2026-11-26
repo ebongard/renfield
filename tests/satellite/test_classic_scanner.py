@@ -90,7 +90,7 @@ async def test_real_rssi_centered_on_baseline():
          patch("asyncio.create_subprocess_exec", side_effect=fake):
         result = await scanner.scan({MAC})
 
-    assert result == [{"mac": MAC, "rssi": -57}]  # -50 + (-7)
+    assert result == [{"mac": MAC, "rssi": -57, "transport": "classic"}]  # -50 + (-7)
 
 
 @pytest.mark.satellite
@@ -108,7 +108,7 @@ async def test_positive_offset_reads_stronger():
          patch("asyncio.create_subprocess_exec", side_effect=fake):
         result = await scanner.scan({MAC})
 
-    assert result == [{"mac": MAC, "rssi": -44}]  # -50 + 6
+    assert result == [{"mac": MAC, "rssi": -44, "transport": "classic"}]  # -50 + 6
 
 
 @pytest.mark.satellite
@@ -126,7 +126,7 @@ async def test_weak_offset_floored_above_backend_threshold():
          patch("asyncio.create_subprocess_exec", side_effect=fake):
         result = await scanner.scan({MAC})
 
-    assert result == [{"mac": MAC, "rssi": ClassicBTScanner.PRESENT_FLOOR}]  # -79, not -90
+    assert result == [{"mac": MAC, "rssi": ClassicBTScanner.PRESENT_FLOOR, "transport": "classic"}]  # -79, not -90
 
 
 @pytest.mark.satellite
@@ -144,7 +144,7 @@ async def test_falls_back_to_synthetic_when_rssi_unreadable():
          patch("asyncio.create_subprocess_exec", side_effect=fake):
         result = await scanner.scan({MAC})
 
-    assert result == [{"mac": MAC, "rssi": ClassicBTScanner.SYNTHETIC_RSSI}]
+    assert result == [{"mac": MAC, "rssi": ClassicBTScanner.SYNTHETIC_RSSI, "transport": "classic"}]
 
 
 @pytest.mark.satellite
@@ -176,7 +176,7 @@ async def test_read_rssi_disabled_keeps_synthetic():
          patch("asyncio.create_subprocess_exec", side_effect=_tracking):
         result = await scanner.scan({MAC})
 
-    assert result == [{"mac": MAC, "rssi": ClassicBTScanner.SYNTHETIC_RSSI}]
+    assert result == [{"mac": MAC, "rssi": ClassicBTScanner.SYNTHETIC_RSSI, "transport": "classic"}]
     assert calls == ["name"]  # cc/rssi/dc never invoked
 
 
@@ -193,7 +193,7 @@ async def test_rssi_timeout_falls_back_and_still_present():
          patch("asyncio.create_subprocess_exec", side_effect=fake):
         result = await scanner.scan({MAC})
 
-    assert result == [{"mac": MAC, "rssi": ClassicBTScanner.SYNTHETIC_RSSI}]
+    assert result == [{"mac": MAC, "rssi": ClassicBTScanner.SYNTHETIC_RSSI, "transport": "classic"}]
 
 
 @pytest.mark.satellite
@@ -251,7 +251,7 @@ async def test_rssi_read_throttled_within_interval():
         r2 = await scanner.scan({MAC})
         r3 = await scanner.scan({MAC})
 
-    assert r1 == r2 == r3 == [{"mac": MAC, "rssi": -71}]  # -50 + (-21)
+    assert r1 == r2 == r3 == [{"mac": MAC, "rssi": -71, "transport": "classic"}]  # -50 + (-21)
     assert counter["cc"] == 1  # only the first scan connected; rest used the cache
 
 
@@ -265,7 +265,7 @@ async def test_mac_normalized_and_cache_pruned():
          patch("asyncio.create_subprocess_exec", side_effect=_fake_hcitool(ok)):
         result = await scanner.scan({MAC.lower()})
 
-    assert result == [{"mac": MAC, "rssi": -56}]
+    assert result == [{"mac": MAC, "rssi": -56, "transport": "classic"}]
     assert list(scanner._rssi_cache.keys()) == [MAC]  # uppercase key
 
     # A scan with a different whitelist (device absent) prunes the stale entry.
@@ -296,5 +296,5 @@ async def test_cached_rssi_reused_when_later_read_fails():
          patch("asyncio.create_subprocess_exec", side_effect=_fake_hcitool(fail)):
         second = await scanner.scan({MAC})
 
-    assert first == [{"mac": MAC, "rssi": -71}]
-    assert second == [{"mac": MAC, "rssi": -71}]  # cached, not -50
+    assert first == [{"mac": MAC, "rssi": -71, "transport": "classic"}]
+    assert second == [{"mac": MAC, "rssi": -71, "transport": "classic"}]  # cached, not -50

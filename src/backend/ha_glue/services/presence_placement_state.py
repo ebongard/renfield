@@ -209,6 +209,8 @@ class PlacementState(PlacementShadow):
         newest = None
         for key in keys:
             for s in presence._sightings.get(key, ()):
+                if not getattr(s, "comparable", True):
+                    continue  # Classic BT: v2 reads no such sighting (DeviceSighting)
                 if 0.0 <= now - s.timestamp <= self._config.absent_after_s and (
                     newest is None or s.timestamp > newest
                 ):
@@ -222,6 +224,8 @@ class PlacementState(PlacementShadow):
             if presence._user_for_key(key) is None:
                 continue
             for s in sightings:
+                if not getattr(s, "comparable", True):
+                    continue
                 candidates.append(s.timestamp + cfg.fresh_s)
                 candidates.append(s.timestamp + cfg.absent_after_s)
         for p in presence._presence.values():
@@ -230,12 +234,13 @@ class PlacementState(PlacementShadow):
                 candidates.append(p.voice_at + cfg.absent_after_s)
             if p.voice_hold_until:
                 candidates.append(p.voice_hold_until)
-        try:
-            roster = self._roster()
-        except Exception:
-            roster = {}
-        for _room, heartbeat_at in roster.values():
-            if heartbeat_at is not None:
-                candidates.append(heartbeat_at + cfg.receiver_alive_s)
+        # A receiver's sign of life running out — the same receivers, with the
+        # same window, the decision sees (a scanner's last advert or a heartbeat).
+        for receiver in self._receivers(presence).values():
+            if receiver.alive_at is not None:
+                window = receiver.alive_window_s
+                candidates.append(
+                    receiver.alive_at + (window if window is not None else cfg.receiver_alive_s)
+                )
         ahead = [t for t in candidates if t > now]
         return min(ahead) if ahead else None

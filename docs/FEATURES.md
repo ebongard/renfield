@@ -1158,6 +1158,22 @@ Satelliten scannen per `bleak` nach registrierten BLE-Geräten und melden RSSI-W
 
 Telefone, die ihre BLE-MAC rotieren (Apple), werden zusätzlich per Classic-BT erkannt: `hcitool name <MAC>` (binäre An/Abwesenheit). Da ein Name-Request kein Signal liefert, las dies früher ein konstantes synthetisches `-50` — bei zwei Satelliten ein Unentschieden, das den Raum „flattern" ließ. Der Satellit liest jetzt ein **echtes** RSSI über eine kurzlebige ACL-Verbindung (`hcitool cc/rssi/dc` via passwortloses `sudo`), **gedrosselt** auf einmal pro `classic_rssi_interval` (Default 300 s) pro Gerät — häufiges Verbinden lässt das Telefon sonst aufhören, auf `name` zu antworten (Präsenz fällt auf „abwesend"). Das golden-range-RSSI wird auf die Backend-Skala abgebildet und gepuffert; bei Read-Fehler greift der synthetische Fallback, sodass Präsenz nie verloren geht. Schalter: `ble.classic_rssi` (siehe `docs/ENVIRONMENT_VARIABLES.md`).
 
+### Platzierung v2 (#1551, `PRESENCE_PLACEMENT_V2_STATE_ENABLED`; im Haushalt an seit 2026-11-25)
+
+Ersetzt „stärkstes RSSI gewinnt“ durch eine Regel mit Raumgrenze und Abstand. Ein Raum wird nur
+zugeordnet, wenn ein kalibrierter Empfänger das Gerät innerhalb seiner Raumgrenze hört und alle
+Empfänger außerhalb um 10 dB übertrifft. Sonst heißt es „zu Hause, Raum unbekannt“, und der zuletzt
+gebuchte Raum bleibt. Offene Grundrisse (Küche und Esszimmer) sind eine Zone.
+
+- **Kalibrierung** unter `/admin/presence` → „Kalibrierung“: Messlauf je Raum (60 s, das Gerät liegt
+  da, wo es sonst liegt). Vorgeschlagen wird das 10. Perzentil, gespeichert erst nach Bestätigung, und
+  es gilt sofort. Die Werte liegen in Tabellen; das JSON der ConfigMap war nur der Startwert.
+- **„Messwerte“** zeigt pro Gerät das Urteil, seinen Grund und je Empfänger den Abstand zur Raumgrenze.
+- **Satelliten ab 1.4.23** melden selbst ihre Schnittgrenze (sie gilt), das Alter jedes Messwerts und
+  ein BLE-Lebenszeichen. Ein Satellit, dessen Scanner 30 s lang nichts empfangen hat, gilt als „weiß
+  nichts“, nicht als „niemand da“. Classic-BT-Werte sind keine dBm und zählen für v2 nicht.
+- Herleitung, Messungen und Grenzen: `docs/design/ble-presence-improvement.md`.
+
 ### Voice Presence
 
 Wenn die Sprechererkennung einen Nutzer auf einem Satelliten identifiziert, wird `register_voice_presence()` aufgerufen. Dies aktualisiert den Raum sofort und feuert die entsprechenden Hooks (`presence_enter_room`, `presence_leave_room`, etc.).

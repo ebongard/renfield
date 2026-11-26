@@ -1146,19 +1146,28 @@ class WebSocketClient:
             "rolled_back": rolled_back
         }, run_id))
 
-    async def send_ble_presence(self, devices: List[Dict[str, Any]]):
+    async def send_ble_presence(
+        self,
+        devices: List[Dict[str, Any]],
+        scanner: Optional[Dict[str, Any]] = None,
+    ):
         """
         Send BLE presence scan results to server.
 
         Args:
-            devices: List of detected devices [{mac, rssi}]
+            devices: List of detected devices [{mac, rssi, age_s?, identity?, transport?}]
+            scanner: The BLE scanner's status (``BLEScanner.status``); sent with
+                every BLE cycle, also without devices, so a silence can be read.
         """
         if not self.is_connected:
             return
 
-        await self._send({
+        message: Dict[str, Any] = {
             "type": "ble_presence",
             "satellite_id": self.satellite_id,
             "devices": devices,
             "timestamp": int(time.time() * 1000)
-        })
+        }
+        if scanner is not None:
+            message["scanner"] = scanner
+        await self._send(message)

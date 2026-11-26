@@ -66,11 +66,20 @@ class _Engine:
         self.calls.append((dict(params), dict(zones)))
 
 
-def _presence(sightings: dict[str, list[DeviceSighting]] | None = None, engine=None):
+def _presence(sightings: dict[str, list[DeviceSighting]] | None = None, engine=None,
+              scanners: dict | None = None):
     presence = MagicMock()
     presence._sightings = sightings or {}
     presence._placement_shadow = engine
+    presence._scanner_status = scanners or {}
     return presence
+
+
+def _status(cutoff=-100.0, age=2.0, received_at=1030.0):
+    from ha_glue.services.presence_service import ScannerStatus
+
+    return ScannerStatus(received_at=received_at, mode="continuous", running=True,
+                         cutoff_dbm=cutoff, last_advert_age_s=age)
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +249,27 @@ class TestProposal:
     def test_an_uncalibrated_receiver_gets_no_invented_cutoff(self):
         p = cal.propose(_presence(_readings([-50] * 12)), redact_device_key(KEY), "sat-a",
                         since=1000.0, now=1030.0, current=None)
-        assert p.cutoff_dbm is None and p.offset_db == 0.0
+        assert p.cutoff_dbm is None and p.offset_db == 0.0 and p.cutoff_source is None
+
+    def test_the_cutoff_the_satellite_reports_wins(self):
+        presence = _presence(_readings([-50] * 12), scanners={"sat-a": _status(cutoff=-100.0)})
+        for current in (None, ReceiverParams(0.5, -55, -80)):
+            p = cal.propose(presence, redact_device_key(KEY), "sat-a",
+                            since=1000.0, now=1030.0, current=current)
+            assert p.cutoff_dbm == -100.0 and p.cutoff_source == "satellite"
+        stored = cal.propose(_presence(_readings([-50] * 12)), redact_device_key(KEY), "sat-a",
+                             since=1000.0, now=1030.0, current=ReceiverParams(0.5, -55, -80))
+        assert stored.cutoff_dbm == -80 and stored.cutoff_source == "stored"
+
+    def test_classic_readings_are_not_measured(self):
+        """A Classic-BT value is no dBm level; it must not become a bound."""
+        sightings = _readings([-50] * 12)
+        for s in sightings[KEY]:
+            s.comparable = False
+        with pytest.raises(cal.CalibrationError) as e:
+            cal.propose(_presence(sightings), redact_device_key(KEY), "sat-a",
+                        since=1000.0, now=1030.0, current=None)
+        assert e.value.code == "too_few_readings"
 
     @pytest.mark.parametrize(
         ("since", "now", "values", "device", "code"),
@@ -375,6 +404,20 @@ class TestRoutes:
         r = await client.put("/api/presence/calibration/zones",
                              json={"zones": [{"name": "z" * 101, "room_ids": [1, 2]}]})
         assert r.status_code == 422  # refused before the database, not a 500
+
+    async def test_the_response_lists_what_the_satellites_report(self, client):
+        from ha_glue.api.routes import presence as route
+
+        now = time.time()
+        presence = _presence(scanners={
+            "sat-a": _status(cutoff=-100.0, age=2.0, received_at=now),
+            "sat-b": _status(cutoff=-80.0, age=50.0, received_at=now),
+        })
+        with patch.object(route, "get_presence_service", lambda: presence):
+            body = (await client.get("/api/presence/calibration")).json()
+        a, b = body["scanners"]
+        assert a["satellite_id"] == "sat-a" and a["cutoff_dbm"] == -100.0 and a["hearing"] is True
+        assert b["hearing"] is False and b["last_advert_age_s"] >= 50.0
 
     async def test_guided_measurement(self, client):
         r = await client.post("/api/presence/calibration/measurement")

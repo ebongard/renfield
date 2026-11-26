@@ -306,6 +306,19 @@ export interface CalibrationZone {
   room_ids: number[];
 }
 
+/** What a satellite (>= 1.4.23) last said about its BLE scanner. */
+export interface CalibrationScanner {
+  satellite_id: string;
+  mode: 'continuous' | 'periodic';
+  running: boolean;
+  /** The cutoff it filters at — the one in effect (it wins over the stored one). */
+  cutoff_dbm: number | null;
+  /** Seconds since it last heard an advertisement of any device. */
+  last_advert_age_s: number | null;
+  /** Heard something within the window that counts as a sign of life. */
+  hearing: boolean;
+}
+
 export interface Calibration {
   source: 'database' | 'empty';
   settings_ignored: boolean;
@@ -314,6 +327,8 @@ export interface Calibration {
   zones: CalibrationZone[];
   min_samples: number;
   in_room_percentile: number;
+  /** Absent from an older backend. */
+  scanners?: CalibrationScanner[];
 }
 
 export interface CalibrationProposal {
@@ -323,10 +338,12 @@ export interface CalibrationProposal {
   min_dbm: number;
   median_dbm: number;
   max_dbm: number;
-  /** null = the receiver is uncalibrated; the admin enters its cutoff. */
+  /** null = no cutoff known (older satellite, uncalibrated): the admin enters it. */
   cutoff_dbm: number | null;
   offset_db: number;
   current: CalibrationReceiver | null;
+  /** Where cutoff_dbm comes from. */
+  cutoff_source?: 'satellite' | 'stored' | null;
 }
 
 /** Stable refusal codes of the calibration routes (`detail.code`). */

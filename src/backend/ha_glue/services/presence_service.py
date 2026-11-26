@@ -6,8 +6,10 @@ based on BLE scan reports from satellites. Aggregates RSSI from multiple
 satellites for robust room assignment with hysteresis to prevent room flicker.
 """
 
+import math
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from loguru import logger
 from sqlalchemy import select
@@ -53,6 +55,68 @@ class DeviceSighting:
     room_id: int | None
     rssi: int
     timestamp: float
+    # False for a Classic-BT result: its "rssi" is a golden-range offset mapped
+    # onto -50 (or that -50 itself), presence but no level to compare rooms by.
+    # The legacy decision uses it as before; placement v2 never reads it.
+    comparable: bool = True
+
+
+# Range a reported cutoff must lie in: the RSSI range of the Bluetooth HCI
+# (as in presence_placement). Anything else is not a cutoff.
+_RSSI_MIN_DBM, _RSSI_MAX_DBM = -127.0, 20.0
+
+
+@dataclass(frozen=True)
+class ScannerStatus:
+    """What a satellite (>= 1.4.23) says about its BLE scanner with every BLE
+    cycle (#1551 stage 2 C). ``received_at`` is backend time; the radio's sign
+    of life is ``received_at - last_advert_age_s`` (an advertisement of ANY
+    device): a heartbeat proves the process, not the scanner."""
+
+    received_at: float
+    mode: str
+    running: bool
+    cutoff_dbm: float | None
+    last_advert_age_s: float | None
+
+    @property
+    def last_advert_at(self) -> float | None:
+        """Backend time of the last advertisement heard, or None."""
+        if not self.running or self.last_advert_age_s is None:
+            return None
+        return self.received_at - self.last_advert_age_s
+
+
+def _finite(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def parse_scanner_status(raw: Any, received_at: float) -> ScannerStatus | None:
+    """The ``scanner`` field of a ``ble_presence`` report, or None when absent
+    (an older satellite) or unusable. Never raises: a malformed field must not
+    lose the readings of the same report. An unusable cutoff or age is dropped
+    on its own (None), not the whole status."""
+    if not isinstance(raw, dict):
+        return None
+    mode = raw.get("mode")
+    if mode not in ("continuous", "periodic"):
+        return None
+    cutoff = _finite(raw.get("cutoff_dbm"))
+    if cutoff is not None and not _RSSI_MIN_DBM <= cutoff <= _RSSI_MAX_DBM:
+        cutoff = None
+    age = _finite(raw.get("last_advert_age_s"))
+    if age is not None and age < 0:
+        age = None
+    return ScannerStatus(
+        received_at=received_at,
+        mode=mode,
+        running=raw.get("running") is True,
+        cutoff_dbm=cutoff,
+        last_advert_age_s=age,
+    )
 
 
 @dataclass
@@ -150,6 +214,8 @@ class PresenceService:
         self._mac_to_method: dict[str, str] = {}         # MAC → detection_method cache
         self._presence: dict[int, UserPresence] = {}     # user_id → presence
         self._sightings: dict[str, list[DeviceSighting]] = {}  # MAC → recent sightings
+        # satellite id → the latest status of its BLE scanner (>= 1.4.23 only)
+        self._scanner_status: dict[str, ScannerStatus] = {}
         self._hysteresis_threshold: int = ha_glue_settings.presence_hysteresis_scans
         self._stale_timeout: float = float(ha_glue_settings.presence_stale_timeout)
         self._rssi_threshold: int = ha_glue_settings.presence_rssi_threshold
@@ -291,6 +357,7 @@ class PresenceService:
         room_id: int | None,
         devices: list[dict],
         room_name: str | None = None,
+        scanner: Any = None,
     ):
         """
         Process a BLE scan report from a satellite.
@@ -298,16 +365,28 @@ class PresenceService:
         Args:
             satellite_id: ID of the reporting satellite
             room_id: Room where the satellite is located
-            devices: List of {mac, rssi} dicts
+            devices: List of {mac, rssi, age_s?, identity?, transport?} dicts
             room_name: Optional room name for display
+            scanner: The satellite's scanner status (>= 1.4.23), sent with
+                every BLE cycle — also with no device (``parse_scanner_status``)
         """
         if room_name and room_id:
             self._room_names[room_id] = room_name
 
         now = time.time()
+        status = parse_scanner_status(scanner, now)
+        if status is not None:
+            self._scanner_status[satellite_id] = status
 
         for device in devices:
             rssi = device.get("rssi", -100)
+            # Date the reading by its advertisement, not by the report: a
+            # continuous scanner reports a value heard up to its freshness
+            # window ago. No usable age (an older satellite): the report time.
+            age = _finite(device.get("age_s"))
+            age = age if age is not None and age >= 0 else 0.0
+            if age >= self._stale_timeout:
+                continue
 
             # An IRK-resolved reading carries a stable `identity` (the rotating
             # `mac` would never match a whitelist); key it by the identity so a
@@ -324,7 +403,8 @@ class PresenceService:
                 satellite_id=satellite_id,
                 room_id=room_id,
                 rssi=rssi,
-                timestamp=now,
+                timestamp=now - age,
+                comparable=device.get("transport") != "classic",
             )
 
             # Keep only recent sightings (last 2 minutes)
@@ -354,6 +434,13 @@ class PresenceService:
 
         # Fire collected presence events
         await self._fire_pending_events()
+
+    def forget_scanner_status(self, satellite_id: str) -> None:
+        """Drop a satellite's scanner status, at its (re)registration. Kept, a
+        status from firmware it no longer runs (an OTA rollback below 1.4.23)
+        would age out and leave a connected receiver offline for good; dropped,
+        the heartbeat counts until its next report brings a new one."""
+        self._scanner_status.pop(satellite_id, None)
 
     def _user_for_key(self, key: str) -> int | None:
         """Resolve a sighting key (a MAC, or an "irk:<label>" identity) to a

@@ -1105,6 +1105,9 @@ async def satellite_websocket(
                     try:
                         from ha_glue.services.presence_service import get_presence_service
                         presence_svc = get_presence_service()
+                        # A (re)registered satellite may run other firmware now
+                        # (an OTA, a rollback): its next report says what it is.
+                        presence_svc.forget_scanner_status(satellite_id)
                         ble_macs = presence_svc.get_ble_macs()
                         if ble_macs:
                             await websocket.send_json({
@@ -1898,6 +1901,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                         room_id=ble_room_id,
                         devices=ble_devices,
                         room_name=satellite.room if satellite else None,
+                        scanner=data.get("scanner"),
                     )
 
             # Handle OTA update progress

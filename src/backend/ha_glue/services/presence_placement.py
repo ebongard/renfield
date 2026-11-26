@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Collection, Hashable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 
 RoomKey = Hashable
@@ -129,9 +129,35 @@ class Receiver:
     room: RoomKey | None
     # None = uncalibrated: may keep a device "home", can never place it.
     params: ReceiverParams | None = None
-    # Latest evidence that the receiver is running (a heartbeat). A reading is
+    # Latest evidence that the receiver is running: the last advertisement its
+    # scanner heard (satellite >= 1.4.23), else its heartbeat. A reading is
     # evidence of its own; None = nothing known beyond the readings.
     alive_at: float | None = None
+    # How long ``alive_at`` counts; None = ``PlacementConfig.receiver_alive_s``
+    # (the heartbeat's window). A scanner's sign of life uses SCANNER_ALIVE_S.
+    alive_window_s: float | None = None
+
+
+# A scanner that has heard no advertisement of ANY device for this long is not
+# hearing: a silence then says nothing (offline), not "at or below the cutoff".
+# The owner's choice (2026-11-26); a house is never this quiet with a radio on.
+SCANNER_ALIVE_S = 30.0
+
+
+def effective_params(
+    params: ReceiverParams | None, reported_cutoff_dbm: float | None
+) -> ReceiverParams | None:
+    """The receiver's numbers with the cutoff its satellite REPORTS, which
+    wins over the stored one: the satellite filters there (the owner's choice,
+    2026-11-26). A reported cutoff at or above the stored in-room bound makes
+    the bound meaningless, so the receiver counts as uncalibrated (None)."""
+    if params is None or reported_cutoff_dbm is None:
+        return params
+    if not _is_finite(reported_cutoff_dbm) or not params.in_room_dbm > reported_cutoff_dbm:
+        return None
+    if reported_cutoff_dbm == params.cutoff_dbm:
+        return params
+    return replace(params, cutoff_dbm=float(reported_cutoff_dbm))
 
 
 @dataclass(frozen=True)
@@ -355,8 +381,11 @@ def _evidence(
             age_s=age,
         )
 
+    window_s = config.receiver_alive_s
+    if receiver.alive_window_s is not None and _is_finite(receiver.alive_window_s):
+        window_s = receiver.alive_window_s
     signs_of_life = [t for t in (receiver.alive_at, newest) if t is not None and t <= now]
-    alive = bool(signs_of_life) and now - max(signs_of_life) <= config.receiver_alive_s
+    alive = bool(signs_of_life) and now - max(signs_of_life) <= window_s
     if alive:
         # Silent, not far: all that is known is "at or below the cutoff, or
         # deaf". For the margin it stands at the cutoff — the strongest value

@@ -46,13 +46,14 @@ Loaded only when the daypart / LED-dimming / presence services are read. BLE/IRK
 ## Placement v2 — stage 1 shadow, stage 2 state (`PRESENCE_PLACEMENT_V2_{SHADOW,STATE}_ENABLED`, code default off)
 - `presence_placement.decide` stays PURE (no I/O, no module state, clock passed in): the labelled walk in
   `tests/backend/fixtures/` replays through it. In a `placed` verdict a gate uses `rooms` (the whole zone); `room` is a hint.
-- A silent receiver is CENSORED (at or below its cutoff, or deaf), never "far"; an uncalibrated one keeps a user home
-  and never places, nor does NaN/±inf or a level outside −127…+20 dBm (gates use `_at_least`). Receiver numbers: NO defaults.
-- Nothing may READ a verdict from the SHADOW: it logs and adds `placement_v2` to the payload. Flag off = not imported.
+- A silent receiver is CENSORED (at or below its cutoff), never "far"; an uncalibrated one keeps a user home and never
+  places, nor does NaN/±inf or a level outside −127…+20 dBm (`_at_least`). NO receiver defaults. The SHADOW is never read; flag off = not imported.
 - Stage 2 (state; ON in the household): `PlacementState` books, legacy does not run. ONE rule: the source that changed
   zone LAST wins (voice = a claim timed at the sighting, decided AT ONCE). Contested / no room / stale = uncertain, last
   room stays booked. One `call_later` timer; `unavailable` changes nothing. Receiver numbers + zones live in TABLES
   (`presence_calibration`; JSON = one-time seed); writes go live via `set_calibration`; a cutoff is never derived.
+- Satellite ≥ 1.4.23 (part C): its REPORTED cutoff wins; a reading is dated `arrival − age_s`; the sign of life is
+  its scanner's last advert of ANY device (30 s), not the heartbeat; `transport: classic` = no level, v2 skips it.
 
 ## IRK push
 IRKs are location-tracking keys: with enrollment on they go ONLY to authenticated satellites (`irks_for_satellite` +
