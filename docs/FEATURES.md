@@ -835,8 +835,13 @@ Firmenzentrale als Knoten würde fremde Personen im Graphen zu Nachbarn machen).
 pflegen, im Chat erfragen („Wie ist die Handynummer von Hans?“, `internal.find_contact`) und rückwärts suchen („wem
 gehört diese Nummer?“). Jede Nummer wird ins Format E.164 gebracht; was keine gültige Nummer ist, wird nicht
 gespeichert. Sichtbarkeit: nie offener als die Entität und nie offener als ihre Quelle; Zusammenführen nimmt die
-Nummern mit, Löschen der Entität löscht sie. Adressbuch-Import, Chat und Dokumente als Quellen folgen
-(`docs/design/kg-contact-points.md`).
+Nummern mit, Löschen der Entität löscht sie.
+
+Stufe 4 (`CONTACT_POINTS_FROM_DOCUMENTS_ENABLED`): neue Dokumente liefern die Nummern ihres Ausstellers aus dem
+Briefkopf bzw. der Fußzeile, deterministisch und nur bei genau einer passenden Person/Firma. Den Bestand durchsucht
+man im Chat mit „Durchsuche meine Dokumente nach Telefonnummern“ (`internal.scan_document_contacts`, braucht
+`kg.manage`; Antwort nur als Zahlen) — sinnvoll nach dem Zusammenführen doppelter Einträge. Adressbuch-Import und
+Chat als Quellen folgen (`docs/design/kg-contact-points.md`).
 
 ### Duplikat-Erkennung
 
