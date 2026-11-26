@@ -354,6 +354,8 @@ Die Review-Schlange wird **je Namens-Cluster** entschieden, nicht je Paar (`POST
 | `circle_memberships` | Wer ist in welchem Tier-Ring welches Eigentümers |
 | `kb_shares` | Knowledge-Base-Freigabe `(kb_id, user_id, permission_level, can_delete)` — `can_delete` ist der getrennte Löschschalter des Eigentümers (`pc20261102`, Standard false); eine Zeile je Freigabe, zur Abfragezeit ausgewertet (seit `pc20261101`; vorher nur Grants je damals vorhandenem Dokument; diese Alt-Grants öffnen ihr Dokument, geben aber keine KB-Stufe, #1446) |
 
+**Kontaktpunkte (#1240)** tragen ein eigenes `circle_tier = LEAST(Entität, source_tier)` ohne eigenes Atom; Grants wirken an der Entität (`contact_points_circles_filter` mit `source_id = cp.entity_id`), aber nur auf Werte mit `source_tier >= Entitäts-Tier` (`grant_guard_expr` in `circles_filter_clause`), gelesen wird immer zusätzlich durch den Entitätsfilter. `source_tier` sinkt mit einem privater gestellten Quelldokument, steigt bei automatischen Quellen nie. Regel: `services/contact_point_tier.py`.
+
 **Denormalisierte Spalten**: `document_chunks.circle_tier`, `document_chunks.atom_id`, dasselbe Paar auf `kg_entities`, `kg_relations`, `conversation_memories`.
 
 ---

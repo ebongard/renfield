@@ -232,3 +232,51 @@ class ApproveMergeRequest(BaseModel):
     # Optional owner override of which entity survives (D2 survivor toggle).
     # Must be one of the proposal's two entity ids; None = stored winner.
     winner_id: int | None = None
+
+
+# --- Contact points (#1240) ---------------------------------------------------
+
+ContactPointKind = Literal["phone", "mobile", "fax"]
+ContactPointLabel = Literal["private", "work"]
+
+
+class ContactPointCreate(BaseModel):
+    kind: ContactPointKind
+    value: str = Field(min_length=1, max_length=64)
+    label: ContactPointLabel | None = None
+    # Optional own tier; the value is never more visible than its entity anyway.
+    circle_tier: int | None = Field(default=None, ge=0, le=4)
+
+
+class ContactPointUpdate(BaseModel):
+    label: ContactPointLabel | None = None
+    circle_tier: int | None = Field(default=None, ge=0, le=4)
+
+
+class ContactPointResponse(BaseModel):
+    id: int
+    entity_id: int
+    kind: str
+    label: str | None
+    value: str
+    normalized: str
+    source_type: str
+    circle_tier: int
+    created_at: str
+
+
+class ContactPointListResponse(BaseModel):
+    contact_points: list[ContactPointResponse]
+    # Whether the caller may add / change / remove values of this entity.
+    editable: bool = False
+
+
+class ContactPointLookupHit(BaseModel):
+    entity_id: int
+    entity_name: str
+    entity_type: str
+    contact_point: ContactPointResponse
+
+
+class ContactPointLookupResponse(BaseModel):
+    hits: list[ContactPointLookupHit]

@@ -1229,6 +1229,22 @@ NOTIFICATION_BELL_ENABLED=false
   Glocke den Zähler neu (Ereignisse werden nicht nachgeliefert).
 - Ungelesen = Status `pending` oder `delivered`, nicht abgelaufen.
 
+### Kontaktpunkte im Wissensgraphen (#1240)
+
+Telefon-, Mobil- und Faxnummern als **Eigenschaft** einer Person oder Firma, nie als eigener Knoten.
+Entwurf: [`design/kg-contact-points.md`](design/kg-contact-points.md). Stufe 1: Pflege von Hand im
+Wissen-Drawer, Agent-Tool `internal.find_contact`, Rückwärtssuche.
+
+```bash
+CONTACT_POINTS_ENABLED=false
+CONTACT_POINTS_DEFAULT_REGION=DE   # Region für Nummern ohne Ländervorwahl ("0170 …")
+```
+
+- Aus: die Routen unter `/api/knowledge-graph/…/contact-points` antworten 404, das Tool wird nicht
+  angeboten und verweigert, der Drawer zeigt keinen Abschnitt.
+- Eine Nummer, die `phonenumbers` nicht als gültig erkennt, wird nicht gespeichert.
+- Neue Abhängigkeit `phonenumbers` (offline, keine Netzabfrage).
+
 ### Web Push (#79)
 
 Systemmitteilung bei geschlossenem Browser für die Personen, die eine Benachrichtigung auch in der

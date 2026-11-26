@@ -134,6 +134,22 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   ONCE, on the first loaded queue (`preventScroll`); `isCautiousProposal` (`mergeClusters.ts`) is the one predicate the
   card's button emphasis and that focus decision share.
 
+## Kontaktpunkte (`kg_entity_contact_points`, #1240, `CONTACT_POINTS_ENABLED` dunkel)
+- Eine Nummer ist eine EIGENSCHAFT einer Entität, nie ein Knoten und nie eine Kante: sie nimmt an Graph-Expansion,
+  Reconciler und `_is_valid_entity` nicht teil. Eine geteilte Nummer (Zentrale, Familienfestnetz) ist legitim und
+  **nie** ein Merge-Signal.
+- Tier = `LEAST(Entität, source_tier)`, eine Regel in `services/contact_point_tier.py`. `source_tier` einer
+  automatischen Quelle geht nur RUNTER (Dokument privater → mit, auch ein PATCH hebt sie nicht); nur ein von Hand
+  eingetragener Wert darf wieder geöffnet werden. 🛑 Jeder `recompute_incident_edge_tiers`-Aufruf braucht ein
+  `recompute_entity_contact_point_tiers` daneben — `test_kg_contact_points.py` zählt beide je Datei.
+- Lesen immer durch BEIDE Filter: `contact_points_circles_filter` (Grants an der Entität) UND
+  `kg_entities_circles_filter`; dazu `valid_to IS NULL`, `is_active`, `canonical_id IS NULL`.
+  🛑 Ein Grant an der Entität erreicht nur Werte mit `source_tier >= Entitäts-Tier` (`grant_guard_expr`) — eine
+  Nummer, die privater ist als ihre Person, bleibt dem Grant-Empfänger verborgen.
+- `merge_entities` hängt um; eine Kollision endet auf der Verliererseite (`superseded_by_id`) und gibt die
+  niedrigere `source_tier` weiter. JEDER Soft-Delete einer Entität LÖSCHT ihre Kontaktpunkte (`delete_entity` und
+  `KGCleanupService.cleanup_invalid_entities`); `document_id` ist ein echter FK (ON DELETE CASCADE).
+
 ## Conflation tripwire (`KG_CONFLATION_MONITOR_ENABLED`, dark, read-only)
 `services/kg_conflation_monitor.py` flags distinct-name same-type same-tier NON-person pairs only. Persons are excluded
 on purpose (names cluster ≥ threshold by themselves → permanent noise). Expected 0; it never mutates.

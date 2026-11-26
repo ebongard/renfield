@@ -828,6 +828,16 @@ Ergänzend zur Basis-Extraktion (siehe Hook System):
 
 Post-Extraction-Filter `_is_valid_entity()` entfernt OCR-Artefakte, URLs, E-Mails, IDs, Datumsangaben, Telefonnummern, IBANs, generische Rollen und Zeichen mit Leerzeichen. Kompilierte Regex-Patterns für Performance.
 
+### Kontaktdaten an Personen und Firmen (#1240, `CONTACT_POINTS_ENABLED`, dunkel)
+
+Telefon-, Mobil- und Faxnummern hängen als **Eigenschaft** an einer Person oder Firma, nicht als eigener Knoten (eine
+Firmenzentrale als Knoten würde fremde Personen im Graphen zu Nachbarn machen). Stufe 1: im Wissen-Drawer von Hand
+pflegen, im Chat erfragen („Wie ist die Handynummer von Hans?“, `internal.find_contact`) und rückwärts suchen („wem
+gehört diese Nummer?“). Jede Nummer wird ins Format E.164 gebracht; was keine gültige Nummer ist, wird nicht
+gespeichert. Sichtbarkeit: nie offener als die Entität und nie offener als ihre Quelle; Zusammenführen nimmt die
+Nummern mit, Löschen der Entität löscht sie. Adressbuch-Import, Chat und Dokumente als Quellen folgen
+(`docs/design/kg-contact-points.md`).
+
 ### Duplikat-Erkennung
 
 String-Similarity (difflib SequenceMatcher) statt Embedding-Similarity für zuverlässigere Ergebnisse. Name-Normalisierung entfernt Titel (Herr/Frau/Dr.) und Org-Suffixe (GmbH/AG). Default-Threshold: 0.82.

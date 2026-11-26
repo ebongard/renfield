@@ -61,6 +61,23 @@ if TYPE_CHECKING:
     from services.semantic_router import SemanticRouter
 
 
+# #1240: the router sentence that sends a phone-number question to the role
+# carrying the tool -- appended only while CONTACT_POINTS_ENABLED is on.
+CONTACT_LOOKUP_TOOL = "internal.find_contact"
+CONTACT_LOOKUP_ROUTE = {
+    "de": (
+        "; AUCH gespeicherte TELEFON-, HANDY- und FAXNUMMERN einer Person oder Firma "
+        "nachschlagen ('wie ist die Handynummer von ...', 'welche Telefonnummer hat die "
+        "Praxis ...') und herausfinden, WEM eine Nummer gehoert ('wessen Nummer ist 0170 ...')"
+    ),
+    "en": (
+        "; ALSO looking up stored PHONE, MOBILE and FAX NUMBERS of a person or company "
+        "('what is Hans's mobile number', 'which phone number does the practice ... have') "
+        "and finding out WHOSE a number is ('whose number is 0170 ...')"
+    ),
+}
+
+
 @dataclass
 class AgentRole:
     """Definition of a specialized agent role."""
@@ -369,11 +386,37 @@ class AgentRouter:
 
         return None
 
+    def contact_lookup_role_name(self) -> str | None:
+        """The role a phone-number question goes to while contact points are on (#1240).
+
+        The role that can run ``internal.find_contact``: one that lists it
+        explicitly wins (narrowest list first), else one that takes every tool
+        (``internal_tools: null``). Sorted by name, so independent of the YAML order.
+        """
+        loops = [(n, r) for n, r in self.roles.items() if r.has_agent_loop]
+        listed = sorted(
+            (len(r.internal_tools), n) for n, r in loops
+            if r.internal_tools and CONTACT_LOOKUP_TOOL in r.internal_tools
+        )
+        if listed:
+            return listed[0][1]
+        open_roles = sorted(n for n, r in loops if r.internal_tools is None)
+        return open_roles[0] if open_roles else None
+
     def _build_role_descriptions(self, lang: str = "de") -> str:
-        """Build compact role descriptions for the classification prompt."""
+        """Build compact role descriptions for the classification prompt.
+
+        With ``CONTACT_POINTS_ENABLED`` the role that carries ``internal.find_contact``
+        gets one more sentence (phone numbers of a person / company). Flag off =
+        the prompt byte for byte as before: until then a number question goes where
+        it always went, e.g. ``knowledge`` (numbers in documents).
+        """
+        contact_role = self.contact_lookup_role_name() if settings.contact_points_enabled else None
         lines = []
         for name, role in sorted(self.roles.items()):
             desc = role.description.get(lang, role.description.get("de", name))
+            if name == contact_role:
+                desc += CONTACT_LOOKUP_ROUTE.get(lang, CONTACT_LOOKUP_ROUTE["de"])
             lines.append(f"- {name}: {desc}")
             if role.sub_intent_definitions:
                 for si_name, si_desc in role.sub_intent_definitions.items():

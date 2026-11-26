@@ -1,7 +1,7 @@
 # Kontaktpunkte — Telefon, Mobil, Fax, Mail, Web an Personen und Firmen
 
 **Issue:** [#1240](https://github.com/ebongard/renfield/issues/1240)
-**Status:** Review-Entscheidungen getroffen 2026-09-13 (§11) — **kein Go zum Bauen**; Stufe 1 braucht ein ausdrückliches Go
+**Status:** Stufe 1 gebaut 2026-11-26 (§13), dunkel hinter `CONTACT_POINTS_ENABLED`. Stufen 2–4 offen.
 **Datum:** 2026-09-13
 **Autor:** Claude Opus 5
 **Bezug:** #875 / PR #1213 (Gültigkeitsintervalle auf `kg_relations`)
@@ -252,3 +252,57 @@ Offen bleibt allein das **Go für Stufe 1**.
 - **R5 — Löschpflicht.** Wird eine Person gelöscht (Entität), müssen ihre Kontaktpunkte mit
   (`ON DELETE CASCADE` greift nur bei hartem Löschen; der Soft-Delete über `is_active` braucht eine
   ausdrückliche Kaskade).
+
+## 13. Stufe 1 — wie gebaut (2026-11-26)
+
+Gebaut: Tabelle `kg_entity_contact_points` (Migration `pc20261126_kg_contact_points`), Modell
+`KGEntityContactPoint`, `contact_points_circles_filter`, Tier-Regel `services/contact_point_tier.py`,
+Normalisierung + Dienst `services/contact_points.py`, REST unter `/api/knowledge-graph`
+(`GET|POST /entities/{id}/contact-points`, `PATCH|DELETE /contact-points/{id}`, `GET /contact-points/lookup`),
+Agent-Tool `internal.find_contact`, Abschnitt „Kontaktdaten" im Wissen-Drawer. v1 kennt nur
+`phone` / `mobile` / `fax`; `email` / `web` folgen mit ihren Quellen.
+
+Abweichungen von §4–§7, aus der Architektur-Review vom 2026-11-26:
+
+| # | Entwurf | gebaut | Grund |
+|---|---|---|---|
+| A1 | `circle_tier = LEAST(Entität, Quelle)`, Kaskade „für `kg_node`" | zusätzlich Spalte `source_tier`; die Kaskade läuft bei JEDER Tier-Änderung der Entität (mit und ohne Atom, Merge) UND bei der eines Dokuments; `source_tier` geht nur runter | Ohne Dokument-Kaskade bliebe ein privater gestelltes Dokument mit offeneren Nummern zurück |
+| A2 | `source_ref TEXT` | dazu echter FK `document_id` (ON DELETE CASCADE) | Löschen und Neuauswerten eines Dokuments sonst mit Waisen |
+| A3 | Merge nicht erwähnt | `reparent_contact_points` in `merge_entities`: umhängen, Kollision endet beim Verlierer (`superseded_by_id`), niedrigere `source_tier` bleibt | Sonst blieben Nummern am Grabstein hängen |
+| A7 | R5: Soft-Delete braucht ausdrückliche Kaskade | `delete_entity` löscht die Kontaktpunkte | Die Nummern einer gelöschten Person dienen nichts mehr |
+| — | Schreibrecht offen | `KG_MANAGE` + Entität sichtbar + Eigentümer (Admin: jede) | Schreiben ist eigentümergebunden wie überall in Circles |
+
+Nachgezogen aus `/review` (2026-11-26):
+
+| # | Befund | gebaut |
+|---|---|---|
+| R1 | Ein Grant an der Entität öffnete auch eine Nummer, die der Eigentümer privater gestellt hatte | `grant_guard_expr`: der Grant-Zweig gilt nur für `source_tier >= Entitäts-Tier` |
+| R2 | PATCH konnte `source_tier` einer automatischen Quelle anheben | nur `manual` darf wieder geöffnet werden; sonst höchstens die gespeicherte Stufe |
+| R3 | `internal.find_contact` ohne Rechteprüfung, REST verlangt `KG_VIEW` | `user_permissions` injiziert; identifiziert ohne `kg.view` = abgelehnt |
+| R4 | `cleanup_invalid_entities` ließ die Nummern stehen (R5) | löscht sie mit |
+| R5 | Jeder `IntegrityError` hieß „duplicate" | nur `uq_contact_points_live`, sonst echter Fehler |
+| R6 | Bearbeiten/Löschen für jeden sichtbar, Löschen ohne Rückfrage | `editable` in der Liste, Bedienelemente nur für Eigentümer/Admin, Löschen mit Bestätigung, 403 als `not_owner` übersetzt |
+| R7 | Modell ohne `server_default`, `user_id` mit CASCADE | an die Migration angeglichen; `user_id` ohne Löschregel wie `kg_entities.user_id` |
+
+| R8 | Telefonfragen erreichten das Werkzeug nicht: der Router schickte sie meist zu `conversation` | bei eingeschaltetem Flag ein Satz an der Rolle mit dem Werkzeug (`CONTACT_LOOKUP_ROUTE`, heute `general`); Flag aus = Router-Prompt unverändert |
+
+Gemessen 2026-11-26 (`bin/measure-router.py --cases bin/router-cases-contact.json`, `qwen3:8b`, 20 Fälle × 3,
+nur die Klassifikationsschicht; der semantische Schnellpfad davor ist nicht gemessen):
+
+| | Flag aus | Flag an |
+|---|---|---|
+| Telefonfragen → `general` | 9/30 (21× `conversation`) | 30/30 |
+| alle Fälle (je Variante) | 39/60 | 57/60 |
+
+Verschoben hat sich eine Kontrolle: „Wie hoch war die letzte Stromrechnung laut Dokument?" geht bei eingeschaltetem
+Flag zu `general` statt `knowledge`. Das ist vertretbar, weil `general` auch `internal.knowledge_search` hat.
+„Was steht im Mietvertrag …" ging umgekehrt von `general` zu `knowledge`. Warum `knowledge` nicht die Zielrolle ist:
+Die Rolle hat keine Agent-Schleife, kann also kein Werkzeug rufen, und §9 hält die Nummern aus dem allgemeinen
+RAG-Kontext heraus.
+
+Für die Stufen 2–4 gilt zusätzlich (noch nicht gebaut): Zuordnung über eine **Zählabfrage** statt
+`resolve_entity` (A4, das `.first()` über Tiers und die `mention_count`-Erhöhung), eine Adressbuch-Karte mit einer
+anderswo schon vorhandenen Nummer nur bei verwandtem Namen (A5), und für Dokumente nur Briefkopf/Fußzeile, nie
+„bestätigt", keine Nummer mehrerer Aussteller (A6). Hergang: `docs/design/caller-lookup.md` §6 (Branch
+`docs/caller-lookup-design`).
+

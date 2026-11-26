@@ -2818,5 +2818,40 @@
       "body": "New notification",
       "bodyCritical": "New urgent notification"
     }
+  },
+  "contactPoints": {
+    "title": "Contact details",
+    "empty": "No contact details stored.",
+    "couldNotLoad": "Could not load contact details.",
+    "add": "Add",
+    "remove": "Remove {{value}}",
+    "confirmRemove": "Really remove {{value}}",
+    "cancelRemove": "Cancel",
+    "kindLabel": "Type",
+    "valueLabel": "Number",
+    "valuePlaceholder": "e.g. +49 170 1234567",
+    "labelLabel": "Context",
+    "kind": {
+      "phone": "Phone",
+      "mobile": "Mobile",
+      "fax": "Fax"
+    },
+    "label": {
+      "none": "—",
+      "private": "Private",
+      "work": "Work"
+    },
+    "source": {
+      "manual": "manual",
+      "vcard": "address book",
+      "chat": "from chat",
+      "document": "from document",
+      "email": "from email"
+    },
+    "errors": {
+      "duplicate": "This number is already stored here.",
+      "invalid_number": "That is not a valid phone number.",
+      "not_owner": "Only the owner of this entry can change its contact details."
+    }
   }
 }

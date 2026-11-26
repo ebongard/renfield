@@ -26,6 +26,8 @@ from models.database import (
     KGRelation,
 )
 from services.atom_owner import AtomOwnerResolverMixin
+from services.contact_point_tier import recompute_entity_contact_point_tiers
+from services.contact_points import delete_entity_contact_points, reparent_contact_points
 from services.kg_edge_tier import (
     cap_document_edges,
     capped_edge_tier,
@@ -1027,6 +1029,12 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         # recompute tier on every winner-incident active relation + sync atom policy
         # (#1625: the tier cap counts, so a merge can never lift a document cap).
         await recompute_incident_edge_tiers(self.db, wid)
+        # #1240 (A3): the loser's contact points move to the survivor. A value the
+        # survivor already holds live ends on the loser's side (superseded_by the
+        # survivor's row) and hands over the LOWER source tier -- a merge never
+        # raises visibility. Then every survivor value recomputes LEAST(entity, source).
+        await reparent_contact_points(self.db, loser_id=lid, winner_id=wid)
+        await recompute_entity_contact_point_tiers(self.db, wid)
         # keep the survivor's own kg_node atom policy in lockstep with merged_tier.
         # CAST(:t AS INTEGER): json_build_object is VARIADIC "any", so asyncpg
         # can't infer a bare param's type -> IndeterminateDatatypeError ($1).
@@ -1680,6 +1688,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         entity.circle_tier = int(circle_tier)
         await self.db.flush()
         await recompute_incident_edge_tiers(self.db, int(entity_id))
+        await recompute_entity_contact_point_tiers(self.db, int(entity_id))
         await self.db.commit()
         await self.db.refresh(entity)
         return entity
@@ -1700,6 +1709,9 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             )
             .values(is_active=False)
         )
+        # #1240 (R5): the soft delete takes the entity's contact data with it --
+        # a deleted person's numbers serve nothing and must not outlive her.
+        await delete_entity_contact_points(self.db, entity_id)
 
         await self.db.commit()
         return True

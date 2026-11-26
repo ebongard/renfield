@@ -15,6 +15,12 @@ from api.routes.knowledge_graph_schemas import (
     CleanupInvalidResponse,
     ClusterResolveRequest,
     ClusterResolveResponse,
+    ContactPointCreate,
+    ContactPointListResponse,
+    ContactPointLookupHit,
+    ContactPointLookupResponse,
+    ContactPointResponse,
+    ContactPointUpdate,
     DuplicateCluster,
     DuplicateClustersResponse,
     EntityBrief,
@@ -44,6 +50,7 @@ from models.database import (
 from models.permissions import Permission
 from services.api_rate_limiter import limiter
 from services.auth_service import require_permission
+from services.contact_points import ContactPointError, ContactPointService
 from services.database import get_db
 from services.kg_reconciler_service import KgReconcilerService
 from services.kg_validity_sql import live_conditions
@@ -746,3 +753,150 @@ async def run_reconciler(
         dropped_cross_type=dropped_type,
         notes=notes,
     )
+
+
+# =============================================================================
+# Contact points (#1240) -- phone / mobile / fax as attributes of an entity.
+# Reads: KG_VIEW + the entity AND the value circle-visible. Writes: KG_MANAGE +
+# the entity visible AND owned by the caller (admins: any). Off => 404 everywhere.
+# =============================================================================
+
+# Stable error code the UI translates (contactPoints.errors.not_owner).
+NOT_OWNER = "not_owner"
+
+
+def _require_contact_points() -> None:
+    if not settings.contact_points_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+def _contact_point_response(cp) -> ContactPointResponse:
+    return ContactPointResponse(
+        id=cp.id, entity_id=cp.entity_id, kind=cp.kind, label=cp.label, value=cp.value,
+        normalized=cp.normalized, source_type=cp.source_type, circle_tier=int(cp.circle_tier),
+        created_at=cp.created_at.isoformat() if cp.created_at else "",
+    )
+
+
+def _may_edit_entity(entity, user: User | None) -> bool:
+    """Ownership-gated write: the owner, or an admin; everyone with auth off."""
+    if not settings.auth_enabled:
+        return True
+    if user is None:
+        return False
+    return entity.user_id == user.id or user.has_permission(Permission.ADMIN.value)
+
+
+async def _visible_entity(db: AsyncSession, entity_id: int, user: User | None):
+    entity = await KnowledgeGraphService(db).get_entity(
+        entity_id, asker_id=user.id if user else None, enforce_circle=True,
+    )
+    if entity is None:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return entity
+
+
+async def _editable_point(db: AsyncSession, point_id: int, user: User | None):
+    """The point, if it AND its entity are visible and the caller may edit -- else 404/403."""
+    svc = ContactPointService(db)
+    point = await svc.get_visible(point_id, user.id if user else None)
+    if point is None:
+        raise HTTPException(status_code=404, detail="Contact point not found")
+    entity = await _visible_entity(db, point.entity_id, user)
+    if not _may_edit_entity(entity, user):
+        raise HTTPException(status_code=403, detail=NOT_OWNER)
+    return svc, point
+
+
+@router.get("/entities/{entity_id}/contact-points", response_model=ContactPointListResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def list_contact_points(
+    request: Request,
+    entity_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.KG_VIEW)),
+):
+    _require_contact_points()
+    entity = await _visible_entity(db, entity_id, user)
+    points = await ContactPointService(db).list_for_entity(entity.id, user.id if user else None)
+    return ContactPointListResponse(
+        contact_points=[_contact_point_response(p) for p in points],
+        editable=_may_edit_entity(entity, user),
+    )
+
+
+@router.post("/entities/{entity_id}/contact-points", response_model=ContactPointResponse, status_code=201)
+@limiter.limit(settings.api_rate_limit_admin)
+async def create_contact_point(
+    request: Request,
+    entity_id: int,
+    body: ContactPointCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
+):
+    _require_contact_points()
+    entity = await _visible_entity(db, entity_id, user)
+    if not _may_edit_entity(entity, user):
+        raise HTTPException(status_code=403, detail=NOT_OWNER)
+    try:
+        point = await ContactPointService(db).add(
+            entity, kind=body.kind, value=body.value, label=body.label,
+            actor_id=user.id if user else None, source_tier=body.circle_tier,
+        )
+    except ContactPointError as e:
+        raise HTTPException(status_code=409 if e.code == "duplicate" else 422, detail=e.code)
+    return _contact_point_response(point)
+
+
+@router.patch("/contact-points/{point_id}", response_model=ContactPointResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def update_contact_point(
+    request: Request,
+    point_id: int,
+    body: ContactPointUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
+):
+    _require_contact_points()
+    svc, point = await _editable_point(db, point_id, user)
+    try:
+        point = await svc.update(
+            point, label=body.label, label_set="label" in body.model_fields_set,
+            source_tier=body.circle_tier,
+        )
+    except ContactPointError as e:
+        raise HTTPException(status_code=422, detail=e.code)
+    return _contact_point_response(point)
+
+
+@router.delete("/contact-points/{point_id}")
+@limiter.limit(settings.api_rate_limit_admin)
+async def delete_contact_point(
+    request: Request,
+    point_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
+):
+    _require_contact_points()
+    svc, point = await _editable_point(db, point_id, user)
+    await svc.delete(point)
+    return {"success": True}
+
+
+@router.get("/contact-points/lookup", response_model=ContactPointLookupResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def lookup_contact_point(
+    request: Request,
+    number: str = Query(min_length=3, max_length=64),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.KG_VIEW)),
+):
+    """Reverse lookup "whose number is this?", circle-filtered for the caller."""
+    _require_contact_points()
+    hits = await ContactPointService(db).lookup_number(number, user.id if user else None)
+    return ContactPointLookupResponse(hits=[
+        ContactPointLookupHit(
+            entity_id=h.entity_id, entity_name=h.entity_name, entity_type=h.entity_type,
+            contact_point=_contact_point_response(h.point),
+        ) for h in hits
+    ])

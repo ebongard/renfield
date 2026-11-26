@@ -58,6 +58,10 @@ from models.database import (
 )
 from services.atom_types import Atom
 from services.circle_resolver import CircleResolver, atom_from_orm
+from services.contact_point_tier import (
+    cap_document_contact_points,
+    recompute_entity_contact_point_tiers,
+)
 from services.kg_edge_tier import (
     cap_document_edges,
     clamp_edge_tier,
@@ -330,6 +334,8 @@ class AtomService:
         # tier_cap) and their atom policies follow (services/kg_edge_tier.py).
         if atom_orm.atom_type == ATOM_TYPE_KG_NODE:
             await recompute_incident_edge_tiers(self.db, int(atom_orm.source_id))
+            # #1240: contact points follow LEAST(entity, source) (contact_point_tier.py).
+            await recompute_entity_contact_point_tiers(self.db, int(atom_orm.source_id))
 
         await self.db.commit()
         self.resolver.invalidate_for_atom(atom_id)
@@ -403,6 +409,8 @@ class AtomService:
         # #1625: the edges this document is the recorded source of follow a
         # LOWER tier down (cap and tier), never a higher one up.
         edge_atom_ids = await cap_document_edges(self.db, doc_id, new_tier)
+        # #1240: contact points this document is the source of follow it DOWN too.
+        await cap_document_contact_points(self.db, doc_id, new_tier)
         return fact_atom_ids + edge_atom_ids
 
     async def rehome_document(

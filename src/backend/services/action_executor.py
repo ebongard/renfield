@@ -161,6 +161,15 @@ class ActionExecutor:
                 user_id=user_id, user_permissions=user_permissions,
             )
 
+        # Read-only: contact points (#1240) by name or reverse by number. user_id
+        # scopes the circle filter -- never taken from the LLM's arguments;
+        # user_permissions gates it on KG_VIEW like the REST read.
+        if intent == "internal.find_contact":
+            from services.contact_point_tool import find_contact
+            return await find_contact(
+                parameters, user_id=user_id, user_permissions=user_permissions,
+            )
+
         # KB near-duplicate detection: find documents that byte-hash dedup misses
         # (different bytes, same document) via a shared identifier. Proposes pairs
         # for owner review — never deletes. user_id scopes the scan to the caller's

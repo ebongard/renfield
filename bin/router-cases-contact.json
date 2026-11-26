@@ -1,0 +1,23 @@
+[
+  {"task": "Wie ist die Handynummer von Hans?", "expect": "general"},
+  {"task": "Welche Telefonnummer hat die Praxis Beispiel?", "expect": "general"},
+  {"task": "Gib mir die Festnetznummer von Oma", "expect": "general"},
+  {"task": "Hast du die Faxnummer vom Steuerbüro?", "expect": "general"},
+  {"task": "Wem gehört die Nummer 0170 1234567?", "expect": "general"},
+  {"task": "Wer hat mich von 030 1234567 angerufen?", "expect": "general"},
+  {"task": "Unter welcher Nummer erreiche ich die Werkstatt Müller?", "expect": "general"},
+  {"task": "Wie lautet die Mobilnummer von Frau Schmidt?", "expect": "general"},
+  {"task": "What is Hans's mobile number?", "expect": "general", "lang": "en"},
+  {"task": "Whose number is +49 170 1234567?", "expect": "general", "lang": "en"},
+
+  {"task": "Was steht im Mietvertrag zur Kündigungsfrist?", "expect": "knowledge"},
+  {"task": "Wie hoch war die letzte Stromrechnung laut Dokument?", "expect": ["knowledge", "documents"]},
+  {"task": "Scanne das Dokument", "expect": "documents"},
+  {"task": "Wie viele Dokumente sind noch nicht in Paperless?", "expect": "documents"},
+  {"task": "Erinnere mich in 10 Minuten an den Tee", "expect": "general"},
+  {"task": "Mach das Licht im Wohnzimmer an", "expect": "smart_home"},
+  {"task": "Wer ist gerade zuhause?", "expect": "presence"},
+  {"task": "Spiel Radio im Bad", "expect": "media"},
+  {"task": "Wie wird das Wetter morgen?", "expect": "research"},
+  {"task": "Erzähl mir einen Witz", "expect": "conversation"}
+]

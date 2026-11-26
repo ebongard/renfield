@@ -134,12 +134,14 @@ class TestUpdateTier:
         atom_orm.source_id = "99"
         # kb_document path: SELECT + generic-doc UPDATE + chunks + facts +
         # fact-atoms-policy + SELECT fact atom_ids (.fetchall() for invalidation)
-        # + the edge cap UPDATE … RETURNING (#1625; no edges here).
+        # + the edge cap UPDATE … RETURNING (#1625; no edges here)
+        # + the contact-point cap and its recompute (#1240).
         fact_ids = MagicMock(fetchall=MagicMock(return_value=[]))
         no_edges = MagicMock(fetchall=MagicMock(return_value=[]))
         session.execute = AsyncMock(side_effect=[
             MagicMock(scalar_one_or_none=MagicMock(return_value=atom_orm)),
             MagicMock(), MagicMock(), MagicMock(), MagicMock(), fact_ids, no_edges,
+            MagicMock(), MagicMock(),
         ])
         svc = AtomService(session, resolver=MagicMock(invalidate_for_atom=MagicMock()))
         await svc.update_tier("atom-x", {"tier": 3})
@@ -184,6 +186,8 @@ class TestUpdateTier:
             fact_atoms_result,  # SELECT atom_id FROM document_facts (for invalidation)
             edge_cap_result,  # UPDATE kg_relations tier_cap (#1625) RETURNING
             MagicMock(),  # UPDATE atoms.policy for the capped edges
+            MagicMock(),  # UPDATE contact points source_tier cap (#1240)
+            MagicMock(),  # UPDATE contact points circle_tier recompute (#1240)
         ])
         resolver = MagicMock(invalidate_for_atom=MagicMock())
         svc = AtomService(session, resolver=resolver)
@@ -191,8 +195,11 @@ class TestUpdateTier:
 
         # 8 executes: SELECT atom + UPDATE documents + chunks + facts + fact-atoms
         # + SELECT fact atom_ids (for resolver-cache invalidation) + the edge cap
-        # and its atom-policy sync (#1625).
-        assert session.execute.await_count == 8
+        # and its atom-policy sync (#1625) + the contact-point cap and its
+        # recompute (#1240).
+        assert session.execute.await_count == 10
+        assert "kg_entity_contact_points" in str(session.execute.await_args_list[8].args[0])
+        assert "kg_entity_contact_points" in str(session.execute.await_args_list[9].args[0])
         edge_sql = str(session.execute.await_args_list[6].args[0])
         assert "UPDATE kg_relations" in edge_sql and "tier_cap" in edge_sql
         assert session.execute.await_args_list[6].args[1] == {"tier": 3, "ref": "doc:99"}
@@ -227,12 +234,15 @@ class TestUpdateTier:
             MagicMock(),  # UPDATE source.circle_tier
             MagicMock(),  # UPDATE kg_relations via LEAST()
             MagicMock(),  # UPDATE atoms.policy for edges
+            MagicMock(),  # UPDATE contact points LEAST(entity, source) (#1240)
         ])
         svc = AtomService(session, resolver=MagicMock(invalidate_for_atom=MagicMock()))
         await svc.update_tier("kg-atom-7", {"tier": 2})
 
-        # 4 executes: SELECT atom + UPDATE source + cascade + edge-policy sync.
-        assert session.execute.await_count == 4
+        # 5 executes: SELECT atom + UPDATE source + cascade + edge-policy sync
+        # + the contact-point recompute (#1240).
+        assert session.execute.await_count == 5
+        assert "kg_entity_contact_points" in str(session.execute.await_args_list[4].args[0])
         # Verify the cascade SQL uses LEAST(s, o, cap) — the whole point (#1625).
         cascade_sql = str(session.execute.await_args_list[2].args[0])
         assert "LEAST(s.circle_tier, o.circle_tier, COALESCE(r.tier_cap" in cascade_sql

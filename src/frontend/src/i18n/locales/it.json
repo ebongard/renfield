@@ -2500,5 +2500,40 @@
       "body": "Nuova notifica",
       "bodyCritical": "Nuova notifica urgente"
     }
+  },
+  "contactPoints": {
+    "title": "Contatti",
+    "empty": "Nessun contatto salvato.",
+    "couldNotLoad": "Impossibile caricare i contatti.",
+    "add": "Aggiungi",
+    "remove": "Rimuovi {{value}}",
+    "confirmRemove": "Rimuovere davvero {{value}}",
+    "cancelRemove": "Annulla",
+    "kindLabel": "Tipo",
+    "valueLabel": "Numero",
+    "valuePlaceholder": "es. +49 170 1234567",
+    "labelLabel": "Ambito",
+    "kind": {
+      "phone": "Telefono",
+      "mobile": "Cellulare",
+      "fax": "Fax"
+    },
+    "label": {
+      "none": "—",
+      "private": "Privato",
+      "work": "Lavoro"
+    },
+    "source": {
+      "manual": "manuale",
+      "vcard": "rubrica",
+      "chat": "dalla chat",
+      "document": "da documento",
+      "email": "da e-mail"
+    },
+    "errors": {
+      "duplicate": "Questo numero è già salvato qui.",
+      "invalid_number": "Non è un numero di telefono valido.",
+      "not_owner": "Solo il proprietario di questa voce può modificarne i recapiti."
+    }
   }
 }
