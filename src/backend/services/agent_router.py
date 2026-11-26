@@ -62,7 +62,10 @@ if TYPE_CHECKING:
 
 
 # #1240: the router sentence that sends a phone-number question to the role
-# carrying the tool -- appended only while CONTACT_POINTS_ENABLED is on.
+# carrying the tool -- appended only while CONTACT_POINTS_ENABLED is on. It also
+# names internal.scan_document_contacts: a role that ever lists find_contact
+# explicitly must list scan_document_contacts too, or the scan request lands on a
+# role that filters the tool out (contact_lookup_role_name keys on find_contact).
 CONTACT_LOOKUP_TOOL = "internal.find_contact"
 CONTACT_LOOKUP_ROUTE = {
     "de": (

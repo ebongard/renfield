@@ -51,6 +51,11 @@ SCAN_DOCUMENT_CONTACTS_TOOL: dict = {
 }
 
 
+# A chat turn waits for the scan: stop between documents after this long and say
+# how many are left (measured 2026-11-26: ~550 documents in well under a minute).
+SCAN_TIME_BUDGET_S = 60.0
+
+
 def _point(hit) -> dict:
     cp = hit.point
     return {
@@ -141,7 +146,9 @@ async def scan_document_contacts(
         from services.document_contact_points import scan_documents
 
         async with AsyncSessionLocal() as db:
-            totals = await scan_documents(db, owner_id=owner_id, commit=True)
+            totals = await scan_documents(
+                db, owner_id=owner_id, commit=True, time_budget_s=SCAN_TIME_BUDGET_S,
+            )
     except Exception as e:
         logger.warning(f"internal.scan_document_contacts failed: {error_text_without_content(e)}")
         return {"success": False, "action_taken": False,
@@ -158,7 +165,12 @@ async def scan_document_contacts(
         "skipped_issuer_not_in_graph": int(totals.get("no_entity", 0)),
         "skipped_removed_by_owner": int(totals.get("rejected", 0)),
         "failed": int(totals.get("failed", 0)),
+        "remaining": int(totals.get("remaining", 0)),
     }
+    if summary["failed"] and not summary["documents"]:
+        return {"success": False, "action_taken": False,
+                "message": f"Keines der {summary['failed']} Dokumente konnte durchsucht werden.",
+                "data": summary}
     message = (
         f"{summary['documents']} Dokumente durchsucht, {stored} Nummern neu ergänzt, "
         f"{summary['already_known']} schon bekannt."
@@ -167,6 +179,13 @@ async def scan_document_contacts(
         message += (
             f" {unresolved} Nummern nicht zugeordnet (Name mehrfach im Wissensgraphen "
             f"oder Aussteller fehlt dort)."
+        )
+    if summary["failed"]:
+        message += f" {summary['failed']} Dokumente fehlgeschlagen."
+    if summary["remaining"]:
+        message += (
+            f" Zeitlimit erreicht: {summary['remaining']} Dokumente noch offen -- "
+            f"einfach noch einmal ausführen."
         )
     return {"success": True, "action_taken": stored > 0 or summary["removed_outdated"] > 0,
             "message": message, "data": summary}

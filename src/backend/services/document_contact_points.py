@@ -317,14 +317,18 @@ async def document_text(db: AsyncSession, document_id: int) -> str:
 
 async def scan_documents(
     db: AsyncSession, *, owner_id: int | None, commit: bool, limit: int | None = None,
+    time_budget_s: float | None = None,
 ) -> dict[str, int]:
     """Re-derive the values of every document with an issuer fact; COUNTS only.
 
     ``owner_id`` scopes to that owner's documents (the document atom's owner);
     None = every document (the operator backfill, or auth off). A failing document
     is rolled back and counted, never ends the run. ``commit=False`` rolls every
-    document back (a dry run).
+    document back (a dry run). ``time_budget_s`` stops between documents once
+    spent and reports the rest as ``remaining`` (a chat turn must not block for
+    minutes); the run is idempotent, so a second one finishes the job.
     """
+    import time
     from collections import Counter
 
     sql = (
@@ -344,7 +348,11 @@ async def scan_documents(
     ids = (await db.execute(text(sql), params)).scalars().all()
 
     totals: Counter = Counter()
-    for doc_id in ids:
+    deadline = time.monotonic() + time_budget_s if time_budget_s else None
+    for i, doc_id in enumerate(ids):
+        if deadline is not None and time.monotonic() > deadline:
+            totals["remaining"] = len(ids) - i
+            break
         try:
             body = await document_text(db, doc_id)
             res = await sync_document_contact_points(db, doc_id, body, commit=commit)

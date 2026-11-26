@@ -383,3 +383,61 @@ class TestScanTool:
         assert "internal.scan_document_contacts" not in registry._tools
         out = await scan_document_contacts({}, user_id=1, user_permissions=["kg.manage"])
         assert out["data"]["enabled"] is False
+
+
+@pytest.mark.database
+class TestScanToolEdges:
+    async def _tool(self, db, monkeypatch):
+        from contextlib import asynccontextmanager
+
+        import services.contact_point_tool as tool
+
+        @asynccontextmanager
+        async def _session():
+            yield db
+
+        monkeypatch.setattr(tool, "AsyncSessionLocal", _session)
+        return tool
+
+    async def test_auth_off_scans_every_owner(self, pg_db_session, monkeypatch, enabled):
+        db = pg_db_session
+        tool = await self._tool(db, monkeypatch)
+        enabled.auth_enabled = False
+        owner, other = await _make_user(db, "own"), await _make_user(db, "oth")
+        for user in (owner, other):
+            await _entity(db, user, ISSUER, tier=2, etype="organization")
+            doc = await _doc(db, user, tier=2)
+            await _fact(db, user, doc, "aussteller", ISSUER)
+            await _chunk(db, doc, LETTERHEAD)
+        await db.commit()
+        out = await tool.scan_document_contacts({}, user_id=None, user_permissions=None)
+        assert (out["success"], out["data"]["documents"], out["data"]["added"]) == (True, 2, 4)
+
+    async def test_time_budget_reports_the_rest(self, pg_db_session, monkeypatch, enabled):
+        from services.document_contact_points import scan_documents
+
+        db = pg_db_session
+        owner = await _make_user(db, "own")
+        for _ in range(2):
+            doc = await _doc(db, owner, tier=2)
+            await _fact(db, owner, doc, "aussteller", ISSUER)
+        await db.commit()
+        totals = await scan_documents(db, owner_id=owner.id, commit=False, time_budget_s=1e-9)
+        assert totals.get("remaining") in (1, 2)
+
+    async def test_all_failed_is_not_a_success(self, pg_db_session, monkeypatch, enabled):
+        import services.document_contact_points as mod
+
+        db = pg_db_session
+        tool = await self._tool(db, monkeypatch)
+        owner = await _make_user(db, "own")
+        doc = await _doc(db, owner, tier=2)
+        await _fact(db, owner, doc, "aussteller", ISSUER)
+        await db.commit()
+
+        async def _boom(*a, **k):
+            raise RuntimeError("x")
+
+        monkeypatch.setattr(mod, "sync_document_contact_points", _boom)
+        out = await tool.scan_document_contacts({}, user_id=owner.id, user_permissions=["kg.manage"])
+        assert out["success"] is False and out["data"]["failed"] == 1

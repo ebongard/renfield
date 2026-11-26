@@ -301,8 +301,10 @@ Source: `services/contact_point_tool.py` → `services/document_contact_points.s
   owner edits and removals survive (design §14).
 - A WRITE: with auth on it needs `kg.manage` AND an identified user — an unidentified turn (`user_permissions=None`)
   is DENIED. Needs only `CONTACT_POINTS_ENABLED`, not the ingest flag.
-- Answers with COUNTS only (added, already known, unresolved because the name is on several entities or missing) —
-  never a number, a name or a title.
+- Answers with COUNTS only (added, already known, unresolved because the name is on several entities or missing,
+  failed) — never a number, a name or a title. All documents failed = `success: false`.
+- Time budget `SCAN_TIME_BUDGET_S` (60 s): the turn waits for it, so it stops between documents and reports
+  `remaining`; idempotent, a second run finishes.
 - Routing: the same `CONTACT_LOOKUP_ROUTE` sentence names it. Measured 2026-11-26 (`qwen3:8b`, 26 cases × 3, flag
   on): the five scan phrasings 15/15 → `general` without a pairing; with a pairing the English one went to
   `documents` 2/3. Controls 78/78 (no pairing).
