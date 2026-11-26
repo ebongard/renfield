@@ -503,7 +503,8 @@ This is thin, and the recording itself says where:
     choice: past the deadline no reading a held verdict rests on would count any more.
 
   What this does not catch: a jump FORWARD looks like a long silence, to both decisions.
-- **Stage 2 — the state follows v2** (part A built, dark — see "Stage 2, part A" below): expiry by deadline (a timer per device, not a sweep inside a
+- **Stage 2 — the state follows v2** (part A built and on in the household, part B built — see
+  "Stage 2, part A/B" below): expiry by deadline (a timer per device, not a sweep inside a
   report; `unavailable` must not fire leave events); `UserPresence` may be "home, room unknown";
   `is_location_uncertain` true for every source whose verdict is not `placed`; voice/auth sightings
   and the hold expressed in v2 terms; one rule for several devices of one person; parameters and
@@ -566,10 +567,54 @@ counts, at every voice/auth sighting, whether each decision had the person in th
 shadow records both decisions; v2 is taken per person over the devices with the rule above. The log lines
 alone could not carry this, because they are lost at every deploy. Not part of A: the comparison the other
 way round (legacy as shadow of v2), because the legacy decision mutates the state it decides on. The
-admin live-readings summary still mirrors the legacy switch rule.
+admin live-readings summary still mirrored the legacy switch rule; part B shows the v2 verdict instead.
 
 Parts B (parameters and zones from a table, with a calibration flow) and C (the satellite reports its
 cutoff, the age of its last advert and a BLE sign of life) follow as their own PRs.
+
+### Stage 2, part B: calibration in tables, with a guided measurement (2026-11-26)
+
+Why: in its first 23.6 h acting (from 2026-11-25 11:45 CET) v2 booked 9 room entries and 6 leaves for the
+one tracked person; the legacy decision had booked 158 entries in the 24 h before. Right after the switch
+the phone was heard at about −76 dBm at its best receiver, outside every in-room bound (they lie between
+−76.4 and −47.4 dBm) and 1.3 dB ahead of the runner-up where 10 dB are required. The bounds of the
+labelled walk (2026-11-13) were taken with the phone CARRIED; a phone lying on a table is heard weaker. A bound has to be measured the way the device usually is in the room, and that needs a
+measurement an admin can run without a commit and a deploy.
+
+Code: tables `presence_receivers`, `presence_zones`, `presence_zone_rooms` (migration
+`pc20261125_presence_calibration`), `ha_glue/services/presence_calibration.py`, routes
+`/api/presence/calibration*` (ADMIN), tab "Kalibrierung" on `/admin/presence`.
+
+- **The tables are the source** (owner's decision, 2026-11-26). On a start with BOTH tables empty the JSON
+  settings are copied in once, all or nothing; afterwards they are ignored, and a start that still finds
+  them set says so in one WARNING. "Once" is a marker in `system_settings`
+  (`presence.calibration_in_tables`), set by the seed and by every admin write: an admin who removes
+  every receiver has decided so, and a restart must not bring the JSON numbers back. Until the startup
+  load runs (seconds) the decision uses the JSON numbers it was built with; a load that fails, or finds
+  nothing to use (no settings, a seed refused for an unknown room), leaves them in effect.
+- **A write** is validated by the JSON parser (the same rules, now also: a bound or cutoff outside the
+  range a receiver can report, −127…+20 dBm, is refused) and handed to the running decision
+  (`PlacementShadow.set_calibration`) — no restart. Verdicts and zone times stay; the next decision
+  uses the new numbers. A refusal carries a stable `code` the UI translates.
+- **The guided measurement:** device, the receiver of the room you are in, start. The start time is the
+  SERVER's (the browser clock never enters). After 60 s the backend takes that receiver's readings of
+  that device since the start, from the readings the presence service keeps anyway (the 120 s window) —
+  no second recorder — and proposes their 10th percentile, the rule the labelled walk was scored with
+  (`IN_ROOM_PERCENTILE`, now in `presence_placement.py`). At least 10 readings (`MIN_SAMPLES`, a choice:
+  the satellites that cut at −80 repeat their own smoothed value for 20 s). Nothing is saved until the
+  admin confirms; the old values stay visible.
+- **The cutoff is never derived from readings.** It is a property of the satellite's firmware; with every
+  device close, the weakest reading in the window sits far above it. A calibrated receiver keeps its
+  value; an uncalibrated one needs it typed in until part C has the satellite report it.
+- **The live-readings view** shows the v2 verdict, the margin against the runner-up and every receiver's
+  distance to its bound. While v2 books the state, the legacy room comparison is hidden: it decides
+  nothing then.
+
+Limits, on purpose: the decision object is still BUILT from the JSON settings (`from_settings`), so
+JSON that has become unusable after the seed still switches v2 off at the next start, although the
+tables are fine — once the tables hold the numbers, the JSON keys can simply be removed from the
+ConfigMap. And a write reaches only the process that handled it: the backend runs as ONE replica; a
+second one would learn of a change at its next start.
 
 ### What stage 1 does NOT do
 

@@ -1263,6 +1263,10 @@ PRESENCE_ANALYTICS_TIMEZONE="Europe/Berlin" # Lokale Zeitzone für Heatmap-/Prog
 # denselben Meldungen und wird nur protokolliert: kein Präsenzzustand, kein Ereignis, kein Kiosk, kein
 # Privatsphäre-Tor liest sie. Aus = das neue Modul wird weder geladen noch ausgeführt.
 PRESENCE_PLACEMENT_V2_SHADOW_ENABLED=false
+# Seit Stufe 2 Teil B (#1551) sind die beiden folgenden JSON-Einstellungen nur noch STARTWERT: Quelle sind die
+# Tabellen presence_receivers / presence_zones (gepflegt unter /admin/presence → Kalibrierung). Sind BEIDE
+# Tabellen leer, werden die Werte beim Start einmal übernommen (alles oder nichts); danach werden sie
+# ignoriert, und ein Start, der sie noch gesetzt findet, meldet das mit einer WARNING.
 # Kennwerte JE EMPFÄNGER als JSON, Schlüssel = Satelliten-ID. LEER als Vorgabe, und zwar absichtlich: es sind
 # Messwerte eines Empfängers in einem Raum, es gibt keinen Wert, der für einen anderen gilt. Ein nicht
 # aufgeführter Empfänger hält eine Person "zu Hause", kann sie aber NIE einem Raum zuordnen.
@@ -1270,6 +1274,7 @@ PRESENCE_PLACEMENT_V2_SHADOW_ENABLED=false
 #   in_room_dbm  schwächster geglätteter ROH-Messwert dieses Empfängers, der noch "in seinem Raum" heißt
 #                (auf der eigenen Skala des Empfängers; der Versatz verschiebt diese Grenze nicht)
 #   cutoff_dbm   Pegel, unter dem der Satellit nichts meldet (sein eigenes rssi_threshold); muss unter in_room_dbm liegen
+#   (in_room_dbm und cutoff_dbm liegen zwischen -127 und +20 dBm, dem Bereich, den ein Empfänger melden kann)
 # Alle drei Felder sind Pflicht, unbekannte Felder werden abgelehnt.
 PRESENCE_PLACEMENT_V2_RECEIVERS=''       # z.B. '{"sat-a": {"offset_db": 0, "in_room_dbm": -60, "cutoff_dbm": -80}}'
 # Offene Raumgruppen als JSON: Zonenname → Raum-IDs (mindestens zwei, jeder Raum in höchstens einer Zone).
