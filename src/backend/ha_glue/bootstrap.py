@@ -304,6 +304,20 @@ async def _init_presence(app: Any) -> None:
     async with AsyncSessionLocal() as db_session:
         await presence_svc.load_device_registry(db_session)
 
+    # Placement v2 calibration: the tables are the source (seeded once from the
+    # JSON settings). Until this runs the decision uses the JSON numbers it was
+    # built with. A failure leaves those in effect and never stops the start.
+    from ha_glue.services.presence_calibration import apply_calibration, load_calibration
+
+    try:
+        async with AsyncSessionLocal() as db_session:
+            apply_calibration(presence_svc, await load_calibration(db_session))
+    except Exception as e:
+        logger.error(
+            f"Presence calibration: loading the tables failed ({type(e).__name__}); "
+            "the JSON settings stay in effect"
+        )
+
     # Cache room names for presence display. `Room` imports through the
     # legacy compat shim — platform `models.database.__getattr__` forwards
     # to `ha_glue.models.database`. Same path the rest of ha_glue uses.

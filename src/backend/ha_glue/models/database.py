@@ -47,6 +47,7 @@ from __future__ import annotations
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -418,6 +419,52 @@ class UserBleIrk(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     user = relationship("User", backref="ble_irks")
+
+
+class PresenceReceiver(Base):
+    """Calibration of one satellite as a BLE receiver for placement v2.
+
+    Measured per receiver, never shared (``presence_placement.ReceiverParams``):
+    ``in_room_dbm`` is on the receiver's own raw scale, ``offset_db`` is added
+    before receivers are compared, ``cutoff_dbm`` is the level below which the
+    satellite reports nothing. A satellite without a row is uncalibrated: it
+    keeps a person home and never places them. Written by the calibration
+    flow on ``/admin/presence``; seeded once from the JSON settings.
+    """
+
+    __tablename__ = "presence_receivers"
+    __table_args__ = (
+        CheckConstraint("in_room_dbm > cutoff_dbm", name="ck_presence_receivers_bound_above_cutoff"),
+    )
+
+    satellite_id = Column(String(100), primary_key=True)
+    offset_db = Column(Float, nullable=False)
+    in_room_dbm = Column(Float, nullable=False)
+    cutoff_dbm = Column(Float, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+    # Provenance only: who saved it. SET NULL, so deleting that user is not refused.
+    updated_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class PresenceZone(Base):
+    """Rooms that form one open-plan space, decided as one unit by placement v2."""
+
+    __tablename__ = "presence_zones"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+
+class PresenceZoneRoom(Base):
+    """One room of a zone. The room is the key: a room is in at most one zone."""
+
+    __tablename__ = "presence_zone_rooms"
+
+    room_id = Column(Integer, ForeignKey("rooms.id", ondelete="CASCADE"), primary_key=True)
+    zone_id = Column(
+        Integer, ForeignKey("presence_zones.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
 
 class Satellite(Base):

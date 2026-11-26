@@ -3,7 +3,9 @@
  * in". One card per tracked device: every satellite's readings in the window
  * (including the connected satellites that did NOT hear it), and per room the
  * smoothed value the room decision compares, with what a challenger room would
- * need to take over.
+ * need to take over. While placement v2 runs, its verdict and every receiver's
+ * distance to its in-room bound; when v2 books the room (`state`), that panel
+ * replaces the legacy room comparison, which then decides nothing.
  *
  * Data arrives by push (usePresenceReadings → /ws/presence-debug); this
  * component never fetches and never ticks. Ages are the server's own
@@ -17,6 +19,8 @@ import Badge from '../Badge';
 import { formatTime } from '../../utils/datetime';
 import {
   usePresenceReadings,
+  type PlacementV2,
+  type PlacementV2Receiver,
   type PresenceReadingDevice,
   type PresenceReadingSatellite,
   type PresenceReadingSettings,
@@ -166,6 +170,18 @@ export function summarizeRooms(
         missing: needs === null ? null : needs - room.rssi,
       };
     });
+}
+
+/** Placement v2's receivers for display: heard ones by comparable value
+ *  (strongest first), then the silent, then the offline ones. */
+export function sortV2Receivers(v2: PlacementV2): PlacementV2Receiver[] {
+  const order = { heard: 0, censored: 1, offline: 2 } as const;
+  return [...(v2.receivers ?? [])].sort(
+    (a, b) =>
+      order[a.state] - order[b.state] ||
+      (b.comparable_dbm ?? -Infinity) - (a.comparable_dbm ?? -Infinity) ||
+      a.satellite_id.localeCompare(b.satellite_id),
+  );
 }
 
 // ---- presentation ----------------------------------------------------------
@@ -372,6 +388,27 @@ function DeviceCard({ device, snapshot, formatDbm }: DeviceCardProps) {
         </table>
       </div>
 
+      {device.placement_v2 && snapshot.placement_v2_mode && (
+        <PlacementV2Panel
+          v2={device.placement_v2}
+          mode={snapshot.placement_v2_mode}
+          roomName={(roomId) =>
+            roomLabel(
+              roomId === null
+                ? null
+                : snapshot.satellites.find((sat) => sat.room_id === roomId)?.room_name
+                  ?? device.sightings.find((sig) => sig.room_id === roomId)?.room_name
+                  ?? null,
+            )
+          }
+          formatDbm={formatDbm}
+        />
+      )}
+
+      {/* Under v2 state the legacy switch rule does not run: its filtered
+          values would explain a room nobody decided with them. */}
+      {snapshot.placement_v2_mode !== 'state' && (
+      <>
       <h4 className="mt-6 mb-2 text-sm font-medium text-gray-900 dark:text-white">
         {t('presence.readings.roomsTitle')}
       </h4>
@@ -421,7 +458,110 @@ function DeviceCard({ device, snapshot, formatDbm }: DeviceCardProps) {
           ))}
         </ul>
       )}
+      </>
+      )}
     </section>
+  );
+}
+
+interface PlacementV2PanelProps {
+  v2: PlacementV2;
+  mode: 'shadow' | 'state';
+  roomName: (roomId: number | null) => string;
+  formatDbm: (value: number) => string;
+}
+
+/** Why placement v2 decides what it decides: verdict, reason, the margin and
+ *  every receiver's distance to its in-room bound. */
+function PlacementV2Panel({ v2, mode, roomName, formatDbm }: PlacementV2PanelProps) {
+  const { t } = useTranslation();
+  const receivers = sortV2Receivers(v2);
+  return (
+    <div data-testid="placement-v2">
+      <h4 className="mt-6 mb-2 text-sm font-medium text-gray-900 dark:text-white">
+        {mode === 'state' ? t('presence.readings.v2.title') : t('presence.readings.v2.titleShadow')}
+      </h4>
+      {v2.kind === null ? (
+        <p className={`text-sm ${MUTED}`}>{t('presence.readings.v2.noVerdict')}</p>
+      ) : (
+        <>
+          <p className="text-sm text-gray-900 dark:text-white" data-testid="v2-verdict">
+            {v2.kind === 'placed'
+              ? t('presence.readings.v2.placed', { room: roomName(v2.room_id ?? null) })
+              : t(`presence.readings.v2.kind.${v2.kind}`)}
+            {v2.reason && (
+              <span className={`ml-2 ${MUTED}`}>{t(`presence.readings.v2.reason.${v2.reason}`)}</span>
+            )}
+          </p>
+          {v2.held && (
+            <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
+              {t('presence.readings.v2.held')}
+            </p>
+          )}
+          {v2.margin_db != null && v2.margin_required_db != null && v2.runner_up && (
+            <p className={`mt-1 text-sm tabular-nums ${MUTED}`} data-testid="v2-margin">
+              {t(
+                v2.runner_up.censored
+                  ? 'presence.readings.v2.marginCensored'
+                  : 'presence.readings.v2.margin',
+                {
+                  margin: formatDbm(v2.margin_db),
+                  required: formatDbm(v2.margin_required_db),
+                  room: roomName(v2.runner_up.room_id),
+                },
+              )}
+            </p>
+          )}
+        </>
+      )}
+      {receivers.length > 0 && (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 dark:border-gray-700 text-left">
+                <th scope="col" className={TH}>{t('presence.readings.colSatellite')}</th>
+                <th scope="col" className={TH}>{t('presence.readings.colRoom')}</th>
+                <th scope="col" className={TH}>{t('presence.readings.v2.colState')}</th>
+                <th scope="col" className={`${TH} text-right`}>{t('presence.readings.v2.colSmoothed')}</th>
+                <th scope="col" className={`${TH} text-right`}>{t('presence.readings.v2.colBound')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {receivers.map((r) => (
+                <tr
+                  key={r.satellite_id}
+                  data-testid={`v2-receiver-${r.satellite_id}`}
+                  className="border-b border-gray-100 dark:border-gray-800 last:border-0"
+                >
+                  <td className="py-2 px-3 font-mono text-xs text-gray-900 dark:text-white">
+                    {r.satellite_id}
+                  </td>
+                  <td className={`py-2 px-3 ${MUTED}`}>{roomName(r.room_id)}</td>
+                  <td className={`py-2 px-3 ${MUTED}`}>
+                    {t(`presence.readings.v2.state.${r.state}`)}
+                    {!r.calibrated && (
+                      <Badge color="amber" className="ml-2">
+                        {t('presence.readings.v2.uncalibrated')}
+                      </Badge>
+                    )}
+                  </td>
+                  <td className={`${TD} text-right`}>
+                    {r.smoothed_dbm != null ? formatDbm(r.smoothed_dbm) : '–'}
+                  </td>
+                  <td className={`${TD} text-right`}>
+                    {r.bound_distance_db == null
+                      ? '–'
+                      : r.bound_distance_db >= 0
+                        ? t('presence.readings.v2.insideBound', { value: formatDbm(r.bound_distance_db) })
+                        : t('presence.readings.v2.belowBound', { value: formatDbm(-r.bound_distance_db) })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -489,6 +629,11 @@ export default function LiveReadings() {
         <EmptyState title={t('presence.noData')} text={t('presence.presenceDisabled')} />
       ) : (
         <>
+          {snapshot.placement_v2_mode === 'state' ? (
+            <p className={`mb-6 text-sm ${MUTED}`} data-testid="legend-v2">
+              {t('presence.readings.v2.legend', { window: snapshot.settings.stale_timeout_s })}
+            </p>
+          ) : (
           <p className={`mb-6 text-sm ${MUTED}`}>
             {t('presence.readings.legend', {
               floor: formatDbm(snapshot.settings.rssi_floor_dbm),
@@ -515,6 +660,7 @@ export default function LiveReadings() {
               </>
             )}
           </p>
+          )}
           {snapshot.devices.length === 0 ? (
             <EmptyState
               title={t('presence.readings.noDevicesTitle')}

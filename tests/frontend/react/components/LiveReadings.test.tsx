@@ -10,10 +10,12 @@ import { screen, within } from '@testing-library/react';
 
 import LiveReadings, {
   isPinnedWithoutReading,
+  sortV2Receivers,
   summarizeRooms,
   summarizeSatellites,
 } from '../../../../src/frontend/src/components/presence/LiveReadings';
 import type {
+  PlacementV2,
   PresenceReadingDevice,
   PresenceReadingsSnapshot,
   PresenceReadingsState,
@@ -427,5 +429,81 @@ describe('LiveReadings', () => {
     hookState.current = { status: 'reconnecting', snapshot: null };
     renderWithProviders(<LiveReadings />);
     expect(screen.getByText(/Server ist gerade nicht erreichbar/)).toBeInTheDocument();
+  });
+});
+
+// ---- placement v2 ------------------------------------------------------------
+
+function v2(overrides: Partial<PlacementV2> = {}): PlacementV2 {
+  return {
+    held: false,
+    kind: 'home_unknown',
+    reason: 'outside_bound',
+    room_id: null,
+    room_name: null,
+    best: { satellite_id: 'sat-kueche', room_id: 10, room_name: 'Küche', dbm: -76 },
+    runner_up: { satellite_id: 'sat-flur', room_id: 20, room_name: 'Flur', dbm: -77.3, censored: false },
+    margin_db: 1.3,
+    margin_required_db: 10,
+    bound_distance_db: -28.6,
+    receivers: [
+      { satellite_id: 'sat-bad', room_id: 30, state: 'offline', calibrated: true,
+        smoothed_dbm: null, comparable_dbm: null, bound_distance_db: null, samples: 0, age_s: null },
+      { satellite_id: 'sat-flur', room_id: 20, state: 'heard', calibrated: false,
+        smoothed_dbm: -77.3, comparable_dbm: -77.3, bound_distance_db: null, samples: 4, age_s: 2 },
+      { satellite_id: 'sat-kueche', room_id: 10, state: 'heard', calibrated: true,
+        smoothed_dbm: -76, comparable_dbm: -76, bound_distance_db: -28.6, samples: 6, age_s: 1 },
+    ],
+    ...overrides,
+  };
+}
+
+describe('placement v2', () => {
+  it('orders receivers: heard by comparable value, then silent, then offline', () => {
+    expect(sortV2Receivers(v2()).map((r) => r.satellite_id)).toEqual([
+      'sat-kueche', 'sat-flur', 'sat-bad',
+    ]);
+  });
+
+  it('under v2 state explains the room with the v2 verdict, not the legacy comparison', () => {
+    hookState.current = {
+      status: 'live',
+      snapshot: snapshot({
+        placement_v2_mode: 'state',
+        devices: [device({ placement_v2: v2() })],
+      }),
+    };
+    renderWithProviders(<LiveReadings />);
+    const panel = screen.getByTestId('placement-v2');
+    expect(within(panel).getByText('Platzierung v2 (entscheidet)')).toBeInTheDocument();
+    expect(within(panel).getByTestId('v2-verdict')).toHaveTextContent('Zu Hause, Raum unbekannt');
+    expect(within(panel).getByTestId('v2-verdict')).toHaveTextContent('innerhalb seiner Raumgrenze');
+    expect(within(panel).getByTestId('v2-margin')).toHaveTextContent('1,3');
+    expect(within(panel).getByTestId('v2-receiver-sat-kueche')).toHaveTextContent('28,6 dB fehlen');
+    expect(within(panel).getByTestId('v2-receiver-sat-flur')).toHaveTextContent('nicht kalibriert');
+    // The legacy room rows and legend decide nothing here.
+    expect(screen.queryByTestId('room-10')).not.toBeInTheDocument();
+    expect(screen.getByTestId('legend-v2')).toBeInTheDocument();
+  });
+
+  it('in shadow mode shows both, the v2 panel marked as deciding nothing', () => {
+    hookState.current = {
+      status: 'live',
+      snapshot: snapshot({
+        placement_v2_mode: 'shadow',
+        devices: [device({ placement_v2: v2({ kind: 'placed', reason: 'in_bound_and_margin', room_id: 10 }) })],
+      }),
+    };
+    renderWithProviders(<LiveReadings />);
+    expect(screen.getByText('Platzierung v2 (Schatten, entscheidet nicht)')).toBeInTheDocument();
+    expect(screen.getByTestId('v2-verdict')).toHaveTextContent('Im Raum: Küche');
+    expect(screen.getByTestId('room-10')).toBeInTheDocument();
+    expect(screen.queryByTestId('legend-v2')).not.toBeInTheDocument();
+  });
+
+  it('without v2 nothing of it appears', () => {
+    renderWithProviders(<LiveReadings />);
+    expect(screen.queryByTestId('placement-v2')).not.toBeInTheDocument();
+    expect(screen.getByTestId('room-10')).toBeInTheDocument();
   });
 });

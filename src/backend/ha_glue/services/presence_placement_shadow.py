@@ -183,6 +183,16 @@ class PlacementShadow:
     _FLAG = "presence_placement_v2_shadow_enabled"
     _OFF_MESSAGE = "settings rejected, shadow stays OFF"
 
+    def set_calibration(
+        self, receiver_params: Mapping[str, ReceiverParams], zones: Mapping[str, frozenset[int]]
+    ) -> None:
+        """Replace the receiver numbers and zones (the calibration tables
+        changed). Verdicts and zone times stay: the next decision uses the new
+        numbers, and an incumbent zone that no longer exists simply is no
+        candidate any more."""
+        self._params = dict(receiver_params)
+        self._zones = dict(zones)
+
     @property
     def fresh_s(self) -> float:
         return self._config.fresh_s

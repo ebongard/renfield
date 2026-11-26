@@ -714,3 +714,227 @@ async def get_room_window(
 
     service = PresenceAnalyticsService(db)
     return await service.get_room_occupancy_window(room_id=room_id, since=since, until=until)
+
+
+# ---------------------------------------------------------------------------
+# Placement v2 calibration (admin) — stage 2, part B
+# ---------------------------------------------------------------------------
+
+
+class CalibrationReceiver(BaseModel):
+    satellite_id: str
+    offset_db: float
+    in_room_dbm: float
+    cutoff_dbm: float
+
+
+class CalibrationZone(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)  # presence_zones.name is String(100)
+    room_ids: list[int] = Field(..., max_length=100)
+
+
+class CalibrationResponse(BaseModel):
+    # "database" | "empty" — where the numbers in effect come from.
+    source: str
+    # The JSON settings are still set but ignored (the tables hold values).
+    settings_ignored: bool
+    # A v2 decision (shadow or state) is running and uses these numbers.
+    engine_active: bool
+    receivers: list[CalibrationReceiver]
+    zones: list[CalibrationZone]
+    min_samples: int
+    in_room_percentile: float
+
+
+class ReceiverUpdate(BaseModel):
+    offset_db: float
+    in_room_dbm: float
+    cutoff_dbm: float
+
+
+class ZonesUpdate(BaseModel):
+    zones: list[CalibrationZone]
+
+
+class MeasurementStartResponse(BaseModel):
+    # Server clock at the start of a guided measurement; the proposal counts
+    # readings from here (the browser's clock never enters).
+    since: float
+
+
+class ProposalRequest(BaseModel):
+    device_key: str = Field(..., max_length=32)  # the redacted key from live readings
+    satellite_id: str = Field(..., min_length=1, max_length=100)
+    since: float
+
+
+class ProposalResponse(BaseModel):
+    satellite_id: str
+    samples: int
+    in_room_dbm: float
+    min_dbm: float
+    median_dbm: float
+    max_dbm: float
+    # None = the receiver is uncalibrated; the admin enters its cutoff.
+    cutoff_dbm: float | None
+    offset_db: float
+    current: CalibrationReceiver | None
+
+
+def _require_presence() -> None:
+    if not ha_glue_settings.presence_enabled:
+        raise HTTPException(status_code=404, detail="Presence detection is disabled")
+
+
+def _calibration_response(calibration) -> CalibrationResponse:
+    from ha_glue.services.presence_calibration import IN_ROOM_PERCENTILE, MIN_SAMPLES
+
+    presence = get_presence_service()
+    return CalibrationResponse(
+        source=calibration.source,
+        settings_ignored=calibration.settings_ignored,
+        engine_active=getattr(presence, "_placement_shadow", None) is not None,
+        receivers=[
+            CalibrationReceiver(satellite_id=sid, offset_db=p.offset_db,
+                                in_room_dbm=p.in_room_dbm, cutoff_dbm=p.cutoff_dbm)
+            for sid, p in sorted(calibration.params.items())
+        ],
+        zones=[
+            CalibrationZone(name=name, room_ids=sorted(rooms))
+            for name, rooms in sorted(calibration.zones.items())
+        ],
+        min_samples=MIN_SAMPLES,
+        in_room_percentile=IN_ROOM_PERCENTILE,
+    )
+
+
+@router.get("/calibration", response_model=CalibrationResponse)
+async def get_calibration(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """The receiver numbers and zones placement v2 decides with (admin)."""
+    _require_presence()
+    from ha_glue.services.presence_calibration import read_calibration
+
+    return _calibration_response(await read_calibration(db))
+
+
+@router.put("/calibration/receivers/{satellite_id}", response_model=CalibrationResponse)
+async def put_calibration_receiver(
+    satellite_id: str,
+    body: ReceiverUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Save one receiver's numbers; the running decision uses them at once."""
+    _require_presence()
+    from ha_glue.services.presence_calibration import (
+        CalibrationError,
+        save_receiver,
+        validate_receiver,
+    )
+
+    if not satellite_id.strip() or len(satellite_id) > 100:
+        raise HTTPException(status_code=422, detail={"code": "invalid_satellite"})
+    try:
+        params = validate_receiver(body.offset_db, body.in_room_dbm, body.cutoff_dbm)
+        calibration = await save_receiver(
+            db, get_presence_service(), satellite_id, params,
+            user_id=current_user.id if current_user is not None else None,
+        )
+    except CalibrationError as e:
+        raise HTTPException(status_code=422, detail=e.detail()) from e
+    return _calibration_response(calibration)
+
+
+@router.delete("/calibration/receivers/{satellite_id}", response_model=CalibrationResponse)
+async def delete_calibration_receiver(
+    satellite_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Remove a receiver's numbers: it becomes uncalibrated (keeps people home, never places)."""
+    _require_presence()
+    from ha_glue.services.presence_calibration import CalibrationError, delete_receiver
+
+    try:
+        calibration = await delete_receiver(db, get_presence_service(), satellite_id)
+    except CalibrationError as e:
+        raise HTTPException(status_code=404, detail=e.detail()) from e
+    return _calibration_response(calibration)
+
+
+@router.put("/calibration/zones", response_model=CalibrationResponse)
+async def put_calibration_zones(
+    body: ZonesUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Replace every zone (rooms decided as one open-plan space)."""
+    _require_presence()
+    from ha_glue.services.presence_calibration import (
+        CalibrationError,
+        replace_zones,
+        validate_zones,
+    )
+
+    names = [z.name for z in body.zones]
+    if len(set(names)) != len(names):
+        raise HTTPException(status_code=422, detail={"code": "invalid_zones"})
+    try:
+        zones = validate_zones({z.name: z.room_ids for z in body.zones})
+        calibration = await replace_zones(db, get_presence_service(), zones)
+    except CalibrationError as e:
+        raise HTTPException(status_code=422, detail=e.detail()) from e
+    return _calibration_response(calibration)
+
+
+@router.post("/calibration/measurement", response_model=MeasurementStartResponse)
+async def start_calibration_measurement(
+    current_user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Start a guided measurement: returns the server time readings count from.
+    Stores nothing — the readings are the ones the presence service keeps anyway."""
+    _require_presence()
+    import time
+
+    return MeasurementStartResponse(since=time.time())
+
+
+@router.post("/calibration/proposal", response_model=ProposalResponse)
+async def propose_calibration(
+    body: ProposalRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Propose a receiver's in-room bound from its readings of one device since
+    the measurement started. Saves nothing."""
+    _require_presence()
+    import time
+
+    from ha_glue.services.presence_calibration import CalibrationError, propose, read_calibration
+
+    current = (await read_calibration(db)).params.get(body.satellite_id)
+    try:
+        proposal = propose(
+            get_presence_service(), body.device_key, body.satellite_id,
+            since=body.since, now=time.time(), current=current,
+        )
+    except CalibrationError as e:
+        raise HTTPException(status_code=422, detail=e.detail()) from e
+    return ProposalResponse(
+        satellite_id=proposal.satellite_id,
+        samples=proposal.samples,
+        in_room_dbm=proposal.in_room_dbm,
+        min_dbm=proposal.min_dbm,
+        median_dbm=proposal.median_dbm,
+        max_dbm=proposal.max_dbm,
+        cutoff_dbm=proposal.cutoff_dbm,
+        offset_db=proposal.offset_db,
+        current=(
+            CalibrationReceiver(satellite_id=body.satellite_id, offset_db=current.offset_db,
+                                in_room_dbm=current.in_room_dbm, cutoff_dbm=current.cutoff_dbm)
+            if current is not None else None
+        ),
+    )

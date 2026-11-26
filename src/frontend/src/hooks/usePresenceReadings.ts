@@ -57,6 +57,55 @@ export interface PresenceFilteredRoom {
   rssi: number;
 }
 
+// Placement v2 (ha_glue/services/presence_placement_shadow.py `payload_for`).
+export type PlacementV2Kind = 'placed' | 'home_unknown' | 'absent' | 'unavailable';
+export type PlacementV2Reason =
+  | 'in_bound_and_margin'
+  | 'incumbent_held'
+  | 'no_calibrated_receiver'
+  | 'outside_bound'
+  | 'margin_too_small'
+  | 'no_fresh_reading'
+  | 'not_heard'
+  | 'no_receiver_alive';
+
+export interface PlacementV2Named {
+  satellite_id: string;
+  room_id: number | null;
+  room_name: string | null;
+  dbm: number | null;
+  /** Runner-up only: the value is a silent receiver's cutoff (an upper bound). */
+  censored?: boolean;
+}
+
+export interface PlacementV2Receiver {
+  satellite_id: string;
+  room_id: number | null;
+  state: 'heard' | 'censored' | 'offline';
+  calibrated: boolean;
+  smoothed_dbm: number | null;
+  comparable_dbm: number | null;
+  /** smoothed − in-room bound; ≥ 0 = inside the bound. */
+  bound_distance_db: number | null;
+  samples: number;
+  age_s: number | null;
+}
+
+export interface PlacementV2 {
+  /** The clock is behind the last decided report: the verdict OF that report. */
+  held: boolean;
+  kind: PlacementV2Kind | null;
+  reason?: PlacementV2Reason;
+  room_id?: number | null;
+  room_name?: string | null;
+  best?: PlacementV2Named | null;
+  runner_up?: PlacementV2Named | null;
+  margin_db?: number | null;
+  margin_required_db?: number;
+  bound_distance_db?: number | null;
+  receivers?: PlacementV2Receiver[];
+}
+
 export interface PresenceReadingDevice {
   /** Redacted `mac:<hash>` / `irk:<hash>` — never the raw address or label. */
   key: string;
@@ -73,6 +122,8 @@ export interface PresenceReadingDevice {
   location_uncertain: boolean;
   filtered_rooms: PresenceFilteredRoom[];
   sightings: PresenceSighting[];
+  /** Present only while placement v2 runs; null when it could not be computed. */
+  placement_v2?: PlacementV2 | null;
 }
 
 export interface PresenceReadingsSnapshot {
@@ -82,6 +133,8 @@ export interface PresenceReadingsSnapshot {
   settings: PresenceReadingSettings;
   satellites: PresenceReadingSatellite[];
   devices: PresenceReadingDevice[];
+  /** Absent = v2 off; `state` = v2 books the room (the legacy rule does not run). */
+  placement_v2_mode?: 'shadow' | 'state';
 }
 
 interface SnapshotMessage extends PresenceReadingsSnapshot {

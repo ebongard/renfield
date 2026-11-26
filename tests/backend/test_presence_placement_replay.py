@@ -46,6 +46,7 @@ from loguru import logger
 
 from ha_glue.services import presence_service as presence_service_module
 from ha_glue.services.presence_placement import (
+    IN_ROOM_PERCENTILE,
     PlacementConfig,
     PlacementVerdict,
     Reading,
@@ -54,6 +55,7 @@ from ha_glue.services.presence_placement import (
     ReceiverParams,
     VerdictKind,
     decide,
+    percentile,
 )
 from ha_glue.services.presence_placement_shadow import LOG_PREFIX, PlacementShadow
 from ha_glue.services.presence_service import PresenceService
@@ -71,7 +73,6 @@ CONFIG = PlacementConfig(
     absent_after_s=120.0,
     receiver_alive_s=60.0,
 )
-IN_ROOM_PERCENTILE = 10.0
 SCORED_KINDS = ("room", "one_metre")
 TRACKED_MAC = "AA:BB:CC:DD:EE:01"
 TRACKED_USER = 1
@@ -155,15 +156,6 @@ def recording() -> Recording:
 # ---------------------------------------------------------------------------
 # Provisional parameters
 # ---------------------------------------------------------------------------
-
-
-def percentile(values: list[float], pct: float) -> float:
-    """Linear interpolation between closest ranks."""
-    ordered = sorted(values)
-    position = (len(ordered) - 1) * pct / 100.0
-    low = int(position)
-    high = min(low + 1, len(ordered) - 1)
-    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
 
 
 def derive_params(
