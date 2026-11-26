@@ -127,6 +127,7 @@ export const keys = {
     relations: (filters?: Record<string, unknown>) => ['knowledgeGraph', 'relations', filters ?? {}] as const,
     circleTiers: () => ['knowledgeGraph', 'circle-tiers'] as const,
     mergeProposals: () => ['knowledgeGraph', 'merge-proposals'] as const,
+    contactPoints: (entityId: number) => ['knowledgeGraph', 'contact-points', entityId] as const,
   },
   circles: {
     all: ['circles'] as const,

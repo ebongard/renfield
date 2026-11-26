@@ -2558,6 +2558,70 @@ KG_MERGE_REASON_NAME_IDENTIFIER = "name_identifier"  # names differ only in a di
 KG_MERGE_WEAK_REASONS = frozenset({KG_MERGE_REASON_NAME_TYPO, KG_MERGE_REASON_NAME_IDENTIFIER})
 
 
+# --- Contact points (#1240) -------------------------------------------------
+# A phone/mobile/fax number (later mail, web, postal) is an ATTRIBUTE of a person
+# or organization, never a KG node: a shared switchboard or family landline as a
+# node would pull strangers together in graph expansion (docs/design/kg-contact-points.md §3).
+CONTACT_POINT_KIND_PHONE = "phone"
+CONTACT_POINT_KIND_MOBILE = "mobile"
+CONTACT_POINT_KIND_FAX = "fax"
+CONTACT_POINT_KINDS = (CONTACT_POINT_KIND_PHONE, CONTACT_POINT_KIND_MOBILE, CONTACT_POINT_KIND_FAX)
+CONTACT_POINT_PHONE_KINDS = CONTACT_POINT_KINDS  # all v1 kinds normalize to E.164
+CONTACT_POINT_LABELS = ("private", "work")
+CONTACT_POINT_SOURCE_MANUAL = "manual"
+CONTACT_POINT_SOURCE_TYPES = (CONTACT_POINT_SOURCE_MANUAL, "vcard", "chat", "document", "email")
+
+
+class KGEntityContactPoint(Base):
+    """A way to reach a KG entity: one normalized value with provenance (#1240).
+
+    Tier: ``circle_tier = LEAST(entity tier, source_tier)`` -- one rule, one place
+    (``services/contact_point_tier.py``). ``source_tier`` is the tier of the source
+    the value came from and only ever goes DOWN (a document made more private lowers
+    it, a more open one does not lift it). Never an atom of its own: explicit grants
+    act on the entity (``contact_points_circles_filter``).
+
+    ``valid_to`` NULL = still valid. A value ends only when a source says so (an
+    explicit replacement, a vCard re-import without it, a merge collision, a
+    soft-deleted entity) -- a second number alone never ends the first.
+    """
+    __tablename__ = "kg_entity_contact_points"
+
+    id = Column(Integer, primary_key=True)
+    entity_id = Column(Integer, ForeignKey("kg_entities.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    kind = Column(String(16), nullable=False)
+    label = Column(String(16), nullable=True)
+    value = Column(Text, nullable=False)          # verbatim, as in the source
+    normalized = Column(Text, nullable=False)     # E.164 for phone kinds
+    source_type = Column(String(16), nullable=False, default=CONTACT_POINT_SOURCE_MANUAL)
+    source_ref = Column(Text, nullable=True)      # message id, vCard UID, ...
+    # Real FK so a re-extracted or deleted document takes its values along (A2).
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=True, index=True)
+    confidence = Column(Float, nullable=True)
+    source_tier = Column(Integer, nullable=False, default=0)
+    circle_tier = Column(Integer, nullable=False, default=0)
+    valid_from = Column(DateTime, nullable=True)
+    valid_to = Column(DateTime, nullable=True)
+    superseded_by_id = Column(
+        Integer, ForeignKey("kg_entity_contact_points.id", ondelete="SET NULL"), nullable=True,
+    )
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+    __table_args__ = (
+        # One live value per (entity, kind, normalized); ended rows may repeat.
+        Index(
+            "uq_contact_points_live", "entity_id", "kind", "normalized", unique=True,
+            postgresql_where=sa_text("valid_to IS NULL"),
+        ),
+        # Reverse lookup: "whose number is this?"
+        Index("idx_contact_points_normalized", "normalized"),
+    )
+
+    entity = relationship("KGEntity", foreign_keys=[entity_id])
+
+
 class KgMergeProposal(Base):
     """A reconciler-proposed entity merge awaiting owner review (D3).
 

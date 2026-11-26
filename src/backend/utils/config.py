@@ -2047,6 +2047,13 @@ class Settings(BaseSettings):
     # Off = no bell, no extra endpoints answer, no events published.
     notification_bell_enabled: bool = False
 
+    # Contact points (#1240): phone / mobile / fax as attributes of KG persons
+    # and organizations (docs/design/kg-contact-points.md). Off = no table reads,
+    # the routes 404, internal.find_contact refuses, the drawer shows nothing.
+    contact_points_enabled: bool = False
+    # Region for numbers written without a country code ("0170 ...").
+    contact_points_default_region: str = "DE"
+
     # Web Push (#79): a content-free wake-up through the browser's push service
     # for the people the in-app notification reaches. Dark by default. The flag
     # alone activates nothing: every precondition (auth on, a valid VAPID key

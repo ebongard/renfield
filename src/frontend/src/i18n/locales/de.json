@@ -2818,5 +2818,39 @@
       "body": "Neue Benachrichtigung",
       "bodyCritical": "Neue dringende Benachrichtigung"
     }
+  },
+  "contactPoints": {
+    "title": "Kontaktdaten",
+    "empty": "Keine Kontaktdaten gespeichert.",
+    "couldNotLoad": "Kontaktdaten konnten nicht geladen werden.",
+    "add": "Hinzufügen",
+    "remove": "{{value}} entfernen",
+    "kindLabel": "Art",
+    "valueLabel": "Nummer",
+    "valuePlaceholder": "z. B. 0170 1234567",
+    "labelLabel": "Bereich",
+    "kind": {
+      "phone": "Telefon",
+      "mobile": "Mobil",
+      "fax": "Fax"
+    },
+    "label": {
+      "none": "—",
+      "private": "Privat",
+      "work": "Geschäftlich"
+    },
+    "source": {
+      "manual": "manuell",
+      "vcard": "Adressbuch",
+      "chat": "aus dem Chat",
+      "document": "aus Dokument",
+      "email": "aus E-Mail"
+    },
+    "errors": {
+      "duplicate": "Diese Nummer ist hier schon gespeichert.",
+      "invalid_number": "Das ist keine gültige Telefonnummer.",
+      "invalid_kind": "Unbekannte Art.",
+      "invalid_label": "Unbekannter Bereich."
+    }
   }
 }

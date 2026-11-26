@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { X, ArrowRight } from 'lucide-react';
 import type { AtomMatch, DocumentFact, FactSource } from '../../api/resources/brain';
-import { usePatchAtomTier, useResetFactTier } from '../../api/resources/brain';
+import { useFeatureFlags, usePatchAtomTier, useResetFactTier } from '../../api/resources/brain';
 import { useUpdateKgEntityTier } from '../../api/resources/knowledgeGraph';
 import { useMemoriesBySubjectQuery } from '../../api/resources/memories';
 import TierPicker from '../TierPicker';
@@ -11,6 +11,7 @@ import type { CircleTier } from '../TierBadge';
 import FaktenPanel from '../knowledge/FaktenPanel';
 import ObligationRow from '../ObligationRow';
 import FactProvenance from '../FactProvenance';
+import EntityContactPoints from './EntityContactPoints';
 
 interface WissenDetailDrawerProps {
   atom: AtomMatch | null;
@@ -70,6 +71,8 @@ export default function WissenDetailDrawer({ atom, onClose }: WissenDetailDrawer
   const patchAtomTier = usePatchAtomTier();
   const updateKgTier = useUpdateKgEntityTier();
   const resetFactTier = useResetFactTier();
+  const { data: featureFlags } = useFeatureFlags();
+  const contactPointsEnabled = featureFlags?.contact_points_enabled === true;
 
   const open = atom !== null;
 
@@ -193,6 +196,9 @@ export default function WissenDetailDrawer({ atom, onClose }: WissenDetailDrawer
             )}
             {num(payload.entity_id) != null && (
               <EntityMemories entityId={num(payload.entity_id) as number} />
+            )}
+            {contactPointsEnabled && num(payload.entity_id) != null && (
+              <EntityContactPoints entityId={num(payload.entity_id) as number} />
             )}
           </div>
         )}

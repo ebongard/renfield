@@ -157,6 +157,8 @@ class FeatureFlags(BaseModel):
     push_notifications_enabled: bool = False
     # Notification bell in the header (#1653). Off => no bell, endpoints 404.
     notification_bell_enabled: bool = False
+    # Contact points on KG entities (#1240). Off => drawer section hidden, routes 404.
+    contact_points_enabled: bool = False
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -192,4 +194,5 @@ async def get_features(
         voice_client_id=settings.voice_browser_client_id,
         push_notifications_enabled=push_active(),
         notification_bell_enabled=settings.notification_bell_enabled,
+        contact_points_enabled=settings.contact_points_enabled,
     )

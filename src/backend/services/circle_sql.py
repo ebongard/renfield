@@ -350,6 +350,28 @@ def kg_relations_circles_filter(
     )
 
 
+def contact_points_circles_filter(
+    asker_id: int, alias: str = "cp", *, peer: PeerScope | None = None
+) -> tuple[str, dict[str, Any]]:
+    """Returns (clause, params) for circle-filtering kg_entity_contact_points (#1240).
+
+    Owner and tier come from the contact point itself (``cp.user_id`` /
+    ``cp.circle_tier`` = LEAST(entity, source)). A contact point has no atom of its
+    own: explicit grants act on its ENTITY (``source_table='kg_entities'``,
+    ``source_id = cp.entity_id``). Callers must ALSO apply
+    :func:`kg_entities_circles_filter` to the joined entity -- a value is never
+    reachable through an entity the asker cannot see.
+    """
+    src = "kg_entities"
+    clause = circles_filter_clause(
+        table_alias=alias, source_table_value=src,
+        source_id_expr=f"{alias}.entity_id", peer=peer,
+    )
+    return clause, circles_filter_params(
+        asker_id, source_table_value=("" if peer is not None else src), peer=peer
+    )
+
+
 def conversation_memories_circles_filter(
     asker_id: int, alias: str = "m", *, peer: PeerScope | None = None
 ) -> tuple[str, dict[str, Any]]:

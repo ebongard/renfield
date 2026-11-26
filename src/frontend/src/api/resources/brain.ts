@@ -158,6 +158,8 @@ export interface FeatureFlags {
   push_notifications_enabled?: boolean;
   /** Notification bell in the header (#1653). */
   notification_bell_enabled?: boolean;
+  /** Contact points on KG entities (#1240). */
+  contact_points_enabled?: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {

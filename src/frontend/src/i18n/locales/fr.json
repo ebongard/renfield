@@ -2843,5 +2843,39 @@
       "body": "Nouvelle notification",
       "bodyCritical": "Nouvelle notification urgente"
     }
+  },
+  "contactPoints": {
+    "title": "Coordonnées",
+    "empty": "Aucune coordonnée enregistrée.",
+    "couldNotLoad": "Impossible de charger les coordonnées.",
+    "add": "Ajouter",
+    "remove": "Supprimer {{value}}",
+    "kindLabel": "Type",
+    "valueLabel": "Numéro",
+    "valuePlaceholder": "p. ex. +49 170 1234567",
+    "labelLabel": "Contexte",
+    "kind": {
+      "phone": "Téléphone",
+      "mobile": "Mobile",
+      "fax": "Fax"
+    },
+    "label": {
+      "none": "—",
+      "private": "Privé",
+      "work": "Professionnel"
+    },
+    "source": {
+      "manual": "manuel",
+      "vcard": "carnet d’adresses",
+      "chat": "depuis le chat",
+      "document": "depuis un document",
+      "email": "depuis un e-mail"
+    },
+    "errors": {
+      "duplicate": "Ce numéro est déjà enregistré ici.",
+      "invalid_number": "Ce n’est pas un numéro de téléphone valide.",
+      "invalid_kind": "Type inconnu.",
+      "invalid_label": "Contexte inconnu."
+    }
   }
 }
