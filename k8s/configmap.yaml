@@ -670,6 +670,8 @@ data:
   # Kontaktpunkte (#1240): Telefon/Mobil/Fax an KG-Personen und -Firmen, Wissen-Drawer
   # + internal.find_contact; Router schickt Telefonfragen dann an general.
   CONTACT_POINTS_ENABLED: "true"
+  # Stufe 4 (renfield#1240): Nummern des Ausstellers aus neuen Dokumenten (deterministisch).
+  CONTACT_POINTS_FROM_DOCUMENTS_ENABLED: "true"
   WISSEN_WORKSPACE_ENABLED: "true"
   PRESENCE_SWITCH_ENTER_MARGIN_DB: "4"
   # Placement v2 in SHADOW (#1549): a second room decision that only logs; nothing reads it.
