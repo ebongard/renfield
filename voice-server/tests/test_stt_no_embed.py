@@ -14,7 +14,6 @@ import numpy as np
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from voice_server.api import rest_voice
 
 
