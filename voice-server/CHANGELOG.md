@@ -5,6 +5,17 @@ version without a section here. Pushed digests live in `RELEASES.md`.
 
 ## [Unreleased]
 
+## [0.3.13] — 2026-11-26
+
+- **`/api/voice/stt` and `/api/voice/stt-opus` take `embed=false`.** With it the
+  speaker model never runs: no voiceprint is computed, not merely left out of
+  the reply. New response field `embedded` (true only when an embedding was
+  computed and returned; also false when the embed failed). A client that must
+  not create a voiceprint (a phone caller's voice on the answering machine)
+  checks `embedded` and refuses the result otherwise, so an older server that
+  ignores the form field is caught. Default unchanged (`embed=true`), so
+  satellites and voice turns behave as before. (renfield #1669)
+
 ## [0.3.12] — 2026-11-24
 
 - **Prometheus metrics, dark by default.** `METRICS_ENABLED=true` serves them on

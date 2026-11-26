@@ -10,7 +10,7 @@ endpoint and adds speaker resolution before responding to the satellite.
 Until B.4.c lands, Traefik does NOT route `/api/voice/*` to voice-server
 (only `/ws/voice`). Backend keeps owning the satellite-facing path.
 
-  POST /api/voice/stt   multipart audio        → { text, language, speaker_embedding?, audio_duration_s }
+  POST /api/voice/stt   multipart audio [, embed=false] → { text, language, speaker_embedding?, embedded, audio_duration_s }
   POST /api/voice/tts   { text, language? }    → audio/wav (single-shot, full WAV)
 """
 
@@ -79,6 +79,11 @@ class STTResponse(BaseModel):
     language: str
     audio_duration_s: float
     speaker_embedding: list[float] | None = None
+    # False = the caller asked for no voiceprint (``embed=false``) and none was
+    # computed. A client that must not see a voiceprint (a phone caller's voice,
+    # renfield #1669) checks THIS field, so an older server that ignores the form
+    # field is detected instead of silently embedding.
+    embedded: bool = False
 
 
 @router.post("/api/voice/stt", response_model=STTResponse)
@@ -86,6 +91,7 @@ async def stt_endpoint(
     request: Request,
     audio: UploadFile = File(...),
     language: str | None = Form(default=None),
+    embed: bool = Form(default=True),
     _user: dict = Depends(_require_token),
 ) -> STTResponse:
     """Transcribe a single audio file. One-shot (not streaming)."""
@@ -103,7 +109,7 @@ async def stt_endpoint(
     if pcm.size == 0:
         raise HTTPException(status_code=400, detail="empty PCM after decode")
 
-    return await _transcribe_and_embed(request, pcm, language)
+    return await _transcribe_and_embed(request, pcm, language, embed=embed)
 
 
 @router.post("/api/voice/stt-opus", response_model=STTResponse)
@@ -111,6 +117,7 @@ async def stt_opus_endpoint(
     request: Request,
     audio: UploadFile = File(...),
     language: str | None = Form(default=None),
+    embed: bool = Form(default=True),
     _user: dict = Depends(_require_token),
 ) -> STTResponse:
     """Transcribe a satellite's raw Opus packets (C1 transport).
@@ -138,14 +145,17 @@ async def stt_opus_endpoint(
     if pcm.size == 0:
         raise HTTPException(status_code=400, detail="empty PCM after opus decode")
 
-    return await _transcribe_and_embed(request, pcm, language)
+    return await _transcribe_and_embed(request, pcm, language, embed=embed)
 
 
 async def _transcribe_and_embed(
-    request: Request, pcm: np.ndarray, language: str | None
+    request: Request, pcm: np.ndarray, language: str | None, *, embed: bool = True
 ) -> STTResponse:
     """Shared STT + speaker-embed tail for both the container (/stt) and raw-opus
-    (/stt-opus) paths — identical once we have float32 16 kHz mono PCM."""
+    (/stt-opus) paths — identical once we have float32 16 kHz mono PCM.
+
+    ``embed=False`` skips the speaker model entirely: no voiceprint is computed,
+    not merely left out of the reply."""
     stt: STTService = request.app.state.stt
     speaker: SpeakerService = request.app.state.speaker
 
@@ -159,17 +169,19 @@ async def _transcribe_and_embed(
     detected_language = stt.last_language or language or "de"
 
     embedding: list[float] | None = None
-    try:
-        emb = await speaker.embed(pcm)
-        embedding = emb.tolist()
-    except Exception as e:
-        logger.warning("speaker embed failed in REST stt: %s", e)
+    if embed:
+        try:
+            emb = await speaker.embed(pcm)
+            embedding = emb.tolist()
+        except Exception as e:
+            logger.warning("speaker embed failed in REST stt: %s", e)
 
     return STTResponse(
         text=text,
         language=detected_language,
         audio_duration_s=float(pcm.size) / 16000.0,
         speaker_embedding=embedding,
+        embedded=embedding is not None,
     )
 
 
