@@ -624,6 +624,61 @@ class TestTool:
         assert "internal.find_contact" not in registry._tools
 
 
+# --- router -------------------------------------------------------------------------------
+
+def _shipped_roles() -> dict:
+    from services.agent_router import load_roles_config
+
+    path = next(
+        (p / "config" / "agent_roles.yaml"
+         for p in Path(__file__).resolve().parents
+         if (p / "config" / "agent_roles.yaml").exists()),
+        None,
+    )
+    assert path is not None, "config/agent_roles.yaml is missing from this copy"
+    return load_roles_config(str(path))
+
+
+@pytest.mark.unit
+class TestRouter:
+    """Measured 2026-11-26 (bin/measure-router.py, qwen3:8b, router-cases-contact.json):
+    flag off, phone questions went to `conversation` 7 of 10; with the sentence 10/10
+    to `general`. Flag off the prompt must stay byte for byte as before."""
+
+    def test_flag_off_leaves_the_prompt_unchanged(self, enabled):
+        from services.agent_router import CONTACT_LOOKUP_ROUTE, AgentRouter
+
+        enabled.contact_points_enabled = False
+        router = AgentRouter(_shipped_roles())
+        for lang in ("de", "en"):
+            assert CONTACT_LOOKUP_ROUTE[lang] not in router._build_role_descriptions(lang)
+
+    def test_flag_on_sends_numbers_to_the_role_with_the_tool(self, enabled):
+        from services.agent_router import CONTACT_LOOKUP_ROUTE, AgentRouter
+
+        router = AgentRouter(_shipped_roles())
+        name = router.contact_lookup_role_name()
+        # The shipped role that can run internal.find_contact: `general` (all tools).
+        assert name == "general"
+        assert router.roles[name].has_agent_loop
+        for lang in ("de", "en"):
+            lines = router._build_role_descriptions(lang).splitlines()
+            hits = [ln for ln in lines if CONTACT_LOOKUP_ROUTE[lang] in ln]
+            assert len(hits) == 1 and hits[0].startswith(f"- {name}: ")
+
+    def test_an_explicit_listing_wins_over_all_tools(self, enabled):
+        from services.agent_router import AgentRouter
+
+        router = AgentRouter({"roles": {
+            "general": {"description": {"de": "Allgemein"}, "internal_tools": None,
+                        "prompt_key": "agent_prompt"},
+            "people": {"description": {"de": "Personen"}, "prompt_key": "agent_prompt",
+                       "internal_tools": ["internal.find_contact"]},
+            "knowledge": {"description": {"de": "Wissen"}},
+        }})
+        assert router.contact_lookup_role_name() == "people"
+
+
 # --- source guard -------------------------------------------------------------------------
 
 @pytest.mark.unit
