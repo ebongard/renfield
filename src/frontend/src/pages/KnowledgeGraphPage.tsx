@@ -7,6 +7,8 @@ import {
 import { extractApiError } from '../utils/axios';
 import { formatDate } from '../utils/datetime';
 import Modal from '../components/Modal';
+import EntityContactPoints from '../components/wissen/EntityContactPoints';
+import { useFeatureFlags } from '../api/resources/brain';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
@@ -167,6 +169,11 @@ export default function KnowledgeGraphPage() {
   const createRelationMutation = useCreateKgRelation();
   const updateRelationMutation = useUpdateKgRelation();
   const entitySearchMutation = useKgEntitySearch();
+  const { data: featureFlags } = useFeatureFlags();
+  // #1240: numbers hang on people and organizations only.
+  const showContactPoints = featureFlags?.contact_points_enabled === true
+    && editingEntity != null
+    && (editingEntity.entity_type === 'person' || editingEntity.entity_type === 'organization');
 
   // Edit entity
   const openEditModal = (entity: KgEntity) => {
@@ -860,6 +867,7 @@ export default function KnowledgeGraphPage() {
                 rows={3}
               />
             </div>
+            {showContactPoints && editingEntity && <EntityContactPoints entityId={editingEntity.id} />}
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setShowEditModal(false)} className="btn-secondary">
                 {t('common.cancel')}
