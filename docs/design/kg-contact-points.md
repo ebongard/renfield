@@ -1,7 +1,8 @@
 # Kontaktpunkte — Telefon, Mobil, Fax, Mail, Web an Personen und Firmen
 
 **Issue:** [#1240](https://github.com/ebongard/renfield/issues/1240)
-**Status:** Stufe 1 gebaut 2026-11-26 (§13), dunkel hinter `CONTACT_POINTS_ENABLED`. Stufen 2–4 offen.
+**Status:** Stufe 1 gebaut 2026-11-26 (§13), dunkel hinter `CONTACT_POINTS_ENABLED`. Stufe 4 (Dokumente) vorgezogen
+und gebaut 2026-11-26 (§14), dunkel hinter `CONTACT_POINTS_FROM_DOCUMENTS_ENABLED`. Stufen 2 und 3 offen.
 **Datum:** 2026-09-13
 **Autor:** Claude Opus 5
 **Bezug:** #875 / PR #1213 (Gültigkeitsintervalle auf `kg_relations`)
@@ -306,3 +307,59 @@ anderswo schon vorhandenen Nummer nur bei verwandtem Namen (A5), und für Dokume
 „bestätigt", keine Nummer mehrerer Aussteller (A6). Hergang: `docs/design/caller-lookup.md` §6 (Branch
 `docs/caller-lookup-design`).
 
+
+## 14. Stufe 4 — Dokumente, vorgezogen und gebaut (2026-11-26)
+
+**Reihenfolge geändert** (Entscheidung des Eigentümers): erst was schon im System liegt (Dokumente), dann die
+Anrufer-Auflösung (`docs/design/caller-lookup.md`), danach erst der Import (vCard, Sync).
+
+`services/document_contact_points.py`, deterministisch, kein LLM. Eine Nummer zählt nur, wenn:
+
+1. ein Stichwort direkt davor steht, auf derselben Zeile (`Tel`, `Telefon`, `Fon`, `Fax`, `Telefax`, `Mobil`,
+   `Handy`; `T`/`F`/`M` nur mit `:`/`.` oder direkt vor `+`/`0`). Ein Klammerzusatz zählt nur als WORT
+   („Tel. (Zentrale):“), eine Vorwahl in Klammern gehört zur Nummer. Die Nummer endet am Zeilenende — sonst
+   verschluckt sie die Postleitzahl der nächsten Zeile;
+2. `normalize_phone` sie annimmt;
+3. sie höchstens `ISSUER_WINDOW` (300) Zeichen vom Namen des Ausstellers steht (mit und ohne Rechtsform);
+4. sie nicht im Empfängerblock steht (`party`-Fakt `empf*`/`recipient*`/`adressat*`);
+5. **genau eine** lebende Person/Firma DESSELBEN Eigentümers den Namen oder Alias des Ausstellers trägt
+   (Zählabfrage, A4). Keine oder mehrere: übersprungen, nie geraten, **nie neu angelegt**.
+
+**Abweichung von A6 (Briefkopf/Fußzeile):** Der gespeicherte Text hat keine verlässliche Seitengeometrie —
+gemessen 2026-11-26 trugen 1131 von 2947 Textstücken im Haushalt (562 von 4145 bei xidra) keine Seitenangabe, und
+Anfang/Ende eines Stücks sagt nichts über oben/unten auf der Seite. Ersatz ist Regel 3: der Block des Ausstellers.
+Ein Inkassobüro schreibt seine Nummer zu seinem Namen, nicht zu dem des Mandanten. Grenze: hält das LLM den
+Mandanten für den Aussteller, greift Regel 3 nicht — dann bleibt die Mehrdeutigkeitssperre.
+
+**Mehrdeutigkeit wird beim LESEN entschieden** (`contact_points.DOCUMENT_AMBIGUITY_SQL`): ein Dokumentwert ist
+unsichtbar, solange dieselbe Nummer bei einer ANDEREN lebenden Entität desselben Eigentümers live ist (gleich
+welcher Quelle). Die Zeilen bleiben als Beleg; wird die Nummer eindeutig, ist der Wert wieder da — unabhängig von
+der Reihenfolge der Dokumente. Zwei Eigentümer mit derselben Firma sperren sich nicht gegenseitig.
+Ein Dokumentwert sortiert nach jedem anderen; ein schon vorhandener Wert (Hand, anderes Dokument) wird nicht
+überschrieben. Nur eine Ausnahme: ist ein späteres Dokument offener, wandert die Quelle dorthin (die Nummer steht
+dort für diesen Kreis gedruckt).
+
+Tier = `LEAST(Entität, Dokument)`; die `kb_document`-Kaskade senkt mit. `document_id` = FK, löschen nimmt mit.
+Ein Wert hängt je Entität und Nummer an EINEM Dokument (der eindeutige Index): wird genau dieses gelöscht,
+verschwindet der Wert, bis ein Nachlauf ihn aus einem anderen Dokument wiederfindet.
+
+Einstieg: am Ende des Schicht-A-Hooks (der Aussteller-Fakt ist dann committet), eigene Sitzung, best-effort.
+Die frühen Rückgaben des Hooks (LLM-Ausfall bei einer Neu-Extraktion) überspringen ihn; der Nachlauf holt nach.
+Nachlauf: `bin/backfill_document_contact_points.py` über die gespeicherten Textstücke (nur oberste Ebene).
+
+**Probelauf 2026-11-26** (nur Zahlen, zurückgerollt):
+
+| | Haushalt | xidra |
+|---|---|---|
+| Dokumente mit Aussteller | 346 | 551 |
+| davon mit Nummer im Ausstellerblock | 57 | 127 |
+| Nummern gefunden | 84 | 180 |
+| angehängt | 23 | 153 |
+| Aussteller-Name bei mehreren Entitäten | 45 | 6 |
+| Aussteller nicht im Graphen | 16 | 21 |
+
+Im Haushalt scheitern die meisten an doppelten Entitäten desselben Namens (offene Merge-Vorschläge). Ein
+Zusammenführen in der Review-Liste und ein zweiter Nachlauf holt sie herein.
+
+**Mail-Absender:** nicht Teil dieser Stufe. Der E-Mail-Ingest liefert nur die Anhänge (die als Dokumente
+hier ohnehin durchlaufen); der Mailtext mit der Signatur kommt nie im Backend an. Eigenes Ticket.

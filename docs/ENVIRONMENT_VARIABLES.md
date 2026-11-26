@@ -1245,6 +1245,16 @@ CONTACT_POINTS_DEFAULT_REGION=DE   # Region für Nummern ohne Ländervorwahl ("0
 - Eine Nummer, die `phonenumbers` nicht als gültig erkennt, wird nicht gespeichert.
 - Neue Abhängigkeit `phonenumbers` (offline, keine Netzabfrage).
 
+```bash
+CONTACT_POINTS_FROM_DOCUMENTS_ENABLED=false   # Stufe 4: Nummern des Ausstellers aus Dokumenten
+```
+
+- Braucht `CONTACT_POINTS_ENABLED`. An: der Schicht-A-Hook liest nach den Fakten die Nummern im Block des
+  Ausstellers (deterministisch, kein LLM) und hängt sie an genau eine passende Person/Firma des Eigentümers.
+- Aus: der Hook schreibt nichts Neues; schon gespeicherte Dokumentwerte bleiben lesbar.
+- Bestand: `bin/backfill_document_contact_points.py --dry-run` (nur Zahlen), dann `--commit`. Der Nachlauf
+  braucht nur `CONTACT_POINTS_ENABLED`.
+
 ### Web Push (#79)
 
 Systemmitteilung bei geschlossenem Browser für die Personen, die eine Benachrichtigung auch in der
