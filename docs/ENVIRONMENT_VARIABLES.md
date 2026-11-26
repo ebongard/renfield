@@ -852,6 +852,21 @@ Ansage im Raum (`tts=false`) und keine öffentliche Ausgabe an gemeinsame Gerät
 diese Ereignisse aus (`dedup=False`): Ein zweiter Anruf derselben Nummer ist ein neuer Anruf, und Wiederholungen
 verhindert schon die Erledigt-Marke.
 
+**Anrufer-Auflösung** (`docs/design/caller-lookup.md`, braucht `CONTACT_POINTS_ENABLED`):
+
+```bash
+CALLER_LOOKUP_ENABLED=false     # Meldung nennt den Anrufer aus den Kontaktdaten des EMPFÄNGERS
+CALLER_LOOKUP_TIMEOUT_S=0.5     # je Empfänger; langsamer = nur die Nummer
+```
+
+- An: je Empfänger eine Suche in den Kontaktpunkten, die DIESER Person sichtbar sind („Anruf von Beispiel Praxis an
+  …“; im Text daneben die Nummer und „Name laut Kontaktdaten/laut Dokument, nicht geprüft“). Kein Treffer: Ort bzw.
+  „Mobilfunk“, offline aus `phonenumbers`. Fax zählt nie. Nie vorgelesen, nie an ein LLM.
+- Eine Meldung MIT Namen geht als `privacy=confidential` raus (ein gemeinsames Raumdisplay zeigt sie nur, wenn der
+  Empfänger allein ist); ohne Namen bleibt es `personal`.
+- Jeder Fehler und jede Zeitüberschreitung fällt auf die reine Nummer zurück und löst keine Wiederholung aus.
+- Aus: der Text ist Byte für Byte wie vorher.
+
 Bei `wss://` ohne `TELEPHONY_GATEWAY_CA_PEM` startet der Client **nicht** (kein ungeprüftes TLS); unverschlüsseltes `ws://` ist nur zu localhost erlaubt. Ein falsches
 Token wird mit 401 abgewiesen, der Client versucht es mit Backoff (max. 60 s) erneut.
 

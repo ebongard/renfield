@@ -2057,6 +2057,13 @@ class Settings(BaseSettings):
     # block, deterministic, no LLM; services/document_contact_points.py). Needs
     # CONTACT_POINTS_ENABLED too. Off = the Schicht-A hook writes nothing new.
     contact_points_from_documents_enabled: bool = False
+    # Caller lookup (#1240 follow-up, docs/design/caller-lookup.md): the incoming-
+    # call / voicemail notification names the caller from the RECIPIENT's visible
+    # contact points (a hint, marked "nicht geprüft"), else an offline place hint.
+    # Needs CONTACT_POINTS_ENABLED. Off = the notification text is byte-identical.
+    caller_lookup_enabled: bool = False
+    # Per recipient; a slower lookup announces the plain number instead.
+    caller_lookup_timeout_s: float = 0.5
 
     # Web Push (#79): a content-free wake-up through the browser's push service
     # for the people the in-app notification reaches. Dark by default. The flag

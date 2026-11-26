@@ -469,6 +469,10 @@ bekommt per Push „Anruf von 0170… an 0301…“ und „Neue Nachricht von 01
 wird nachgeliefert; eine schon zugestellte Meldung kommt nicht doppelt. Details: `docs/sip-integration-plan.md`,
 `docs/ENVIRONMENT_VARIABLES.md` → „Telefonie“.
 
+Anrufer-Auflösung (`CALLER_LOOKUP_ENABLED`, dunkel): die Meldung nennt den Anrufer aus den Kontaktdaten, die der
+jeweilige Empfänger sehen darf („Anruf von Beispiel Praxis an …“), mit Nummer und dem Hinweis „nicht geprüft“
+(Rufnummern lassen sich fälschen); ohne Treffer Ort oder „Mobilfunk“. Entwurf: `docs/design/caller-lookup.md`.
+
 ### Benachrichtigungs-Glocke (#1653, `NOTIFICATION_BELL_ENABLED`, dark)
 
 Eine Glocke mit Badge im Header zeigt die ungelesenen eigenen Benachrichtigungen, etwa Anrufe,

@@ -114,22 +114,34 @@ def format_duration(seconds: object) -> str:
     return f"{total // 60}:{total % 60:02d}"
 
 
-def build_notification(event: dict) -> dict:
-    """Map an ``incoming_call``/``voicemail`` event to the recipient-independent
-    NotificationService.process_webhook kwargs (recipient is added per user)."""
+def build_notification(event: dict, hint=None) -> dict:
+    """Map an ``incoming_call``/``voicemail`` event to the NotificationService.process_webhook
+    kwargs (recipient is added per user). ``hint`` = a ``caller_lookup.CallerHint`` for
+    THIS recipient, or None -- None keeps the text byte-identical to before #1240."""
     caller = format_number(str(event.get("caller", "")))
     did = _plain_number(event.get("did"))
     # "Anruf von <Anrufer> an <angerufene Nummer>" -- the called number tells which
     # line rang (private, business, ...). Without a valid DID the "an" part is left out.
-    route = f"von {caller} an {format_number(did)}" if did else f"von {caller}"
+    to = f" an {format_number(did)}" if did else ""
+    route = f"von {caller}{to}"
+    long_route = route
+    label = hint.label() if hint is not None else None
+    if label:
+        # A name is a HINT (CallerID is spoofable): the raw number always stands
+        # beside it, the long text says where it comes from and that it is unchecked.
+        origin = "laut Dokument" if hint.source == "document" else "laut Kontaktdaten"
+        route = f"von {label}{to}"
+        long_route = f"von {label} ({caller}; Name {origin}, nicht geprüft){to}"
+    elif hint is not None and hint.place:
+        route = long_route = f"von {caller} ({hint.place}){to}"
     if event.get("type") == "voicemail":
         duration = format_duration(event.get("duration_s"))
         title, message = (
             f"Neue Nachricht {route}",
-            f"Neue Nachricht auf dem Anrufbeantworter {route} ({duration})",
+            f"Neue Nachricht auf dem Anrufbeantworter {long_route} ({duration})",
         )
     else:
-        title, message = f"Anruf {route}", f"Eingehender Anruf {route}"
+        title, message = f"Anruf {route}", f"Eingehender Anruf {long_route}"
     data = {
         "call_id": str(event.get("call_id", ""))[:64],
         "did": did,
@@ -137,6 +149,15 @@ def build_notification(event: dict) -> dict:
     }
     if event.get("type") == "voicemail":
         data["duration_s"] = _seconds(event.get("duration_s"))
+    privacy = "personal"
+    if label:
+        # Snapshot of what this recipient was shown; never read back as identity.
+        data["caller_name"] = label
+        data["caller_name_source"] = hint.source
+        # The name came through THIS recipient's circle filter. "personal" lets the
+        # room delivery show it on a shared display to any household member in the
+        # room; "confidential" = only while the recipient is alone (fail-closed).
+        privacy = "confidential"
     return {
         "event_type": f"telephony.{event.get('type')}",
         "title": title,
@@ -145,23 +166,32 @@ def build_notification(event: dict) -> dict:
         "tts": False,
         "data": data,
         "source": "telephony",
-        "privacy": "personal",
+        "privacy": privacy,
         "dedup": False,  # exactly once per event already (call claim); a repeat call is a new call
     }
 
 
-async def notify_users(event: dict, user_ids: list[int], process) -> int:
+async def notify_users(event: dict, user_ids: list[int], process, resolve=None) -> int:
     """One personal notification per user. ``process`` = process_webhook.
 
+    ``resolve(caller, user_id)`` (caller lookup, #1240) names the caller from what
+    THAT user may see; it never raises (``caller_lookup.resolve_caller``), so a
+    lookup problem can never turn into a retry and duplicate notifications.
     A user's feedback suppression raises ValueError — that skips only that user.
     Any other error propagates, so the event is retried (users already notified
     may then get it twice — accepted: rare, and better than none).
     """
     base = build_notification(event)
+    caller = _plain_number(event.get("caller"))
     sent = 0
     for user_id in user_ids:
+        kwargs = base
+        if resolve is not None and caller:
+            hint = await resolve(caller, user_id)
+            if hint is not None:
+                kwargs = build_notification(event, hint)
         try:
-            await process(**base, target_user_id=user_id)
+            await process(**kwargs, target_user_id=user_id)
             sent += 1
         except ValueError as e:
             logger.debug("Telephony notification suppressed: %s", error_text_without_content(e))
@@ -187,7 +217,10 @@ async def deliver_via_notification_service(event: dict) -> None:
         if not user_ids:
             logger.warning("Telephony event without any active user — nobody to notify")
             return
-        await notify_users(event, user_ids, NotificationService(db).process_webhook)
+        resolve = None
+        if settings.caller_lookup_enabled and settings.contact_points_enabled:
+            from services.caller_lookup import resolve_caller as resolve
+        await notify_users(event, user_ids, NotificationService(db).process_webhook, resolve)
 
 
 def ssl_context_for(ca_pem: str) -> ssl.SSLContext:
