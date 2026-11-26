@@ -280,6 +280,10 @@ Source: `services/contact_point_tool.py` (#1240, `CONTACT_POINTS_ENABLED`, dark;
   (`phone` / `mobile` / `fax`). `number`: reverse lookup, "whose number is this?" (normalized to E.164).
 - Read-only. Circle-filtered for the injected `user_id`, through BOTH `contact_points_circles_filter` and the entity
   filter: a value is never more visible than its entity or its source. A `user_id` in the arguments is ignored.
+- Permission gate like the REST read: with auth on, an identified user without `kg.view` is refused
+  (`user_permissions` injected by `action_executor`); an unidentified turn (`None`) reaches public values only.
+- Role: only `general` (`internal_tools: null`) carries it. `knowledge` has no agent loop (RAG path), so a phone
+  question routed there does not reach the tool — the router wording for it is still open (§13 of the design).
 - Registered only while the flag is on (a dark instance's agent never offers it); the handler re-checks the flag (H4).
 - Contact points never enter the general RAG context, only an answer that asks for them.
 

@@ -272,6 +272,21 @@ Abweichungen von §4–§7, aus der Architektur-Review vom 2026-11-26:
 | A7 | R5: Soft-Delete braucht ausdrückliche Kaskade | `delete_entity` löscht die Kontaktpunkte | Die Nummern einer gelöschten Person dienen nichts mehr |
 | — | Schreibrecht offen | `KG_MANAGE` + Entität sichtbar + Eigentümer (Admin: jede) | Schreiben ist eigentümergebunden wie überall in Circles |
 
+Nachgezogen aus `/review` (2026-11-26):
+
+| # | Befund | gebaut |
+|---|---|---|
+| R1 | Ein Grant an der Entität öffnete auch eine Nummer, die der Eigentümer privater gestellt hatte | `grant_guard_expr`: der Grant-Zweig gilt nur für `source_tier >= Entitäts-Tier` |
+| R2 | PATCH konnte `source_tier` einer automatischen Quelle anheben | nur `manual` darf wieder geöffnet werden; sonst höchstens die gespeicherte Stufe |
+| R3 | `internal.find_contact` ohne Rechteprüfung, REST verlangt `KG_VIEW` | `user_permissions` injiziert; identifiziert ohne `kg.view` = abgelehnt |
+| R4 | `cleanup_invalid_entities` ließ die Nummern stehen (R5) | löscht sie mit |
+| R5 | Jeder `IntegrityError` hieß „duplicate" | nur `uq_contact_points_live`, sonst echter Fehler |
+| R6 | Bearbeiten/Löschen für jeden sichtbar, Löschen ohne Rückfrage | `editable` in der Liste, Bedienelemente nur für Eigentümer/Admin, Löschen mit Bestätigung, 403 als `not_owner` übersetzt |
+| R7 | Modell ohne `server_default`, `user_id` mit CASCADE | an die Migration angeglichen; `user_id` ohne Löschregel wie `kg_entities.user_id` |
+
+Offen: das Werkzeug steht nur in der Rolle `general`. `knowledge` hat keine Agent-Schleife; ob der Router
+Fragen nach Telefonnummern zuverlässig zu `general` schickt, ist nicht gemessen (`bin/measure-router.py`).
+
 Für die Stufen 2–4 gilt zusätzlich (noch nicht gebaut): Zuordnung über eine **Zählabfrage** statt
 `resolve_entity` (A4, das `.first()` über Tiers und die `mention_count`-Erhöhung), eine Adressbuch-Karte mit einer
 anderswo schon vorhandenen Nummer nur bei verwandtem Namen (A5), und für Dokumente nur Briefkopf/Fußzeile, nie
