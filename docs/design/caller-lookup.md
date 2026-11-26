@@ -1,6 +1,7 @@
 # Caller lookup: who is calling? (builds on #1240 contact points)
 
-**Status:** draft v3, 2026-11-26. No go to build yet.
+**Status:** Stage 1 (lookup in the call notification, §4) built 2026-11-26, dark behind `CALLER_LOOKUP_ENABLED` — see §10.
+Order changed by the owner: #1240 documents first (built), then this, then the address-book import.
 **Depends on:** [`kg-contact-points.md`](kg-contact-points.md) (#1240). That design defines where
 numbers live: `kg_entity_contact_points`. This one defines how a caller number is **resolved**, plus
 the sources and amendments #1240 needs for that. It deliberately adds **no table of its own for
@@ -116,3 +117,20 @@ The flags for the #1240 sources stay in #1240.
 - Sync trigger: periodic (an exception to the no-polling rule) or manual?
 - A1: stored tier plus document cascade, or live derivation?
 - Provider for the external lookup.
+
+## 10. Stage 1 — as built (2026-11-26)
+
+`services/caller_lookup.py`, called from `telephony_client.notify_users` once per recipient (`resolve_caller(caller,
+user_id)`); `build_notification(event, hint)` with `hint=None` is byte-identical to before.
+
+- Lookup = `ContactPointService.lookup_number` (both circle filters, live values, `DOCUMENT_AMBIGUITY_SQL`), so the
+  rules of #1240 apply unchanged. Fax never answers. Rank manual > vcard > chat > document; at the top rank two
+  entities read "A oder B", more add "und weitere". Names are cleaned (control characters, 80 chars).
+- Text (owner's decision, variant A): the title carries only the name ("Anruf von Beispiel Praxis an …"); the
+  message adds the number and "Name laut Kontaktdaten|laut Dokument, nicht geprüft". `tts` stays false. The
+  notification `data` keeps a snapshot `caller_name` + `caller_name_source` — never read back as identity.
+- Miss: an offline hint from `phonenumbers` (town of a landline, "Mobilfunk"); nothing leaves the instance.
+- Own session per lookup, `asyncio.wait_for(CALLER_LOOKUP_TIMEOUT_S=0.5)`; every failure → `None` → the plain
+  number. `resolve_caller` never raises, so a lookup can never trigger the event retry (duplicate notifications).
+- Not yet: person + its `arbeitet_bei` organization folded into one hit; clearing the snapshot in open
+  notifications when a value is removed; "Wer war das?" (§5.2); external lookup (§5.3).
