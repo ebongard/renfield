@@ -172,6 +172,8 @@ function toSnapshot(msg: SnapshotMessage): PresenceReadingsSnapshot {
       voice_pinned: device.voice_pinned ?? false,
       location_uncertain: device.location_uncertain ?? false,
     })),
+    // Absent when no v2 decision runs; the readings view keys on it.
+    ...(msg.placement_v2_mode ? { placement_v2_mode: msg.placement_v2_mode } : {}),
   };
 }
 
