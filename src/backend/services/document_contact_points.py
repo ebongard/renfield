@@ -23,7 +23,10 @@ property manager's number printed on letters for many issuers names nobody.
 
 Tier: ``source_tier`` = the document's tier; the ``kb_document`` cascade
 (``cap_document_contact_points``) lowers it with the document. ``document_id`` is
-a real FK, so deleting the document takes its values along.
+a real FK, so deleting the document takes its values along. A value keeps the tier
+of the document it was FIRST read from: a later, more open document does not lift
+it (an owner's lowered tier must survive a re-ingest, and a lift would need to tell
+the two apart).
 """
 from __future__ import annotations
 
@@ -55,6 +58,8 @@ _KIND_BY_KEYWORD = {
     "fax": CONTACT_POINT_KIND_FAX, "telefax": CONTACT_POINT_KIND_FAX, "f": CONTACT_POINT_KIND_FAX,
     "mobil": CONTACT_POINT_KIND_MOBILE, "mobile": CONTACT_POINT_KIND_MOBILE,
     "handy": CONTACT_POINT_KIND_MOBILE, "m": CONTACT_POINT_KIND_MOBILE,
+    "faxnummer": CONTACT_POINT_KIND_FAX, "telefaxnummer": CONTACT_POINT_KIND_FAX,
+    "mobilnummer": CONTACT_POINT_KIND_MOBILE, "handynummer": CONTACT_POINT_KIND_MOBILE,
 }
 
 # keyword, optional "." / ":" , then the number ON THE SAME LINE (no \n inside:
@@ -63,13 +68,16 @@ _KIND_BY_KEYWORD = {
 # "+" / "0" right behind -- "T 0221 ..." in a footer, never a stray capital.
 _NUMBER = r"((?:\+|00|\()?\d[\d \t/().\-–]{4,24}\d)"
 _KEYWORD_RE = re.compile(
-    r"(?i)(?<![A-Za-zÀ-ſ])"
-    r"(telefax|telefon|tel|fon|phone|fax|mobil(?:e|funk)?|handy"
-    r"|[tfm](?=\s*[:.]|\s*(?:\+|0)))"
-    r"(?![A-Za-zÀ-ſ])"
+    r"(?i)(?<![A-Za-z\u00c0-\u017f])"
+    r"(telefonnummer|telefaxnummer|faxnummer|mobilnummer|handynummer|rufnummer"
+    r"|tel\.?[ \t]?-?[ \t]?nr|telefax|telefon|tel|fon|phone|fax|mobil(?:e|funk)?|handy|hotline"
+    r"|[tfm](?=[ \t]{0,3}[:.]|[ \t]{0,3}(?:\+|0)))"
+    r"(?![A-Za-z\u00c0-\u017f])"
     # an optional WORD label in parentheses ("Tel. (Zentrale):"), never a
-    # parenthesized area code -- that belongs to the number
-    r"\.?[ \t]*(?:\([A-Za-zÀ-ſ][^)\n]{0,20}\))?[ \t]*[:.]?[ \t]*" + _NUMBER
+    # parenthesized area code -- that belongs to the number. Every gap is
+    # BOUNDED ({0,5}): unbounded neighbouring runs backtrack polynomially on a
+    # keyword followed by a long run of blanks (padded table columns).
+    r"\.?[ \t]{0,5}(?:\([A-Za-z\u00c0-\u017f][^)\n]{0,20}\)[ \t]{0,5})?[:.]?[ \t]{0,5}" + _NUMBER
 )
 _WS_RE = re.compile(r"\s+")
 _LEGAL_FORM_RE = re.compile(
@@ -89,6 +97,8 @@ class SyncResult:
     candidates: int = 0
     stored: int = 0
     unchanged: int = 0
+    removed: int = 0
+    rejected: int = 0
     no_entity: int = 0
     ambiguous_entity: int = 0
     in_recipient_block: int = 0
@@ -100,7 +110,8 @@ def _name_pattern(name: str) -> re.Pattern | None:
     tokens = [re.escape(t) for t in _WS_RE.split(name.strip()) if t]
     if not tokens:
         return None
-    return re.compile(r"(?i)" + r"\s+".join(tokens))
+    # Whole words: "Bau" (from "Bau GmbH") must not match inside "Baumarkt".
+    return re.compile(r"(?i)(?<!\w)" + r"\s+".join(tokens) + r"(?!\w)")
 
 
 def _issuer_spans(text_: str, issuer_names: list[str]) -> list[tuple[int, int]]:
@@ -148,7 +159,9 @@ def find_issuer_numbers(
         start = m.start()
         if not any(s - ISSUER_WINDOW <= start <= e + ISSUER_WINDOW for s, e in spans):
             continue
-        raw = m.group(2).strip(" \t-./")
+        # A column gap (two or more blanks) ends the number: a layout row
+        # "Tel 030 1234567   01.02.2024" must not swallow the date beside it.
+        raw = re.split(r"[ \t]{2,}", m.group(2))[0].strip(" \t-./(")
         normalized = normalize_phone(raw)
         if normalized is None:
             continue
@@ -198,12 +211,16 @@ async def match_issuer_entity(db: AsyncSession, name: str, owner_id: int) -> tup
 async def sync_document_contact_points(
     db: AsyncSession, document_id: int, text_: str, *, commit: bool = True,
 ) -> SyncResult:
-    """Replace this document's values by what its text yields now (no LLM).
+    """Bring this document's values in line with what its text yields now (no LLM).
 
-    Idempotent: the document's prior document-sourced values are removed first,
-    then re-derived. A value the entity already holds live (manual, vCard, another
-    document) is left alone -- except that a document value moves to THIS document
-    when this one is more open (the number is printed there for that circle).
+    Idempotent and edit-preserving: a value still derived is left UNTOUCHED (an
+    owner's lowered tier or label survives a re-ingest); a value no longer derived
+    from this document is removed; a new one is inserted. Never re-inserted: a
+    value the owner removed (``ContactPointService.delete`` ends a document value
+    instead of deleting it -- the ended row is the tombstone). A value the entity
+    already holds live from any source is left alone. The INSERT is
+    ``ON CONFLICT DO NOTHING`` on the live unique index, so a concurrent ingest
+    and backfill cannot fail each other.
     """
     from services.contact_point_tier import contact_point_tier
 
@@ -223,10 +240,6 @@ async def sync_document_contact_points(
     numbers, res.in_recipient_block = find_issuer_numbers(text_, issuers, recipients)
     res.candidates = len(numbers)
 
-    await db.execute(text(
-        "DELETE FROM kg_entity_contact_points WHERE document_id = :d AND source_type = :s"
-    ), {"d": int(document_id), "s": CONTACT_POINT_SOURCE_DOCUMENT})
-
     entity_id: int | None = None
     if numbers:
         most = 0
@@ -242,35 +255,46 @@ async def sync_document_contact_points(
                 res.no_entity = len(numbers)
             numbers = []
 
+    derived = {(entity_id, n.normalized) for n in numbers}
+    prior = (await db.execute(text(
+        "SELECT id, entity_id, normalized FROM kg_entity_contact_points "
+        "WHERE document_id = :d AND source_type = :s AND valid_to IS NULL"
+    ), {"d": int(document_id), "s": CONTACT_POINT_SOURCE_DOCUMENT})).all()
+    stale = [r.id for r in prior if (r.entity_id, r.normalized) not in derived]
+    if stale:
+        await db.execute(text("DELETE FROM kg_entity_contact_points WHERE id = ANY(:ids)"), {"ids": stale})
+        res.removed = len(stale)
+
     if entity_id is not None:
         etier = int((await db.execute(text(
             "SELECT circle_tier FROM kg_entities WHERE id = :e"), {"e": entity_id})).scalar() or 0)
         for n in numbers:
-            live = (await db.execute(text(
-                "SELECT id, source_type, source_tier FROM kg_entity_contact_points "
-                "WHERE entity_id = :e AND normalized = :n AND valid_to IS NULL "
-                "ORDER BY id LIMIT 1"
-            ), {"e": entity_id, "n": n.normalized})).first()
-            if live is not None:
-                if live.source_type == CONTACT_POINT_SOURCE_DOCUMENT and int(live.source_tier) < tier:
-                    await db.execute(text(
-                        "UPDATE kg_entity_contact_points SET document_id = :d, source_tier = :t, "
-                        "circle_tier = :ct WHERE id = :i"
-                    ), {"d": int(document_id), "t": tier, "ct": contact_point_tier(etier, tier), "i": live.id})
-                    res.stored += 1
-                else:
-                    res.unchanged += 1
+            seen = (await db.execute(text(
+                "SELECT bool_or(valid_to IS NULL) AS live, "
+                "bool_or(valid_to IS NOT NULL AND superseded_by_id IS NULL AND source_type = :s) AS removed "
+                "FROM kg_entity_contact_points WHERE entity_id = :e AND normalized = :n"
+            ), {"e": entity_id, "n": n.normalized, "s": CONTACT_POINT_SOURCE_DOCUMENT})).one()
+            if seen.live:
+                res.unchanged += 1
                 continue
-            await db.execute(text(
+            if seen.removed:
+                res.rejected += 1
+                continue
+            inserted = (await db.execute(text(
                 "INSERT INTO kg_entity_contact_points (entity_id, user_id, kind, value, normalized, "
                 "source_type, document_id, confidence, source_tier, circle_tier, valid_from, created_at) "
-                "VALUES (:e, :o, :k, :v, :n, :s, :d, :c, :t, :ct, now(), now())"
+                "VALUES (:e, :o, :k, :v, :n, :s, :d, :c, :t, :ct, now(), now()) "
+                "ON CONFLICT (entity_id, kind, normalized) WHERE valid_to IS NULL DO NOTHING "
+                "RETURNING id"
             ), {
                 "e": entity_id, "o": int(owner_id), "k": n.kind, "v": n.value[:64], "n": n.normalized,
                 "s": CONTACT_POINT_SOURCE_DOCUMENT, "d": int(document_id), "c": DOCUMENT_CONFIDENCE,
                 "t": tier, "ct": contact_point_tier(etier, tier),
-            })
-            res.stored += 1
+            })).first()
+            if inserted is None:
+                res.unchanged += 1
+            else:
+                res.stored += 1
     if commit:
         await db.commit()
     return res

@@ -94,8 +94,14 @@ async def _run(*, commit: bool, limit: int | None) -> int:
         ids = (await db.execute(text(sql), {"k": list(ISSUER_KINDS), "lim": limit})).scalars().all()
         logger.info("%d document(s) with an issuer fact", len(ids))
         for doc_id in ids:
-            body = await _document_text(db, doc_id)
-            res = await sync_document_contact_points(db, doc_id, body, commit=commit)
+            try:
+                body = await _document_text(db, doc_id)
+                res = await sync_document_contact_points(db, doc_id, body, commit=commit)
+            except Exception as e:  # one bad document must not end the run
+                await db.rollback()
+                totals["failed"] += 1
+                logger.warning("  doc %s failed: %s", doc_id, type(e).__name__)
+                continue
             if not commit:
                 await db.rollback()
             totals["documents"] += 1
@@ -103,14 +109,18 @@ async def _run(*, commit: bool, limit: int | None) -> int:
                 totals[f"skipped_{res.skipped_reason}"] += 1
             if res.candidates:
                 totals["documents_with_numbers"] += 1
-            for key in ("candidates", "stored", "unchanged", "no_entity", "ambiguous_entity", "in_recipient_block"):
+            for key in ("candidates", "stored", "unchanged", "removed", "rejected",
+                        "no_entity", "ambiguous_entity", "in_recipient_block"):
                 totals[key] += getattr(res, key)
         live = (await db.execute(text(
             "SELECT count(*), count(DISTINCT entity_id) FROM kg_entity_contact_points "
             "WHERE source_type = 'document' AND valid_to IS NULL"
         ))).one()
     logger.info("Done%s: %s", "" if commit else " (DRY-RUN -- no writes)", dict(sorted(totals.items())))
-    logger.info("Live document values now: %d on %d entities", live[0], live[1])
+    # After a dry-run this is the UNCHANGED state (every document was rolled back);
+    # "stored" above is what a --commit would write.
+    logger.info("Live document values %s: %d on %d entities",
+                "now" if commit else "before (unchanged by the dry-run)", live[0], live[1])
     return 0
 
 

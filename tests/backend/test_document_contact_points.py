@@ -92,6 +92,27 @@ class TestExtraction:
             f"{ISSUER}\nTel. (030) 1234567\nFax (Zentrale): 030 1234568", [ISSUER])
         assert _kinds(found) == {("phone", PHONE_E164), ("fax", FAX_E164)}
 
+    def test_number_keyword_forms(self):
+        found, _ = find_issuer_numbers(
+            f"{ISSUER}\nTel.-Nr. 030 1234567\nFaxnummer: 030 1234568", [ISSUER])
+        assert _kinds(found) == {("phone", PHONE_E164), ("fax", FAX_E164)}
+
+    def test_a_column_gap_ends_the_number(self):
+        found, _ = find_issuer_numbers(f"{ISSUER}\nTel 030 1234567   01.02.2024", [ISSUER])
+        assert [n.value for n in found] == ["030 1234567"]
+
+    def test_issuer_matches_whole_words_only(self):
+        # "Bau GmbH" without its legal form is "Bau" -- it must not match "Baumarkt".
+        found, _ = find_issuer_numbers("Baumarkt Beispiel\nTel 030 1234567", ["Bau GmbH"])
+        assert found == []
+
+    def test_long_blank_run_after_a_keyword_is_fast(self):
+        import time
+
+        t0 = time.perf_counter()
+        find_issuer_numbers(f"{ISSUER}\n" + ("Tel" + " " * 2000 + "x\n") * 20, [ISSUER])
+        assert time.perf_counter() - t0 < 0.5
+
     def test_no_issuer_no_numbers(self):
         assert find_issuer_numbers(LETTERHEAD, []) == ([], 0)
 
@@ -210,7 +231,7 @@ class TestSync:
         hits = await ContactPointService(db).lookup_number("030 1234567", owner.id)
         assert len(hits) == 1
 
-    async def test_more_open_document_moves_the_source(self, pg_db_session, enabled):
+    async def test_a_later_more_open_document_does_not_lift_the_tier(self, pg_db_session, enabled):
         db = pg_db_session
         owner = await _make_user(db, "own")
         org = await _entity(db, owner, ISSUER, tier=3, etype="organization")
@@ -219,9 +240,43 @@ class TestSync:
         await sync_document_contact_points(db, private.id, LETTERHEAD, commit=False)
         shared = await _doc(db, owner, tier=2)
         await _fact(db, owner, shared, "aussteller", ISSUER)
-        await sync_document_contact_points(db, shared.id, LETTERHEAD, commit=False)
+        res = await sync_document_contact_points(db, shared.id, LETTERHEAD, commit=False)
+        assert (res.stored, res.unchanged) == (0, 2)
         rows = await _doc_values(db, org.id)
-        assert {(r.document_id, r.source_tier, r.circle_tier) for r in rows} == {(shared.id, 2, 2)}
+        assert {(r.document_id, r.source_tier, r.circle_tier) for r in rows} == {(private.id, 0, 0)}
+
+    async def test_owner_edits_survive_a_resync(self, pg_db_session, enabled):
+        db = pg_db_session
+        owner = await _make_user(db, "own")
+        org = await _entity(db, owner, ISSUER, tier=2, etype="organization")
+        doc = await _doc(db, owner, tier=2)
+        await _fact(db, owner, doc, "aussteller", ISSUER)
+        await sync_document_contact_points(db, doc.id, LETTERHEAD, commit=False)
+        svc = ContactPointService(db)
+        monkey_commit = db.commit
+        db.commit = db.flush  # stay inside the test transaction
+        try:
+            points = {p.kind: p for p in await svc.list_for_entity(org.id, owner.id)}
+            await svc.update(points["phone"], source_tier=0)          # made private
+            await svc.delete(points["fax"])                           # removed as wrong
+            res = await sync_document_contact_points(db, doc.id, LETTERHEAD, commit=False)
+        finally:
+            db.commit = monkey_commit
+        assert (res.stored, res.unchanged, res.rejected) == (0, 1, 1)
+        rows = await _doc_values(db, org.id)
+        assert [(r.kind, r.source_tier, r.circle_tier) for r in rows] == [("phone", 0, 0)]
+
+    async def test_a_number_gone_from_the_text_is_removed(self, pg_db_session, enabled):
+        db = pg_db_session
+        owner = await _make_user(db, "own")
+        org = await _entity(db, owner, ISSUER, tier=2, etype="organization")
+        doc = await _doc(db, owner, tier=2)
+        await _fact(db, owner, doc, "aussteller", ISSUER)
+        await sync_document_contact_points(db, doc.id, LETTERHEAD, commit=False)
+        res = await sync_document_contact_points(
+            db, doc.id, f"{ISSUER}\nTelefon: 030 1234567", commit=False)
+        assert res.removed == 1
+        assert {r.kind for r in await _doc_values(db, org.id)} == {"phone"}
 
     async def test_recipient_fact_drops_the_number(self, pg_db_session, enabled):
         db = pg_db_session

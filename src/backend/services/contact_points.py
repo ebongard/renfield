@@ -259,8 +259,18 @@ class ContactPointService:
         return point
 
     async def delete(self, point: KGEntityContactPoint) -> None:
-        """Hard delete: an owner removing a wrong or obsolete value."""
-        await self.db.delete(point)
+        """An owner removing a wrong or obsolete value.
+
+        A manual value is deleted. A value from an automatic source is ENDED
+        instead (``valid_to`` set, no ``superseded_by_id``): that row is the
+        tombstone the source's next sync honours, else a re-ingest of the same
+        document would bring the number straight back.
+        """
+        if point.source_type == CONTACT_POINT_SOURCE_MANUAL:
+            await self.db.delete(point)
+        else:
+            point.valid_to = _now()
+            point.superseded_by_id = None
         await self.db.commit()
 
 
