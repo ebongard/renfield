@@ -355,7 +355,9 @@ verschwindet der Wert, bis ein Nachlauf ihn aus einem anderen Dokument wiederfin
 
 Einstieg: am Ende des Schicht-A-Hooks (der Aussteller-Fakt ist dann committet), eigene Sitzung, best-effort.
 Die frühen Rückgaben des Hooks (LLM-Ausfall bei einer Neu-Extraktion) überspringen ihn; der Nachlauf holt nach.
-Nachlauf: `bin/backfill_document_contact_points.py` über die gespeicherten Textstücke (nur oberste Ebene).
+Nachlauf: `bin/backfill_document_contact_points.py` über die gespeicherten Textstücke (nur oberste Ebene), im
+Chat für die eigenen Dokumente `internal.scan_document_contacts` („Durchsuche meine Dokumente nach
+Telefonnummern“, `kg.manage`) — dieselbe Funktion `scan_documents`.
 
 **Probelauf 2026-11-26** (nur Zahlen, zurückgerollt):
 

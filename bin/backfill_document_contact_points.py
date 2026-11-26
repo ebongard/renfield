@@ -25,7 +25,6 @@ import asyncio
 import logging
 import os
 import sys
-from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -63,55 +62,19 @@ if str(_BACKEND) not in sys.path:
 from sqlalchemy import text  # noqa: E402
 
 from services.database import AsyncSessionLocal  # noqa: E402
-from services.document_contact_points import ISSUER_KINDS, sync_document_contact_points  # noqa: E402
+from services.document_contact_points import scan_documents  # noqa: E402
 from utils.config import settings  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("backfill_document_contact_points")
 
 
-async def _document_text(db, document_id: int) -> str:
-    """The stored text: top-level chunks only (a child repeats its parent's text)."""
-    rows = (await db.execute(text(
-        "SELECT content FROM document_chunks WHERE document_id = :d AND parent_chunk_id IS NULL "
-        "ORDER BY chunk_index NULLS LAST, id"
-    ), {"d": int(document_id)})).scalars().all()
-    return "\n".join(r for r in rows if r)
-
-
 async def _run(*, commit: bool, limit: int | None) -> int:
     if not settings.contact_points_enabled:
         logger.error("CONTACT_POINTS_ENABLED is off on this instance -- nothing to do.")
         return 2
-    totals: Counter = Counter()
     async with AsyncSessionLocal() as db:
-        sql = (
-            "SELECT DISTINCT document_id FROM document_facts WHERE lower(kind) = ANY(:k) "
-            "ORDER BY document_id"
-        )
-        if limit:
-            sql += " LIMIT :lim"
-        ids = (await db.execute(text(sql), {"k": list(ISSUER_KINDS), "lim": limit})).scalars().all()
-        logger.info("%d document(s) with an issuer fact", len(ids))
-        for doc_id in ids:
-            try:
-                body = await _document_text(db, doc_id)
-                res = await sync_document_contact_points(db, doc_id, body, commit=commit)
-            except Exception as e:  # one bad document must not end the run
-                await db.rollback()
-                totals["failed"] += 1
-                logger.warning("  doc %s failed: %s", doc_id, type(e).__name__)
-                continue
-            if not commit:
-                await db.rollback()
-            totals["documents"] += 1
-            if res.skipped_reason:
-                totals[f"skipped_{res.skipped_reason}"] += 1
-            if res.candidates:
-                totals["documents_with_numbers"] += 1
-            for key in ("candidates", "stored", "unchanged", "removed", "rejected",
-                        "no_entity", "ambiguous_entity", "in_recipient_block"):
-                totals[key] += getattr(res, key)
+        totals = await scan_documents(db, owner_id=None, commit=commit, limit=limit)
         live = (await db.execute(text(
             "SELECT count(*), count(DISTINCT entity_id) FROM kg_entity_contact_points "
             "WHERE source_type = 'document' AND valid_to IS NULL"

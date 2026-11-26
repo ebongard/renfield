@@ -36,6 +36,7 @@ Source paths are relative to `src/backend/`.
 | `internal.paperless_dedupe` | Destructive: find + delete duplicate Paperless documents | `services/paperless_dedupe_tool.py` | `Permission.ADMIN` |
 | `internal.find_duplicate_documents` | KB near-duplicate detection, propose-only | `services/document_dedupe_tool.py` | `DOCUMENT_DEDUPE_ENABLED` (dark) |
 | `internal.find_contact` | Phone/mobile/fax of a KG person or organization, or whose number it is (read-only) | `services/contact_point_tool.py` | `CONTACT_POINTS_ENABLED` (dark) |
+| `internal.scan_document_contacts` | Write: add the issuers' numbers from the asker's own documents to the KG (counts only) | `services/contact_point_tool.py` | `CONTACT_POINTS_ENABLED` + `Permission.KG_MANAGE`, unidentified turn denied |
 
 `AUTH_ENABLED=false` skips every permission gate, and with auth on an authenticated low-privilege user is always
 refused. An UNIDENTIFIED turn (`user_permissions=None` — a device/satellite token or an unrecognized voice) is handled
@@ -289,6 +290,24 @@ Source: `services/contact_point_tool.py` (#1240, `CONTACT_POINTS_ENABLED`, dark;
   `qwen3:8b`): phone questions to `general` 3/10 → 10/10, controls 39/60 → 57/60.
 - Registered only while the flag is on (a dark instance's agent never offers it); the handler re-checks the flag (H4).
 - Contact points never enter the general RAG context, only an answer that asks for them.
+
+### `internal.scan_document_contacts`
+
+Source: `services/contact_point_tool.py` → `services/document_contact_points.scan_documents` (#1240 stage 4).
+
+- Backs "durchsuche meine Dokumente nach Telefonnummern" / "ergänze die Kontaktdaten aus den Dokumenten" — the same
+  deterministic derivation as the ingest hook and `bin/backfill_document_contact_points.py`, over the stored chunk
+  text of the asker's OWN documents (document atom owner = injected `user_id`; auth off = all documents). Idempotent;
+  owner edits and removals survive (design §14).
+- A WRITE: with auth on it needs `kg.manage` AND an identified user — an unidentified turn (`user_permissions=None`)
+  is DENIED. Needs only `CONTACT_POINTS_ENABLED`, not the ingest flag.
+- Answers with COUNTS only (added, already known, unresolved because the name is on several entities or missing,
+  failed) — never a number, a name or a title. All documents failed = `success: false`.
+- Time budget `SCAN_TIME_BUDGET_S` (60 s): the turn waits for it, so it stops between documents and reports
+  `remaining`; idempotent, a second run finishes.
+- Routing: the same `CONTACT_LOOKUP_ROUTE` sentence names it. Measured 2026-11-26 (`qwen3:8b`, 26 cases × 3, flag
+  on): the five scan phrasings 15/15 → `general` without a pairing; with a pairing the English one went to
+  `documents` 2/3. Controls 78/78 (no pairing).
 
 ### `internal.find_duplicate_documents`
 
