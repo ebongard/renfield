@@ -142,6 +142,13 @@ def build_sightings_payload(presence) -> dict[str, Any]:
     # Placement v2 shadow (None unless its flag is on): adds one field per
     # device below. Absent with the flag off, so the payload is unchanged.
     shadow = getattr(presence, "_placement_shadow", None)
+    if shadow is not None:
+        # "state": v2 books the room and the legacy switch rule does not run,
+        # so a viewer must explain the room with the v2 verdict, not with the
+        # filtered values. "shadow": v2 only watches.
+        payload["placement_v2_mode"] = (
+            "state" if getattr(presence, "_placement_state", None) is not None else "shadow"
+        )
     out = payload["devices"]
     for key, sightings in presence._sightings.items():
         uid = presence._user_for_key(key)

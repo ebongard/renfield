@@ -291,3 +291,134 @@ export function useDeletePresenceIrk() {
     'common.error',
   );
 }
+
+// --- Placement v2 calibration (admin; ha_glue/api/routes/presence.py) ---
+
+export interface CalibrationReceiver {
+  satellite_id: string;
+  offset_db: number;
+  in_room_dbm: number;
+  cutoff_dbm: number;
+}
+
+export interface CalibrationZone {
+  name: string;
+  room_ids: number[];
+}
+
+export interface Calibration {
+  source: 'database' | 'empty';
+  settings_ignored: boolean;
+  engine_active: boolean;
+  receivers: CalibrationReceiver[];
+  zones: CalibrationZone[];
+  min_samples: number;
+  in_room_percentile: number;
+}
+
+export interface CalibrationProposal {
+  satellite_id: string;
+  samples: number;
+  in_room_dbm: number;
+  min_dbm: number;
+  median_dbm: number;
+  max_dbm: number;
+  /** null = the receiver is uncalibrated; the admin enters its cutoff. */
+  cutoff_dbm: number | null;
+  offset_db: number;
+  current: CalibrationReceiver | null;
+}
+
+/** Stable refusal codes of the calibration routes (`detail.code`). */
+export type CalibrationErrorCode =
+  | 'invalid_receiver'
+  | 'invalid_zones'
+  | 'invalid_satellite'
+  | 'unknown_rooms'
+  | 'not_calibrated'
+  | 'not_started'
+  | 'too_old'
+  | 'device_not_heard'
+  | 'too_few_readings'
+  | 'bound_not_above_cutoff';
+
+export interface CalibrationErrorDetail {
+  code: CalibrationErrorCode;
+  samples?: number;
+  needed?: number;
+  window_s?: number;
+  bound_dbm?: number;
+  cutoff_dbm?: number;
+  room_ids?: number[];
+}
+
+/** The refusal detail of a calibration request, or null for any other failure. */
+export function calibrationErrorDetail(error: unknown): CalibrationErrorDetail | null {
+  if (typeof error !== 'object' || error === null || !('response' in error)) return null;
+  const response = (error as { response?: { data?: { detail?: unknown } } }).response;
+  const detail = response?.data?.detail;
+  if (typeof detail === 'object' && detail !== null && 'code' in detail
+      && typeof (detail as { code: unknown }).code === 'string') {
+    return detail as CalibrationErrorDetail;
+  }
+  return null;
+}
+
+const calibrationKey = [...keys.presence.all, 'calibration'] as const;
+
+async function fetchCalibration(): Promise<Calibration> {
+  const response = await apiClient.get<Calibration>('/api/presence/calibration');
+  return response.data;
+}
+
+export function usePresenceCalibrationQuery() {
+  return useApiQuery(
+    { queryKey: calibrationKey, queryFn: fetchCalibration, staleTime: STALE.CONFIG },
+    'common.error',
+  );
+}
+
+export async function saveCalibrationReceiver(receiver: CalibrationReceiver): Promise<Calibration> {
+  const { satellite_id: satelliteId, ...values } = receiver;
+  const response = await apiClient.put<Calibration>(
+    `/api/presence/calibration/receivers/${encodeURIComponent(satelliteId)}`,
+    values,
+  );
+  return response.data;
+}
+
+export async function deleteCalibrationReceiver(satelliteId: string): Promise<Calibration> {
+  const response = await apiClient.delete<Calibration>(
+    `/api/presence/calibration/receivers/${encodeURIComponent(satelliteId)}`,
+  );
+  return response.data;
+}
+
+export async function saveCalibrationZones(zones: CalibrationZone[]): Promise<Calibration> {
+  const response = await apiClient.put<Calibration>('/api/presence/calibration/zones', { zones });
+  return response.data;
+}
+
+export async function startCalibrationMeasurement(): Promise<number> {
+  const response = await apiClient.post<{ since: number }>('/api/presence/calibration/measurement');
+  return response.data.since;
+}
+
+export async function requestCalibrationProposal(args: {
+  deviceKey: string;
+  satelliteId: string;
+  since: number;
+}): Promise<CalibrationProposal> {
+  const response = await apiClient.post<CalibrationProposal>('/api/presence/calibration/proposal', {
+    device_key: args.deviceKey,
+    satellite_id: args.satelliteId,
+    since: args.since,
+  });
+  return response.data;
+}
+
+/** Writes return the whole calibration; put it into the cache. */
+export function useCalibrationCache() {
+  const queryClient = useQueryClient();
+  return (calibration: Calibration) => queryClient.setQueryData(calibrationKey, calibration);
+}

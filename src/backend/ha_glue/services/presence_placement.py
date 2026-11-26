@@ -666,7 +666,28 @@ def combine_person(
 
 
 # ---------------------------------------------------------------------------
-# Configuration (JSON settings; a later stage moves this into a table)
+# Calibration rule (stage 2, part B)
+# ---------------------------------------------------------------------------
+
+
+# The in-room bound proposed from readings taken in the receiver's own room:
+# their 10th percentile. The rule the labelled walk of 2026-11-13 was scored
+# with (``tests/backend/test_presence_placement_replay.py``) — a choice, kept
+# so a calibration is derived the way the replay was.
+IN_ROOM_PERCENTILE = 10.0
+
+
+def percentile(values: Sequence[float], pct: float) -> float:
+    """Linear interpolation between closest ranks. ``values`` must not be empty."""
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * pct / 100.0
+    low = int(position)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+# ---------------------------------------------------------------------------
+# Configuration (JSON settings; the seed for the tables)
 # ---------------------------------------------------------------------------
 
 
@@ -714,6 +735,14 @@ def parse_receiver_params(raw: str) -> dict[str, ReceiverParams]:
                 f"(expected exactly {list(_RECEIVER_FIELDS)})"
             )
         values = {f: _number(entry[f], f"receiver {satellite_id!r}.{f}") for f in _RECEIVER_FIELDS}
+        for level in ("in_room_dbm", "cutoff_dbm"):
+            # A bound no receiver can report is no bound (the readings
+            # themselves are held to the same range by ``_at_least``).
+            if not RSSI_MIN_DBM <= values[level] <= RSSI_MAX_DBM:
+                raise PlacementConfigError(
+                    f"receiver {satellite_id!r}.{level} must lie within "
+                    f"{RSSI_MIN_DBM:g}..{RSSI_MAX_DBM:g} dBm"
+                )
         if values["in_room_dbm"] <= values["cutoff_dbm"]:
             # Below the cutoff nothing is reported, so such a bound is never
             # reached by a reading — and would be met by silence if misread.
@@ -740,7 +769,7 @@ def parse_zones(raw: str) -> dict[str, frozenset[int]]:
     for name, rooms in data.items():
         if not name.strip():
             raise PlacementConfigError("a zone has an empty name")
-        if not isinstance(rooms, list) or len(rooms) < 2:
+        if not isinstance(rooms, list):
             raise PlacementConfigError(f"zone {name!r} must list at least two room ids")
         for room in rooms:
             if isinstance(room, bool) or not isinstance(room, int):
@@ -750,5 +779,8 @@ def parse_zones(raw: str) -> dict[str, frozenset[int]]:
                     f"room {room} is in two zones: {seen[room]!r} and {name!r}"
                 )
             seen[room] = name
+        if len(set(rooms)) < 2:
+            # Counted as a set: [5, 5] is one room, and one room is no zone.
+            raise PlacementConfigError(f"zone {name!r} must list at least two different room ids")
         out[name] = frozenset(rooms)
     return out
