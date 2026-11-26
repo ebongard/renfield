@@ -17,3 +17,4 @@ that enforceable.
 | v0.3.10 | 2026-11-22 | edf11631 | `your-registry.example/renfield/voice-server@sha256:5c7bd11588d0c3b5525fd7cbaecd5c4ff8af21fd7839c66f0e022213d9d32a70` |
 | v0.3.11 | 2026-11-22 | 4b016cbc | `your-registry.example/renfield/voice-server@sha256:ed703e39cabfd3545bba1a055c76003a0c6f48f5881567b9d088bf5e509d0f89` |
 | v0.3.12 | 2026-11-24 | db392f12 | `your-registry.example/renfield/voice-server@sha256:282b0c12c1e6985f4a21056ae19faeb4dfe656a04abb5d89f910b91b0e9dbd0e` |
+| v0.3.13 | 2026-11-26 | 0019053f | `your-registry.example/renfield/voice-server@sha256:eb1a4ae422d2f9450c9b5d0b258b74329e05d02d992efaf327187470f084bdd0` |
