@@ -315,12 +315,15 @@ Anrufer-Auflösung (`docs/design/caller-lookup.md`), danach erst der Import (vCa
 
 `services/document_contact_points.py`, deterministisch, kein LLM. Eine Nummer zählt nur, wenn:
 
-1. ein Stichwort direkt davor steht, auf derselben Zeile (`Tel`, `Telefon`, `Fon`, `Fax`, `Telefax`, `Mobil`,
-   `Handy`; `T`/`F`/`M` nur mit `:`/`.` oder direkt vor `+`/`0`). Ein Klammerzusatz zählt nur als WORT
+1. ein Stichwort direkt davor steht, auf derselben Zeile (`Tel`, `Tel.-Nr.`, `Telefon(nummer)`, `Rufnummer`, `Fon`,
+   `Fax(nummer)`, `Telefax`, `Mobil(nummer)`, `Handy`, `Hotline`; `T`/`F`/`M` nur mit `:`/`.` oder direkt vor
+   `+`/`0`). Zwei oder mehr Leerzeichen beenden die Nummer (Spaltenlayout); alle Lücken im Muster sind begrenzt,
+   sonst läuft es bei langen Leerzeichenfolgen polynomiell. Ein Klammerzusatz zählt nur als WORT
    („Tel. (Zentrale):“), eine Vorwahl in Klammern gehört zur Nummer. Die Nummer endet am Zeilenende — sonst
    verschluckt sie die Postleitzahl der nächsten Zeile;
 2. `normalize_phone` sie annimmt;
-3. sie höchstens `ISSUER_WINDOW` (300) Zeichen vom Namen des Ausstellers steht (mit und ohne Rechtsform);
+3. sie höchstens `ISSUER_WINDOW` (300) Zeichen vom Namen des Ausstellers steht (mit und ohne Rechtsform, nur als
+   ganze Wörter: „Bau“ trifft nicht „Baumarkt“);
 4. sie nicht im Empfängerblock steht (`party`-Fakt `empf*`/`recipient*`/`adressat*`);
 5. **genau eine** lebende Person/Firma DESSELBEN Eigentümers den Namen oder Alias des Ausstellers trägt
    (Zählabfrage, A4). Keine oder mehrere: übersprungen, nie geraten, **nie neu angelegt**.
@@ -336,10 +339,17 @@ unsichtbar, solange dieselbe Nummer bei einer ANDEREN lebenden Entität desselbe
 welcher Quelle). Die Zeilen bleiben als Beleg; wird die Nummer eindeutig, ist der Wert wieder da — unabhängig von
 der Reihenfolge der Dokumente. Zwei Eigentümer mit derselben Firma sperren sich nicht gegenseitig.
 Ein Dokumentwert sortiert nach jedem anderen; ein schon vorhandener Wert (Hand, anderes Dokument) wird nicht
-überschrieben. Nur eine Ausnahme: ist ein späteres Dokument offener, wandert die Quelle dorthin (die Nummer steht
-dort für diesen Kreis gedruckt).
+überschrieben. Ein späteres, offeneres Dokument hebt die Stufe NICHT: ein vom Eigentümer gesenkter Wert sähe genauso
+aus und muss einen Neu-Ingest überleben.
 
-Tier = `LEAST(Entität, Dokument)`; die `kb_document`-Kaskade senkt mit. `document_id` = FK, löschen nimmt mit.
+**Bearbeitungen des Eigentümers überleben den Neu-Ingest** (Review 2026-11-26): ein Sync lässt einen noch
+abgeleiteten Wert unberührt (gesenkte Stufe, Label), entfernt nur, was dieses Dokument nicht mehr liefert, und fügt
+mit `ON CONFLICT DO NOTHING` ein (gleichzeitiger Ingest + Nachlauf scheitern nicht aneinander). Löscht der
+Eigentümer einen Dokumentwert, wird er BEENDET statt gelöscht (`valid_to`, ohne `superseded_by_id`) — diese Zeile
+ist der Grabstein, den jeder weitere Sync achtet. Ein Handwert wird weiterhin gelöscht.
+
+Tier = `LEAST(Entität, Dokument)` des Dokuments, aus dem der Wert ZUERST kam; die `kb_document`-Kaskade senkt mit.
+`document_id` = FK, löschen nimmt mit.
 Ein Wert hängt je Entität und Nummer an EINEM Dokument (der eindeutige Index): wird genau dieses gelöscht,
 verschwindet der Wert, bis ein Nachlauf ihn aus einem anderen Dokument wiederfindet.
 
@@ -352,11 +362,14 @@ Nachlauf: `bin/backfill_document_contact_points.py` über die gespeicherten Text
 | | Haushalt | xidra |
 |---|---|---|
 | Dokumente mit Aussteller | 346 | 551 |
-| davon mit Nummer im Ausstellerblock | 57 | 127 |
-| Nummern gefunden | 84 | 180 |
-| angehängt | 23 | 153 |
-| Aussteller-Name bei mehreren Entitäten | 45 | 6 |
-| Aussteller nicht im Graphen | 16 | 21 |
+| davon mit Nummer im Ausstellerblock | 49 | 121 |
+| Nummern gefunden | 69 | 174 |
+| angehängt | 20 | 147 |
+| Aussteller-Name bei mehreren Entitäten | 35 | 6 |
+| Aussteller nicht im Graphen | 14 | 21 |
+
+(Nach den Review-Korrekturen: Ausstellername nur als ganze Wörter, Spaltenlücke beendet die Nummer. Der erste Lauf
+hatte 84/180 Nummern gefunden — die Differenz sind Treffer im Wortinneren und verschluckte Nachbarspalten.)
 
 Im Haushalt scheitern die meisten an doppelten Entitäten desselben Namens (offene Merge-Vorschläge). Ein
 Zusammenführen in der Review-Liste und ein zweiter Nachlauf holt sie herein.
