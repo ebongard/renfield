@@ -68,12 +68,17 @@ CONTACT_LOOKUP_ROUTE = {
     "de": (
         "; AUCH gespeicherte TELEFON-, HANDY- und FAXNUMMERN einer Person oder Firma "
         "nachschlagen ('wie ist die Handynummer von ...', 'welche Telefonnummer hat die "
-        "Praxis ...') und herausfinden, WEM eine Nummer gehoert ('wessen Nummer ist 0170 ...')"
+        "Praxis ...') und herausfinden, WEM eine Nummer gehoert ('wessen Nummer ist 0170 ...'); "
+        "AUCH die eigenen Dokumente nach Telefon- und Faxnummern DURCHSUCHEN und die "
+        "Kontaktdaten im Wissensgraphen ERGAENZEN ('durchsuche meine Dokumente nach "
+        "Telefonnummern', 'ergaenze die Kontaktdaten aus den Dokumenten')"
     ),
     "en": (
         "; ALSO looking up stored PHONE, MOBILE and FAX NUMBERS of a person or company "
         "('what is Hans's mobile number', 'which phone number does the practice ... have') "
-        "and finding out WHOSE a number is ('whose number is 0170 ...')"
+        "and finding out WHOSE a number is ('whose number is 0170 ...'); ALSO SCANNING "
+        "one's own documents for phone and fax numbers and ADDING them to the contacts in "
+        "the knowledge graph ('scan my documents for phone numbers')"
     ),
 }
 

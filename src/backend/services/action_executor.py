@@ -170,6 +170,15 @@ class ActionExecutor:
                 parameters, user_id=user_id, user_permissions=user_permissions,
             )
 
+        # Write: re-derive contact points from the asker's own documents (#1240).
+        # user_id scopes it to their documents; user_permissions gates it on
+        # KG_MANAGE (an unidentified turn is refused).
+        if intent == "internal.scan_document_contacts":
+            from services.contact_point_tool import scan_document_contacts
+            return await scan_document_contacts(
+                parameters, user_id=user_id, user_permissions=user_permissions,
+            )
+
         # KB near-duplicate detection: find documents that byte-hash dedup misses
         # (different bytes, same document) via a shared identifier. Proposes pairs
         # for owner review — never deletes. user_id scopes the scan to the caller's

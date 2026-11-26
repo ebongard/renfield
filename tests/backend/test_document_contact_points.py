@@ -314,3 +314,72 @@ class TestFlag:
                             lambda *a, **k: called.append(a))
         await mod.contact_points_post_extraction(1, LETTERHEAD)
         assert called == []
+
+
+# --- internal.scan_document_contacts --------------------------------------------------------
+
+async def _chunk(db, doc, content: str) -> None:
+    await db.execute(text(
+        "INSERT INTO document_chunks (document_id, content, chunk_index, circle_tier) "
+        "VALUES (:d, :c, 0, :t)"
+    ), {"d": doc.id, "c": content, "t": doc.circle_tier})
+
+
+@pytest.mark.database
+class TestScanTool:
+    async def _setup(self, db, monkeypatch):
+        from contextlib import asynccontextmanager
+
+        import services.contact_point_tool as tool
+
+        @asynccontextmanager
+        async def _session():
+            yield db
+
+        monkeypatch.setattr(tool, "AsyncSessionLocal", _session)
+        return tool
+
+    async def test_scans_only_the_askers_documents(self, pg_db_session, monkeypatch, enabled):
+        db = pg_db_session
+        tool = await self._setup(db, monkeypatch)
+        owner, other = await _make_user(db, "own"), await _make_user(db, "oth")
+        mine = await _entity(db, owner, ISSUER, tier=2, etype="organization")
+        theirs = await _entity(db, other, ISSUER, tier=2, etype="organization")
+        for user in (owner, other):
+            doc = await _doc(db, user, tier=2)
+            await _fact(db, user, doc, "aussteller", ISSUER)
+            await _chunk(db, doc, LETTERHEAD)
+        await db.commit()
+
+        out = await tool.scan_document_contacts(
+            {"user_id": other.id}, user_id=owner.id, user_permissions=["kg.manage"])
+        assert out["success"] is True
+        assert (out["data"]["documents"], out["data"]["added"]) == (1, 2)
+        assert len(await _doc_values(db, mine.id)) == 2
+        assert await _doc_values(db, theirs.id) == []   # an LLM-supplied user_id changes nothing
+        # Counts only: no number and no name in what the agent gets back.
+        assert "030" not in out["message"] and ISSUER not in out["message"]
+
+        again = await tool.scan_document_contacts({}, user_id=owner.id, user_permissions=["kg.manage"])
+        assert (again["data"]["added"], again["data"]["already_known"]) == (0, 2)
+
+    async def test_refused_without_kg_manage_or_identity(self, pg_db_session, monkeypatch, enabled):
+        tool = await self._setup(pg_db_session, monkeypatch)
+        for uid, perms in ((1, ["kg.view"]), (None, None), (1, None)):
+            out = await tool.scan_document_contacts({}, user_id=uid, user_permissions=perms)
+            assert out["success"] is False
+
+    async def test_off_and_advertised_only_when_enabled(self, enabled):
+        from services.agent_tools import AgentToolRegistry
+        from services.contact_point_tool import scan_document_contacts
+
+        registry = AgentToolRegistry.__new__(AgentToolRegistry)
+        registry._tools = {}
+        registry._register_internal_tools()
+        assert "internal.scan_document_contacts" in registry._tools
+        enabled.contact_points_enabled = False
+        registry._tools = {}
+        registry._register_internal_tools()
+        assert "internal.scan_document_contacts" not in registry._tools
+        out = await scan_document_contacts({}, user_id=1, user_permissions=["kg.manage"])
+        assert out["data"]["enabled"] is False

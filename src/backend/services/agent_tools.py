@@ -204,7 +204,7 @@ class AgentToolRegistry:
             internal_filter: If set, only register these tool names. None = all.
         """
         from services.chat_upload_tool import CHAT_UPLOAD_TOOLS
-        from services.contact_point_tool import FIND_CONTACT_TOOL
+        from services.contact_point_tool import FIND_CONTACT_TOOL, SCAN_DOCUMENT_CONTACTS_TOOL
         from services.document_dedupe_tool import FIND_DUPLICATE_DOCUMENTS_TOOL
         from services.kb_maintenance_tool import KB_MAINTENANCE_TOOLS
         from services.knowledge_tool import KNOWLEDGE_TOOL
@@ -227,6 +227,7 @@ class AgentToolRegistry:
 
         if settings.contact_points_enabled:
             platform_tools.update(FIND_CONTACT_TOOL)
+            platform_tools.update(SCAN_DOCUMENT_CONTACTS_TOOL)
         # Simba tools only where the Simba MCP is present (per-instance-optional —
         # a Simba-less instance carries no Simba tool artifact).
         if simba_available:

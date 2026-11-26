@@ -9,7 +9,11 @@
   {"task": "Wie lautet die Mobilnummer von Frau Schmidt?", "expect": "general"},
   {"task": "What is Hans's mobile number?", "expect": "general", "lang": "en"},
   {"task": "Whose number is +49 170 1234567?", "expect": "general", "lang": "en"},
-
+  {"task": "Durchsuche meine Dokumente nach Telefonnummern", "expect": "general"},
+  {"task": "Ergänze die Kontaktdaten aus den Dokumenten", "expect": "general"},
+  {"task": "Hol dir die Telefonnummern aus meinen Briefen und trag sie ein", "expect": "general"},
+  {"task": "Suche in den Dokumenten nach Faxnummern und füge sie zu den Firmen hinzu", "expect": "general"},
+  {"task": "Scan my documents for phone numbers", "expect": "general", "lang": "en"},
   {"task": "Was steht im Mietvertrag zur Kündigungsfrist?", "expect": "knowledge"},
   {"task": "Wie hoch war die letzte Stromrechnung laut Dokument?", "expect": ["knowledge", "documents"]},
   {"task": "Scanne das Dokument", "expect": "documents"},
@@ -19,5 +23,6 @@
   {"task": "Wer ist gerade zuhause?", "expect": "presence"},
   {"task": "Spiel Radio im Bad", "expect": "media"},
   {"task": "Wie wird das Wetter morgen?", "expect": "research"},
-  {"task": "Erzähl mir einen Witz", "expect": "conversation"}
+  {"task": "Erzähl mir einen Witz", "expect": "conversation"},
+  {"task": "Durchsuche meine Dokumente nach der letzten Stromrechnung", "expect": ["knowledge", "documents", "general"]}
 ]

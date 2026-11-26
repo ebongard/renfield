@@ -300,6 +300,71 @@ async def sync_document_contact_points(
     return res
 
 
+SCAN_COUNT_KEYS = (
+    "candidates", "stored", "unchanged", "removed", "rejected",
+    "no_entity", "ambiguous_entity", "in_recipient_block",
+)
+
+
+async def document_text(db: AsyncSession, document_id: int) -> str:
+    """The stored text: top-level chunks only (a child repeats its parent's text)."""
+    rows = (await db.execute(text(
+        "SELECT content FROM document_chunks WHERE document_id = :d AND parent_chunk_id IS NULL "
+        "ORDER BY chunk_index NULLS LAST, id"
+    ), {"d": int(document_id)})).scalars().all()
+    return "\n".join(r for r in rows if r)
+
+
+async def scan_documents(
+    db: AsyncSession, *, owner_id: int | None, commit: bool, limit: int | None = None,
+) -> dict[str, int]:
+    """Re-derive the values of every document with an issuer fact; COUNTS only.
+
+    ``owner_id`` scopes to that owner's documents (the document atom's owner);
+    None = every document (the operator backfill, or auth off). A failing document
+    is rolled back and counted, never ends the run. ``commit=False`` rolls every
+    document back (a dry run).
+    """
+    from collections import Counter
+
+    sql = (
+        "SELECT DISTINCT f.document_id FROM document_facts f "
+        "JOIN documents d ON d.id = f.document_id "
+        "LEFT JOIN atoms a ON a.atom_id = d.atom_id "
+        "WHERE lower(f.kind) = ANY(:k)"
+    )
+    params: dict = {"k": list(ISSUER_KINDS)}
+    if owner_id is not None:
+        sql += " AND a.owner_user_id = :o"
+        params["o"] = int(owner_id)
+    sql += " ORDER BY f.document_id"
+    if limit:
+        sql += " LIMIT :lim"
+        params["lim"] = int(limit)
+    ids = (await db.execute(text(sql), params)).scalars().all()
+
+    totals: Counter = Counter()
+    for doc_id in ids:
+        try:
+            body = await document_text(db, doc_id)
+            res = await sync_document_contact_points(db, doc_id, body, commit=commit)
+        except Exception as e:  # one bad document must not end the run
+            await db.rollback()
+            totals["failed"] += 1
+            logger.warning(f"Contact points scan: doc {doc_id} failed: {type(e).__name__}")
+            continue
+        if not commit:
+            await db.rollback()
+        totals["documents"] += 1
+        if res.skipped_reason:
+            totals[f"skipped_{res.skipped_reason}"] += 1
+        if res.candidates:
+            totals["documents_with_numbers"] += 1
+        for key in SCAN_COUNT_KEYS:
+            totals[key] += getattr(res, key)
+    return dict(totals)
+
+
 async def contact_points_post_extraction(document_id: int, field_text: str) -> None:
     """Ingest seam, called by the Schicht-A hook once the issuer fact is committed.
 
