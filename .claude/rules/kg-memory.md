@@ -149,6 +149,12 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
 - `merge_entities` hängt um; eine Kollision endet auf der Verliererseite (`superseded_by_id`) und gibt die
   niedrigere `source_tier` weiter. JEDER Soft-Delete einer Entität LÖSCHT ihre Kontaktpunkte (`delete_entity` und
   `KGCleanupService.cleanup_invalid_entities`); `document_id` ist ein echter FK (ON DELETE CASCADE).
+- Dokumentquelle (`services/document_contact_points.py`, `CONTACT_POINTS_FROM_DOCUMENTS_ENABLED` dunkel): nur
+  Stichwort + Ausstellerblock + genau EINE Entität des Eigentümers (Zählabfrage, nie `resolve_entity`, nie anlegen).
+  🛑 Mehrdeutig wird beim LESEN entschieden (`DOCUMENT_AMBIGUITY_SQL` in `_hits`): jede neue Lesestelle muss es
+  mitnehmen, sonst nennt die Nummer des Steuerberaters jeden Mandanten. Ein Sync lässt noch abgeleitete Werte
+  UNBERÜHRT (Bearbeitungen des Eigentümers); `delete` BEENDET einen Nicht-Handwert = Grabstein, nie neu
+  einfügen. Design §14.
 
 ## Conflation tripwire (`KG_CONFLATION_MONITOR_ENABLED`, dark, read-only)
 `services/kg_conflation_monitor.py` flags distinct-name same-type same-tier NON-person pairs only. Persons are excluded

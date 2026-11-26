@@ -1171,5 +1171,13 @@ async def schicht_a_post_document_ingest_hook(
                     await db.commit()
             except Exception as e:
                 logger.warning(f"Schicht A: document_date derivation failed for doc {document_id}: {error_text_without_content(e)}")
+
+            # #1240 stage 4: the issuer's own numbers, now that the issuer fact is
+            # committed. Dark (CONTACT_POINTS_FROM_DOCUMENTS_ENABLED); best-effort,
+            # own session, never fails the ingest. The early returns above (LLM
+            # outage on a re-extraction) skip it; the backfill catches those up.
+            from services.document_contact_points import contact_points_post_extraction
+
+            await contact_points_post_extraction(document_id, field_text)
     except Exception as e:
         logger.warning(f"Schicht A post_document_ingest hook failed: {error_text_without_content(e)}")
