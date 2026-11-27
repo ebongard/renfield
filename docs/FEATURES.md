@@ -479,6 +479,12 @@ und hängt den Text an die schon zugestellte Nachricht-Meldung derselben Empfän
 zurück.“ (automatisch verschriftet, kann Fehler enthalten)“); die Meldung wird dabei `confidential`. Kein
 zweiter Push, nie vorgelesen, nie an ein LLM. Entwurf: `docs/design/voicemail-transcript.md`.
 
+Fax-Empfang (#1677, `TELEPHONY_FAX_ENABLED`, dunkel): Ein Fax an die Faxnummer der Instanz (T.38, sonst G.711)
+kommt als PDF über das Gateway und wird wie ein Dokument aus dem überwachten Ordner abgelegt: in der
+Wissensdatenbank „Fax“ des konfigurierten Besitzers (`TELEPHONY_FAX_OWNER`, Stufe `TELEPHONY_FAX_TIER`), mit
+Texterkennung und in Paperless. Nur der Besitzer bekommt eine Meldung („Fax von … (3 Seiten)“; bei einem
+Fehlschlag „fehlgeschlagen“ bzw. „die Ablage ist fehlgeschlagen“).
+
 ### Benachrichtigungs-Glocke (#1653, `NOTIFICATION_BELL_ENABLED`, dark)
 
 Eine Glocke mit Badge im Header zeigt die ungelesenen eigenen Benachrichtigungen, etwa Anrufe,
