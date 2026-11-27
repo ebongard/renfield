@@ -32,6 +32,17 @@ from utils.config import settings
 from utils.log_safety import error_text_without_content, logged_content
 
 
+def embedding_text(notification) -> str:
+    """The text a STORED embedding of this notification is built from.
+
+    #1669: a transcribed voicemail's message carries a caller's spoken words --
+    untrusted third-party text that must not live on as a vector (a suppression
+    rule, ``/admin/reembed``). The title has none of them."""
+    if (notification.source_data or {}).get("transcript_status") == "done":
+        return notification.title
+    return f"{notification.title} {notification.message}"
+
+
 class NotificationService:
     """
     Core notification service: webhook processing, dedup, delivery,
@@ -424,7 +435,7 @@ class NotificationService:
         # Generate embedding for semantic matching
         embedding = None
         try:
-            combined = f"{notification.title} {notification.message}"
+            combined = embedding_text(notification)
             embedding = await self._get_embedding(combined)
         except Exception as e:
             logger.warning(f"⚠️ Could not generate suppression embedding: {e}")

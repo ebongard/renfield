@@ -1556,6 +1556,32 @@ class Notification(Base):
     target_user = relationship("User", foreign_keys=[target_user_id])
 
 
+VOICEMAIL_PENDING = "pending"
+VOICEMAIL_DONE = "done"
+VOICEMAIL_FAILED = "failed"
+
+
+class TelephonyVoicemail(Base):
+    """A transcript job for one voicemail (#1669, docs/design/voicemail-transcript.md).
+
+    ``recording`` is the gateway's opaque basename, never a path. The transcript
+    itself is NOT stored here -- it lives only in the voicemail notification rows.
+    ``call_id`` is unique: a replayed event (gateway restart) makes no second job."""
+    __tablename__ = "telephony_voicemails"
+
+    id = Column(Integer, primary_key=True)
+    call_id = Column(String(64), nullable=False, unique=True)
+    recording = Column(String(64), nullable=False)
+    # server_default = the migration's, so a fresh install (create_all) builds the same table.
+    status = Column(String(16), nullable=False, default=VOICEMAIL_PENDING, server_default=VOICEMAIL_PENDING)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    next_attempt_at = Column(DateTime, nullable=False, default=_utcnow, server_default=sa_text("now()"))
+    created_at = Column(DateTime, nullable=False, default=_utcnow, server_default=sa_text("now()"))
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow, server_default=sa_text("now()"))
+
+    __table_args__ = (Index("ix_telephony_voicemails_due", "status", "next_attempt_at"),)
+
+
 class NotificationSuppression(Base):
     """
     Feedback learning: a user suppresses similar notifications.

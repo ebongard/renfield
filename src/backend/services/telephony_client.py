@@ -8,7 +8,8 @@ events over it. Protocol (JSON text frames)::
     <- {"type": "welcome", "instance": "...", "epoch": "<id>", "last_seq": <n>}
     <- {"type": "incoming_call", "seq": n, "call_id": "...", "did": "+49...", "caller": "+49..." | "anonymous"}
     <- {"type": "call_ended", "seq": n, "call_id": "...", "cause": "..."}
-    <- {"type": "voicemail", "seq": n, "call_id": "...", "did": "...", "caller": "...", "duration_s": 23}
+    <- {"type": "voicemail", "seq": n, "call_id": "...", "did": "...", "caller": "...", "duration_s": 23,
+        "recording": "<basename>"}   # recording: the transcript job's handle (#1669)
 
 Guarantees:
 - Resume: (epoch, last seq) are stored in Redis; after a reconnect the gateway
@@ -221,6 +222,12 @@ async def deliver_via_notification_service(event: dict) -> None:
         if settings.caller_lookup_enabled and settings.contact_points_enabled:
             from services.caller_lookup import resolve_caller as resolve
         await notify_users(event, user_ids, NotificationService(db).process_webhook, resolve)
+    if event.get("type") == "voicemail" and settings.voicemail_transcript_enabled:
+        # #1669: after the notifications, before the event is marked done. Never
+        # raises -- a queue problem must not retry the event and notify twice.
+        from services.voicemail_transcript import enqueue
+
+        await enqueue(event)
 
 
 def ssl_context_for(ca_pem: str) -> ssl.SSLContext:

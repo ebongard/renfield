@@ -23,13 +23,16 @@ def _load():
     return module, path.parent.parent
 
 
-def test_joins_exactly_the_two_heads_and_is_the_only_head():
+def test_joins_exactly_the_two_heads_on_the_single_head_path():
     from alembic.script import ScriptDirectory
 
     mig, alembic_dir = _load()
     assert set(mig.down_revision) == {"pc20261125_presence_calibration", "pc20261126_kg_contact_points"}
     assert len(mig.revision) <= 32, "alembic_version.version_num is VARCHAR(32)"
-    assert ScriptDirectory(str(alembic_dir)).get_heads() == [mig.revision]
+    # One head, and the merge lies on its path (later revisions build on it).
+    script = ScriptDirectory(str(alembic_dir))
+    (head,) = script.get_heads()
+    assert mig.revision in {r.revision for r in script.walk_revisions("base", head)}
 
 
 def test_carries_no_schema_change():

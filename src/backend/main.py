@@ -586,6 +586,7 @@ async def reembed_all(
         Notification,
         NotificationSuppression,
     )
+    from services.notification_service import embedding_text as notification_embedding_text
     from utils.llm_client import get_embed_client
 
     BATCH_SIZE = 50
@@ -602,7 +603,7 @@ async def reembed_all(
          lambda r: f"{r.summary} {r.topic or ''} {r.outcome or ''}".strip(),
          "episodic_memories"),
         (IntentCorrection, lambda r: r.message_text, "intent_corrections"),
-        (Notification, lambda r: f"{r.title} {r.message}", "notifications"),
+        (Notification, notification_embedding_text, "notifications"),
         (NotificationSuppression, lambda r: r.event_pattern, "notification_suppressions"),
         (KGEntity, lambda r: r.name, "kg_entities"),
     ]
