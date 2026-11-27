@@ -416,6 +416,16 @@ def _schedule_telephony_client():
         _startup_tasks.append(asyncio.create_task(voicemail_main()))
         logger.info("Voicemail transcript loop scheduled")
 
+    if settings.telephony_fax_enabled:
+        # #1677: the fax filing loop; every replica runs one (SKIP LOCKED claim).
+        async def fax_main():
+            from services.telephony_fax import run_fax_jobs
+
+            await run_fax_jobs()
+
+        _startup_tasks.append(asyncio.create_task(fax_main()))
+        logger.info("Fax filing loop scheduled")
+
 
 async def _init_mcp(app: "FastAPI"):
     """Initialize MCP client connections to external tool servers."""

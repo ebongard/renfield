@@ -8,7 +8,7 @@ einem privaten Repo, weil sie Rufnummern und Infrastrukturdetails enthalten.
 | Phase | Renfield-Teil | Stand |
 |---|---|---|
 | 2 – Anruf erkennen | `services/telephony_client.py`: eine **ausgehende** WebSocket-Verbindung zum Gateway, Ereignisse per Push → `NotificationService` | #1650 |
-| 3 – Fax | PDF über denselben Kanal abholen → Paperless (Business-Instanz) | offen |
+| 3 – Fax | PDF über denselben Kanal abholen → Dokument + Paperless (Business-Instanz), `TELEPHONY_FAX_ENABLED` (#1677) | gebaut |
 | 4 – Renfield ruft an | `internal.*`-Tool `place_call` über den Kanal, Ziele nur aus einer Allowlist | offen (vgl. #1627) |
 | 5 – Renfield nimmt an | Audio über den Kanal → STT → Agent mit eigener Rolle `telephony_guest` → TTS | offen |
 | 7 – Satelliten als Freisprechstelle | Vollduplex-Modus `call_audio` (zunächst nur XVF3800 mit Hardware-AEC) | offen |

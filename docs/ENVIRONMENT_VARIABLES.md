@@ -882,6 +882,25 @@ VOICEMAIL_TRANSCRIPT_ENABLED=false   # Aufnahme holen, ohne Stimmabdruck verschr
   `confidential` werden. 3 Versuche in etwa 10 Minuten; ein Fehlschlag lässt die Meldung wie sie war.
 - Aus: kein Auftrag, keine Anfrage, die Meldung ist Byte für Byte wie vorher.
 
+**Fax-Empfang** (#1677, Telefonie Phase 3; braucht `TELEPHONY_ENABLED` und ein Gateway mit `fax_received`):
+
+```bash
+TELEPHONY_FAX_ENABLED=false       # Ereignis fax_received: PDF holen, als Dokument ablegen, Besitzer benachrichtigen
+TELEPHONY_FAX_OWNER=              # Benutzername oder ID des EINEN Besitzers; leer/unbekannt = Faxe warten (Fehler im Log)
+TELEPHONY_FAX_TIER=0              # Stufe des abgelegten Dokuments (0–4)
+TELEPHONY_FAX_KB=Fax              # Wissensdatenbank des Besitzers, beim ersten Fax angelegt
+TELEPHONY_FAX_TO_PAPERLESS=true   # zusätzlich nach Paperless (außer Band, wie Ordner/E-Mail)
+```
+
+- An: Ein empfangenes Fax wird ein Auftrag in `telephony_faxes` (Migration `pc20261127b_telephony_faxes`, VOR dem
+  Rollout). Eine Schleife holt das PDF (`GET /v1/faxes/<name>`, gleiches Token und Zertifikat wie die Ereignisse)
+  und legt es über `folder_ingest.ingest_document` ab (Dedup, Texterkennung, Besitzer + Stufe, Quelle
+  `telephony_fax`, Paperless). Danach bekommt **nur der Besitzer** eine persönliche Meldung „Fax von … (n Seiten)“.
+- Ein fehlgeschlagenes Fax meldet Renfield sofort („Fax … fehlgeschlagen“). Scheitert die Ablage endgültig
+  (3 Versuche in etwa 10 Minuten), heißt es „… die Ablage ist fehlgeschlagen“ — das PDF liegt 30 Tage am Gateway.
+- Der Dateiname enthält keine Rufnummer (`Fax_<Datum>_<Uhrzeit>.pdf`).
+- Aus: `fax_received` wird ignoriert wie vorher, kein Auftrag, keine Meldung.
+
 Bei `wss://` ohne `TELEPHONY_GATEWAY_CA_PEM` startet der Client **nicht** (kein ungeprüftes TLS); unverschlüsseltes `ws://` ist nur zu localhost erlaubt. Ein falsches
 Token wird mit 401 abgewiesen, der Client versucht es mit Backoff (max. 60 s) erneut.
 

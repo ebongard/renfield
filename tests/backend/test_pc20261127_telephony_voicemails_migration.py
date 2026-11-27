@@ -6,7 +6,7 @@ schema and the real ``upgrade()`` / ``downgrade()`` bound to a MigrationContext.
 What must hold:
 - upgrade creates the table; a bare INSERT gets status/attempts/timestamps;
 - ``call_id`` is unique (a replayed voicemail makes no second job);
-- it builds on the single head and fits ``alembic_version`` (VARCHAR(32));
+- it lies on the path to the single head and fits ``alembic_version`` (VARCHAR(32));
 - upgrade -> downgrade -> upgrade is clean, a second upgrade is a no-op.
 """
 from __future__ import annotations
@@ -111,7 +111,11 @@ def test_builds_on_the_single_head():
     mig, alembic_dir = _load_migration()
     assert mig.down_revision == "pc20261126b_merge_heads"
     assert len(mig.revision) <= 32, "alembic_version.version_num is VARCHAR(32)"
-    assert ScriptDirectory(str(alembic_dir)).get_heads() == [mig.revision]
+    script = ScriptDirectory(str(alembic_dir))
+    heads = script.get_heads()
+    assert len(heads) == 1, heads
+    # Later migrations build on it: it stays on the path to the single head.
+    assert mig.revision in {r.revision for r in script.iterate_revisions(heads[0], "base")}
 
 
 async def test_upgrade_defaults_and_unique_call(schema_conn):

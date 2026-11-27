@@ -2047,6 +2047,17 @@ class Settings(BaseSettings):
     # notification is byte-identical.
     voicemail_transcript_enabled: bool = False
 
+    # Fax reception (#1677, Telefonie Phase 3): a ``fax_received`` event from the
+    # gateway queues a job that fetches the PDF (GET /v1/faxes/<name>) and files it
+    # through the document pipeline (folder_ingest.ingest_document, Paperless
+    # included) for ONE configured owner, who alone is notified. Needs
+    # TELEPHONY_ENABLED and TELEPHONY_FAX_OWNER. Off = the event is ignored as before.
+    telephony_fax_enabled: bool = False
+    telephony_fax_owner: str = ""      # username or id; "" = not started
+    telephony_fax_tier: int = Field(default=0, ge=0, le=4)  # circle tier of the filed document
+    telephony_fax_kb: str = "Fax"      # the owner's KB (created on first use)
+    telephony_fax_to_paperless: bool = True  # stamp for the out-of-band Paperless filing (Design Z)
+
     # Notification bell (#1653): a bell with an unread badge in the app header
     # that lists the viewer's own notifications (always viewer-scoped, admins
     # included) and refreshes live over /ws/user (`notifications_changed`).

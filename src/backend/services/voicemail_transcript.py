@@ -94,14 +94,28 @@ async def enqueue(event: dict) -> None:
         _wake.set()
 
 
-def recording_url(name: str) -> str:
+def gateway_file_url(prefix: str, name: str) -> str:
     parts = urlsplit(settings.telephony_gateway_url)
     scheme = "https" if parts.scheme == "wss" else "http"
-    return urlunsplit((scheme, parts.netloc, f"/v1/recordings/{name}", "", ""))
+    return urlunsplit((scheme, parts.netloc, f"{prefix}{name}", "", ""))
+
+
+def recording_url(name: str) -> str:
+    return gateway_file_url("/v1/recordings/", name)
 
 
 async def fetch_recording(name: str) -> bytes:
     """The WAV from the gateway; size cap and deadline enforced while streaming."""
+    audio = await fetch_gateway_file("/v1/recordings/", name, MAX_RECORDING_BYTES, what="recording")
+    if audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
+        raise _Fail("not a WAV file")
+    return audio
+
+
+async def fetch_gateway_file(prefix: str, name: str, max_bytes: int, *, what: str) -> bytes:
+    """One file from the gateway (``/v1/recordings/``, ``/v1/faxes/``) with the instance
+    token and the pinned CA; size cap and deadline enforced while streaming.
+    ``what`` names it in the error text only -- never the file name."""
     import httpx
 
     from services.telephony_client import _is_loopback, ssl_context_for
@@ -117,10 +131,10 @@ async def fetch_recording(name: str) -> bytes:
 
     async def _download() -> bytes:
         async with httpx.AsyncClient(verify=verify, timeout=FETCH_TIMEOUT_S, follow_redirects=False) as client:
-            async with client.stream("GET", recording_url(name), headers=headers) as resp:
+            async with client.stream("GET", gateway_file_url(prefix, name), headers=headers) as resp:
                 code = resp.status_code
                 if code == 404:
-                    raise _Fail("recording gone (404)")
+                    raise _Fail(f"{what} gone (404)")
                 if code in (425, 429) or code >= 500:
                     raise _Retry(f"gateway answered {code}")
                 if code != 200:
@@ -129,24 +143,21 @@ async def fetch_recording(name: str) -> bytes:
                     declared = int(resp.headers.get("content-length", "0"))
                 except ValueError:
                     declared = 0
-                if declared > MAX_RECORDING_BYTES:
-                    raise _Fail("recording too large")
+                if declared > max_bytes:
+                    raise _Fail(f"{what} too large")
                 buf = bytearray()
                 async for chunk in resp.aiter_bytes():
                     buf += chunk
-                    if len(buf) > MAX_RECORDING_BYTES:
-                        raise _Fail("recording too large")
+                    if len(buf) > max_bytes:
+                        raise _Fail(f"{what} too large")
                 return bytes(buf)
 
     try:
-        audio = await asyncio.wait_for(_download(), FETCH_TIMEOUT_S)
+        return await asyncio.wait_for(_download(), FETCH_TIMEOUT_S)
     except (_Retry, _Fail):
         raise
     except Exception as e:  # connect error, TLS, timeout
         raise _Retry(f"gateway fetch failed ({type(e).__name__})") from e
-    if audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
-        raise _Fail("not a WAV file")
-    return audio
 
 
 def _service_token() -> str:
