@@ -37,6 +37,9 @@ interface NotificationBellProps {
  * broadcast to shared devices. The count refreshes live via the content-free
  * `notifications_changed` user event (useUserEvents), not by polling.
  */
+// Above this a message may not fit the two clamped lines of the panel (w-80).
+const LONG_MESSAGE_CHARS = 90;
+
 export default function NotificationBell({ enabled }: NotificationBellProps) {
   const { t, i18n } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
@@ -44,6 +47,16 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const panelId = useId();
+  // Expanded messages by id. A long message (a voicemail transcript sits at its end)
+  // is clamped to two lines until opened.
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const toggleExpanded = (id: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const count = useUnreadNotificationCount(enabled);
   const list = useMyNotifications(enabled && isOpen);
@@ -143,6 +156,9 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
             )}
             {items.map((n) => {
               const isUnread = UNREAD_STATUSES.has(n.status);
+              const isLong = n.message.length > LONG_MESSAGE_CHARS;
+              const isExpanded = expanded.has(n.id);
+              const messageId = `${panelId}-message-${n.id}`;
               return (
                 <li key={n.id} className="flex items-start gap-3 px-4 py-3" data-testid="notification-bell-item">
                   <span
@@ -153,7 +169,24 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
                     <p className={`text-sm truncate ${isUnread ? 'font-medium text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>
                       {n.title}
                     </p>
-                    <p className="text-xs text-gray-600 dark:text-gray-300 line-clamp-2">{n.message}</p>
+                    <p
+                      id={messageId}
+                      className={`text-xs text-gray-600 dark:text-gray-300 break-words ${isExpanded ? '' : 'line-clamp-2'}`}
+                      data-testid="notification-bell-message"
+                    >
+                      {n.message}
+                    </p>
+                    {isLong && (
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(n.id)}
+                        aria-expanded={isExpanded}
+                        aria-controls={messageId}
+                        className="mt-0.5 text-xs font-medium text-primary-600 hover:underline dark:text-primary-400"
+                      >
+                        {isExpanded ? t('notifications.bell.showLess') : t('notifications.bell.showMore')}
+                      </button>
+                    )}
                     <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{relativeTime(n.created_at, i18n.language)}</p>
                   </div>
                   {isUnread && (

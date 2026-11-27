@@ -1870,6 +1870,8 @@
       "labelUnread": "Notifications, {{count}} unread",
       "markRead": "Mark as read",
       "markAllRead": "Mark all read",
+      "showMore": "Show more",
+      "showLess": "Show less",
       "empty": "No notifications",
       "failed": "Could not load notifications"
     }

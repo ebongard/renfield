@@ -1471,6 +1471,8 @@
       "labelUnread": "Notifiche, {{count}} non lette",
       "markRead": "Segna come letta",
       "markAllRead": "Segna tutte come lette",
+      "showMore": "Mostra di più",
+      "showLess": "Mostra meno",
       "empty": "Nessuna notifica",
       "failed": "Impossibile caricare le notifiche"
     }

@@ -1865,6 +1865,8 @@
       "labelUnread": "Notifications, {{count}} non lues",
       "markRead": "Marquer comme lue",
       "markAllRead": "Tout marquer comme lu",
+      "showMore": "Afficher plus",
+      "showLess": "Afficher moins",
       "empty": "Aucune notification",
       "failed": "Impossible de charger les notifications"
     },

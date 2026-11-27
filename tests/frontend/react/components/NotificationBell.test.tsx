@@ -5,7 +5,8 @@
  *  - the badge shows the unread count (99+ cap) and hides at zero;
  *  - opening lists `mine=true` notifications; acknowledge / mark-all hit the API
  *    and the count refetches; a failed acknowledge is shown;
- *  - focus moves into the panel on open and back to the bell on Escape.
+ *  - focus moves into the panel on open and back to the bell on Escape;
+ *  - a long message (a voicemail transcript at its end) is clamped and opens on demand.
  */
 import { describe, it, expect } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
@@ -142,5 +143,38 @@ describe('NotificationBell', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(bell).toHaveFocus();
+  });
+
+  it('a long message opens and closes; a short one offers no toggle', async () => {
+    const long = 'Neue Nachricht auf dem Anrufbeantworter von 0301234567 an 021611234567 (0:09): '
+      + '„Bitte rufen Sie zurück.“ (automatisch verschriftet, kann Fehler enthalten)';
+    server.use(
+      http.get(`${BASE_URL}/api/notifications/unread-count`, () => HttpResponse.json({ count: 1 })),
+      http.get(`${BASE_URL}/api/notifications`, () => HttpResponse.json({
+        notifications: [{ ...item(1, 'Neue Nachricht'), message: long }, item(2, 'Kurz')],
+        total: 2, limit: 20, offset: 0,
+      })),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<NotificationBell enabled />);
+    await user.click(await screen.findByTestId('notification-bell'));
+    const messages = await screen.findAllByTestId('notification-bell-message');
+    expect(messages[0]).toHaveTextContent('Bitte rufen Sie zurück.');
+    expect(messages[0].className).toContain('line-clamp-2');
+
+    const toggles = screen.getAllByRole('button', { name: /mehr anzeigen|show more/i });
+    expect(toggles).toHaveLength(1); // only the long one
+    expect(toggles[0]).toHaveAttribute('aria-expanded', 'false');
+    expect(toggles[0]).toHaveAttribute('aria-controls', messages[0].id);
+
+    await user.click(toggles[0]);
+    expect(messages[0].className).not.toContain('line-clamp-2');
+    const less = screen.getByRole('button', { name: /weniger anzeigen|show less/i });
+    expect(less).toHaveAttribute('aria-expanded', 'true');
+    // Opening a message keeps the panel open (the click stays inside it).
+    expect(screen.getAllByTestId('notification-bell-item')).toHaveLength(2);
+
+    await user.click(less);
+    expect(messages[0].className).toContain('line-clamp-2');
   });
 });

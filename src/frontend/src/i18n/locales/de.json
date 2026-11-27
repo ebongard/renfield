@@ -1870,6 +1870,8 @@
       "labelUnread": "Benachrichtigungen, {{count}} ungelesen",
       "markRead": "Als gelesen markieren",
       "markAllRead": "Alle gelesen",
+      "showMore": "Mehr anzeigen",
+      "showLess": "Weniger anzeigen",
       "empty": "Keine Benachrichtigungen",
       "failed": "Benachrichtigungen konnten nicht geladen werden"
     }
