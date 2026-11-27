@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isAxiosError } from 'axios';
 import { Bell, Check, CheckCheck, NotebookPen } from 'lucide-react';
@@ -11,7 +11,8 @@ import {
   useUnreadNotificationCount,
   type BellNotification,
 } from '../api/resources/notifications';
-import { useCreateNote } from '../api/resources/notes';
+import { useCreateNote, type Note } from '../api/resources/notes';
+import apiClient from '../utils/axios';
 
 /** The backend sends naive UTC (`isoformat()` without offset). */
 function parseServerTime(value: string): Date {
@@ -28,20 +29,27 @@ function relativeTime(value: string, locale: string): string {
   return rtf.format(Math.round(seconds / 86400), 'day');
 }
 
-/** A note from a notification: title + date/time (the title is the note's unique
- *  [[link]] key), the message as body, tier 0 (only the viewer). The message may
- *  carry a caller's words (voicemail transcript): `[[`/`]]` are broken up so that
- *  text can never create a note link in the knowledge graph. */
-export function noteFromNotification(n: Pick<BellNotification, 'title' | 'message' | 'created_at'>, locale: string) {
-  const when = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
+/** A note from a notification: title + date/time to the second (the title is the
+ *  note's unique [[link]] key; ``attempt`` > 1 adds " (n)"), the message as body,
+ *  tier 0 (only the viewer). The message may carry a caller's words (voicemail
+ *  transcript): every bracket becomes its fullwidth form, so that text can never
+ *  form a [[link]] in the knowledge graph -- for any run of brackets. */
+export function noteFromNotification(
+  n: Pick<BellNotification, 'title' | 'message' | 'created_at'>,
+  locale: string,
+  attempt = 1,
+) {
+  const when = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium' })
     .format(parseServerTime(n.created_at));
-  const unlink = (text: string) => text.replace(/\[\[/g, '[ [').replace(/\]\]/g, '] ]');
-  return {
-    title: unlink(`${n.title} – ${when}`).slice(0, 255),
-    body: unlink(n.message),
-    circle_tier: 0,
-  };
+  const unlink = (text: string) => text.replace(/\[/g, '［').replace(/\]/g, '］');
+  const tail = ` – ${when}${attempt > 1 ? ` (${attempt})` : ''}`;
+  // Cut the notification title, never the date (by code point: no split surrogate).
+  const head = Array.from(unlink(n.title)).slice(0, Math.max(1, 255 - tail.length)).join('');
+  return { title: `${head}${tail}`, body: unlink(n.message), circle_tier: 0 };
 }
+
+/** Try " (2)" .. up to this when the title is taken by a DIFFERENT note. */
+const MAX_NOTE_ATTEMPTS = 5;
 
 interface NotificationBellProps {
   /** Feature flag AND a signed-in (or auth-off) viewer; false => renders nothing, fetches nothing. */
@@ -56,9 +64,6 @@ interface NotificationBellProps {
  * broadcast to shared devices. The count refreshes live via the content-free
  * `notifications_changed` user event (useUserEvents), not by polling.
  */
-// Above this a message may not fit the two clamped lines of the panel (w-80).
-const LONG_MESSAGE_CHARS = 90;
-
 export default function NotificationBell({ enabled, notesEnabled = false }: NotificationBellProps) {
   const { t, i18n } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
@@ -69,21 +74,43 @@ export default function NotificationBell({ enabled, notesEnabled = false }: Noti
   // Expanded messages by id. A long message (a voicemail transcript sits at its end)
   // is clamped to two lines until opened.
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  // Messages that do not fit their two clamped lines -- measured, not guessed from a
+  // character count (the width depends on the panel, the read state and the screen).
+  const [overflowing, setOverflowing] = useState<Set<number>>(() => new Set());
+  const messageEls = useRef(new Map<number, HTMLParagraphElement>());
   const createNote = useCreateNote();
   const [savedAsNote, setSavedAsNote] = useState<Set<number>>(() => new Set());
-  const markSaved = (id: number) => setSavedAsNote((prev) => new Set(prev).add(id));
+  const [noteError, setNoteError] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState('');
+  const markSaved = (id: number) => {
+    setSavedAsNote((prev) => new Set(prev).add(id));
+    setAnnouncement(t('notifications.bell.savedAsNote'));
+  };
   const saveAsNote = async (n: BellNotification) => {
-    try {
-      await createNote.mutateAsync(noteFromNotification(n, i18n.language));
-      markSaved(n.id);
-    } catch (error) {
-      // 409 = a note with this title (same notification) already exists: it IS saved.
-      // Anything else stays visible through createNote.errorMessage.
-      if (isAxiosError(error) && error.response?.status === 409) {
-        createNote.reset();
+    setNoteError(null);
+    for (let attempt = 1; attempt <= MAX_NOTE_ATTEMPTS; attempt += 1) {
+      const note = noteFromNotification(n, i18n.language, attempt);
+      try {
+        await createNote.mutateAsync(note);
         markSaved(n.id);
+        return;
+      } catch (error) {
+        if (!(isAxiosError(error) && error.response?.status === 409)) return; // shown via createNote.errorMessage
+        createNote.reset();
+        // The title is taken. Saved already only if that note holds THIS message;
+        // another note of the same title (same minute, a hand-written one) is not it.
+        try {
+          const existing = (await apiClient.get<Note[]>('/api/notes')).data;
+          if (Array.isArray(existing) && existing.some((e) => e.title === note.title && e.body === note.body)) {
+            markSaved(n.id);
+            return;
+          }
+        } catch {
+          break;
+        }
       }
     }
+    setNoteError(t('notes.failedToSave'));
   };
   const toggleExpanded = (id: number) =>
     setExpanded((prev) => {
@@ -92,6 +119,14 @@ export default function NotificationBell({ enabled, notesEnabled = false }: Noti
       else next.add(id);
       return next;
     });
+
+  const resetNoteError = createNote.reset;
+  useEffect(() => {
+    if (!isOpen) {
+      resetNoteError();
+      setNoteError(null);
+    }
+  }, [isOpen, resetNoteError]);
 
   const count = useUnreadNotificationCount(enabled);
   const list = useMyNotifications(enabled && isOpen);
@@ -118,6 +153,20 @@ export default function NotificationBell({ enabled, notesEnabled = false }: Noti
       document.removeEventListener('keydown', onKey);
     };
   }, [isOpen]);
+
+  // After each render of the open list: which clamped messages are cut off? Only the
+  // collapsed ones are measured (an expanded one keeps its toggle via ``expanded``).
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    const next = new Set<number>();
+    messageEls.current.forEach((el, id) => {
+      if (el.scrollHeight > el.clientHeight + 1) next.add(id);
+    });
+    setOverflowing((prev) => {
+      const same = prev.size === next.size && [...next].every((id) => prev.has(id));
+      return same ? prev : next;
+    });
+  }, [isOpen, list.data, expanded]);
 
   if (!enabled) return null;
 
@@ -173,11 +222,12 @@ export default function NotificationBell({ enabled, notesEnabled = false }: Noti
             )}
           </div>
 
-          {(acknowledge.errorMessage || acknowledgeAll.errorMessage || createNote.errorMessage) && (
+          {(acknowledge.errorMessage || acknowledgeAll.errorMessage || createNote.errorMessage || noteError) && (
             <p className="px-4 py-2 text-xs text-red-600 dark:text-red-400" role="alert">
-              {acknowledge.errorMessage ?? acknowledgeAll.errorMessage ?? createNote.errorMessage}
+              {acknowledge.errorMessage ?? acknowledgeAll.errorMessage ?? createNote.errorMessage ?? noteError}
             </p>
           )}
+          <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
 
           <ul className="max-h-96 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700">
             {list.isLoading && (
@@ -191,8 +241,9 @@ export default function NotificationBell({ enabled, notesEnabled = false }: Noti
             )}
             {items.map((n) => {
               const isUnread = UNREAD_STATUSES.has(n.status);
-              const isLong = n.message.length > LONG_MESSAGE_CHARS;
               const isExpanded = expanded.has(n.id);
+              const isLong = isExpanded || overflowing.has(n.id);
+              const isSaved = savedAsNote.has(n.id);
               const messageId = `${panelId}-message-${n.id}`;
               return (
                 <li key={n.id} className="flex items-start gap-3 px-4 py-3" data-testid="notification-bell-item">
@@ -206,6 +257,10 @@ export default function NotificationBell({ enabled, notesEnabled = false }: Noti
                     </p>
                     <p
                       id={messageId}
+                      ref={(el) => {
+                        if (el) messageEls.current.set(n.id, el);
+                        else messageEls.current.delete(n.id);
+                      }}
                       className={`text-xs text-gray-600 dark:text-gray-300 break-words ${isExpanded ? '' : 'line-clamp-2'}`}
                       data-testid="notification-bell-message"
                     >
@@ -219,27 +274,29 @@ export default function NotificationBell({ enabled, notesEnabled = false }: Noti
                             onClick={() => toggleExpanded(n.id)}
                             aria-expanded={isExpanded}
                             aria-controls={messageId}
+                            aria-describedby={messageId}
                             className="text-xs font-medium text-primary-600 hover:underline dark:text-primary-400"
                           >
                             {isExpanded ? t('notifications.bell.showLess') : t('notifications.bell.showMore')}
                           </button>
                         )}
-                        {notesEnabled && (savedAsNote.has(n.id) ? (
-                          <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400" role="status">
-                            <Check className="w-3.5 h-3.5" aria-hidden="true" />
-                            {t('notifications.bell.savedAsNote')}
-                          </span>
-                        ) : (
+                        {notesEnabled && (
+                          // Stays mounted when saved (disabled), so keyboard focus is not lost.
                           <button
                             type="button"
                             onClick={() => void saveAsNote(n)}
-                            disabled={createNote.isPending}
-                            className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:underline dark:text-primary-400 disabled:opacity-50"
+                            disabled={isSaved || createNote.isPending}
+                            aria-describedby={messageId}
+                            className={`inline-flex items-center gap-1 text-xs font-medium ${isSaved
+                              ? 'text-gray-500 dark:text-gray-400'
+                              : 'text-primary-600 hover:underline dark:text-primary-400 disabled:opacity-50'}`}
                           >
-                            <NotebookPen className="w-3.5 h-3.5" aria-hidden="true" />
-                            {t('notifications.bell.saveAsNote')}
+                            {isSaved
+                              ? <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                              : <NotebookPen className="w-3.5 h-3.5" aria-hidden="true" />}
+                            {isSaved ? t('notifications.bell.savedAsNote') : t('notifications.bell.saveAsNote')}
                           </button>
-                        ))}
+                        )}
                       </div>
                     )}
                     <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{relativeTime(n.created_at, i18n.language)}</p>

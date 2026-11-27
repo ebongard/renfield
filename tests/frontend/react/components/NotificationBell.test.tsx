@@ -7,9 +7,10 @@
  *    and the count refetches; a failed acknowledge is shown;
  *  - focus moves into the panel on open and back to the bell on Escape;
  *  - a long message (a voicemail transcript at its end) is clamped and opens on demand;
- *  - "save as note" (only with notes on) creates a tier-0 note; a caller's [[...]] never links.
+ *  - "save as note" (only with notes on) creates a tier-0 note; a title taken by ANOTHER note
+ *    gets " (2)", the same note counts as saved; a caller's brackets never form a [[link]].
  */
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -62,6 +63,31 @@ function mockApi(count: number, ackStatus = 200): Api {
   );
   return api;
 }
+
+/** jsdom has no layout: a clamped message "overflows" when its text is long. */
+function fakeLayout(): () => void {
+  const proto = HTMLElement.prototype;
+  const sh = Object.getOwnPropertyDescriptor(proto, 'scrollHeight');
+  const ch = Object.getOwnPropertyDescriptor(proto, 'clientHeight');
+  Object.defineProperty(proto, 'scrollHeight', {
+    configurable: true,
+    get(this: HTMLElement) { return (this.textContent ?? '').length > 90 ? 60 : 20; },
+  });
+  Object.defineProperty(proto, 'clientHeight', {
+    configurable: true,
+    get(this: HTMLElement) { return this.className.includes('line-clamp-2') ? 32 : 60; },
+  });
+  return () => {
+    if (sh) Object.defineProperty(proto, 'scrollHeight', sh);
+    if (ch) Object.defineProperty(proto, 'clientHeight', ch);
+  };
+}
+
+let restoreLayout: (() => void) | null = null;
+afterEach(() => {
+  restoreLayout?.();
+  restoreLayout = null;
+});
 
 describe('NotificationBell', () => {
   it('renders nothing and fetches nothing when disabled', async () => {
@@ -147,6 +173,7 @@ describe('NotificationBell', () => {
   });
 
   it('a long message opens and closes; a short one offers no toggle', async () => {
+    restoreLayout = fakeLayout();
     const long = 'Neue Nachricht auf dem Anrufbeantworter von 0301234567 an 021611234567 (0:09): '
       + '„Bitte rufen Sie zurück.“ (automatisch verschriftet, kann Fehler enthalten)';
     server.use(
@@ -180,55 +207,74 @@ describe('NotificationBell', () => {
   });
 
   describe('save as note', () => {
-    function mockNotes(status = 200) {
-      const posted: Array<Record<string, unknown>> = [];
+    interface NotesApi { posted: Array<Record<string, unknown>>; existing: Array<{ title: string; body: string }> }
+    function mockNotes(status = 200, existing: Array<{ title: string; body: string }> = []): NotesApi {
+      const api: NotesApi = { posted: [], existing };
       server.use(
         http.get(`${BASE_URL}/api/notifications/unread-count`, () => HttpResponse.json({ count: 1 })),
         http.get(`${BASE_URL}/api/notifications`, () => HttpResponse.json({
           notifications: [item(1, 'Neue Nachricht')], total: 1, limit: 20, offset: 0,
         })),
+        http.get(`${BASE_URL}/api/notes`, () => HttpResponse.json(api.existing.map((e, i) => ({
+          id: i + 1, ...e, circle_tier: 0, project_id: null, owner_id: 1, atom_id: 'a', created_at: '', updated_at: '',
+        })))),
         http.post(`${BASE_URL}/api/notes`, async ({ request }) => {
-          posted.push((await request.json()) as Record<string, unknown>);
-          if (status !== 200) return HttpResponse.json({ detail: 'A note with this title already exists' }, { status });
-          return HttpResponse.json({ id: 7, title: 't', body: 'b', circle_tier: 0, project_id: null, owner_id: 1,
+          const body = (await request.json()) as { title: string; body: string };
+          api.posted.push(body);
+          if (status !== 200) return HttpResponse.json({ detail: 'boom' }, { status });
+          if (api.existing.some((e) => e.title === body.title)) {
+            return HttpResponse.json({ detail: 'A note with this title already exists' }, { status: 409 });
+          }
+          api.existing.push({ title: body.title, body: body.body });
+          return HttpResponse.json({ id: 7, ...body, circle_tier: 0, project_id: null, owner_id: 1,
             atom_id: 'a', created_at: '', updated_at: '' });
         }),
       );
-      return posted;
+      return api;
+    }
+    const saveButton = () => screen.getByRole('button', { name: /als notiz speichern|save as note/i });
+
+    async function openAndSave() {
+      const user = userEvent.setup();
+      renderWithProviders(<NotificationBell enabled notesEnabled />);
+      await user.click(await screen.findByTestId('notification-bell'));
+      await user.click(await screen.findByRole('button', { name: /als notiz speichern|save as note/i }));
     }
 
     it('creates a private note from the notification', async () => {
-      const posted = mockNotes();
-      const user = userEvent.setup();
-      renderWithProviders(<NotificationBell enabled notesEnabled />);
-      await user.click(await screen.findByTestId('notification-bell'));
-      await user.click(await screen.findByRole('button', { name: /als notiz speichern|save as note/i }));
-      await screen.findByText(/als notiz gespeichert|saved as note/i);
-      expect(posted).toHaveLength(1);
-      expect(posted[0].title).toMatch(/^Neue Nachricht – /);
-      expect(posted[0].body).toBe('Neue Nachricht message');
-      expect(posted[0].circle_tier).toBe(0);
-      expect(screen.queryByRole('button', { name: /als notiz speichern|save as note/i })).toBeNull();
+      const api = mockNotes();
+      await openAndSave();
+      const saved = await screen.findByRole('button', { name: /als notiz gespeichert|saved as note/i });
+      expect(saved).toBeDisabled(); // stays mounted: focus is not lost
+      expect(api.posted).toHaveLength(1);
+      expect(api.posted[0].title).toMatch(/^Neue Nachricht – /);
+      expect(api.posted[0].body).toBe('Neue Nachricht message');
+      expect(api.posted[0].circle_tier).toBe(0);
     });
 
-    it('an existing note of the same title counts as saved, not as an error', async () => {
-      mockNotes(409);
-      const user = userEvent.setup();
-      renderWithProviders(<NotificationBell enabled notesEnabled />);
-      await user.click(await screen.findByTestId('notification-bell'));
-      await user.click(await screen.findByRole('button', { name: /als notiz speichern|save as note/i }));
-      await screen.findByText(/als notiz gespeichert|saved as note/i);
+    it('the same note already there counts as saved', async () => {
+      const first = noteFromNotification(item(1, 'Neue Nachricht'), 'de');
+      const api = mockNotes(200, [{ title: first.title, body: first.body }]);
+      await openAndSave();
+      await screen.findByRole('button', { name: /als notiz gespeichert|saved as note/i });
+      expect(api.posted).toHaveLength(1); // no second copy
       expect(screen.queryByRole('alert')).toBeNull();
     });
 
-    it('a server error is shown', async () => {
+    it('a title taken by ANOTHER note gets " (2)" -- never a false "saved"', async () => {
+      const first = noteFromNotification(item(1, 'Neue Nachricht'), 'de');
+      const api = mockNotes(200, [{ title: first.title, body: 'eine andere Nachricht' }]);
+      await openAndSave();
+      await screen.findByRole('button', { name: /als notiz gespeichert|saved as note/i });
+      expect(api.posted.map((p) => p.title)).toEqual([first.title, `${first.title} (2)`]);
+      expect(api.existing.at(-1)?.body).toBe('Neue Nachricht message');
+    });
+
+    it('a server error is shown and the button stays', async () => {
       mockNotes(500);
-      const user = userEvent.setup();
-      renderWithProviders(<NotificationBell enabled notesEnabled />);
-      await user.click(await screen.findByTestId('notification-bell'));
-      await user.click(await screen.findByRole('button', { name: /als notiz speichern|save as note/i }));
+      await openAndSave();
       expect(await screen.findByRole('alert')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /als notiz speichern|save as note/i })).toBeInTheDocument();
+      expect(saveButton()).toBeEnabled();
     });
 
     it('no button with notes off', async () => {
@@ -240,14 +286,22 @@ describe('NotificationBell', () => {
       expect(screen.queryByRole('button', { name: /als notiz speichern|save as note/i })).toBeNull();
     });
 
-    it("a caller's [[link]] never becomes a note link", () => {
+    it("a caller's brackets never form a [[link]], however many", () => {
       const note = noteFromNotification(
-        { title: 'Neue Nachricht', message: '„Siehe [[Geheim]] und ]]x[[“', created_at: '2026-11-27T10:04:00' },
+        { title: 'Neue [[Nachricht]]', message: '„Siehe [[Geheim]], [[[x]]] und ]]y[[“', created_at: '2026-11-27T10:04:00' },
         'de',
       );
-      expect(note.body).not.toMatch(/\[\[|\]\]/);
+      expect(note.body).not.toMatch(/[[\]]/);
+      expect(note.title).not.toMatch(/[[\]]/);
       expect(note.body).toContain('Geheim');
-      expect(note.title).not.toMatch(/\[\[|\]\]/);
+    });
+
+    it('a long title is cut, the date never', () => {
+      const n = { title: 'x'.repeat(400), message: 'm', created_at: '2026-11-27T10:04:05' };
+      const note = noteFromNotification(n, 'de');
+      expect(note.title.length).toBeLessThanOrEqual(255);
+      expect(note.title).toMatch(/ – .*2026/);
+      expect(noteFromNotification(n, 'de', 2).title).toMatch(/\(2\)$/);
     });
   });
 });
