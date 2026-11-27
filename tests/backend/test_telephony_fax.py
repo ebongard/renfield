@@ -180,14 +180,14 @@ async def env(monkeypatch, pg_db_session):
 
     monkeypatch.setattr(tf, "fetch_fax", fetch)
 
-    import api.routes.knowledge as kn
+    import services.task_queue as tq
 
     state = {"worker": True, "result": IngestResult(IngestStatus.INGESTED, document_id=42, detail="enqueued")}
 
     async def alive():
         return state["worker"]
 
-    monkeypatch.setattr(kn, "_worker_is_alive", alive)
+    monkeypatch.setattr(tq, "document_worker_is_alive", alive)
     ingested: list[dict] = []
 
     async def ingest(file_bytes, meta, **kw):
@@ -223,6 +223,26 @@ class TestEvent:
         assert await _jobs(pg_db_session) == []
         (event, users), = env["notified"]
         assert users == [env["owner"].id] and event["status"] == "failed"
+
+    async def test_a_failed_notice_carries_only_vetted_fields(self, pg_db_session, env):
+        await tf.handle_event({**EVENT, "status": "failed", "document_id": 99, "kb": "X", "filed": True})
+        event = env["notified"][0][0]
+        assert set(event) == {"type", "status", "call_id", "did", "caller", "pages"}
+        assert tc.build_notification(event)["data"]["fax_status"] == "failed"
+
+    async def test_without_an_owner_the_fax_waits_in_the_queue(self, pg_db_session, env, monkeypatch, caplog):
+        monkeypatch.setattr(tf.settings, "telephony_fax_owner", "")
+        with caplog.at_level(logging.ERROR):
+            await tf.handle_event(EVENT)
+        assert len(await _jobs(pg_db_session)) == 1  # not marked done and forgotten
+        assert "TELEPHONY_FAX_OWNER" in caplog.text
+
+    async def test_an_owner_that_is_no_user_retries(self, pg_db_session, env, monkeypatch):
+        monkeypatch.setattr(tf.settings, "telephony_fax_owner", "nobody-such")
+        await tf.handle_event(EVENT)
+        await tf.process_one()
+        job = (await _jobs(pg_db_session))[0]
+        assert job.status == "pending" and job.attempts == 1 and env["ingested"] == []
 
     async def test_ok_without_a_valid_file_is_a_failed_fax(self, pg_db_session, env):
         await tf.handle_event({**EVENT, "fax": "../haushalt/x"})

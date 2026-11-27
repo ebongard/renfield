@@ -886,7 +886,7 @@ VOICEMAIL_TRANSCRIPT_ENABLED=false   # Aufnahme holen, ohne Stimmabdruck verschr
 
 ```bash
 TELEPHONY_FAX_ENABLED=false       # Ereignis fax_received: PDF holen, als Dokument ablegen, Besitzer benachrichtigen
-TELEPHONY_FAX_OWNER=              # Benutzername oder ID des EINEN Besitzers; leer = Schleife startet nicht
+TELEPHONY_FAX_OWNER=              # Benutzername oder ID des EINEN Besitzers; leer/unbekannt = Faxe warten (Fehler im Log)
 TELEPHONY_FAX_TIER=0              # Stufe des abgelegten Dokuments (0–4)
 TELEPHONY_FAX_KB=Fax              # Wissensdatenbank des Besitzers, beim ersten Fax angelegt
 TELEPHONY_FAX_TO_PAPERLESS=true   # zusätzlich nach Paperless (außer Band, wie Ordner/E-Mail)

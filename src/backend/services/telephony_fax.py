@@ -42,6 +42,7 @@ _wake: asyncio.Event | None = None   # created by the loop; enqueue only sets it
 
 
 def enabled() -> bool:
+    """The filing loop runs. Queuing needs only the flag (see ``handle_event``)."""
     return bool(settings.telephony_fax_enabled and settings.telephony_enabled and settings.telephony_fax_owner.strip())
 
 
@@ -72,7 +73,7 @@ async def notify_owner(event: dict) -> None:
     async with AsyncSessionLocal() as db:
         owner = await _owner_id(db)
         if owner is None:
-            logger.warning("Fax notification: TELEPHONY_FAX_OWNER is no user — nobody notified")
+            logger.error("Fax notification: TELEPHONY_FAX_OWNER is no user — nobody notified")
             return
         resolve = None
         if settings.caller_lookup_enabled and settings.contact_points_enabled:
@@ -92,7 +93,9 @@ async def enqueue(event: dict) -> bool:
 
     call_id = str(event.get("call_id") or "")[:64]
     fax = event.get("fax")
-    if not call_id or not valid_recording(fax):  # the gateway's name check, same format
+    # The gateway names a fax like a recording (<YYYYMMDD-HHMMSS>-<uniqueid>, no extension;
+    # telefonie extensions.conf fax-receive): the same check as for recordings.
+    if not call_id or not valid_recording(fax):
         return False
     now = _utcnow()
     stmt = (
@@ -113,13 +116,23 @@ async def enqueue(event: dict) -> bool:
 
 
 async def handle_event(event: dict) -> None:
-    """``fax_received`` from the telephony client. Raises = retry the event."""
-    if not enabled():
+    """``fax_received`` from the telephony client. Raises = retry the event.
+
+    A received fax is queued whenever the flag is on -- also without a valid
+    owner: the job waits in ``telephony_faxes`` (the loop does not start, or
+    retries) instead of the event being marked done and the fax forgotten."""
+    if not settings.telephony_fax_enabled:
         return
+    if not enabled():
+        logger.error("Fax received but TELEPHONY_FAX_OWNER is empty — queued, not filed until it is set")
     if event.get("status") == "ok" and await enqueue(event):
         return
     # Not received (or "ok" without a usable file): tell the owner now, nothing to file.
-    await notify_owner({**event, "status": "failed"})
+    # Only the vetted fields: nothing else of a gateway event reaches the notification.
+    await notify_owner({
+        "type": "fax_received", "status": "failed", "call_id": event.get("call_id"),
+        "did": event.get("did"), "caller": event.get("caller"), "pages": event.get("pages"),
+    })
 
 
 async def fetch_fax(name: str) -> bytes:
@@ -138,7 +151,10 @@ async def file_fax(db, job, pdf: bytes):
 
     owner = await _owner_id(db)
     if owner is None:
-        return IngestResult(IngestStatus.FAILED, detail="no_owner"), None
+        # A configuration error, not a bad fax: retry (and log loudly) -- an owner that is
+        # fixed within the retries still gets the fax; the PDF stays 30 days at the gateway.
+        logger.error("Fax job: TELEPHONY_FAX_OWNER is no user — cannot file")
+        return IngestResult(IngestStatus.RETRY, detail="no_owner"), None
     kb_name = settings.telephony_fax_kb.strip() or "Fax"
     kb = await get_or_create_owned_kb(db, kb_name, owner, description="Empfangene Faxe (Telefonie)")
     stamp = job.created_at.strftime("%Y-%m-%d_%H%M%S") if job.created_at else "unbekannt"
@@ -152,7 +168,7 @@ async def file_fax(db, job, pdf: bytes):
         pdf, meta, db=db, kb_id=kb.id, owner_user_id=owner, default_tier=settings.telephony_fax_tier,
         file_to_paperless=settings.telephony_fax_to_paperless, source=INGEST_SOURCE,
     )
-    await db.commit()  # the KB, if it was new; ingest_document commits its own rows
+    await db.commit()  # nothing left open (get_or_create_owned_kb and ingest_document commit their own rows)
     return result, kb_name
 
 
@@ -231,9 +247,9 @@ async def process_one() -> bool:
         return True
     try:
         pdf = await fetch_fax(job.fax)
-        from api.routes.knowledge import _worker_is_alive
+        from services.task_queue import document_worker_is_alive
 
-        if not await _worker_is_alive():
+        if not await document_worker_is_alive():
             raise _Retry("document worker unavailable")  # enqueued work nobody consumes = an orphan
         async with AsyncSessionLocal() as db:
             result, kb_name = await file_fax(db, job, pdf)
