@@ -487,6 +487,13 @@ einzelne oder alle lassen sich als gelesen markieren. Neue Meldungen erscheinen 
 (über `/ws/user`). Die Glocke enthält nur Meldungen an die angemeldete Person, auch bei Admins;
 öffentliche Meldungen erscheinen weiter als Einblendung auf allen Geräten.
 
+Eine Meldung, die nicht in ihre zwei Zeilen passt, lässt sich aufklappen („Mehr anzeigen“; gemessen, nicht nach
+Zeichenzahl) — so ist auch der Text einer AB-Nachricht zu lesen, der am Ende steht. Mit `NOTES_ENABLED` legt
+„Als Notiz speichern“ die Meldung als eigene Notiz ab (Titel = Titel der Meldung + Datum/Uhrzeit, Stufe 0). Eckige
+Klammern im Text werden dabei zu Vollbreite-Klammern: die Worte eines Anrufers können keine `[[Verknüpfung]]` im
+Wissensgraph anlegen. Ab dem Speichern ist der Text Teil des eigenen Wissens (Suche, Antworten) — eine bewusste
+Entscheidung je Meldung.
+
 ### Web Push (#79, `PUSH_NOTIFICATIONS_ENABLED`, opt-in/dark)
 
 **Stand:** im Haushalt ist der Schalter gesetzt (2026-11-23); aktiv erst mit VAPID-Paar und Kontaktadresse im Secret `renfield-env-private`. xidra: aus.
