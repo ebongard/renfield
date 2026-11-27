@@ -473,6 +473,12 @@ Anrufer-Auflösung (`CALLER_LOOKUP_ENABLED`, dunkel): die Meldung nennt den Anru
 jeweilige Empfänger sehen darf („Anruf von Beispiel Praxis an …“), mit Nummer und dem Hinweis „nicht geprüft“
 (Rufnummern lassen sich fälschen); ohne Treffer Ort oder „Mobilfunk“. Entwurf: `docs/design/caller-lookup.md`.
 
+Text der Nachricht (#1669, `VOICEMAIL_TRANSCRIPT_ENABLED`, dunkel): Renfield holt die Aufnahme vom Gateway,
+lässt sie vom voice-server verschriften, **ohne Stimmabdruck** (`embed=false`, die Antwort muss es bestätigen),
+und hängt den Text an die schon zugestellte Nachricht-Meldung derselben Empfänger an („…: „Bitte rufen Sie
+zurück.“ (automatisch verschriftet, kann Fehler enthalten)“); die Meldung wird dabei `confidential`. Kein
+zweiter Push, nie vorgelesen, nie an ein LLM. Entwurf: `docs/design/voicemail-transcript.md`.
+
 ### Benachrichtigungs-Glocke (#1653, `NOTIFICATION_BELL_ENABLED`, dark)
 
 Eine Glocke mit Badge im Header zeigt die ungelesenen eigenen Benachrichtigungen, etwa Anrufe,

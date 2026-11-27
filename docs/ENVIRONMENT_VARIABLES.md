@@ -867,6 +867,21 @@ CALLER_LOOKUP_TIMEOUT_S=0.5     # je Empfänger; langsamer = nur die Nummer
 - Jeder Fehler und jede Zeitüberschreitung fällt auf die reine Nummer zurück und löst keine Wiederholung aus.
 - Aus: der Text ist Byte für Byte wie vorher.
 
+**Text der Nachricht** (`docs/design/voicemail-transcript.md`, braucht `TELEPHONY_ENABLED` und `VOICE_SERVER_URL`
+mit voice-server ≥ 0.3.13):
+
+```bash
+VOICEMAIL_TRANSCRIPT_ENABLED=false   # Aufnahme holen, ohne Stimmabdruck verschriften, Text an die Meldung
+```
+
+- An: Je Nachricht ein Auftrag in `telephony_voicemails` (Migration `pc20261127_telephony_voicemails`, VOR dem
+  Rollout). Eine Schleife im Backend holt die Aufnahme (`GET /v1/recordings/<name>` am Gateway, gleiches Token und
+  Zertifikat wie die Ereignisse) und schickt sie mit `embed=false` an den voice-server. Ohne `embedded: false` in
+  der Antwort wird der Text verworfen.
+- Der Text kommt nur in die bestehenden Meldungen dieses Anrufs (nicht verworfen, nicht abgelaufen), die dabei
+  `confidential` werden. 3 Versuche in etwa 10 Minuten; ein Fehlschlag lässt die Meldung wie sie war.
+- Aus: kein Auftrag, keine Anfrage, die Meldung ist Byte für Byte wie vorher.
+
 Bei `wss://` ohne `TELEPHONY_GATEWAY_CA_PEM` startet der Client **nicht** (kein ungeprüftes TLS); unverschlüsseltes `ws://` ist nur zu localhost erlaubt. Ein falsches
 Token wird mit 401 abgewiesen, der Client versucht es mit Backoff (max. 60 s) erneut.
 

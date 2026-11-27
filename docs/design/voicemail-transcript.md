@@ -1,6 +1,6 @@
 # Voicemail transcript — the text of a message in the notification
 
-Status: DRAFT 2026-11-26, architect-reviewed the same day (§11). Issue #1669. Built: step 1 (voice-server `embed=false`, 0.3.13). Follows the telephony gateway (#1650) and the caller lookup (#1240, `caller-lookup.md`).
+Status: DRAFT 2026-11-26, architect-reviewed the same day (§11). Issue #1669. Built: step 1 (voice-server `embed=false`, 0.3.13), step 2 (gateway `GET /v1/recordings`, live 2026-11-27), step 3 (Renfield job + loop, dark). Follows the telephony gateway (#1650) and the caller lookup (#1240, `caller-lookup.md`).
 Gateway side lives in the private `telefonie` repo (`docs/plan.md` Phase 2b: "Abruf der Audiodatei über den Kanal
 (Renfield holt, LAN → DMZ) folgt mit dem Transkript (Whisper) als eigener Schritt").
 
@@ -126,6 +126,19 @@ The hint ships together with switching the flag on, not before.
   dismissed or expired rows are not updated; only the original recipients' rows change; the row becomes
   confidential; the transcript is not in `source_data`, the embedding or the logs; bidi/control stripped;
   length cap.
+
+## 10a. As built (step 3)
+
+- `services/voicemail_transcript.py`; table `telephony_voicemails`, migration `pc20261127_telephony_voicemails`.
+- The claim is a LEASE, not a lock held across the I/O: `FOR UPDATE SKIP LOCKED`, `attempts += 1`,
+  `next_attempt_at = now + 5 min`, commit. A pod that dies mid-job leaves the row pending; it runs again when the
+  lease is over. Retries after attempt 1 and 2: +2 min, +8 min; attempt 3 failing = `failed`.
+- Text and `done` commit in ONE transaction; a row that already carries `transcript_status` is skipped, so a
+  repeated job never appends twice.
+- The loop is woken by `enqueue` in the same process, otherwise polls every 60 s.
+- Found while building: "Ähnliche unterdrücken" embedded `title + message` into a STORED suppression rule. For a
+  row with `transcript_status = done` it now embeds the title only (the caller's words never outlive the row).
+- `/ws/user` reason `updated` (the frontend refetches on any `notifications_changed`).
 
 ## 10. Out of scope (later)
 
