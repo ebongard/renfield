@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bell, Check, CheckCheck } from 'lucide-react';
+import { isAxiosError } from 'axios';
+import { Bell, Check, CheckCheck, NotebookPen } from 'lucide-react';
 
 import {
   UNREAD_STATUSES,
@@ -10,6 +11,7 @@ import {
   useUnreadNotificationCount,
   type BellNotification,
 } from '../api/resources/notifications';
+import { useCreateNote } from '../api/resources/notes';
 
 /** The backend sends naive UTC (`isoformat()` without offset). */
 function parseServerTime(value: string): Date {
@@ -26,9 +28,26 @@ function relativeTime(value: string, locale: string): string {
   return rtf.format(Math.round(seconds / 86400), 'day');
 }
 
+/** A note from a notification: title + date/time (the title is the note's unique
+ *  [[link]] key), the message as body, tier 0 (only the viewer). The message may
+ *  carry a caller's words (voicemail transcript): `[[`/`]]` are broken up so that
+ *  text can never create a note link in the knowledge graph. */
+export function noteFromNotification(n: Pick<BellNotification, 'title' | 'message' | 'created_at'>, locale: string) {
+  const when = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
+    .format(parseServerTime(n.created_at));
+  const unlink = (text: string) => text.replace(/\[\[/g, '[ [').replace(/\]\]/g, '] ]');
+  return {
+    title: unlink(`${n.title} – ${when}`).slice(0, 255),
+    body: unlink(n.message),
+    circle_tier: 0,
+  };
+}
+
 interface NotificationBellProps {
   /** Feature flag AND a signed-in (or auth-off) viewer; false => renders nothing, fetches nothing. */
   enabled: boolean;
+  /** NOTES_ENABLED: offer "save as note" on each notification. */
+  notesEnabled?: boolean;
 }
 
 /**
@@ -40,7 +59,7 @@ interface NotificationBellProps {
 // Above this a message may not fit the two clamped lines of the panel (w-80).
 const LONG_MESSAGE_CHARS = 90;
 
-export default function NotificationBell({ enabled }: NotificationBellProps) {
+export default function NotificationBell({ enabled, notesEnabled = false }: NotificationBellProps) {
   const { t, i18n } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -50,6 +69,22 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
   // Expanded messages by id. A long message (a voicemail transcript sits at its end)
   // is clamped to two lines until opened.
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const createNote = useCreateNote();
+  const [savedAsNote, setSavedAsNote] = useState<Set<number>>(() => new Set());
+  const markSaved = (id: number) => setSavedAsNote((prev) => new Set(prev).add(id));
+  const saveAsNote = async (n: BellNotification) => {
+    try {
+      await createNote.mutateAsync(noteFromNotification(n, i18n.language));
+      markSaved(n.id);
+    } catch (error) {
+      // 409 = a note with this title (same notification) already exists: it IS saved.
+      // Anything else stays visible through createNote.errorMessage.
+      if (isAxiosError(error) && error.response?.status === 409) {
+        createNote.reset();
+        markSaved(n.id);
+      }
+    }
+  };
   const toggleExpanded = (id: number) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -138,9 +173,9 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
             )}
           </div>
 
-          {(acknowledge.errorMessage || acknowledgeAll.errorMessage) && (
+          {(acknowledge.errorMessage || acknowledgeAll.errorMessage || createNote.errorMessage) && (
             <p className="px-4 py-2 text-xs text-red-600 dark:text-red-400" role="alert">
-              {acknowledge.errorMessage ?? acknowledgeAll.errorMessage}
+              {acknowledge.errorMessage ?? acknowledgeAll.errorMessage ?? createNote.errorMessage}
             </p>
           )}
 
@@ -176,16 +211,36 @@ export default function NotificationBell({ enabled }: NotificationBellProps) {
                     >
                       {n.message}
                     </p>
-                    {isLong && (
-                      <button
-                        type="button"
-                        onClick={() => toggleExpanded(n.id)}
-                        aria-expanded={isExpanded}
-                        aria-controls={messageId}
-                        className="mt-0.5 text-xs font-medium text-primary-600 hover:underline dark:text-primary-400"
-                      >
-                        {isExpanded ? t('notifications.bell.showLess') : t('notifications.bell.showMore')}
-                      </button>
+                    {(isLong || notesEnabled) && (
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                        {isLong && (
+                          <button
+                            type="button"
+                            onClick={() => toggleExpanded(n.id)}
+                            aria-expanded={isExpanded}
+                            aria-controls={messageId}
+                            className="text-xs font-medium text-primary-600 hover:underline dark:text-primary-400"
+                          >
+                            {isExpanded ? t('notifications.bell.showLess') : t('notifications.bell.showMore')}
+                          </button>
+                        )}
+                        {notesEnabled && (savedAsNote.has(n.id) ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400" role="status">
+                            <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                            {t('notifications.bell.savedAsNote')}
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void saveAsNote(n)}
+                            disabled={createNote.isPending}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:underline dark:text-primary-400 disabled:opacity-50"
+                          >
+                            <NotebookPen className="w-3.5 h-3.5" aria-hidden="true" />
+                            {t('notifications.bell.saveAsNote')}
+                          </button>
+                        ))}
+                      </div>
                     )}
                     <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{relativeTime(n.created_at, i18n.language)}</p>
                   </div>

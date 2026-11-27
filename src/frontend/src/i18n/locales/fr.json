@@ -1867,6 +1867,8 @@
       "markAllRead": "Tout marquer comme lu",
       "showMore": "Afficher plus",
       "showLess": "Afficher moins",
+      "saveAsNote": "Enregistrer comme note",
+      "savedAsNote": "Enregistré comme note",
       "empty": "Aucune notification",
       "failed": "Impossible de charger les notifications"
     },

@@ -1872,6 +1872,8 @@
       "markAllRead": "Alle gelesen",
       "showMore": "Mehr anzeigen",
       "showLess": "Weniger anzeigen",
+      "saveAsNote": "Als Notiz speichern",
+      "savedAsNote": "Als Notiz gespeichert",
       "empty": "Keine Benachrichtigungen",
       "failed": "Benachrichtigungen konnten nicht geladen werden"
     }

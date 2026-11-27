@@ -6,7 +6,8 @@
  *  - opening lists `mine=true` notifications; acknowledge / mark-all hit the API
  *    and the count refetches; a failed acknowledge is shown;
  *  - focus moves into the panel on open and back to the bell on Escape;
- *  - a long message (a voicemail transcript at its end) is clamped and opens on demand.
+ *  - a long message (a voicemail transcript at its end) is clamped and opens on demand;
+ *  - "save as note" (only with notes on) creates a tier-0 note; a caller's [[...]] never links.
  */
 import { describe, it, expect } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
@@ -16,7 +17,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { BASE_URL } from '../mocks/handlers';
 import { renderWithProviders } from '../test-utils';
-import NotificationBell from '../../../../src/frontend/src/components/NotificationBell';
+import NotificationBell, { noteFromNotification } from '../../../../src/frontend/src/components/NotificationBell';
 
 interface Api {
   calls: string[];
@@ -176,5 +177,77 @@ describe('NotificationBell', () => {
 
     await user.click(less);
     expect(messages[0].className).toContain('line-clamp-2');
+  });
+
+  describe('save as note', () => {
+    function mockNotes(status = 200) {
+      const posted: Array<Record<string, unknown>> = [];
+      server.use(
+        http.get(`${BASE_URL}/api/notifications/unread-count`, () => HttpResponse.json({ count: 1 })),
+        http.get(`${BASE_URL}/api/notifications`, () => HttpResponse.json({
+          notifications: [item(1, 'Neue Nachricht')], total: 1, limit: 20, offset: 0,
+        })),
+        http.post(`${BASE_URL}/api/notes`, async ({ request }) => {
+          posted.push((await request.json()) as Record<string, unknown>);
+          if (status !== 200) return HttpResponse.json({ detail: 'A note with this title already exists' }, { status });
+          return HttpResponse.json({ id: 7, title: 't', body: 'b', circle_tier: 0, project_id: null, owner_id: 1,
+            atom_id: 'a', created_at: '', updated_at: '' });
+        }),
+      );
+      return posted;
+    }
+
+    it('creates a private note from the notification', async () => {
+      const posted = mockNotes();
+      const user = userEvent.setup();
+      renderWithProviders(<NotificationBell enabled notesEnabled />);
+      await user.click(await screen.findByTestId('notification-bell'));
+      await user.click(await screen.findByRole('button', { name: /als notiz speichern|save as note/i }));
+      await screen.findByText(/als notiz gespeichert|saved as note/i);
+      expect(posted).toHaveLength(1);
+      expect(posted[0].title).toMatch(/^Neue Nachricht – /);
+      expect(posted[0].body).toBe('Neue Nachricht message');
+      expect(posted[0].circle_tier).toBe(0);
+      expect(screen.queryByRole('button', { name: /als notiz speichern|save as note/i })).toBeNull();
+    });
+
+    it('an existing note of the same title counts as saved, not as an error', async () => {
+      mockNotes(409);
+      const user = userEvent.setup();
+      renderWithProviders(<NotificationBell enabled notesEnabled />);
+      await user.click(await screen.findByTestId('notification-bell'));
+      await user.click(await screen.findByRole('button', { name: /als notiz speichern|save as note/i }));
+      await screen.findByText(/als notiz gespeichert|saved as note/i);
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('a server error is shown', async () => {
+      mockNotes(500);
+      const user = userEvent.setup();
+      renderWithProviders(<NotificationBell enabled notesEnabled />);
+      await user.click(await screen.findByTestId('notification-bell'));
+      await user.click(await screen.findByRole('button', { name: /als notiz speichern|save as note/i }));
+      expect(await screen.findByRole('alert')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /als notiz speichern|save as note/i })).toBeInTheDocument();
+    });
+
+    it('no button with notes off', async () => {
+      mockNotes();
+      const user = userEvent.setup();
+      renderWithProviders(<NotificationBell enabled />);
+      await user.click(await screen.findByTestId('notification-bell'));
+      await screen.findAllByTestId('notification-bell-item');
+      expect(screen.queryByRole('button', { name: /als notiz speichern|save as note/i })).toBeNull();
+    });
+
+    it("a caller's [[link]] never becomes a note link", () => {
+      const note = noteFromNotification(
+        { title: 'Neue Nachricht', message: '„Siehe [[Geheim]] und ]]x[[“', created_at: '2026-11-27T10:04:00' },
+        'de',
+      );
+      expect(note.body).not.toMatch(/\[\[|\]\]/);
+      expect(note.body).toContain('Geheim');
+      expect(note.title).not.toMatch(/\[\[|\]\]/);
+    });
   });
 });

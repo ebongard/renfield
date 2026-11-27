@@ -1473,6 +1473,8 @@
       "markAllRead": "Segna tutte come lette",
       "showMore": "Mostra di più",
       "showLess": "Mostra meno",
+      "saveAsNote": "Salva come nota",
+      "savedAsNote": "Salvato come nota",
       "empty": "Nessuna notifica",
       "failed": "Impossibile caricare le notifiche"
     }

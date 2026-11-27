@@ -1872,6 +1872,8 @@
       "markAllRead": "Mark all read",
       "showMore": "Show more",
       "showLess": "Show less",
+      "saveAsNote": "Save as note",
+      "savedAsNote": "Saved as note",
       "empty": "No notifications",
       "failed": "Could not load notifications"
     }
