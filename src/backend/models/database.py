@@ -1582,6 +1582,32 @@ class TelephonyVoicemail(Base):
     __table_args__ = (Index("ix_telephony_voicemails_due", "status", "next_attempt_at"),)
 
 
+class TelephonyFax(Base):
+    """A filing job for one received fax (#1677, Telefonie Phase 3).
+
+    ``fax`` is the gateway's opaque basename (``GET /v1/faxes/<fax>``), never a
+    path. ``caller``/``did``/``pages`` are kept for the owner's notification once
+    the fax is filed; the PDF itself lives in the document pipeline, never here.
+    ``call_id`` is unique: a replayed event (gateway restart) makes no second job.
+    Statuses: the ``VOICEMAIL_*`` constants (pending / done / failed)."""
+    __tablename__ = "telephony_faxes"
+
+    id = Column(Integer, primary_key=True)
+    call_id = Column(String(64), nullable=False, unique=True)
+    fax = Column(String(64), nullable=False)
+    caller = Column(String(32), nullable=True)
+    did = Column(String(32), nullable=True)
+    pages = Column(Integer, nullable=False, default=0, server_default="0")
+    document_id = Column(Integer, nullable=True)  # the filed Document, for reference only
+    status = Column(String(16), nullable=False, default=VOICEMAIL_PENDING, server_default=VOICEMAIL_PENDING)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    next_attempt_at = Column(DateTime, nullable=False, default=_utcnow, server_default=sa_text("now()"))
+    created_at = Column(DateTime, nullable=False, default=_utcnow, server_default=sa_text("now()"))
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow, server_default=sa_text("now()"))
+
+    __table_args__ = (Index("ix_telephony_faxes_due", "status", "next_attempt_at"),)
+
+
 class NotificationSuppression(Base):
     """
     Feedback learning: a user suppresses similar notifications.

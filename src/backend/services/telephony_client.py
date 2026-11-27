@@ -10,6 +10,8 @@ events over it. Protocol (JSON text frames)::
     <- {"type": "call_ended", "seq": n, "call_id": "...", "cause": "..."}
     <- {"type": "voicemail", "seq": n, "call_id": "...", "did": "...", "caller": "...", "duration_s": 23,
         "recording": "<basename>"}   # recording: the transcript job's handle (#1669)
+    <- {"type": "fax_received", "seq": n, "call_id": "...", "did": "...", "caller": "...",
+        "status": "ok" | "failed", "pages": 3, "fax": "<basename>"}   # #1677, only with TELEPHONY_FAX_ENABLED
 
 Guarantees:
 - Resume: (epoch, last seq) are stored in Redis; after a reconnect the gateway
@@ -96,6 +98,11 @@ def format_number(number: str) -> str:
 
 
 ANNOUNCED_TYPES = ("incoming_call", "voicemail")
+FAX_TYPE = "fax_received"  # #1677: announced only with TELEPHONY_FAX_ENABLED (off = ignored as before)
+
+
+def announced_types() -> tuple[str, ...]:
+    return (*ANNOUNCED_TYPES, FAX_TYPE) if settings.telephony_fax_enabled else ANNOUNCED_TYPES
 
 
 def _plain_number(value: object) -> str | None:
@@ -141,6 +148,8 @@ def build_notification(event: dict, hint=None) -> dict:
             f"Neue Nachricht {route}",
             f"Neue Nachricht auf dem Anrufbeantworter {long_route} ({duration})",
         )
+    elif event.get("type") == FAX_TYPE:
+        title, message = _fax_text(event, route, long_route)
     else:
         title, message = f"Anruf {route}", f"Eingehender Anruf {long_route}"
     data = {
@@ -150,6 +159,11 @@ def build_notification(event: dict, hint=None) -> dict:
     }
     if event.get("type") == "voicemail":
         data["duration_s"] = _seconds(event.get("duration_s"))
+    if event.get("type") == FAX_TYPE:
+        data["pages"] = _pages(event.get("pages"))
+        data["fax_status"] = _fax_status(event)
+        if isinstance(event.get("document_id"), int):
+            data["document_id"] = event["document_id"]
     privacy = "personal"
     if label:
         # Snapshot of what this recipient was shown; never read back as identity.
@@ -170,6 +184,34 @@ def build_notification(event: dict, hint=None) -> dict:
         "privacy": privacy,
         "dedup": False,  # exactly once per event already (call claim); a repeat call is a new call
     }
+
+
+def _pages(value: object) -> int:
+    try:
+        return min(max(int(value), 0), 10_000)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _fax_status(event: dict) -> str:
+    """``filed`` | ``not_filed`` (received, the filing failed) | ``failed`` (not received)."""
+    if event.get("status") != "ok":
+        return "failed"
+    return "filed" if event.get("filed") else "not_filed"
+
+
+def _fax_text(event: dict, route: str, long_route: str) -> tuple[str, str]:
+    status = _fax_status(event)
+    if status == "failed":
+        return f"Fax {route} fehlgeschlagen", f"Ein Fax {long_route} konnte nicht empfangen werden"
+    pages = _pages(event.get("pages"))
+    count = f"{pages} Seite" if pages == 1 else f"{pages} Seiten"
+    if status == "filed":
+        kb = str(event.get("kb") or "").strip()[:64]
+        where = f", abgelegt in „{kb}“" if kb else ""
+        return f"Fax {route} ({count})", f"Fax {long_route} empfangen ({count}){where}"
+    return (f"Fax {route} ({count})",
+            f"Fax {long_route} empfangen ({count}), die Ablage ist fehlgeschlagen")
 
 
 async def notify_users(event: dict, user_ids: list[int], process, resolve=None) -> int:
@@ -212,6 +254,13 @@ async def recipient_user_ids(db) -> list[int]:
 async def deliver_via_notification_service(event: dict) -> None:
     from services.database import AsyncSessionLocal
     from services.notification_service import NotificationService
+
+    if event.get("type") == FAX_TYPE:
+        # #1677: one configured owner, not every user; filing first, then the notice.
+        from services.telephony_fax import handle_event
+
+        await handle_event(event)
+        return
 
     async with AsyncSessionLocal() as db:
         user_ids = await recipient_user_ids(db)
@@ -321,7 +370,7 @@ class TelephonyClient:
 
     async def _handle(self, event: dict) -> bool:
         """True = done with this event (delivered, skipped or nothing to do); False = retry."""
-        if event.get("type") not in ANNOUNCED_TYPES:
+        if event.get("type") not in announced_types():
             return True  # call_ended etc.: nothing to announce
         call_id = str(event.get("call_id") or "")[:64]
         if not call_id:
