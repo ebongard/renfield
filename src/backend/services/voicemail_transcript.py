@@ -224,9 +224,11 @@ async def apply_transcript(db, call_id: str, text: str) -> list[int]:
 
 
 async def _claim():
+    """(id, call_id, recording, attempts) of the claimed job; None = nothing due;
+    False = a job was due but used up its attempts and is now failed."""
     from sqlalchemy import select
 
-    from models.database import VOICEMAIL_PENDING, TelephonyVoicemail, _utcnow
+    from models.database import VOICEMAIL_FAILED, VOICEMAIL_PENDING, TelephonyVoicemail, _utcnow
     from services.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
@@ -242,6 +244,14 @@ async def _claim():
         ).scalar_one_or_none()
         if job is None:
             return None
+        if job.attempts >= MAX_ATTEMPTS:
+            # Every attempt was claimed and none came back (the pod died each time):
+            # give up instead of claiming it forever.
+            job.status = VOICEMAIL_FAILED
+            job.updated_at = now
+            await db.commit()
+            logger.warning("Voicemail transcript job %d failed: no attempt finished", job.id)
+            return False
         job.attempts += 1
         job.next_attempt_at = now + timedelta(seconds=LEASE_S)  # the lease
         claimed = (job.id, job.call_id, job.recording, job.attempts)
@@ -269,6 +279,8 @@ async def process_one() -> bool:
     claimed = await _claim()
     if claimed is None:
         return False
+    if claimed is False:
+        return True  # a job was settled (given up); look for the next one
     job_id, call_id, recording, attempts = claimed
     try:
         text = await transcribe(await fetch_recording(recording))

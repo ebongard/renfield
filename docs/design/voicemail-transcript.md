@@ -136,8 +136,11 @@ The hint ships together with switching the flag on, not before.
 - Text and `done` commit in ONE transaction; a row that already carries `transcript_status` is skipped, so a
   repeated job never appends twice.
 - The loop is woken by `enqueue` in the same process, otherwise polls every 60 s.
-- Found while building: "Ähnliche unterdrücken" embedded `title + message` into a STORED suppression rule. For a
-  row with `transcript_status = done` it now embeds the title only (the caller's words never outlive the row).
+- Found while building: "Ähnliche unterdrücken" embedded `title + message` into a STORED suppression rule, and the
+  review found `/admin/reembed` doing the same into `notifications.embedding` (a row there is a candidate for the
+  semantic duplicate check, so a caller could have suppressed a later notification). Both now build the text from
+  ONE function, `notification_service.embedding_text`: title only for a row with `transcript_status = done`.
+- A job whose pod dies on every attempt is given up: a claim with all attempts used sets `failed`.
 - `/ws/user` reason `updated` (the frontend refetches on any `notifications_changed`).
 
 ## 10. Out of scope (later)

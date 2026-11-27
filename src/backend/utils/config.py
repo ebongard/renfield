@@ -2038,8 +2038,8 @@ class Settings(BaseSettings):
     telephony_gateway_url: str = ""                     # wss://<gateway>:8090/v1/events
     telephony_gateway_token: SecretStr = ""
     telephony_gateway_ca_pem: str = ""                  # self-signed gateway cert (PEM) = pinned trust anchor
-    # Recipients: every ACTIVE user of the instance gets a personal notification
-    # (no room announcement, no public device broadcast) — fixed, not configurable.
+    # (Recipients: every ACTIVE user of the instance gets a personal notification --
+    # no room announcement, no public device broadcast -- fixed, not configurable.)
     # Voicemail transcript (#1669, docs/design/voicemail-transcript.md): fetch the
     # recording from the gateway, transcribe it on the voice-server WITHOUT a
     # voiceprint (embed=false) and add the text to the voicemail notification.

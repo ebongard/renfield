@@ -357,6 +357,18 @@ class TestJob:
         await _make_due(db)  # the lease ran out
         assert await vt.process_one() is True
 
+    async def test_a_job_whose_pod_dies_every_time_is_given_up(self, pg_db_session, enabled, stt):
+        db = pg_db_session
+        await vt.enqueue(EVENT)
+        for _ in range(vt.MAX_ATTEMPTS):
+            assert await vt._claim() not in (None, False)  # claimed, then the pod dies
+            await _make_due(db)  # the lease runs out
+        assert await vt.process_one() is True
+        job = (await _jobs(db))[0]
+        await db.refresh(job)
+        assert (job.status, job.attempts) == ("failed", vt.MAX_ATTEMPTS)
+        assert await vt.process_one() is False
+
 
 @pytest.mark.database
 class TestDelivery:
@@ -413,3 +425,28 @@ async def test_a_suppression_rule_never_embeds_the_spoken_words(pg_db_session, e
     monkeypatch.setattr(NotificationService, "_get_embedding", fake_embedding)
     await NotificationService(db).suppress_similar(n.id, user_id=user.id, restrict_to_viewer=True)
     assert embedded and SPOKEN not in embedded[0]
+
+
+class TestStoredEmbeddings:
+    """The caller's words never become a stored vector: not in a suppression rule
+    (above), not in ``/admin/reembed`` -- both build it from ``embedding_text``."""
+
+    def test_a_transcribed_row_embeds_its_title_only(self):
+        from services.notification_service import embedding_text
+
+        n = Notification(title="Neue Nachricht von 0301234567", message=f"Neue Nachricht: „{SPOKEN}“",
+                         source_data={"call_id": "c1", "transcript_status": "done"})
+        assert embedding_text(n) == n.title
+        n.source_data = {"call_id": "c1", "transcript_status": "empty"}
+        assert embedding_text(n) == f"{n.title} {n.message}"
+        n.source_data = None
+        assert embedding_text(n) == f"{n.title} {n.message}"
+
+    def test_admin_reembed_uses_it(self):
+        import inspect
+
+        import main
+
+        source = inspect.getsource(main.reembed_all)
+        assert "(Notification, notification_embedding_text," in source
+        assert "{r.title} {r.message}" not in source

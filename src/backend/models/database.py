@@ -1572,11 +1572,12 @@ class TelephonyVoicemail(Base):
     id = Column(Integer, primary_key=True)
     call_id = Column(String(64), nullable=False, unique=True)
     recording = Column(String(64), nullable=False)
-    status = Column(String(16), nullable=False, default=VOICEMAIL_PENDING)
-    attempts = Column(Integer, nullable=False, default=0)
-    next_attempt_at = Column(DateTime, nullable=False, default=_utcnow)
-    created_at = Column(DateTime, nullable=False, default=_utcnow)
-    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+    # server_default = the migration's, so a fresh install (create_all) builds the same table.
+    status = Column(String(16), nullable=False, default=VOICEMAIL_PENDING, server_default=VOICEMAIL_PENDING)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    next_attempt_at = Column(DateTime, nullable=False, default=_utcnow, server_default=sa_text("now()"))
+    created_at = Column(DateTime, nullable=False, default=_utcnow, server_default=sa_text("now()"))
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow, server_default=sa_text("now()"))
 
     __table_args__ = (Index("ix_telephony_voicemails_due", "status", "next_attempt_at"),)
 
