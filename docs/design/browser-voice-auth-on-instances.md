@@ -1,8 +1,8 @@
 # Browser voice on auth-on instances (xidra)
 
-Status: **code + infra prepared, `FEATURE_VOICE` NOT flipped** (2026-09-15,
-branch `feat/xidra-browser-voice`). The flag flip is the last rollout step and a
-separate, explicit decision.
+Status: **LIVE on xidra since 2026-11-27** (`FEATURE_VOICE=true`, #1669). Prepared 2026-09-15
+(branch `feat/xidra-browser-voice`); the flag flip came with the voicemail transcript, which needs
+the BACKEND path too (step 6). Open: the browser E2E with a real user (step 5).
 
 ## What the path looks like
 
@@ -77,18 +77,27 @@ only the wake-word controls were), so xidra shows no mic until the flag flips.
 2. **Renfield release** containing this branch (backend + frontend image) on
    xidra. Harmless while `FEATURE_VOICE=false`: `voice_client_id` is served but
    unused, the mic is hidden, the speaker gate is inert without voice turns.
-3. **xidra ConfigMap** (`x-ren`, `k8s/renfield-env.configmap.yaml` — the live one;
-   `k8s/configmap.yaml` carries the same keys): `VOICE_BROWSER_CLIENT_ID=xidra`,
+3. **xidra ConfigMap** (`x-ren`, `k8s/configmap.yaml` — the one the kustomization applies and
+   the live state matches; `k8s/renfield-env.configmap.yaml` is a stale copy, never apply it, see
+   `docs/runbooks/cookie-auth-flag-flip-xidra.md`): `VOICE_BROWSER_CLIENT_ID=xidra`,
    `SPEAKER_RECOGNITION_ENABLED=false`, `SPEAKER_AUTO_ENROLL=false`,
    `SPEAKER_CONTINUOUS_LEARNING=false`, `SPEAKER_VOCAB_CAPTURE_ENABLED=false`;
    `FEATURE_VOICE` stays `false`. Backend rollout.
 4. **IngressRoute** (`private_k8s/voice-server/41-xidra-browser-ingressroute.yaml`)
    + the updated netpol comment. Verify with the no-credential checks below.
-5. **(Separate decision)** `FEATURE_VOICE=true` on xidra + backend rollout, then a
-   browser E2E with a real user (mic prompt → transcript → answer → TTS).
+5. ✅ **2026-11-27:** `FEATURE_VOICE=true` on xidra + backend rollout. Still open: a browser E2E
+   with a real user (mic prompt → transcript → answer → TTS).
+6. ✅ **2026-11-27, backend → voice-server** (STT/TTS/meetings, voicemail transcript #1669):
+   `VOICE_SERVER_URL=http://voice-server.voice:8080` (the MAIN listener, not the anonymous `:8081`)
+   and `VOICE_CLIENT_ID=xidra`; `VOICE_SERVER_AUTH_ENABLED` stays at its default `true`. The backend
+   mints its own service JWT (`sub="service:…"`, `scope:"voice"`); the registry row `xidra` verifies
+   it at this backend's `/api/internal/auth/verify`, which accepts service subjects. Checked before
+   the flip, from the xidra backend pod: `/health` 200; the verify-secret three-way check (step 1);
+   STT with `embed=false` → `embedded:false`; a bogus token → 401.
 
-Rollback: delete the IngressRoute (route gone → 404), revert the ConfigMap keys;
-the code is inert without `FEATURE_VOICE`.
+Rollback: delete the IngressRoute (route gone → 404), revert the ConfigMap keys
+(`FEATURE_VOICE`, and for the backend path `VOICE_SERVER_URL=""` + drop `VOICE_CLIENT_ID`), then
+restart backend + workers; the browser code is inert without `FEATURE_VOICE`.
 
 ## No-credential E2E checks (after step 4, before the flag)
 
