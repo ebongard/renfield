@@ -5,7 +5,8 @@ instance (ns `renfield-xidra`), activating the HttpOnly-cookie + CSRF session
 (PR #1125 / #1116). This is the deferred **Phase 5** of the cookie migration; the
 code is already merged and deployed flag-off (byte-identical) on both instances.
 
-**Scope:** xidra ONLY. The household (`renfield`) is auth-off and stays cookie-off.
+**Scope:** written for xidra (on since 2026-08-25). The household (`renfield`) followed on 2026-11-27 with the same
+steps (namespace `renfield`, origin `https://renfield.local`; git source `k8s/configmap.yaml` in this repo).
 **No image build, no DB migration.** Just a ConfigMap key + a rolling restart.
 **Fully reversible** in ~1 minute (set the flag back to false + rollout).
 
@@ -134,8 +135,7 @@ real xidra user, confirm end-to-end:
 12. **Reva (if OIDC ever enabled):** dark on xidra today; the `#access_token=`
     fragment path is untouched. No action.
 
-Household regression check (should be untouched): `renfield` still cookie-off,
-chat works, no `Set-Cookie`.
+Household: since 2026-11-27 cookie-on as well — run the same checks against `https://renfield.local`.
 
 ---
 
@@ -178,8 +178,8 @@ resumes writing localStorage tokens). Also revert the git one-liner.
 - **SSO cutover / fragment handler removal** stays deferred (needs Reva `?code=`).
 - **`SECRET_KEY` is untouched** (tri-purpose: JWT + Fernet-at-rest + BLE IRK —
   never rotate/split as part of this).
-- **Household stays cookie-off** (auth-off; cookies are meaningless there and the
-  validator would hard-fail `AUTH_COOKIE_ENABLED=true` + `AUTH_ENABLED=false`).
+- **Household:** auth-on since 2026-09-23, cookie-on since 2026-11-27 (the validator still hard-fails
+  `AUTH_COOKIE_ENABLED=true` + `AUTH_ENABLED=false`).
 
 Design + full context: `docs/design/sso-token-handoff-hardening.md` (§9 cookie
 alternative), CLAUDE.md §"JWT HttpOnly-cookie session + CSRF", `docs/ENVIRONMENT_VARIABLES.md`.

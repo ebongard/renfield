@@ -15,6 +15,7 @@ data:
   # combo.
   RENFIELD_ENV: "production"        # auth-on cutover 2026-09-23; arms the insecure-JWT-key boot guard — requires a strong SECRET_KEY in EVERY pod that boots the app (see cutover below)
   AUTH_ENABLED: "true"             # auth-on cutover 2026-09-23 (war: false, single-user LAN); the whole multi-user surface — REST *and* WebSocket — is gated on this
+  AUTH_COOKIE_ENABLED: "true"      # HttpOnly-Sitzung + CSRF (P4 des Cutovers, 2026-11-27; Runbook docs/runbooks/cookie-auth-flag-flip-xidra.md). Zurueck: "false" + Rollout
   # WS_AUTH_ENABLED is RETIRED (was never an independent decision: the validator
   # refused to boot on AUTH_ENABLED=true + WS_AUTH_ENABLED=false, so only
   # both-on/both-off existed). A leftover key that AGREES with AUTH_ENABLED still

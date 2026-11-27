@@ -14,7 +14,7 @@ Renfield is a fully offline-capable, self-hosted **digital assistant** — a per
 
 **Integrations:** Home Assistant, Frigate, n8n, SearXNG, Jellyfin, DLNA, Samsung TV, Paperless, Email, Calendar, Filesystem (watch-folders), Parcel Tracking — all via MCP servers (`config/mcp_servers.yaml`). Servers that hold credentials the backend must not (filesystem, email-ingest) and the `hostNetwork` ones (DLNA, Samsung) run as their own deployments; the other stdio servers live in the backend image.
 
-**Two instances:** household (`renfield`) and xidra (`renfield-xidra`, config in the private `x-ren` repo). **Beide laufen auth-on** (Haushalt seit dem Cutover 2026-09-23, `k8s/configmap.yaml`); der Haushalt hat aber KEINE HttpOnly-Sitzung (`AUTH_COOKIE_ENABLED` dort nicht gesetzt), xidra schon. Every change must work on both.
+**Two instances:** household (`renfield`) and xidra (`renfield-xidra`, config in the private `x-ren` repo). **Beide laufen auth-on** (Haushalt seit dem Cutover 2026-09-23, `k8s/configmap.yaml`); beide mit HttpOnly-Cookie-Sitzung + CSRF (`AUTH_COOKIE_ENABLED`, Haushalt seit 2026-11-27). Every change must work on both.
 
 ## KRITISCHE REGELN - IMMER BEACHTEN
 
