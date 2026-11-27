@@ -447,7 +447,7 @@ export default function Layout({ children }: LayoutProps) {
               X-IDRA), users have no satellites; the "Set up device" button
               links to a flow that doesn't apply. Hide it. */}
           <div className="flex items-center space-x-2 sm:space-x-3">
-            <NotificationBell enabled={bellEnabled} />
+            <NotificationBell enabled={bellEnabled} notesEnabled={notesEnabled} />
             <LanguageSwitcher compact />
             <ThemeToggle />
             {import.meta.env.VITE_APP_EDITION !== 'pro' && <DeviceStatus compact />}
