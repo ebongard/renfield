@@ -160,7 +160,7 @@ P0 der personenbezogenen Föderation ist dieser Cutover (`docs/design/federation
 | **P1 Konten (noch auth-off)** | Konten für alle Mitglieder (`POST /api/users`), Rollen, Erfassungsvorgabe Familie 2 / Gast 0, Sprecher-Enrollment mit Einwilligung + Verknüpfung; Gerätekonten Haushalt + Kiosk | unter auth-off wirkungslos |
 | **P2 Backfill (noch auth-off)** | Dry-Run mit Zählwerten je Klasse → Freigabe → Commit: Stufen je Klasse (§4.1), NULL-Relationen, KB-Eigentümer, Unterhaltungen (§4.2), Kopplungs-Rest, Mitgliedschaften inkl. Gerätekonto nur beim Admin (§4.3) | unter auth-off ohne Wirkung auf Lesepfade; `--revert` |
 | **P3 Umschalten** | **Zuerst** die GERÄTESEITE ausgerollt und je Satellit NACHGEWIESEN (`HANDSHAKE OK` noch unter auth-off, Runbook §1.0) — der Satellit leitet `sat.<id>.<psk>` aus seinem Enrollment-Token ab, das Tor ist `auth_enabled ODER enrollment_token`, und der Kopf-Kwarg kommt aus der websockets-Signatur; wird das versäumt, ist der Weg zum Gerät nach dem Umlegen abgeschnitten (OTA läuft über dieselbe Verbindung). **Dann** ConfigMap-Commit mit den NEUN Schlüsseln; Rollout; Admin-Passwortrotation; Abnahme §11. Sperre: ohne `TRUSTED_PROXIES` satellitenweit (5 Versuche / 900 s); Entsperren über die Enrollment-Route | `AUTH_ENABLED=false` → Lesepfade byte-identisch; ein Satellit mit PSK verbindet auch unter auth-off, weil der Server den Header dann gar nicht prüft (`websocket_auth.py:173-174`) |
-| **P4 Cookie** | `AUTH_COOKIE_ENABLED` nach dem Runbook (D-8) | Flag zurück, ~1 min |
+| **P4 Cookie** ✅ 2026-11-27 | `AUTH_COOKIE_ENABLED` nach dem Runbook (D-8) | Flag zurück, ~1 min |
 | **P5 danach** | F-ID-2 (D-9), Linker (E-1) | eigene Posten |
 
 ## 10. Rollback

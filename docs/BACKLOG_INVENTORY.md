@@ -308,11 +308,9 @@ Grenzen der Methode: Schalter außerhalb von `config.py` sind nicht gezählt —
 
 Unverändert gegenüber der Messung vom 2026-09-27; erneut gegen die LIVE-ConfigMaps beider Instanzen gemessen.
 
-🛑 **`AUTH_COOKIE_ENABLED` bleibt ein offener Befund.** Im Haushalt ist die Anmeldung an (seit 2026-09-23, #1324), der
-Cookie-Schalter aber weiterhin nicht gesetzt (Standard `False`, `config.py:1513`) — das Sitzungstoken liegt dort in
-`localStorage` und ist für jedes Skript auf der Seite lesbar, während xidra mit `AUTH_COOKIE_ENABLED=true` eine
-HttpOnly-Sitzung führt. Das Muster „unkritisch, solange Flag F aus ist" mit abgelaufenem Verfallsdatum; gehört in die
-Cutover-Restliste, nicht in eine Aufzählung dunkler Funktionen.
+✅ **`AUTH_COOKIE_ENABLED` erledigt (2026-11-27).** Der offene Befund (Haushalt auth-on seit 2026-09-23, #1324, das
+Sitzungstoken aber in `localStorage`) ist geschlossen: der Haushalt führt jetzt wie xidra eine HttpOnly-Sitzung mit
+CSRF (`k8s/configmap.yaml`, P4 des Cutovers).
 
 ### 4b. Nie eingeschaltet — auf KEINER Instanz (28)
 Das ist die Liste fertiger, aber nie aktivierter Funktionen.
