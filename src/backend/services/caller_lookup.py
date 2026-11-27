@@ -50,12 +50,12 @@ class CallerHint:
         return None
 
 
-def _clean(name: str) -> str:
-    """Untrusted text from the KG: one line, bounded."""
+def _clean(name: str, limit: int = MAX_NAME_LENGTH) -> str:
+    """Untrusted text (KG name, voicemail transcript): one line, bounded."""
     text = "".join(
         " " if unicodedata.category(ch) in _STRIP_CATEGORIES else ch for ch in str(name or "")
     )
-    return " ".join(text.split())[:MAX_NAME_LENGTH]
+    return " ".join(text.split())[:limit]
 
 
 def offline_place(raw: str) -> str | None:

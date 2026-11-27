@@ -78,10 +78,14 @@ async def stt(
     language: str | None = None,
     auth_token: str,
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    embed: bool | None = None,
 ) -> dict[str, Any]:
     """POST audio to voice-server /api/voice/stt.
 
-    Returns {text, language, speaker_embedding?, audio_duration_s}.
+    Returns {text, language, speaker_embedding?, audio_duration_s, embedded}.
+    ``embed=False`` (voice-server >= 0.3.13) computes no voiceprint at all; the
+    reply then says ``embedded: false`` -- a caller that needs that guarantee
+    must check it (an older server ignores the field). None = server default.
     """
     url = f"{_base_url()}/api/voice/stt"
     headers = _auth_headers(auth_token)
@@ -89,6 +93,8 @@ async def stt(
     data: dict[str, Any] = {}
     if language:
         data["language"] = language
+    if embed is not None:
+        data["embed"] = "true" if embed else "false"
 
     async with httpx.AsyncClient(timeout=timeout_s) as client:
         try:
@@ -98,7 +104,8 @@ async def stt(
 
     if resp.status_code != 200:
         raise VoiceServerError(
-            f"voice-server STT returned {resp.status_code}: {resp.text[:300]}"
+            f"voice-server STT returned {resp.status_code}: {resp.text[:300]}",
+            status_code=resp.status_code,
         )
 
     return resp.json()

@@ -406,6 +406,16 @@ def _schedule_telephony_client():
     _startup_tasks.append(task)
     logger.info("Telephony client scheduled")
 
+    if settings.voicemail_transcript_enabled:
+        # #1669: the transcript loop; every replica runs one (SKIP LOCKED claim).
+        async def voicemail_main():
+            from services.voicemail_transcript import run_voicemail_transcripts
+
+            await run_voicemail_transcripts()
+
+        _startup_tasks.append(asyncio.create_task(voicemail_main()))
+        logger.info("Voicemail transcript loop scheduled")
+
 
 async def _init_mcp(app: "FastAPI"):
     """Initialize MCP client connections to external tool servers."""

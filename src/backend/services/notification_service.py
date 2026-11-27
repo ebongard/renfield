@@ -425,6 +425,10 @@ class NotificationService:
         embedding = None
         try:
             combined = f"{notification.title} {notification.message}"
+            if (notification.source_data or {}).get("transcript_status") == "done":
+                # #1669: the message carries a caller's spoken words -- they must not
+                # live on in a suppression rule's embedding. The title has none.
+                combined = notification.title
             embedding = await self._get_embedding(combined)
         except Exception as e:
             logger.warning(f"⚠️ Could not generate suppression embedding: {e}")
