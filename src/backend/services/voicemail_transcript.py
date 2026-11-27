@@ -281,9 +281,9 @@ async def process_one() -> bool:
         logger.info("Voicemail transcript job %d done (%d notification(s))", job_id, len(refresh))
         return True
     except _Fail as e:
-        status, delay, why = VOICEMAIL_FAILED, None, str(e)
-    except Exception as e:  # _Retry and anything unexpected
-        why = str(e) if isinstance(e, _Retry) else type(e).__name__
+        status, delay, why = VOICEMAIL_FAILED, None, error_text_without_content(e)
+    except Exception as e:  # _Retry and anything unexpected (a database error: no statement in the log)
+        why = error_text_without_content(e)
         if attempts >= MAX_ATTEMPTS:
             status, delay = VOICEMAIL_FAILED, None
         else:
