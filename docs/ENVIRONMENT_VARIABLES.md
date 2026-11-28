@@ -890,6 +890,11 @@ TELEPHONY_FAX_OWNER=              # Benutzername oder ID des EINEN Besitzers; le
 TELEPHONY_FAX_TIER=0              # Stufe des abgelegten Dokuments (0–4)
 TELEPHONY_FAX_KB=Fax              # Wissensdatenbank des Besitzers, beim ersten Fax angelegt
 TELEPHONY_FAX_TO_PAPERLESS=true   # zusätzlich nach Paperless (außer Band, wie Ordner/E-Mail)
+# Registrierungs-Überwachung (#1680): Meldung an den Owner-Admin (ops_alert), wenn eine Nummer der Instanz
+# bei der Telekom abgemeldet ist (Gateway-Ereignis line_status, entprellt 2 min) bzw. wieder angemeldet,
+# und wenn das Gateway selbst länger nicht erreichbar ist. Aus = line_status ignoriert wie bisher.
+TELEPHONY_LINE_ALERTS_ENABLED=false
+TELEPHONY_GATEWAY_ALERT_AFTER_SECONDS=300   # 60–86400; so lange ohne Gateway = Meldung
 ```
 
 - An: Ein empfangenes Fax wird ein Auftrag in `telephony_faxes` (Migration `pc20261127b_telephony_faxes`, VOR dem

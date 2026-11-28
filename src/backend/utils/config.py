@@ -2057,6 +2057,12 @@ class Settings(BaseSettings):
     telephony_fax_tier: int = Field(default=0, ge=0, le=4)  # circle tier of the filed document
     telephony_fax_kb: str = "Fax"      # the owner's KB (created on first use)
     telephony_fax_to_paperless: bool = True  # stamp for the out-of-band Paperless filing (Design Z)
+    # Line alerts (#1680): the gateway's ``line_status`` (a number of THIS instance is
+    # no longer registered at the Telekom / again) and the gateway itself being
+    # unreachable for TELEPHONY_GATEWAY_ALERT_AFTER_SECONDS become an ops alert to
+    # the owner admin (ops_alert.notify_admin). Off = line_status ignored, no alert.
+    telephony_line_alerts_enabled: bool = False
+    telephony_gateway_alert_after_seconds: int = Field(default=300, ge=60, le=86400)
 
     # Notification bell (#1653): a bell with an unread badge in the app header
     # that lists the viewer's own notifications (always viewer-scoped, admins
