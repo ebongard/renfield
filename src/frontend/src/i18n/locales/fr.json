@@ -2988,7 +2988,7 @@
     "numberLabel": "Numéro de téléphone",
     "changeLabel": "Saisir un autre numéro",
     "start": "Appel de confirmation",
-    "calling": "Renfield t’appelle maintenant et te donne un code à quatre chiffres.",
+    "calling": "Renfield t’appelle maintenant et te donne un code à six chiffres.",
     "startFailed": "L’appel de confirmation n’a pas pu être lancé.",
     "codeLabel": "Code de l’appel au {{number}}",
     "confirm": "Confirmer",

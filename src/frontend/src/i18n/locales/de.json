@@ -2963,7 +2963,7 @@
     "numberLabel": "Telefonnummer",
     "changeLabel": "Andere Nummer eintragen",
     "start": "Bestätigungsanruf",
-    "calling": "Renfield ruft jetzt an und nennt dir einen vierstelligen Code.",
+    "calling": "Renfield ruft jetzt an und nennt dir einen sechsstelligen Code.",
     "startFailed": "Der Bestätigungsanruf konnte nicht gestartet werden.",
     "codeLabel": "Code aus dem Anruf an {{number}}",
     "confirm": "Bestätigen",

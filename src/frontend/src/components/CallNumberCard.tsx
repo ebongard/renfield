@@ -3,7 +3,7 @@
  *
  * Renders NOTHING unless the instance reports outbound calls as active
  * (`telephony_outbound_enabled`). The number only counts after a code call:
- * "Bestätigungsanruf" rings it and Renfield speaks a 4-digit code, which the
+ * "Bestätigungsanruf" rings it and Renfield speaks a 6-digit code, which the
  * user types here. Until then nothing is stored and Renfield never calls it.
  */
 import { useState } from 'react';
@@ -131,14 +131,14 @@ export default function CallNumberCard() {
               type="text"
               inputMode="numeric"
               autoComplete="one-time-code"
-              pattern="[0-9]{4}"
-              maxLength={4}
+              pattern="[0-9]{6}"
+              maxLength={6}
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
               className="input mt-1 w-full tabular-nums tracking-widest"
             />
           </label>
-          <button type="submit" disabled={busy || code.length !== 4} className="btn-primary min-h-11">
+          <button type="submit" disabled={busy || code.length !== 6} className="btn-primary min-h-11">
             {verify.isPending && (
               <Loader className="w-4 h-4 mr-2 animate-spin motion-reduce:animate-none" aria-hidden="true" />
             )}

@@ -492,7 +492,7 @@ angemeldet“) und eine Entwarnung, sobald sie wieder angemeldet ist. Dasselbe, 
 
 Renfield ruft an (#1683, `TELEPHONY_OUTBOUND_ENABLED`, dunkel): „Ruf mich an und sag mir …“ klingelt das eigene
 Telefon mit der Nummer der Instanz als Absender und spricht die Nachricht. Angerufen wird nur die eigene Nummer aus
-„Mein Konto“, die erst nach einem Bestätigungsanruf mit vierstelligem Code gilt. Nimmt niemand ab, kommt die
+„Mein Konto“, die erst nach einem Bestätigungsanruf mit sechsstelligem Code gilt. Nimmt niemand ab, kommt die
 Nachricht als Meldung. Berechtigung `telephony.call` (Admin, Familie); höchstens `TELEPHONY_CALL_PER_HOUR` Anrufe.
 
 ### Benachrichtigungs-Glocke (#1653, `NOTIFICATION_BELL_ENABLED`, dark)

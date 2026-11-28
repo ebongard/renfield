@@ -34,10 +34,13 @@ class FakeRedis:
     async def get(self, k):
         return self.data.get(k)
 
-    async def set(self, k, v, ex=None):
+    async def set(self, k, v, ex=None, nx=False):
+        if nx and k in self.data:
+            return None
         self.data[k] = v
         if ex:
             self.ttls[k] = ex
+        return True
 
     async def delete(self, k):
         self.data.pop(k, None)
@@ -156,9 +159,14 @@ async def test_place_call_refusals(env, monkeypatch):
     assert not [k for k in redis.data if k.startswith(to.PENDING_PREFIX)]  # nothing left pending
     state["gateway"] = True
     await to.place_call(user_id=7, number=MOBILE, text="x")  # 2nd counted call this hour
+    with pytest.raises(to.CallError) as e:  # a repeated tool call while the first one rings
+        await to.place_call(user_id=7, number=MOBILE, text="x")
+    assert e.value.code == "in_flight"
+    await redis.delete(f"{to.LOCK_PREFIX}7")
     with pytest.raises(to.CallError) as e:
         await to.place_call(user_id=7, number=MOBILE, text="x")
     assert e.value.code == "rate"
+    assert f"{to.LOCK_PREFIX}7" not in redis.data  # a refusal frees the lock
     await to.place_call(user_id=8, number=MOBILE, text="x")  # per user
     monkeypatch.setattr(to.settings, "telephony_outbound_enabled", False)
     with pytest.raises(to.CallError) as e:
@@ -194,7 +202,7 @@ async def test_a_failing_result_handler_never_raises(env, monkeypatch):
 
     import services.redis_client as rc
 
-    monkeypatch.setattr(rc, "get_redis", lambda: type("R", (), {"getdel": boom})())
+    monkeypatch.setattr(rc, "get_redis", lambda: type("R", (), {"get": boom})())
     await to.handle_call_result({"type": "call_result", "id": "a" * 32, "status": "no_answer"})
 
 
@@ -213,8 +221,8 @@ async def test_code_call_stores_nothing_until_the_right_code(env, monkeypatch):
     await to.start_verification(7, "0170 1234567")
     assert await to.pending_verification(7) == MOBILE
     code = "".join(c for c in spoken[0].split("lautet:")[1].split(".")[0] if c.isdigit())
-    assert len(code) == 4
-    wrong = "0000" if code != "0000" else "1111"
+    assert len(code) == 6
+    wrong = "000000" if code != "000000" else "111111"
     assert await to.confirm_verification(7, wrong) is None
     assert await to.confirm_verification(8, code) is None  # another user's code store
     assert await to.confirm_verification(7, code) == MOBILE
@@ -239,6 +247,94 @@ async def test_code_call_refuses_a_foreign_number(env):
     with pytest.raises(to.CallError):
         await to.start_verification(7, "+44 20 7946 0958")
     assert await to.pending_verification(7) is None
+
+
+async def test_parallel_guesses_share_the_attempt_budget(env, monkeypatch):
+    import asyncio
+
+    async def synth(text):
+        return to.phone_wav(wav(1.0))
+
+    monkeypatch.setattr(to, "synthesize", synth)
+    await to.start_verification(7, MOBILE)
+    guesses = [f"{i:06d}" for i in range(20)]
+    results = await asyncio.gather(*(to.confirm_verification(7, g) for g in guesses))
+    assert sum(r is not None for r in results) <= 1
+    assert await to.pending_verification(7) is None  # budget used up -> void
+
+
+async def test_one_number_gets_few_code_calls_a_day(env, monkeypatch):
+    _, sent, _, _ = env
+    monkeypatch.setattr(to.settings, "telephony_call_per_hour", 30)
+
+    async def synth(text):
+        return to.phone_wav(wav(1.0))
+
+    monkeypatch.setattr(to, "synthesize", synth)
+    for uid in range(1, to.VERIFY_PER_TARGET_PER_DAY + 1):  # different users, same victim
+        await to.start_verification(uid, MOBILE)
+    with pytest.raises(to.CallError) as e:
+        await to.start_verification(99, MOBILE)
+    assert e.value.code == "target_limit"
+    assert len(sent) == to.VERIFY_PER_TARGET_PER_DAY
+
+
+async def test_cancel_verification_voids_a_pending_code(env, monkeypatch):
+    async def synth(text):
+        return to.phone_wav(wav(1.0))
+
+    monkeypatch.setattr(to, "synthesize", synth)
+    await to.start_verification(7, MOBILE)
+    await to.cancel_verification(7)
+    assert await to.pending_verification(7) is None
+
+
+async def test_result_frees_the_lock_and_a_failed_notice_is_kept(env, monkeypatch):
+    redis, _, _, _ = env
+    placed = await to.place_call(user_id=7, number=MOBILE, text="Der Ofen ist an")
+    assert f"{to.LOCK_PREFIX}7" in redis.data
+
+    async def broken(*_a):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(to, "_notify", broken)
+    event = {"type": "call_result", "id": placed.call_id, "status": "no_answer"}
+    await to.handle_call_result(event)
+    assert f"{to.LOCK_PREFIX}7" not in redis.data
+    assert f"{to.PENDING_PREFIX}{placed.call_id}" in redis.data  # kept for the replay
+
+
+async def test_the_fallback_notice_is_never_spoken(monkeypatch):
+    seen = {}
+
+    class Svc:
+        def __init__(self, db):
+            pass
+
+        async def process_webhook(self, **kw):
+            seen.update(kw)
+
+    class Session:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *a):
+            return False
+
+    import services.database as dbmod
+    import services.notification_service as ns
+
+    monkeypatch.setattr(ns, "NotificationService", Svc)
+    monkeypatch.setattr(dbmod, "AsyncSessionLocal", Session)
+    await to._notify(7, "t", "m")
+    assert seen["tts"] is False and seen["target_user_id"] == 7
+
+
+def test_empty_or_broken_speech_is_refused():
+    with pytest.raises(to.CallError):
+        to.phone_wav(wav(0.0))
+    with pytest.raises(to.CallError):
+        to.phone_wav(b"not a wav")
 
 
 # --------------------------------------------------------------------------- tool
@@ -280,8 +376,11 @@ def tool(env, monkeypatch):
 
 async def test_tool_calls_the_own_number_never_an_argument(tool):
     pt, placed = tool
-    res = await pt.phone_call({"message": "Der Ofen ist an", "number": "+4930999", "to": "+4930999"},
-                              user_id=7, user_permissions=["telephony.call"])
+    res = await pt.phone_call(
+        {"message": "Der Ofen ist an", "number": "+4930999", "to": "+4930999"},
+        user_id=7,
+        user_permissions=["telephony.call"],
+    )
     assert res["success"] and placed == [(7, MOBILE, "Der Ofen ist an")]
 
 

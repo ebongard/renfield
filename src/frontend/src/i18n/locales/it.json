@@ -2645,7 +2645,7 @@
     "numberLabel": "Numero di telefono",
     "changeLabel": "Inserisci un altro numero",
     "start": "Chiamata di conferma",
-    "calling": "Renfield ti sta chiamando e ti dirà un codice di quattro cifre.",
+    "calling": "Renfield ti sta chiamando e ti dirà un codice di sei cifre.",
     "startFailed": "Non è stato possibile avviare la chiamata di conferma.",
     "codeLabel": "Codice della chiamata al {{number}}",
     "confirm": "Conferma",

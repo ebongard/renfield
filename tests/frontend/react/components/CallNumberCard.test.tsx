@@ -37,7 +37,7 @@ function mockApi(flag = true): Api {
     http.post(`${BASE_URL}/api/preferences/call-number/verify`, async ({ request }) => {
       const body = (await request.json()) as { code: string };
       api.calls.push(`VERIFY ${body.code}`);
-      if (body.code !== '4712') {
+      if (body.code !== '471205') {
         return HttpResponse.json({ detail: 'Der Code stimmt nicht oder ist abgelaufen.' }, { status: 400 });
       }
       api.state = { number: '+491701234567', verified_at: '2026-11-28T12:00:00', pending: null };
@@ -67,13 +67,13 @@ describe('CallNumberCard', () => {
     await waitFor(() => expect(api.calls).toContain('PUT 0170 1234567'));
 
     const code = await screen.findByRole('textbox', { name: /Code/i });
-    await user.type(code, '0000');
+    await user.type(code, '000000');
     await user.click(screen.getByRole('button', { name: /^(Bestätigen|Confirm)$/i }));
     expect(await screen.findByText('Der Code stimmt nicht oder ist abgelaufen.')).toBeInTheDocument();
     expect(screen.queryByText(/(Bestätigt|Confirmed):/)).toBeNull();
 
     await user.clear(code);
-    await user.type(code, '4712');
+    await user.type(code, '471205');
     await user.click(screen.getByRole('button', { name: /^(Bestätigen|Confirm)$/i }));
     expect(await screen.findByText(/(Bestätigt|Confirmed): \+491701234567/)).toBeInTheDocument();
   });

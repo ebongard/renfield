@@ -116,7 +116,7 @@ class CallNumberRequest(BaseModel):
 
 
 class CallNumberCode(BaseModel):
-    code: str = Field(..., min_length=4, max_length=4, pattern=r"^[0-9]{4}$")
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
 
 
 def _call_number_user(user: User | None) -> User:
@@ -183,7 +183,10 @@ async def verify_call_number(
 
 @router.delete("/call-number", response_model=CallNumberStatus)
 async def delete_call_number(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from services import telephony_outbound
+
     user = _call_number_user(user)
+    await telephony_outbound.cancel_verification(user.id)
     user.call_number = None
     user.call_number_verified_at = None
     db.add(user)

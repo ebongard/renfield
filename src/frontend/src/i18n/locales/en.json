@@ -2963,7 +2963,7 @@
     "numberLabel": "Phone number",
     "changeLabel": "Enter a different number",
     "start": "Confirmation call",
-    "calling": "Renfield is calling now and will tell you a four-digit code.",
+    "calling": "Renfield is calling now and will tell you a six-digit code.",
     "startFailed": "The confirmation call could not be started.",
     "codeLabel": "Code from the call to {{number}}",
     "confirm": "Confirm",

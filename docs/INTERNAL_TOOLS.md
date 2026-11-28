@@ -115,7 +115,10 @@ the number is never a tool argument and is set only after a code call to it was 
 (`/api/preferences/call-number`). Piper speaks „Hier ist Renfield. <message>“ (8 kHz WAV, repeated when short,
 ≤ 58 s), sent as gateway command `place_call`; `call_result` other than `answered` falls back to a personal
 notification with the message. Refused: auth off, `user_id`/`user_permissions` None, no `telephony.call`
-(Admin + Familie by default), no confirmed number, over `TELEPHONY_CALL_PER_HOUR` (Redis, code calls included).
+(Admin + Familie by default), no confirmed number, over `TELEPHONY_CALL_PER_HOUR` (Redis, code calls included),
+a call of the same user still running (lock, released by its `call_result`). Code call: 6 digits, attempts counted
+atomically (5), at most 3 code calls per target number and day. The fallback notice is never spoken (`tts=False`)
+and the pending entry is deleted only after it went out.
 The gateway enforces its own limits (German targets only, fixed sender, one call at a time, per hour/day).
 
 ### `internal.forward_attachment_to_paperless`
