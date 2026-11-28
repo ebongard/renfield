@@ -485,6 +485,11 @@ Wissensdatenbank „Fax“ des konfigurierten Besitzers (`TELEPHONY_FAX_OWNER`, 
 Texterkennung und in Paperless. Nur der Besitzer bekommt eine Meldung („Fax von … (3 Seiten)“; bei einem
 Fehlschlag „fehlgeschlagen“ bzw. „die Ablage ist fehlgeschlagen“).
 
+Registrierungs-Überwachung (#1680, `TELEPHONY_LINE_ALERTS_ENABLED`, dunkel): Ist eine Nummer der Instanz länger
+als 2 Minuten nicht bei der Telekom angemeldet, bekommt der Admin eine Meldung („… ist nicht mehr bei der Telekom
+angemeldet“) und eine Entwarnung, sobald sie wieder angemeldet ist. Dasselbe, wenn Renfield das Gateway länger als
+`TELEPHONY_GATEWAY_ALERT_AFTER_SECONDS` nicht erreicht (dann kommt gar kein Anruf, keine Nachricht und kein Fax an).
+
 ### Benachrichtigungs-Glocke (#1653, `NOTIFICATION_BELL_ENABLED`, dark)
 
 Eine Glocke mit Badge im Header zeigt die ungelesenen eigenen Benachrichtigungen, etwa Anrufe,
