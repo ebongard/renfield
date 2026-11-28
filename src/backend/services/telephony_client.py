@@ -14,6 +14,9 @@ events over it. Protocol (JSON text frames)::
         "status": "ok" | "failed", "pages": 3, "fax": "<basename>"}   # #1677, only with TELEPHONY_FAX_ENABLED
     <- {"type": "line_status", "seq": n, "lines": [{"did": "+49...", "state": "up" | "down"}]}
         # #1680: a snapshot, no call_id, not deduplicated -- services/telephony_lines.py
+    <- {"type": "call_result", "seq": n, "id": "<32 hex>", "status": "answered" | "no_answer" | "busy"
+        | "failed" | "rejected"}   # #1683: outcome of OUR place_call -- services/telephony_outbound.py
+    -> {"type": "place_call", "id": "<32 hex>", "to": "+49...", "audio_b64": "..."}   # #1683, send_command()
 
 Guarantees:
 - Resume: (epoch, last seq) are stored in Redis; after a reconnect the gateway
@@ -55,6 +58,21 @@ WELCOME_TIMEOUT_SECONDS = 10.0
 MAX_ATTEMPTS = 3
 MAX_SEQ_JUMP = 10_000  # a seq far beyond what the gateway announced is a bug or forgery
 _NUMBER_RE = re.compile(r"^\+?[0-9]{1,20}$")
+
+
+class GatewayUnavailable(Exception):
+    """No open connection to the gateway right now (a command was NOT sent)."""
+
+
+_active: TelephonyClient | None = None  # the running client (set by run_telephony_client)
+
+
+async def send_command(message: dict) -> None:
+    """Send one command (#1683 place_call) over the open connection, or raise GatewayUnavailable."""
+    client = _active
+    if client is None:
+        raise GatewayUnavailable()
+    await client.send(message)
 
 
 class StateStore(Protocol):
@@ -317,6 +335,16 @@ class TelephonyClient:
         # #1680: (connected, seconds without a gateway) after every welcome and every failed attempt.
         self._on_gateway_state = on_gateway_state
         self._lost_since = time.monotonic()  # never connected yet counts as "without a gateway"
+        self._ws = None  # the open connection while a session is healthy (#1683 commands)
+
+    async def send(self, message: dict) -> None:
+        ws = self._ws
+        if ws is None or not self.connected.is_set():
+            raise GatewayUnavailable()
+        try:
+            await ws.send(json.dumps(message))
+        except Exception as e:  # closed mid-send: the command did not go out
+            raise GatewayUnavailable() from e
 
     async def run(self) -> None:
         """Connect, consume, reconnect with backoff — until cancelled."""
@@ -357,26 +385,33 @@ class TelephonyClient:
             except (TypeError, ValueError):
                 ceiling = seq
             logger.info("Telephony gateway connected (instance=%s)", welcome.get("instance"))
+            self._ws = ws
             self.connected.set()
             await self._report_gateway(True)
-            async for raw in ws:
-                try:
-                    event = json.loads(raw)
-                    event_seq = int(event["seq"])
-                except (ValueError, TypeError, KeyError):
-                    # Skip, don't reconnect: the replay would hand us the same frame again
-                    # and every later call would be stuck behind it.
-                    logger.warning("Telephony gateway sent a malformed frame — skipped")
-                    continue
-                if event_seq <= seq:
-                    continue
-                if event_seq > ceiling + MAX_SEQ_JUMP:
-                    logger.warning("Telephony gateway sent an implausible seq — frame skipped")
-                    continue
-                if not await self._handle(event):
-                    raise RuntimeError("delivery failed — reconnect and retry")
-                seq, ceiling = event_seq, max(ceiling, event_seq)
-                await self._store.save(epoch, seq)
+            try:
+                await self._consume(ws, epoch, seq, ceiling)
+            finally:
+                self._ws = None
+
+    async def _consume(self, ws, epoch: str, seq: int, ceiling: int) -> None:
+        async for raw in ws:
+            try:
+                event = json.loads(raw)
+                event_seq = int(event["seq"])
+            except (ValueError, TypeError, KeyError):
+                # Skip, don't reconnect: the replay would hand us the same frame again
+                # and every later call would be stuck behind it.
+                logger.warning("Telephony gateway sent a malformed frame — skipped")
+                continue
+            if event_seq <= seq:
+                continue
+            if event_seq > ceiling + MAX_SEQ_JUMP:
+                logger.warning("Telephony gateway sent an implausible seq — frame skipped")
+                continue
+            if not await self._handle(event):
+                raise RuntimeError("delivery failed — reconnect and retry")
+            seq, ceiling = event_seq, max(ceiling, event_seq)
+            await self._store.save(epoch, seq)
 
     async def _report_gateway(self, connected: bool) -> None:
         if self._on_gateway_state is None:
@@ -388,6 +423,13 @@ class TelephonyClient:
 
     async def _handle(self, event: dict) -> bool:
         """True = done with this event (delivered, skipped or nothing to do); False = retry."""
+        if event.get("type") == "call_result":
+            # #1683: outcome of our own place_call. Idempotent (the pending entry is consumed),
+            # never raises; only that call's owner is ever notified.
+            from services.telephony_outbound import handle_call_result
+
+            await handle_call_result(event)
+            return True
         if event.get("type") == "line_status":
             # #1680: a snapshot (no call_id, nothing to deduplicate); the handler never raises.
             from services.telephony_lines import handle_line_status
@@ -458,4 +500,9 @@ async def run_telephony_client() -> None:
         ssl_ctx=ssl_ctx,
         on_gateway_state=handle_gateway_state,
     )
-    await client.run()
+    global _active
+    _active = client
+    try:
+        await client.run()
+    finally:
+        _active = None

@@ -490,6 +490,11 @@ als 2 Minuten nicht bei der Telekom angemeldet, bekommt der Admin eine Meldung (
 angemeldet“) und eine Entwarnung, sobald sie wieder angemeldet ist. Dasselbe, wenn Renfield das Gateway länger als
 `TELEPHONY_GATEWAY_ALERT_AFTER_SECONDS` nicht erreicht (dann kommt gar kein Anruf, keine Nachricht und kein Fax an).
 
+Renfield ruft an (#1683, `TELEPHONY_OUTBOUND_ENABLED`, dunkel): „Ruf mich an und sag mir …“ klingelt das eigene
+Telefon mit der Nummer der Instanz als Absender und spricht die Nachricht. Angerufen wird nur die eigene Nummer aus
+„Mein Konto“, die erst nach einem Bestätigungsanruf mit sechsstelligem Code gilt. Nimmt niemand ab, kommt die
+Nachricht als Meldung. Berechtigung `telephony.call` (Admin, Familie); höchstens `TELEPHONY_CALL_PER_HOUR` Anrufe.
+
 ### Benachrichtigungs-Glocke (#1653, `NOTIFICATION_BELL_ENABLED`, dark)
 
 Eine Glocke mit Badge im Header zeigt die ungelesenen eigenen Benachrichtigungen, etwa Anrufe,

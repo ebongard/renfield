@@ -25,6 +25,13 @@ from services.auth_service import get_user_or_default
 from services.push_preconditions import push_active
 from utils.config import settings
 
+
+def telephony_outbound_active() -> bool:
+    from services import telephony_outbound
+
+    return telephony_outbound.enabled() and settings.auth_enabled
+
+
 router = APIRouter()
 
 # The richer Reva Wissensbasis surface (`/api/wissensbasis/trace` + `/me/mix`)
@@ -159,6 +166,8 @@ class FeatureFlags(BaseModel):
     notification_bell_enabled: bool = False
     # Contact points on KG entities (#1240). Off => drawer section hidden, routes 404.
     contact_points_enabled: bool = False
+    # Outbound calls (#1683): the "own number for calls" card on the account page.
+    telephony_outbound_enabled: bool = False
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -195,4 +204,5 @@ async def get_features(
         push_notifications_enabled=push_active(),
         notification_bell_enabled=settings.notification_bell_enabled,
         contact_points_enabled=settings.contact_points_enabled,
+        telephony_outbound_enabled=telephony_outbound_active(),
     )

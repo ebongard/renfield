@@ -2954,5 +2954,21 @@
       "invalid_number": "That is not a valid phone number.",
       "not_owner": "Only the owner of this entry can change its contact details."
     }
+  },
+  "callNumber": {
+    "title": "My phone number for calls",
+    "explain": "Renfield calls you on this number when you ask (“call me and tell me …”). It only counts once you enter the code from the confirmation call. German mobile or landline numbers only.",
+    "current": "Confirmed: {{number}}",
+    "remove": "Remove",
+    "numberLabel": "Phone number",
+    "changeLabel": "Enter a different number",
+    "start": "Confirmation call",
+    "calling": "Renfield is calling now and will tell you a six-digit code.",
+    "startFailed": "The confirmation call could not be started.",
+    "codeLabel": "Code from the call to {{number}}",
+    "confirm": "Confirm",
+    "confirmed": "The number is confirmed.",
+    "wrongCode": "The code is wrong or has expired.",
+    "removed": "The number was removed. Renfield will no longer call you."
   }
 }

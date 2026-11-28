@@ -160,6 +160,8 @@ export interface FeatureFlags {
   notification_bell_enabled?: boolean;
   /** Contact points on KG entities (#1240). */
   contact_points_enabled?: boolean;
+  /** Outbound calls (#1683): "own number for calls" on the account page. */
+  telephony_outbound_enabled?: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {

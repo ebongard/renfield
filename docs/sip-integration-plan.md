@@ -10,7 +10,7 @@ einem privaten Repo, weil sie Rufnummern und Infrastrukturdetails enthalten.
 | 2 – Anruf erkennen | `services/telephony_client.py`: eine **ausgehende** WebSocket-Verbindung zum Gateway, Ereignisse per Push → `NotificationService` | #1650 |
 | 3 – Fax | PDF über denselben Kanal abholen → Dokument + Paperless (Business-Instanz), `TELEPHONY_FAX_ENABLED` (#1677) | live (xidra) |
 | 1 – Überwachung | `services/telephony_lines.py`: `line_status` und ein nicht erreichbares Gateway → `ops_alert.notify_admin`, `TELEPHONY_LINE_ALERTS_ENABLED` (#1680) | gebaut |
-| 4 – Renfield ruft an | `internal.*`-Tool `place_call` über den Kanal, Ziele nur aus einer Allowlist | offen (vgl. #1627) |
+| 4 – Renfield ruft an | `internal.phone_call` → Gateway-Befehl `place_call` über den Kanal; Ziel nur die eigene, per Code-Anruf bestätigte Nummer, `TELEPHONY_OUTBOUND_ENABLED` (#1683); Erinnerung per Anruf folgt | gebaut |
 | 5 – Renfield nimmt an | Audio über den Kanal → STT → Agent mit eigener Rolle `telephony_guest` → TTS | offen |
 | 7 – Satelliten als Freisprechstelle | Vollduplex-Modus `call_audio` (zunächst nur XVF3800 mit Hardware-AEC) | offen |
 

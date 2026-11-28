@@ -1335,6 +1335,10 @@ class User(Base):
     media_follow_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
     personality_style = Column(String(20), default="freundlich", nullable=False, server_default="freundlich")
     personality_prompt = Column(Text, nullable=True)  # Free-text personality fine-tuning
+    # Telephony Phase 4 (#1683): the user's OWN number Renfield may call ("ruf mich an"),
+    # E.164, set only after a code call to it was confirmed; NULL = no calls.
+    call_number = Column(String(20), nullable=True)
+    call_number_verified_at = Column(DateTime, nullable=True)
 
     # Cold-start counter for the Paperless LLM-metadata confirm flow.
     # Increments on each successful upload that went through the confirm

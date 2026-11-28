@@ -2636,5 +2636,21 @@
       "invalid_number": "Non è un numero di telefono valido.",
       "not_owner": "Solo il proprietario di questa voce può modificarne i recapiti."
     }
+  },
+  "callNumber": {
+    "title": "Il mio numero per le chiamate",
+    "explain": "Renfield ti chiama su questo numero quando lo chiedi («chiamami e dimmi …»). Vale solo dopo aver inserito il codice della chiamata di conferma. Solo numeri tedeschi (cellulare o fisso).",
+    "current": "Confermato: {{number}}",
+    "remove": "Rimuovi",
+    "numberLabel": "Numero di telefono",
+    "changeLabel": "Inserisci un altro numero",
+    "start": "Chiamata di conferma",
+    "calling": "Renfield ti sta chiamando e ti dirà un codice di sei cifre.",
+    "startFailed": "Non è stato possibile avviare la chiamata di conferma.",
+    "codeLabel": "Codice della chiamata al {{number}}",
+    "confirm": "Conferma",
+    "confirmed": "Il numero è confermato.",
+    "wrongCode": "Il codice è errato o scaduto.",
+    "removed": "Il numero è stato rimosso. Renfield non ti chiamerà più."
   }
 }

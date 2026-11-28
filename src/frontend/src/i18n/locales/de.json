@@ -2954,5 +2954,21 @@
       "invalid_number": "Das ist keine gültige Telefonnummer.",
       "not_owner": "Nur der Eigentümer dieses Eintrags kann Kontaktdaten ändern."
     }
+  },
+  "callNumber": {
+    "title": "Meine Telefonnummer für Anrufe",
+    "explain": "Renfield ruft dich auf dieser Nummer an, wenn du darum bittest („Ruf mich an und sag mir …“). Sie gilt erst, wenn du den Code aus dem Bestätigungsanruf eingibst. Nur deutsche Mobil- oder Festnetznummern.",
+    "current": "Bestätigt: {{number}}",
+    "remove": "Entfernen",
+    "numberLabel": "Telefonnummer",
+    "changeLabel": "Andere Nummer eintragen",
+    "start": "Bestätigungsanruf",
+    "calling": "Renfield ruft jetzt an und nennt dir einen sechsstelligen Code.",
+    "startFailed": "Der Bestätigungsanruf konnte nicht gestartet werden.",
+    "codeLabel": "Code aus dem Anruf an {{number}}",
+    "confirm": "Bestätigen",
+    "confirmed": "Die Nummer ist bestätigt.",
+    "wrongCode": "Der Code stimmt nicht oder ist abgelaufen.",
+    "removed": "Die Nummer ist entfernt. Renfield ruft dich nicht mehr an."
   }
 }

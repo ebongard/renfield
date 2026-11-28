@@ -895,6 +895,12 @@ TELEPHONY_FAX_TO_PAPERLESS=true   # zusätzlich nach Paperless (außer Band, wie
 # und wenn das Gateway selbst länger nicht erreichbar ist. Aus = line_status ignoriert wie bisher.
 TELEPHONY_LINE_ALERTS_ENABLED=false
 TELEPHONY_GATEWAY_ALERT_AFTER_SECONDS=300   # 60–86400; so lange ohne Gateway = Meldung
+# Renfield ruft an (#1683, Phase 4): internal.phone_call ruft die EIGENE, per Code-Anruf bestätigte Nummer des
+# Nutzers an (Kontoeinstellungen) und spricht die Nachricht. Braucht TELEPHONY_ENABLED + AUTH_ENABLED; aus = kein
+# Werkzeug, /api/preferences/call-number 404, kein Anruf. Absender und Grenzen setzt zusätzlich das Gateway.
+TELEPHONY_OUTBOUND_ENABLED=false
+TELEPHONY_CALL_PER_HOUR=5          # 1–30 Anrufe je Nutzer und Stunde (Bestätigungsanrufe eingeschlossen)
+TELEPHONY_CALL_MAX_CHARS=400       # 50–1000 Zeichen gesprochene Nachricht
 ```
 
 - An: Ein empfangenes Fax wird ein Auftrag in `telephony_faxes` (Migration `pc20261127b_telephony_faxes`, VOR dem

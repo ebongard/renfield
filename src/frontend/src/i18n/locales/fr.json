@@ -2979,5 +2979,21 @@
       "invalid_number": "Ce n’est pas un numéro de téléphone valide.",
       "not_owner": "Seul le propriétaire de cette entrée peut modifier ses coordonnées."
     }
+  },
+  "callNumber": {
+    "title": "Mon numéro pour les appels",
+    "explain": "Renfield t’appelle sur ce numéro quand tu le demandes (« appelle-moi et dis-moi … »). Il n’est valable qu’après avoir saisi le code de l’appel de confirmation. Uniquement des numéros allemands (mobile ou fixe).",
+    "current": "Confirmé : {{number}}",
+    "remove": "Supprimer",
+    "numberLabel": "Numéro de téléphone",
+    "changeLabel": "Saisir un autre numéro",
+    "start": "Appel de confirmation",
+    "calling": "Renfield t’appelle maintenant et te donne un code à six chiffres.",
+    "startFailed": "L’appel de confirmation n’a pas pu être lancé.",
+    "codeLabel": "Code de l’appel au {{number}}",
+    "confirm": "Confirmer",
+    "confirmed": "Le numéro est confirmé.",
+    "wrongCode": "Le code est faux ou a expiré.",
+    "removed": "Le numéro a été supprimé. Renfield ne t’appellera plus."
   }
 }
