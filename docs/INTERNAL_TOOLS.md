@@ -110,7 +110,8 @@ Source: `services/reminder_tool.py` (#264)
 
 ### `internal.phone_call`
 
-„Ruf mich an und sag mir …“ (#1683, Telefonie Phase 4). Rings `users.call_number` of the injected `user_id` --
+„Ruf mich an und sag mir …“ (#1683, Telefonie Phase 4). Role `presence` (the router sends „ruf mich an“
+there; `general` sees it too). Rings `users.call_number` of the injected `user_id` --
 the number is never a tool argument and is set only after a code call to it was confirmed
 (`/api/preferences/call-number`). Piper speaks „Hier ist Renfield. <message>“ (8 kHz WAV, repeated when short,
 ≤ 58 s), sent as gateway command `place_call`; `call_result` other than `answered` falls back to a personal
