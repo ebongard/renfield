@@ -22,6 +22,7 @@ Source paths are relative to `src/backend/`.
 | `internal.list_my_memories` | Enumerate the asker's own memories without the vector threshold | `services/memory_list_tool.py` | own memories only |
 | `internal.create_reminder` | Create a time-based reminder | `services/reminder_tool.py` | re-asserts `settings.proactive_reminders_enabled` (H4) |
 | `internal.list_reminders` / `internal.cancel_reminder` | List / cancel the asker's own pending reminders by voice (#264) | `services/reminder_tool.py` | own reminders only (admins too); H4 like create |
+| `internal.phone_call` | Call the asker on their OWN confirmed number and speak a message (#1683) | `services/phone_call_tool.py` | `TELEPHONY_OUTBOUND_ENABLED` (registered only while on, H4); `telephony.call`; unidentified turn DENIED |
 | `internal.forward_attachment_to_paperless` | Forward a chat attachment to Paperless from server-stored bytes | `services/chat_upload_tool.py` | — |
 | `internal.ingest_file` | Interactive folder-ingest of a file on a watched share | `services/folder_ingest_tool.py` | `FOLDER_INGEST_ENABLED` |
 | `internal.render_table` / `internal.render_list` | Gen-UI: render an answer as a typed `table`/`list` widget | `services/widget_tools.py` | `ARTIFACTS_TYPED_ENABLED` (widget emit) |
@@ -106,6 +107,16 @@ Source: `services/reminder_tool.py` (#264)
 - Times are local, like the create confirmation. Both re-assert `settings.proactive_reminders_enabled` (H4).
 - Routed via the `general` role (`internal_tools: null`); the role description names listing and cancelling.
 - Not yet: named timers ("Nudel-Timer" as a name, not a text match) — the open rest of #264.
+
+### `internal.phone_call`
+
+„Ruf mich an und sag mir …“ (#1683, Telefonie Phase 4). Rings `users.call_number` of the injected `user_id` --
+the number is never a tool argument and is set only after a code call to it was confirmed
+(`/api/preferences/call-number`). Piper speaks „Hier ist Renfield. <message>“ (8 kHz WAV, repeated when short,
+≤ 58 s), sent as gateway command `place_call`; `call_result` other than `answered` falls back to a personal
+notification with the message. Refused: auth off, `user_id`/`user_permissions` None, no `telephony.call`
+(Admin + Familie by default), no confirmed number, over `TELEPHONY_CALL_PER_HOUR` (Redis, code calls included).
+The gateway enforces its own limits (German targets only, fixed sender, one call at a time, per hour/day).
 
 ### `internal.forward_attachment_to_paperless`
 

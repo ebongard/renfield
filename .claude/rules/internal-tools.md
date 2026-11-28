@@ -39,7 +39,8 @@ UNIDENTIFIED turn (`user_permissions=None`: device/satellite token, unrecognized
   (`_HA_CONTROL_GATED_TOOLS`, `ha_glue/bootstrap.py`).
 - **`None` DENIED** (larger blast radius): `Permission.ADMIN` on `internal.paperless_dedupe` (bulk archive delete) and
   `HA_CONTROL` on the `device_action` frame (`chat_handler`: `auth_enabled and user_id is None` → refuse), which also
-  re-validates domain, action and entity. Check the code before assuming which group a new gate belongs to.
+  re-validates domain, action and entity; `internal.phone_call` (`telephony.call`, rings a real phone, #1683).
+  Check the code before assuming which group a new gate belongs to.
 - `internal.list_unfiled_documents` is owner-scoped: admin/single-user sees all, a non-admin only their OWN docs via
   the atom owner, INNER-joined fail-closed (its `query` mode is a corpus-wide name search); LIKE wildcards escaped.
 - `internal.list_my_memories` reads only the authenticated user's own memories.
