@@ -2063,6 +2063,14 @@ class Settings(BaseSettings):
     # the owner admin (ops_alert.notify_admin). Off = line_status ignored, no alert.
     telephony_line_alerts_enabled: bool = False
     telephony_gateway_alert_after_seconds: int = Field(default=300, ge=60, le=86400)
+    # Outbound calls (#1683, Telefonie Phase 4): "ruf mich an und sag mir ..." --
+    # internal.phone_call rings the asking user's OWN number (confirmed by a code
+    # call, /api/preferences/call-number) and speaks the message (Piper) via the
+    # gateway's place_call. Needs TELEPHONY_ENABLED + auth on. Off = no tool, the
+    # routes 404, no call is ever placed. The gateway has its own target/rate limits.
+    telephony_outbound_enabled: bool = False
+    telephony_call_per_hour: int = Field(default=5, ge=1, le=30)   # calls per user (incl. code calls)
+    telephony_call_max_chars: int = Field(default=400, ge=50, le=1000)  # spoken message length
 
     # Notification bell (#1653): a bell with an unread badge in the app header
     # that lists the viewer's own notifications (always viewer-scoped, admins

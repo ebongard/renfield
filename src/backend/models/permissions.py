@@ -85,6 +85,9 @@ class Permission(str, Enum):
     NOTIFICATIONS_VIEW = "notifications.view"       # View notifications
     NOTIFICATIONS_MANAGE = "notifications.manage"   # Send notifications, manage webhook token
 
+    # === Telephony ===
+    TELEPHONY_CALL = "telephony.call"   # Renfield may call the user's own confirmed number (#1683)
+
 
 
 # Permission hierarchy definitions
@@ -147,6 +150,9 @@ PERMISSION_HIERARCHY = {
     # Notification permissions (notifications.manage > notifications.view)
     Permission.NOTIFICATIONS_MANAGE: {Permission.NOTIFICATIONS_VIEW},
     Permission.NOTIFICATIONS_VIEW: set(),
+
+    # Telephony (standalone)
+    Permission.TELEPHONY_CALL: set(),
 
     # Kiosk (standalone — nothing implies it, it implies nothing)
     Permission.KIOSK_VIEW: set(),
@@ -377,6 +383,8 @@ def get_all_permissions() -> list[dict]:
         Permission.NOTIFICATIONS_VIEW: "Benachrichtigungen ansehen",
         Permission.NOTIFICATIONS_MANAGE: "Benachrichtigungen senden und Webhook-Token verwalten",
 
+        Permission.TELEPHONY_CALL: "Von Renfield auf der eigenen Nummer angerufen werden",
+
         Permission.KIOSK_VIEW: "Wanddisplay (Kiosk) ansehen",
     }
 
@@ -449,6 +457,7 @@ DEFAULT_ROLES = [
             Permission.ROLES_MANAGE.value,
             Permission.SETTINGS_MANAGE.value,
             Permission.NOTIFICATIONS_MANAGE.value,
+            Permission.TELEPHONY_CALL.value,
             # Not redundant: the backend does NOT read `admin` as a wildcard
             # (PERMISSION_HIERARCHY), so without this line an admin would lose
             # /ws/kiosk the moment that gate stopped asking for ADMIN.
@@ -471,6 +480,7 @@ DEFAULT_ROLES = [
             Permission.RAG_USE.value,
             Permission.KG_VIEW.value,
             Permission.NOTIFICATIONS_VIEW.value,
+            Permission.TELEPHONY_CALL.value,
             "mcp.*",
         ],
         "is_system": True

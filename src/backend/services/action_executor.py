@@ -118,6 +118,12 @@ class ActionExecutor:
                 parameters, user_id=user_id, session_id=self.session_id,
             )
 
+        # Call the asker on their OWN confirmed number (#1683). user_id + permissions
+        # are injected here; the handler fails closed on an unidentified turn.
+        if intent == "internal.phone_call":
+            from services.phone_call_tool import phone_call
+            return await phone_call(parameters, user_id=user_id, user_permissions=user_permissions)
+
         # List / cancel the asker's own pending reminders (#264). Owner-scoped on
         # the injected user_id, admins included — never on an LLM-supplied id.
         if intent == "internal.list_reminders":

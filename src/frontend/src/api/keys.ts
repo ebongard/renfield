@@ -204,6 +204,7 @@ export const keys = {
   preferences: {
     all: ['preferences'] as const,
     language: () => ['preferences', 'language'] as const,
+    callNumber: () => ['preferences', 'call-number'] as const,
   },
   auth: {
     all: ['auth'] as const,

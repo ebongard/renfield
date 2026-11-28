@@ -228,6 +228,14 @@ class AgentToolRegistry:
         if settings.contact_points_enabled:
             platform_tools.update(FIND_CONTACT_TOOL)
             platform_tools.update(SCAN_DOCUMENT_CONTACTS_TOOL)
+        # Outbound calls (#1683): only where calls are on, so a dark instance's agent
+        # never offers a tool that would only refuse.
+        from services import telephony_outbound
+
+        if telephony_outbound.enabled():
+            from services.phone_call_tool import PHONE_CALL_TOOL
+
+            platform_tools.update(PHONE_CALL_TOOL)
         # Simba tools only where the Simba MCP is present (per-instance-optional —
         # a Simba-less instance carries no Simba tool artifact).
         if simba_available:

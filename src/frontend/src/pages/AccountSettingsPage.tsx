@@ -28,6 +28,7 @@ import Alert from '../components/Alert';
 import PageHeader from '../components/PageHeader';
 import HapticFeedbackSetting from '../components/HapticFeedbackSetting';
 import PushNotificationsCard from '../components/PushNotificationsCard';
+import CallNumberCard from '../components/CallNumberCard';
 
 export default function AccountSettingsPage() {
   const { t } = useTranslation();
@@ -222,6 +223,9 @@ export default function AccountSettingsPage() {
 
       {/* Web Push (#79). Renders nothing unless the instance has it active. */}
       <PushNotificationsCard />
+
+      {/* Own number for calls (#1683). Renders nothing unless outbound calls are active. */}
+      <CallNumberCard />
 
       {ConfirmDialogComponent}
     </div>
