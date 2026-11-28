@@ -12,10 +12,14 @@ Two signals, one alert path (``ops_alert``: owner admin, dedup ledger, re-alert 
   (the LXC is down, the gateway crashed, the network between the zones broke) --
   then no call, voicemail, fax or line_status arrives at all.
 
-The ledger is in-process (see ``ops_alert``): after a pod restart an ongoing
-outage alerts once more and a recovery that happens meanwhile sends no all-clear
--- the safe direction. Nothing here raises: an alert must never break the client.
-Logs carry no number.
+An all-clear is sent only for an alert that REACHED the admin (``_told``; the
+ops_alert ledger also holds deferred keys that never did). An all-clear that does
+not get through stays pending: the gateway repeats its snapshot every 10 min, so
+the next ``up`` tries again -- and also catches up on an ``up`` missed while this
+instance was disconnected. Both are in-process: after a pod restart an ongoing
+outage alerts once more and a recovery meanwhile sends no all-clear -- the safe
+direction. Nothing here raises: an alert must never break the client. Logs carry
+no number.
 """
 
 from __future__ import annotations
@@ -32,6 +36,14 @@ LINE_PREFIX = "telephony_line:"
 GATEWAY_KEY = "telephony_gateway"
 RETRY_SECONDS = 300.0  # an alert that did not reach the admin is retried after this
 MAX_LINES = 20
+
+# Keys whose alert reached the admin and still await an all-clear.
+_told: set[str] = set()
+
+
+def reset() -> None:
+    """Test hook."""
+    _told.clear()
 
 
 def enabled() -> bool:
@@ -59,20 +71,23 @@ def _lines(event: dict) -> list[tuple[str, str]]:
 async def _alert(key: str, title: str, message: str, data: dict) -> None:
     if not ops_alert.should_alert(key):
         return
-    if not await ops_alert.notify_admin(
+    if await ops_alert.notify_admin(
         title=title, message=message, dedup_key=key, data=data, event_type="telephony_ops", source="telephony"
     ):
+        _told.add(key)
+    else:
         ops_alert.defer_alert(key, RETRY_SECONDS)
 
 
 async def _all_clear(key: str, title: str, message: str, data: dict) -> None:
-    if key not in ops_alert.alerted_keys(key):
-        return  # never alerted (or the pod restarted since): nothing to clear
-    ops_alert.clear_alert(key)
-    await ops_alert.notify_admin(
+    ops_alert.clear_alert(key)  # recovered: a new outage alerts at once (also drops a pending retry)
+    if key not in _told:
+        return  # the admin was never told (or the pod restarted since): nothing to clear
+    if await ops_alert.notify_admin(
         title=title, message=message, dedup_key=f"{key}:ok", data=data, event_type="telephony_ops",
         source="telephony", urgency="info",
-    )
+    ):
+        _told.discard(key)  # else: the next "up" (the gateway repeats it) tries again
 
 
 async def handle_line_status(event: dict) -> None:

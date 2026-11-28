@@ -18,7 +18,12 @@ import pytest
 from services import ops_alert
 from services import telephony_client as tc
 from services import telephony_lines as tl
-from tests.backend.test_telephony_client import MemoryStore, _wait_for, gateway  # noqa: F401  (fixture)
+from tests.backend.test_telephony_client import (  # noqa: F401  (fixtures)
+    MemoryStore,
+    _fast_backoff,
+    _wait_for,
+    gateway,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -35,12 +40,14 @@ def sent(monkeypatch):
         return state["told"]
 
     ops_alert.reset_ledger()
+    tl.reset()
     monkeypatch.setattr(ops_alert, "notify_admin", notify_admin)
     monkeypatch.setattr(tl.settings, "telephony_enabled", True)
     monkeypatch.setattr(tl.settings, "telephony_line_alerts_enabled", True)
     monkeypatch.setattr(tl.settings, "telephony_gateway_alert_after_seconds", 300)
     yield calls, state
     ops_alert.reset_ledger()
+    tl.reset()
 
 
 def snap(state, did=DID):
@@ -86,6 +93,25 @@ async def test_an_alert_that_was_not_delivered_is_retried_later(sent, monkeypatc
     state["told"] = True
     await tl.handle_line_status(snap("down"))
     assert len(calls) == 2
+
+
+async def test_no_all_clear_for_an_alert_the_admin_never_got(sent):
+    calls, state = sent
+    state["told"] = False
+    await tl.handle_line_status(snap("down"))  # not delivered (deferred)
+    await tl.handle_line_status(snap("up"))
+    assert [c["title"] for c in calls] == ["Telefonie: Nummer abgemeldet"]
+
+
+async def test_an_all_clear_that_did_not_get_through_is_retried_on_the_next_up(sent):
+    calls, state = sent
+    await tl.handle_line_status(snap("down"))
+    state["told"] = False
+    await tl.handle_line_status(snap("up"))
+    state["told"] = True
+    await tl.handle_line_status(snap("up"))  # the gateway's periodic snapshot
+    await tl.handle_line_status(snap("up"))
+    assert [c["title"] for c in calls] == ["Telefonie: Nummer abgemeldet"] + ["Telefonie: Nummer wieder angemeldet"] * 2
 
 
 async def test_untrusted_fields_are_vetted_and_no_number_is_logged(sent, caplog):
@@ -153,3 +179,20 @@ async def test_client_hands_line_status_to_the_handler_and_reports_state(gateway
     finally:
         task.cancel()
     assert states[0] is True
+
+
+async def test_down_for_counts_from_start_and_restarts_only_after_a_healthy_session(monkeypatch):
+    now = {"t": 1000.0}
+    monkeypatch.setattr(tc.time, "monotonic", lambda: now["t"])
+    reports = []
+
+    async def hook(connected, down_for):
+        reports.append((connected, down_for))
+
+    client = tc.TelephonyClient("ws://127.0.0.1:1/v1/events", "tok", MemoryStore(), None, connect=object(),
+                                on_gateway_state=hook)
+    now["t"] = 1400.0
+    await client._report_gateway(False)  # never connected: counted from construction
+    assert reports[-1] == (False, 400.0)
+    await client._report_gateway(True)
+    assert reports[-1] == (True, 0.0)
