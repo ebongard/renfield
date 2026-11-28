@@ -12,6 +12,8 @@ events over it. Protocol (JSON text frames)::
         "recording": "<basename>"}   # recording: the transcript job's handle (#1669)
     <- {"type": "fax_received", "seq": n, "call_id": "...", "did": "...", "caller": "...",
         "status": "ok" | "failed", "pages": 3, "fax": "<basename>"}   # #1677, only with TELEPHONY_FAX_ENABLED
+    <- {"type": "line_status", "seq": n, "lines": [{"did": "+49...", "state": "up" | "down"}]}
+        # #1680: a snapshot, no call_id, not deduplicated -- services/telephony_lines.py
 
 Guarantees:
 - Resume: (epoch, last seq) are stored in Redis; after a reconnect the gateway
@@ -36,6 +38,7 @@ import logging
 import random
 import re
 import ssl
+import time
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -297,6 +300,7 @@ class TelephonyClient:
         deliver: Callable[[dict], Awaitable[None]],
         ssl_ctx: ssl.SSLContext | None = None,
         connect: Callable | None = None,
+        on_gateway_state: Callable[[bool, float], Awaitable[None]] | None = None,
     ):
         if connect is None:
             from websockets.asyncio.client import connect as ws_connect
@@ -310,6 +314,9 @@ class TelephonyClient:
         self._connect = connect
         self.connected = asyncio.Event()
         self._attempts: dict[str, int] = {}
+        # #1680: (connected, seconds without a gateway) after every welcome and every failed attempt.
+        self._on_gateway_state = on_gateway_state
+        self._lost_since = time.monotonic()  # never connected yet counts as "without a gateway"
 
     async def run(self) -> None:
         """Connect, consume, reconnect with backoff — until cancelled."""
@@ -326,7 +333,9 @@ class TelephonyClient:
             finally:
                 if self.connected.is_set():
                     backoff = 1.0  # the session was healthy: start the backoff over
+                    self._lost_since = time.monotonic()
                 self.connected.clear()
+            await self._report_gateway(False)
             await self._sleep(backoff + random.uniform(0, backoff / 4))
             backoff = min(backoff * 2, BACKOFF_MAX_SECONDS)
 
@@ -349,6 +358,7 @@ class TelephonyClient:
                 ceiling = seq
             logger.info("Telephony gateway connected (instance=%s)", welcome.get("instance"))
             self.connected.set()
+            await self._report_gateway(True)
             async for raw in ws:
                 try:
                     event = json.loads(raw)
@@ -368,8 +378,22 @@ class TelephonyClient:
                 seq, ceiling = event_seq, max(ceiling, event_seq)
                 await self._store.save(epoch, seq)
 
+    async def _report_gateway(self, connected: bool) -> None:
+        if self._on_gateway_state is None:
+            return
+        try:
+            await self._on_gateway_state(connected, 0.0 if connected else time.monotonic() - self._lost_since)
+        except Exception as e:  # an alert must never break the connection loop
+            logger.warning("Telephony gateway state hook failed: %s", type(e).__name__)
+
     async def _handle(self, event: dict) -> bool:
         """True = done with this event (delivered, skipped or nothing to do); False = retry."""
+        if event.get("type") == "line_status":
+            # #1680: a snapshot (no call_id, nothing to deduplicate); the handler never raises.
+            from services.telephony_lines import handle_line_status
+
+            await handle_line_status(event)
+            return True
         if event.get("type") not in announced_types():
             return True  # call_ended etc.: nothing to announce
         call_id = str(event.get("call_id") or "")[:64]
@@ -408,6 +432,7 @@ def _is_loopback(url: str) -> bool:
 async def run_telephony_client() -> None:
     """Entry point for the lifecycle task (only called when TELEPHONY_ENABLED)."""
     from services.redis_client import get_redis
+    from services.telephony_lines import handle_gateway_state
 
     if not settings.telephony_gateway_url or not settings.telephony_gateway_token.get_secret_value():
         logger.error("TELEPHONY_ENABLED but TELEPHONY_GATEWAY_URL/TOKEN missing — telephony client not started")
@@ -431,5 +456,6 @@ async def run_telephony_client() -> None:
         RedisStateStore(get_redis()),
         deliver_via_notification_service,
         ssl_ctx=ssl_ctx,
+        on_gateway_state=handle_gateway_state,
     )
     await client.run()
